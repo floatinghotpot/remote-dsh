@@ -6,3 +6,6 @@ packages:
 # esbuild (vite's dependency, portal only) needs its postinstall.
 allowBuilds:
   esbuild: true
+
+minimumReleaseAgeExclude:
+  - rdsh-gateway@0.1.0

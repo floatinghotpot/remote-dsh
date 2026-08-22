@@ -17,8 +17,8 @@
 
 | 编号 | 需求 | 验收标准 |
 |---|---|---|
-| R1 | **HTTPS（TLS 1.3）**：三种部署方式（2026-08-23 定案）—— ① 内置 TLS（`tls.cert/key` 任意 PEM，或自动自签）；② `behind_proxy: true` + apache2 反代（cron + acme.sh 自动续期）；③ `behind_proxy: true` + nginx 反代；无 TLS 且非反代时保持 http（仅允许 pair/none 模式） | 三种方式均可 https 访问；`behind_proxy` 时允许 password + http（信任反代 TLS） |
-| R2 | **自签证书快速可用**：无证书时 `rdsh serve` 可自动生成自签证书（提示浏览器信任） | 无证书配置也能以 https 启动；启动日志提示证书来源 |
+| R1 | **HTTPS（TLS 1.3）**：三种部署方式（2026-08-23 定案，2026-08-23 修订去自动自签）—— ① 内置 TLS（`tls.cert/key` 任意 PEM：acme.sh / Let's Encrypt / 云厂商 / 手动 openssl 自签）；② `behind_proxy: true` + apache2 反代（cron + acme.sh 自动续期）；③ `behind_proxy: true` + nginx 反代；无证书即 http（仅 pair/none 模式） | 三种方式均可 https 访问；`behind_proxy` 时允许 password + http（信任反代 TLS） |
+| R2 | **证书由用户提供**：https 必须配置 `tls.cert/key`；无证书时网关跑 http；`auth.mode: password` 无证书且非反代 → 拒绝启动（提示配证书） | 配证书后 https 启动；无证书 pair 模式 http 启动；password 无证书非反代拒绝启动 |
 | R3 | **用户名 + 密码认证**（config `auth.mode: password`）：scrypt 哈希（每用户独立盐）存 config；浏览器登录页输 user/pass → 签发会话 Cookie（复用 M1 机制） | 登录成功进入 DSH；错误密码拒绝；`auth.mode` 三值（pair/password/none）切换生效 |
 | R4 | **改密 = 全部旧会话失效**：`rdsh user passwd` 后轮换会话密钥，已登录设备全部掉线 | 改密后旧 Cookie 访问被拒（307 登录页），新密码可登录 |
 | R5 | **登录失败限流**：复用 M1 限流框架（按 IP，超阈值锁定） | 连续失败达阈值后锁定并返回 429；锁定期间即使密码正确也拒绝 |
@@ -42,9 +42,10 @@
 
 > **场景**：阿里云 ECS（Ubuntu，headless）。三种部署方式（req R1）各验收一遍：
 >
-> **用例 1（内置自签）**：
-> 1. `npm i -g remote-dsh` → `rdsh user add admin`（设密码）→ config（tls 留空自签 + allow_from 可选）→ `rdsh service install`。
-> 2. 公网浏览器访问 `https://<ECS公网IP>:8443` → 信任自签证书 → 登录页 → 输 admin/密码 → DSH 完整操作。
+> **用例 1（内置 TLS）**：
+> 1. `npm i -g remote-dsh` → `rdsh user add admin`（设密码）→ config（`tls.cert/key` 填证书路径 + allow_from 可选）→ `rdsh service install`。
+> 2. 公网浏览器访问 `https://<ECS公网IP>:8443` → 登录页 → 输 admin/密码 → DSH 完整操作。
+> 3. 证书来源任选：acme.sh 自动签发、云厂商证书、手动 `openssl req -x509 ...` 自签（浏览器需信任一次）。
 >
 > **用例 2（apache2 + cron acme.sh）** 与 **用例 3（nginx）**：
 > - config `behind_proxy: true` + 监听 127.0.0.1；反代终止 TLS（证书 acme.sh 签发、cron 自动续期）；WebSocket upgrade 头正确转发；`allow_from` 取 X-Forwarded-For 真实 IP。
@@ -64,7 +65,6 @@
 
 ## 5. 待定项（留给 solution.md，不阻塞 req 批准）
 
-- 自签证书实现（内置生成 vs openssl 调用；有效期）
 - 无 TLS + password 模式的处置（拒绝启动 vs 强警告）
 - 登录限流参数（复用 5 次/10 分钟？）
 - systemd/launchd 模板细节（用户级路径、环境变量传递）

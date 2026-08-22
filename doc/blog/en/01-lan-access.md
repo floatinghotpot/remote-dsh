@@ -105,7 +105,7 @@ Two scenarios, two paths:
 
 | Scenario | Solution | Notes |
 |---|---|---|
-| Agent **deployed on a cloud server** (Alibaba Cloud ECS, etc.) | **M2 cloud-server direct access** | HTTPS + username/password + systemd service; direct public access (post ②) |
+| Agent **deployed on a cloud server** (Alibaba Cloud ECS, etc.) | **M2 cloud-server direct access** | HTTPS + username/password + systemd service; direct public access ([cloud-server series ②/③/④](../en/02-cloud-single-tls.md)) |
 | Agent **on a home machine** (no public IP), accessing it remotely while traveling | **M3 hub tunnel** | The agent connects **outbound** to the hub only — no ports exposed (post ③) |
 
 M2 (cloud-server direct access) is on the roadmap; the M3 hub tunnel follows.

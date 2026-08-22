@@ -1,68 +1,107 @@
 /**
- * serve.ts — `rdsh serve` 编排：spawn dsh → 启动网关 → 打印启动信息 → 生命周期。
+ * serve.ts — `rdsh serve` 编排：加载 config（CLI 覆盖）→ 解析 TLS → 启动网关 → 生命周期。
  */
 import { networkInterfaces } from "node:os";
 import type { NetworkInterfaceInfo } from "node:os";
 import { startGateway } from "./server.ts";
+import type { RunningGateway } from "./server.ts";
 import { findDsh, spawnDsh } from "./spawn-dsh.ts";
+import { loadConfig, resolveConfigPath } from "./config.ts";
+import type { RdshConfig } from "./config.ts";
+import { UserManager } from "./auth.ts";
+import { loadTls } from "./tls.ts";
 
 export interface ServeOptions {
-  host: string;
-  port: number;
+  host?: string;
+  port?: number;
   pairCode?: string;
-  sessionTtlSeconds: number;
+  sessionTtlSeconds?: number;
   dshPath?: string;
   reset?: boolean;
-  /** true = 跳过配对码认证（仅限完全可信网络！打印警告） */
   noCode?: boolean;
+  /** 配置文件路径（--config / $RDSH_CONFIG / 默认 ~/.rdsh/config.json） */
+  configPath?: string;
 }
 
 /**
- * 启动 LAN 认证网关。进程常驻：SIGINT/SIGTERM 时先关网关再终止 dsh 子进程。
- * 启动失败（dsh 缺失/启动失败/端口占用）→ 抛错（CLI 负责以非零码退出）。
+ * 启动网关。进程常驻：SIGINT/SIGTERM/SIGHUP 时先关网关再终止 dsh 子进程。
+ * 启动失败（dsh 缺失/TLS 缺失/端口占用/安全约束）→ 抛错（CLI 以非零码退出）。
  */
 export async function serve(opts: ServeOptions): Promise<void> {
-  const dshPath = findDsh(opts.dshPath);
-  if (dshPath === null) {
-    throw new Error(
-      "cannot find 'dsh' in PATH. Install DeepSeek Harness first, or pass --dsh <path>.",
+  const configPath = resolveConfigPath(opts.configPath);
+  const config: RdshConfig = await loadConfig(configPath);
+
+  // CLI 参数优先于 config（持久配置在 config，CLI 做临时覆盖/调试）
+  const host = opts.host ?? config.host;
+  const port = opts.port ?? config.port;
+  const sessionTtlSeconds = opts.sessionTtlSeconds ?? config.sessionTtlSeconds;
+  const dshPath = opts.dshPath ?? config.dshPath;
+  const authMode = opts.noCode ? "none" : config.auth.mode;
+  const pairCode = opts.pairCode ?? config.auth.pairCode;
+
+  const foundDsh = findDsh(dshPath);
+  if (foundDsh === null) {
+    throw new Error("cannot find 'dsh' in PATH. Install DeepSeek Harness first, or set dshPath in config / pass --dsh <path>.");
+  }
+
+  const dsh = await spawnDsh(foundDsh);
+
+  // TLS 决策：有 tls.cert/key → https；无 → http（behindProxy 或 pair/none）。
+  // password + http + 非反代 → server.ts 安全约束拒绝启动（需自行提供证书）。
+  const tlsMaterial = await loadTls(config.tls, config.behindProxy);
+  const userManager = authMode === "password" ? new UserManager(configPath) : undefined;
+
+  if (opts.noCode || authMode === "none") {
+    console.warn(
+      "\n⚠  rdsh: 认证已禁用（auth.mode=none / --no-code）—— 任何能访问该端口的设备将直接操作 DSH！\n" +
+        "     仅限完全可信网络！\n",
     );
   }
 
-  const dsh = await spawnDsh(dshPath);
-  if (opts.noCode) {
-    console.warn(
-      "\n⚠  rdsh: --no-code 已启用 —— 跳过配对码认证！\n" +
-        "     任何能访问该端口的设备都将直接操作 DSH（可执行任意命令）。\n" +
-        "     仅限完全可信的局域网（家庭/公司内网）使用！\n",
-    );
+  let gateway: RunningGateway;
+  try {
+    gateway = await startGateway({
+      host,
+      port,
+      pairCode,
+      sessionTtlSeconds,
+      dshPort: dsh.port,
+      reset: opts.reset,
+      noCode: opts.noCode,
+      authMode,
+      authVersion: config.auth.version,
+      allowFrom: config.allowFrom,
+      behindProxy: config.behindProxy,
+      tlsMaterial,
+      userManager,
+      configPath,
+    });
+  } catch (err) {
+    // 启动失败（端口占用 / 安全约束拒绝）→ 先停掉已 spawn 的 dsh，避免残留
+    await dsh.stop().catch(() => undefined);
+    throw err;
   }
-  const gateway = await startGateway({
-    host: opts.host,
-    port: opts.port,
-    pairCode: opts.pairCode,
-    sessionTtlSeconds: opts.sessionTtlSeconds,
-    dshPort: dsh.port,
-    reset: opts.reset,
-    noCode: opts.noCode,
-  });
 
   const lan = lanAddresses();
-  const displayHost = opts.host === "0.0.0.0" ? (lan[0] ?? "127.0.0.1") : opts.host;
-  console.log(`rdsh serve: gateway on http://${displayHost}:${gateway.actualPort}`);
-  if (opts.host === "0.0.0.0" && lan.length > 0) {
-    console.log(`rdsh serve: LAN: ${lan.map((ip) => `http://${ip}:${gateway.actualPort}`).join(", ")}`);
+  const scheme = tlsMaterial === null ? "http" : "https";
+  const displayHost = host === "0.0.0.0" ? (lan[0] ?? "127.0.0.1") : host;
+  console.log(`rdsh serve: gateway on ${scheme}://${displayHost}:${gateway.actualPort}`);
+  if (host === "0.0.0.0" && lan.length > 0) {
+    console.log(`rdsh serve: LAN: ${lan.map((ip) => `${scheme}://${ip}:${gateway.actualPort}`).join(", ")}`);
   }
   console.log(`rdsh serve: dsh web on 127.0.0.1:${dsh.port}`);
-  console.log(`rdsh serve: pair code: ${gateway.pair.codeValue()}`);
-  console.log("rdsh serve: enter the pair code in the browser on your other device.");
+  console.log(`rdsh serve: auth mode: ${authMode}${authMode === "password" ? ` (config: ${configPath})` : authMode === "pair" ? ` (pair code: ${gateway.pair.codeValue()})` : ""}`);
+  if (config.allowFrom.length > 0) console.log(`rdsh serve: allow_from: ${config.allowFrom.join(", ")}`);
+  if (tlsMaterial !== null) console.log(`rdsh serve: TLS: custom cert (${config.tls!.cert})`);
+  if (config.behindProxy) console.log("rdsh serve: behind_proxy: true (TLS terminated by reverse proxy)");
+  if (authMode === "password") console.log("rdsh serve: sign in with `rdsh user` credentials in the browser login page.");
+  else if (authMode === "pair") console.log("rdsh serve: enter the pair code in the browser on your other device.");
 
   let shuttingDown = false;
   const shutdown = async (signal: string): Promise<void> => {
-    if (shuttingDown) return; // 幂等：重复信号不再处理
+    if (shuttingDown) return;
     shuttingDown = true;
     console.log(`\nrdsh: received ${signal}, shutting down...`);
-    // 停止接受新连接；残留活跃连接由进程退出时由 OS 清理
     gateway.server.close();
     let code: number;
     try {
@@ -70,12 +109,10 @@ export async function serve(opts: ServeOptions): Promise<void> {
     } catch {
       code = 1;
     }
-    // 必须显式退出：仅设 exitCode 会因残留句柄（信号监听器/管道）而挂住
     process.exit(code === 0 ? 0 : 1);
   };
   process.on("SIGINT", () => void shutdown("SIGINT"));
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
-  // 覆盖默认行为：SIGHUP（关终端/断 SSH）也优雅清理，避免 dsh 子进程成为孤儿
   process.on("SIGHUP", () => void shutdown("SIGHUP"));
 }
 

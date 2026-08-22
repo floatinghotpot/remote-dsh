@@ -103,6 +103,10 @@ hub and gateway only — clients never implement it.
 Scenario guides (中文 → [doc/blog/zh/](doc/blog/zh/), English → [doc/blog/en/](doc/blog/en/)):
 
 - [Control your DSH agent from your phone, at home or in the office (LAN)](doc/blog/en/01-lan-access.md)
+- Cloud-server deployment series (bilingual):
+  - [② rdsh standalone + built-in TLS: remote-control from any browser](doc/blog/en/02-cloud-single-tls.md)
+  - [③ Apache2 reverse proxy + acme.sh auto-renewed certs](doc/blog/en/03-cloud-apache-acme.md)
+  - [④ nginx reverse proxy (shared port 443)](doc/blog/en/04-cloud-nginx.md)
 
 ## Development
 

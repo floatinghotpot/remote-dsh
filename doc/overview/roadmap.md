@@ -2,7 +2,7 @@
 
 > **日期**: 2026-08-23
 > **来源**: `proposal.md` §8 里程碑 + §10 决策记录（Q1–Q10）
-> **状态**: M1 MVP 验收通过（2026-08-23）；下一里程碑 M2（云服务器直连）
+> **状态**: M2 云服务器直连验收通过（2026-08-23）；下一里程碑 M3（公网 hub）
 
 ## 里程碑总览
 
@@ -10,13 +10,13 @@
 |---|---|---|
 | **M0 需求确认** | discussion / req / solution / plan 定稿 | ✅ 完成（2026-08-22） |
 | **M1 MVP（LAN）** | `rdsh serve` 局域网认证网关 | ✅ 完成（2026-08-23，单测 33/33 + 端到端 14/14 + 双设备实测通过） |
-| **M2 云服务器直连** | TLS/https + headless 配对码体验 + 可选 IP 白名单（2026-08-23 新增） | ⏳ 未开始（下一步） |
-| **M3 公网 hub** | rdsh-hub（认证/路由）+ `rdsh join` + rdsh-portal（原 M2 顺延） | ⏳ 未开始 |
-| **M4 多租户增强** | 邮箱验证、2FA、共享授权、审计、限流（原 M3 顺延） | ⏳ 未开始 |
-| **M5 移动端 App** | rdsh-app（Flutter，Android/iOS）（原 M4 顺延） | ⏳ 未开始 |
-| **M6 上线准备** | 域名备案、隐私政策、部署文档、压测（原 M5 顺延） | ⏳ 未开始 |
-| **M7 hub Go 化 + E2E** | rdsh-hub Go 单二进制 + conformance；公共 SaaS 化时实现 E2E（原 M6 顺延） | ⏳ 未开始 |
-| **M8 微信小程序** | rdsh-weapp（原生小程序，wss 直连 hub API）（原 M7 顺延） | ⏳ 未开始 |
+| **M2 云服务器直连** | TLS/https + 密码认证 + 配置文件 + 服务化 | ✅ 完成（2026-08-23，单测 57/57 + M2 e2e 43/43 + M1 回归 14/14） |
+| **M3 公网 hub** | rdsh-hub（认证/路由）+ `rdsh join` + rdsh-portal | ⏳ 未开始 |
+| **M4 多租户增强** | 邮箱验证、2FA、共享授权、审计、限流 | ⏳ 未开始 |
+| **M5 移动端 App** | rdsh-app（Flutter，Android/iOS） | ⏳ 未开始 |
+| **M6 上线准备** | 域名备案、隐私政策、部署文档、压测 | ⏳ 未开始 |
+| **M7 hub Go 化 + E2E** | rdsh-hub Go 单二进制 + conformance；公共 SaaS 化时实现 E2E | ⏳ 未开始 |
+| **M8 微信小程序** | rdsh-weapp（原生小程序，wss 直连 hub API） | ⏳ 未开始 |
 
 ## 各里程碑详情
 
@@ -37,50 +37,50 @@
   - ✅ 运行时问题修复：secure-context polyfill（randomUUID）、Origin 围栏 403、SIGTERM 退出挂起、SIGHUP 孤儿进程
 - **验收标准**：另一台设备输配对码即可操作 DSH；无认证流量被拒；Ctrl+C 无 dsh 残留 —— 全部达成
 
-### M2 云服务器直连 ⏳（2026-08-23 新增，替换原"公网 hub"位置）
+### M2 云服务器直连 ✅
 
 - **背景**：`rdsh serve` 已可跑在云服务器（阿里云等）上（M1 能力），但公网直连有安全缺口：明文 http + headless 认证体验差（配对码依赖"人在终端前"）+ 无服务化
 - **内容**：
-  - 网关内置 **HTTPS**（TLS 1.3）：自签证书快速可用 + 用户证书/Let's Encrypt 选项
+  - 网关内置 **HTTPS**（TLS 1.3，`tls.cert/key` 任意 PEM —— acme.sh / Let's Encrypt / 云厂商 / 手动 openssl 自签；2026-08-23 修订：**不内置自签生成，无证书即 http**，password 模式无证书非反代拒绝启动）
   - **密码认证**（headless HTTPS 主认证，2026-08-23 定案）：**用户名 + 密码**（`rdsh user add/passwd/ls/rm`），scrypt 哈希（每用户独立盐）存 `~/.rdsh/config.json`；浏览器登录页输 user/pass → 签发会话 Cookie（复用 M1 会话机制）；认证失败限流（复用 M1 限流框架）；**改密 = 轮换会话密钥，全部旧会话立即失效**；Web 登录页提供改密入口（可选）；可选叠加 IP 白名单
   - **认证模式**（config.json 的 `auth.mode`，2026-08-23 定案 —— **持久配置一律进 config，不走 CLI**）：`pair`（LAN/可信网络，M1 现有）/ `password`（HTTPS 服务，M2 默认）/ `none`（--no-code 语义，完全可信网络）；`auth.pair_code` 为 pair 模式预置码
-  - **IP 白名单**：config.json 的 `allow_from` 字段（CIDR 列表，持久安全配置，2026-08-23 定案 —— 不进 CLI）
+  - **IP 白名单**：config.json 的 `allowFrom` 字段（CIDR 列表，持久安全配置，2026-08-23 定案 —— 不进 CLI）
   - **配置文件**：默认 `~/.rdsh/config.json`，支持 `--config <path>` 指定（全局参数，`serve`/`user`/`service` 共享；也可用 `RDSH_CONFIG` 环境变量）—— **持久配置的唯一来源**（host/port/session-ttl/TLS 证书/allow_from/auth），零依赖 JSON 解析。**CLI 结构**：`rdsh serve [--config <path>] [--reset]`（常驻主命令，持久参数从 config 读）+ `rdsh user add|passwd|ls|rm` / `rdsh service install|uninstall|status`（管理子命令）+ `--version/--help`（全局）
   - **服务化**：`rdsh service install / uninstall / status` —— 生成 systemd unit（Linux）/ launchd plist（macOS），开机自启 + 崩溃重启；不自带 fork 后台（交系统进程管理器托管 rdsh，连带其 spawn 的 dsh）
 - **验收**：云服务器 `rdsh service install` 后常驻；浏览器访问 https → 输密码 → 完整操作 DSH；`allow_from` 限定来源；错误密码限流生效
-- **部署用例**（三种，均覆盖）：① rdsh 单独 + 自签证书；② apache2 反代 + cron + acme.sh 自动续期；③ nginx 反代
-- **配套博客**（M2 落地后，双语）：02 单独+自签 / 03 apache2+cron acme.sh / 04 nginx
+- **部署用例**（三种，均覆盖）：① rdsh 单独 + 内置 TLS（用户证书）；② apache2 反代 + cron + acme.sh 自动续期；③ nginx 反代
+- **配套博客**（✅ 已写，双语）：[02 单独+内置 TLS](../blog/zh/02-cloud-single-tls.md) / [03 apache2+cron acme.sh](../blog/zh/03-cloud-apache-acme.md) / [04 nginx](../blog/zh/04-cloud-nginx.md)
 - **相关决策**：安全基线（公网直连 = 必须 TLS + 密码认证，不做明文裸奔）；认证演进（OIDC 登录可作为后续增强，暂不排期）
 
-### M3 公网 hub ⏳（原 M2 顺延）
+### M3 公网 hub ⏳
 
 - **内容**：rdsh-hub（注册/登录/host 绑定/路由）+ `rdsh join`（出站隧道）+ rdsh-portal（门户页）
 - **验收**：异地浏览器登录 hub → 选择 host → 完整操作 DSH；token 吊销即时生效
 - **前提**：层 1（hub 对外 API）与层 2（rdsh-tunnel）契约文档先行（协议先行纪律）
 - **相关决策**：Q6（提供 Docker 镜像，主分发 npm 包/单二进制）
 
-### M4 多租户增强 ⏳（原 M3 顺延）
+### M4 多租户增强 ⏳
 
 - **内容**：邮箱验证、2FA（TOTP 或 passkey）、共享授权（owner/member）、审计日志、登录风控
 - **验收**：安全加固项逐条过验收
 
-### M5 移动端 App ⏳（原 M4 顺延）
+### M5 移动端 App ⏳
 
 - **内容**：rdsh-app（Flutter + WebView 壳）
 - **验收**：App 登录后可访问 host 的 DSH
 - **相关决策**：Q7（首版纯 WebView 壳，验收须含剪贴板/输入法验证）
 
-### M6 上线准备 ⏳（原 M5 顺延）
+### M6 上线准备 ⏳
 
 - **内容**：域名 ICP 备案、隐私政策、部署文档、压测（含 300 MB 大流量压测，M1 遗留项）
 - **验收**：达到公开服务标准
 
-### M7 hub Go 化 + E2E ⏳（原 M6 顺延）
+### M7 hub Go 化 + E2E ⏳
 
 - **内容**：rdsh-hub 用 Go 重写（单二进制，go:embed portal）+ TS↔Go conformance 测试；公共 SaaS 化时实现 E2E（帧格式加密位已预留）
 - **验收**：单二进制部署；互操作测试通过；E2E 需求评审
 
-### M8 微信小程序 ⏳（原 M7 顺延）
+### M8 微信小程序 ⏳
 
 - **内容**：rdsh-weapp（原生小程序）—— host 列表、会话读写、wss 直连 hub 对外 API（层 1）
 - **验收**：小程序登录后可访问 host 的 DSH 轻量操作
@@ -88,12 +88,12 @@
 - **约束**：Flutter 不可用于小程序（平台硬约束）；原生实现最稳、审核风险最低
 - **相关决策**：Q3（小程序后置）
 
-## 当前焦点（M1 收尾 → M2 云服务器直连）
+## 当前焦点（M2 收尾 → M3 公网 hub）
 
-1. **发布**：`remote-dsh@0.2.0`（含真实 `rdsh serve` 与 `--no-code`；当前 npm 0.1.0 为占名骨架）
-2. **git 提交**：M0–M1 全部文档与代码（Batch Plan 待确认）
-3. **清理**：spike/ 一次性验证脚本（MVP 完成后移除）
-4. **M2 启动**：HTTPS（TLS）支持 → headless 配对码体验 → IP 白名单
+1. **git 提交**：M2 代码与文档（Batch Plan 待确认）
+2. **发布**：`remote-dsh@0.3.0` + `rdsh-gateway@0.2.0`（serve 子命令、user/service、TLS）
+3. **博客**：云服务器三部署用例（双语，02/03/04）
+4. **M3 启动**：hub 对外 API（层 1）与 rdsh-tunnel（层 2）契约文档先行 → `rdsh join`
 
 ## 变更记录
 
@@ -102,5 +102,6 @@
 | 2026-08-23 | 创建；M1 状态更新（代码完成、polyfill/SIGHUP 修复、待双设备验收） |
 | 2026-08-23 | **M1 验收通过**：双设备实测 OK；新增 `--no-code`；四个运行时问题修复；单测 33/33、端到端 14/14 |
 | 2026-08-23 | **里程碑重排**：新增 M2 云服务器直连（TLS + headless + IP 白名单）；原 M2 起全部顺延（hub→M3，多租户→M4，App→M5，上线→M6，Go+E2E→M7，小程序→M8） |
+| 2026-08-23 | **M2 验收通过**：单测 57/57 + M2 e2e 43/43 + M1 回归 14/14；修订去自动自签（无证书即 http，password 无证书非反代拒绝启动）；修复 CLI 管道输入/config watch/dsh 回收 |
 
 *关联文档：proposal.md | doc/overview/architecture.md | doc/feature/01-remote-access/*

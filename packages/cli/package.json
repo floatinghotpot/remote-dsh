@@ -23,7 +23,7 @@
     "node": ">=22"
   },
   "dependencies": {
-    "rdsh-gateway": "0.1.0"
+    "rdsh-gateway": "workspace:*"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

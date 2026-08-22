@@ -65,24 +65,24 @@ rdsh serve: enter the pair code in the browser on your other device.
 {
   "host": "0.0.0.0",
   "port": 8443,
-  "session_ttl_seconds": 43200,
+  "sessionTtlSeconds": 43200,
   "tls": { "cert": "/root/.acme.sh/example.com/fullchain.cer", "key": "/root/.acme.sh/example.com/example.com.key" },
-  "allow_from": ["192.168.1.0/24"],
+  "allowFrom": ["192.168.1.0/24"],
   "auth": {
     "mode": "password",
-    "pair_code": "",
-    "users": [{ "name": "admin", "password_hash": "scrypt:..." }]
+    "pairCode": "",
+    "users": [{ "name": "admin", "passwordHash": "scrypt:..." }]
   }
 }
 ```
 
-**证书来源**：`tls.cert/key` 接受任意 PEM —— acme.sh / Let's Encrypt / 云厂商证书均可。无配置时自动生成自签证书（浏览器需信任提示）。
+**证书来源**：`tls.cert/key` 接受任意 PEM —— acme.sh / Let's Encrypt / 云厂商 / 手动 `openssl req -x509 ...` 自签均可。**无证书时网关跑 http**（仅 pair/none 模式可用）；`auth.mode: password` 无证书且非反代时拒绝启动（需自行提供证书）。
 
 **两种 TLS 落地方式**：
 
 | 方式 | 配置 | 适用 |
 |---|---|---|
-| 内置 TLS | `tls.cert/key`（任意 PEM）或自动自签 | 快速起步 |
+| 内置 TLS | `tls.cert/key`（任意 PEM） | 单独运行 + 自备证书 |
 | 反代 TLS（nginx/apache） | `behindProxy: true`，反代终止 TLS，rdsh 监听本地 http | 已有反代 / certbot 自动续期 |
 
 **acme.sh 集成（内置 TLS）**（证书 90 天续期）：续期后需重启 rdsh 服务重载证书 ——
@@ -121,14 +121,14 @@ rdsh service uninstall
 > 公共前置：`npm i -g remote-dsh`；`rdsh user add admin`（设密码）；config `auth.mode: password`。
 > 三种部署方式任选其一（博客 02/03/04 分别详解）。
 
-### 用例 1：rdsh 单独运行 + 自签证书（快速起步）
+### 用例 1：rdsh 单独运行 + 内置 TLS（用户证书）
 
 ```jsonc
 // ~/.rdsh/config.json
 {
   "port": 8443,
-  "tls": { },                        // 留空 = 自动生成自签证书（~/.rdsh/）
-  "auth": { "mode": "password", "users": [{ "name": "admin", "password_hash": "..." }] }
+  "tls": { "cert": "/etc/rdsh/cert.pem", "key": "/etc/rdsh/key.pem" },   // 证书：acme.sh/云厂商/手动 openssl 自签
+  "auth": { "mode": "password", "users": [{ "name": "admin", "passwordHash": "..." }] }
 }
 ```
 
@@ -137,7 +137,7 @@ rdsh service install                # 常驻（systemd/launchd）
 rdsh service status
 ```
 
-- 浏览器首次访问提示证书不受信 → 手动信任
+- 证书来源任选：acme.sh 自动签发、云厂商证书、手动 `openssl req -x509 -newkey rsa:2048 -nodes -days 365 -keyout key.pem -out cert.pem -subj "/CN=example.com"`（自签浏览器需手动信任一次）
 - 适用：个人使用/内部测试，快速可用
 
 ### 用例 2：rdsh 在 apache2 后面（apache2 管 HTTPS，cron + acme.sh 自动续期）
@@ -147,8 +147,8 @@ rdsh service status
 {
   "host": "127.0.0.1",               // 只监听本机，由 apache2 转发
   "port": 8443,
-  "behind_proxy": true,              // 信任外部 TLS + X-Forwarded-For
-  "auth": { "mode": "password", "users": [{ "name": "admin", "password_hash": "..." }] }
+  "behindProxy": true,               // 信任外部 TLS + X-Forwarded-For
+  "auth": { "mode": "password", "users": [{ "name": "admin", "passwordHash": "..." }] }
 }
 ```
 
@@ -183,7 +183,7 @@ acme.sh --issue -d example.com --webroot /var/www/html
 ### 用例 3：rdsh 在 nginx 后面
 
 ```jsonc
-// ~/.rdsh/config.json —— 同用例 2（behind_proxy: true，监听 127.0.0.1）
+// ~/.rdsh/config.json —— 同用例 2（behindProxy: true，监听 127.0.0.1）
 ```
 
 ```nginx
@@ -212,7 +212,7 @@ server {
 
 | 用例 | HTTPS | 证书续期 | 复杂度 | 适用 |
 |---|---|---|---|---|
-| ① rdsh 单独 + 自签 | rdsh 内置 | 手动（或 acme.sh hook） | 低 | 快速起步/个人 |
+| ① rdsh 单独 + 内置 TLS | rdsh | 手动（或 acme.sh hook） | 低 | 快速起步/个人 |
 | ② apache2 + cron acme.sh | apache2 | **cron 全自动** | 中 | 正式域名/多服务 |
 | ③ nginx | nginx | certbot/手动 | 中 | 已有 nginx |
 

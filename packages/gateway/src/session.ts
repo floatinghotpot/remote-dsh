@@ -19,6 +19,8 @@ export interface SessionPayload {
   sid: string;
   /** 过期时刻（epoch 秒） */
   exp: number;
+  /** auth.version（M2 改密版本；不匹配 → 会话无效） */
+  v: number;
 }
 
 export class SessionManager {
@@ -46,20 +48,21 @@ export class SessionManager {
     this.key = await loadOrCreateKey(this.keyFile);
   }
 
-  /** 签发一个有效期 ttlSeconds 的会话 token。 */
-  sign(ttlSeconds: number): string {
+  /** 签发一个有效期 ttlSeconds 的会话 token（携带 auth 版本号）。 */
+  sign(ttlSeconds: number, version = 1): string {
     const key = this.requireKey();
     const payload: SessionPayload = {
       sid: randomUUID(),
       exp: Math.floor(Date.now() / 1000) + ttlSeconds,
+      v: version,
     };
     const body = Buffer.from(JSON.stringify(payload));
     const mac = createHmac("sha256", key).update(body).digest("base64url");
     return `${mac}.${body.toString("base64url")}`;
   }
 
-  /** 校验 token；无效/过期/被篡改 → null。 */
-  verify(token: string): SessionPayload | null {
+  /** 校验 token；无效/过期/被篡改/版本不匹配 → null。 */
+  verify(token: string, version?: number): SessionPayload | null {
     const key = this.requireKey();
     const dot = token.indexOf(".");
     if (dot <= 0) return null;
@@ -75,10 +78,11 @@ export class SessionManager {
     if (!safeEqual(mac, expected)) return null;
     try {
       const payload = JSON.parse(bodyBytes.toString("utf8")) as SessionPayload;
-      if (typeof payload.sid !== "string" || typeof payload.exp !== "number") return null;
+      if (typeof payload.sid !== "string" || typeof payload.exp !== "number" || typeof payload.v !== "number") return null;
       const now = Math.floor(Date.now() / 1000);
       if (payload.exp <= now) return null;
       if (payload.exp > now + MAX_EXP_FUTURE_SECONDS) return null;
+      if (version !== undefined && payload.v !== version) return null;
       return payload;
     } catch {
       return null;
@@ -86,8 +90,8 @@ export class SessionManager {
   }
 
   /** 生成 Set-Cookie 头（HttpOnly + SameSite=Lax）。 */
-  cookieHeader(ttlSeconds: number): string {
-    const token = this.sign(ttlSeconds);
+  cookieHeader(ttlSeconds: number, version = 1): string {
+    const token = this.sign(ttlSeconds, version);
     return `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${ttlSeconds}`;
   }
 
