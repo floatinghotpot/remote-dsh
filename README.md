@@ -98,6 +98,12 @@ Two protocol layers: **layer 1** (hub public API, JSON over HTTPS + WSS events)
 is the only contract clients implement; **layer 2** (`rdsh-tunnel`) runs between
 hub and gateway only — clients never implement it.
 
+## Blog
+
+Scenario guides (中文 → [doc/blog/zh/](doc/blog/zh/), English → [doc/blog/en/](doc/blog/en/)):
+
+- [Control your DSH agent from your phone, at home or in the office (LAN)](doc/blog/en/01-lan-access.md)
+
 ## Development
 
 - Node.js ≥ 22 (see `.nvmrc`), pnpm ≥ 9

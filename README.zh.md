@@ -89,6 +89,12 @@ rdsh serve                 # 启动局域网认证网关（自动拉起 dsh web�
 两个协议层：**层 1**（hub 对外 API，JSON over HTTPS + WSS 事件）是客户端实现的唯一契约；
 **层 2**（rdsh-tunnel）只在 hub 与 gateway 之间运行，客户端从不实现。
 
+## 博客
+
+场景化教程（中文 → [doc/blog/zh/](doc/blog/zh/)，English → [doc/blog/en/](doc/blog/en/)）：
+
+- [在家或办公室，用手机/笔记本/台式机遥控开发机的 DSH 智能体（局域网篇）](doc/blog/zh/01-lan-access.md)
+
 ## 开发
 
 - Node.js ≥ 22（见 `.nvmrc`）、pnpm ≥ 9
