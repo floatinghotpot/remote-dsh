@@ -129,7 +129,7 @@ discussion.md → req.md → solution.md → plan.md → (implementation) → ve
 - **语言与编译**: TypeScript（`tsc` strict，`tsconfig.base.json`，`outDir: dist`）。
 - **构建**: `pnpm build`（`pnpm -r build`，tsc across packages）、`pnpm test`（`node --test`）。
 - **测试**: 内置 `node:test` + `node:assert`（零依赖）；测试文件放各包 `test/`。
-- **npm 发布**: npm 包名 **`remote-dsh`**（CLI 命令仍是 `rdsh`；`rdsh` 裸名被 npm typo-squatting 防护拒绝，2026-08-22 已实测）。子包 `rdsh-tunnel` / `rdsh-gateway` / `rdsh-hub` / `rdsh-portal` 待发。发布需用户显式确认；`remote-dsh@0.1.0` 已占名发布（2026-08-22）。
+- **npm 发布**: npm 包名 **`remote-dsh`**（CLI 命令仍是 `rdsh`；`rdsh` 裸名被 npm typo-squatting 防护拒绝，2026-08-22 已实测）。子包 `rdsh-tunnel` / `rdsh-hub` / `rdsh-portal` 待发。发布需用户显式确认；`rdsh-gateway@0.1.0` + `remote-dsh@0.2.0` 已发布（2026-08-23，含真实 `rdsh serve`）。
 - **依赖纪律**: 依赖最小化——能用 Node 内置（`node:http`、`node:sqlite` ≥22.5、`node:crypto`、`node:test`）就不加包；必须新增依赖时先说明理由。
 - **项目布局**:
   - `packages/tunnel` — 线协议（零依赖；PROTOCOL.md 是跨语言契约）

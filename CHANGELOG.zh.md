@@ -7,6 +7,15 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.2.0] - 2026-08-23
+
+### 新增
+
+- M1 MVP：`rdsh serve` 局域网认证网关 —— 配对码 + 签名会话 Cookie、HTTP/SSE/WebSocket 全双工转发、自动拉起 `dsh web`。
+- `--no-code` 跳过配对（仅限完全可信网络，启动警告）。
+- 运行时修复：secure-context polyfill（明文 http 下 `crypto.randomUUID`）、DSH Host 围栏兼容（Host + Origin 改写）、优雅退出（SIGINT/SIGTERM/SIGHUP）、无 dsh 孤儿进程。
+- 发布 `rdsh-gateway@0.1.0` + `remote-dsh@0.2.0` 到 npm。
+
 ## [0.1.0] - 2026-08-22
 
 ### 新增

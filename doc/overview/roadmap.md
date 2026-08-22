@@ -43,9 +43,9 @@
 - **内容**：
   - 网关内置 **HTTPS**（TLS 1.3）：自签证书快速可用 + 用户证书/Let's Encrypt 选项
   - **密码认证**（headless HTTPS 主认证，2026-08-23 定案）：**用户名 + 密码**（`rdsh user add/passwd/ls/rm`），scrypt 哈希（每用户独立盐）存 `~/.rdsh/config.json`；浏览器登录页输 user/pass → 签发会话 Cookie（复用 M1 会话机制）；认证失败限流（复用 M1 限流框架）；**改密 = 轮换会话密钥，全部旧会话立即失效**；Web 登录页提供改密入口（可选）；可选叠加 IP 白名单
-  - **认证模式双轨**：`pair`（LAN/可信网络默认，M1 现有）+ `password`（HTTPS/公网服务）；`--no-code` 保留（完全可信网络）
+  - **认证模式**（config.json 的 `auth.mode`，2026-08-23 定案 —— **持久配置一律进 config，不走 CLI**）：`pair`（LAN/可信网络，M1 现有）/ `password`（HTTPS 服务，M2 默认）/ `none`（--no-code 语义，完全可信网络）；`auth.pair_code` 为 pair 模式预置码
   - **IP 白名单**：config.json 的 `allow_from` 字段（CIDR 列表，持久安全配置，2026-08-23 定案 —— 不进 CLI）
-  - **配置文件**：默认 `~/.rdsh/config.json`，支持 `--config <path>` 指定（全局参数，`serve`/`user`/`service` 共享；也可用 `RDSH_CONFIG` 环境变量）—— **持久配置的唯一来源**（host/port/session-ttl/TLS 证书/allow_from/auth），零依赖 JSON 解析；CLI 只保留一次性操作（`--reset`/`user`/`service`）
+  - **配置文件**：默认 `~/.rdsh/config.json`，支持 `--config <path>` 指定（全局参数，`serve`/`user`/`service` 共享；也可用 `RDSH_CONFIG` 环境变量）—— **持久配置的唯一来源**（host/port/session-ttl/TLS 证书/allow_from/auth），零依赖 JSON 解析。**CLI 结构**：`rdsh serve [--config <path>] [--reset]`（常驻主命令，持久参数从 config 读）+ `rdsh user add|passwd|ls|rm` / `rdsh service install|uninstall|status`（管理子命令）+ `--version/--help`（全局）
   - **服务化**：`rdsh service install / uninstall / status` —— 生成 systemd unit（Linux）/ launchd plist（macOS），开机自启 + 崩溃重启；不自带 fork 后台（交系统进程管理器托管 rdsh，连带其 spawn 的 dsh）
 - **验收**：云服务器 `rdsh service install` 后常驻；浏览器访问 https → 输密码 → 完整操作 DSH；`allow_from` 限定来源；错误密码限流生效
 - **相关决策**：安全基线（公网直连 = 必须 TLS + 密码认证，不做明文裸奔）；认证演进（OIDC 登录可作为后续增强，暂不排期）
