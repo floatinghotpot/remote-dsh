@@ -42,5 +42,5 @@ approved before implementation starts.
 
 ## Open questions
 
-See `doc/marketing/proposal.md` §10 — open decisions are tracked there before
+See `doc/overview/proposal.md` §10 — open decisions are tracked there before
 they land in `req.md` files.

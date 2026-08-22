@@ -1,5 +1,7 @@
 # remote-dsh
 
+**English** | [中文](README.zh.md)
+
 Make your DeepSeek Harness available anywhere.
 
 ![rdsh logo](media/rdsh256.png)
@@ -12,10 +14,45 @@ the internet.
 
 ## Status
 
-MVP in progress: the LAN gateway (`rdsh serve`) is the first milestone.
-See [doc/feature/01-remote-access](doc/feature/) for the requirements pipeline
-and [doc/marketing/proposal.md](doc/marketing/proposal.md) for the full product
+**M1 MVP complete** (2026-08-23): the LAN gateway (`rdsh serve`) is implemented
+and verified on real devices. Next milestone: M2 cloud-server direct access (TLS).
+See [doc/feature/01-remote-access](doc/feature/) for the requirements pipeline,
+[doc/overview/roadmap.md](doc/overview/roadmap.md) for the roadmap, and
+[doc/overview/proposal.md](doc/overview/proposal.md) for the full product
 proposal.
+
+## Features
+
+Implemented `[x]` · planned `[ ]` — from the user's point of view
+
+**M1 — Use DSH from any device on your network (implemented)**
+- [x] Open your DSH in a browser on another laptop or phone — no SSH, no setup
+- [x] Secure pairing: type the code shown in your host terminal, once
+- [x] No account needed — the pairing code is your key
+- [x] Full DSH experience: chat, run tools, browse files, live event stream
+- [x] Stay signed in for 12 hours — no re-pairing on the same device
+- [x] Unauthorized devices are locked out until they pair
+- [x] One command to start: `npm i -g remote-dsh && rdsh serve`
+- [x] Optional `--no-code` for fully trusted networks
+- [x] Quit cleanly (Ctrl+C / close terminal) — no leftover processes
+
+**M2 — Run it on a rented cloud server (e.g. Alibaba Cloud) (planned)**
+- [ ] HTTPS (TLS) — secure direct access over the public internet
+- [ ] User/password sign-in (`rdsh user add/passwd`; scrypt-hashed; changing password revokes all sessions)
+- [ ] IP allow-list (`allow_from` in config file) for extra hardening
+- [ ] Config file (default `~/.rdsh/config.json`, or `--config <path>` / `$RDSH_CONFIG`)
+- [ ] Run as a system service (systemd / launchd — auto-start on boot)
+
+**M3 — Use DSH from anywhere (planned)**
+- [ ] Reach any of your machines from the internet — no public IP or router setup
+- [ ] One account, manage multiple machines
+- [ ] Web portal to see and pick your machines
+
+**M4+ — Planned**
+- [ ] Mobile apps (Android / iOS)
+- [ ] WeChat mini program
+- [ ] Share a machine with your team
+- [ ] End-to-end encrypted sessions
 
 ## Quick start (MVP)
 
@@ -42,10 +79,19 @@ the pairing code shown in your terminal, and you are in.
 ## Architecture
 
 ```
-Client (browser / app / weapp)
-        │  HTTPS/WSS — layer 1: hub public API
-        ▼
-    rdsh-hub  ◄──── WSS tunnel — layer 2: rdsh-tunnel ──── rdsh-gateway ──► dsh web (127.0.0.1)
+        Client (browser / app / weapp)
+                    │
+                    │  HTTPS/WSS — layer 1: hub public API
+                    ▼
+                rdsh-hub
+                    │
+                    │  WSS tunnel — layer 2: rdsh-tunnel
+                    ▼
+             rdsh-gateway
+                    │
+                    │  HTTP (loopback)
+                    ▼
+          dsh web (127.0.0.1)
 ```
 
 Two protocol layers: **layer 1** (hub public API, JSON over HTTPS + WSS events)

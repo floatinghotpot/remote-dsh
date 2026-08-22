@@ -18,6 +18,12 @@
   "engines": {
     "node": ">=22"
   },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.0"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "node --test test/"

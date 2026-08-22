@@ -14,9 +14,9 @@ Vibe Coding 八荣八耻
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 > **项目速览**（2026-08-22）：
-> - 产品：**remote-dsh（代码名 rdsh）** —— 为 DeepSeek Harness（DSH）构建"安全远程访问层"：`rdsh serve`（局域网认证网关，MVP）/ `rdsh join <hub>`（公网隧道，M2）/ 未来多租户 + 移动端。
-> - 技术栈：TypeScript monorepo（`packages/*`，pnpm workspace）；rdsh-app 用 Flutter（`apps/app`）；rdsh-weapp 原生微信小程序（`apps/weapp`）；未来 rdsh-hub 用 Go 重写（`go/`）。详见 `doc/marketing/proposal.md`。
-> - 当前阶段：M0 需求确认（`doc/feature/01-remote-access/`），随后 M1 MVP = `rdsh serve` LAN 网关。
+> - 产品：**remote-dsh（代码名 rdsh）** —— 为 DeepSeek Harness（DSH）构建"安全远程访问层"：`rdsh serve`（局域网认证网关，MVP）/ 云服务器直连 / `rdsh join <hub>`（公网隧道）/ 多租户 + 移动端。**里程碑进度见 `doc/overview/roadmap.md`，不在本文件维护。**
+> - 技术栈：TypeScript monorepo（`packages/*`，pnpm workspace）；rdsh-app 用 Flutter（`apps/app`）；rdsh-weapp 原生微信小程序（`apps/weapp`）；未来 rdsh-hub 用 Go 重写（`go/`）。详见 `doc/overview/proposal.md`。
+> - 当前阶段：局域网网关（`rdsh serve`）已实现并验收（见 `doc/feature/01-remote-access/`）；后续里程碑见 `doc/overview/roadmap.md`。
 
 ## 0. Thinking Discipline (MUST READ FIRST)
 
@@ -84,8 +84,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Directory Convention
 - **Feature Pipeline**: Follow `discussion → req → solution → plan → verification → summary + TODO` in `doc/feature/{NN-name}/`，特性目录以两位数字编号作索引（如 `01-remote-access`、`02-xxx`）。
-- **架构文档**: 跨项目的架构/提案类文档放 `doc/architecture/`，**不进 `doc/feature/`**。
-- **营销/提案**: `doc/marketing/`（如 `proposal.md`）。
+- **架构/概览/提案文档**: 跨项目的架构、概览、提案类文档放 `doc/overview/`（如 `architecture.md`、`roadmap.md`、`proposal.md`），**不进 `doc/feature/`**。
 - **Bugfix Pipeline**: Record complex fixes in `doc/fix/{name}/`; simple fixes go to Daily Summary only.
 - **Consistency**: Keep `doc/daily/YYYYMMDD.md` updated at the end of task series upon user request.
 
@@ -138,12 +137,12 @@ discussion.md → req.md → solution.md → plan.md → (implementation) → ve
   - `packages/hub` — rdsh-hub：服务器（原型期 TS；生产期 Go 见 `go/`）
   - `packages/cli` — `rdsh` 统一 bin（serve/join/hub）
   - `packages/portal` — rdsh-portal（Vite + React 18，与 DSH 前端同构）
-  - `apps/app` — rdsh-app（Flutter，M4）
-  - `apps/weapp` — rdsh-weapp（微信小程序，M4）
-  - `go/` — 生产期 rdsh-hub Go 实现（M6）
+  - `apps/app` — rdsh-app（Flutter）
+  - `apps/weapp` — rdsh-weapp（微信小程序）
+  - `go/` — 生产期 rdsh-hub Go 实现
   - `e2e/` — TS↔Go conformance 互操作测试宿主
   - `media/` — logo 资产（品牌，不随 MIT，见 NOTICE）
-  - `doc/` — 文档（Feature Pipeline 见 §7）
+  - `doc/` — 文档（Feature Pipeline 见 §7；**组件对应的里程碑见 `doc/overview/roadmap.md`**）
 
 ## Appendix A: DSH 事实速查（以查档为准，勿凭记忆）
 

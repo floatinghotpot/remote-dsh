@@ -37,4 +37,4 @@
 
 ## 状态
 
-`DRAFT` —— 待 M0/M2 的 solution.md 定稿后冻结。
+`DRAFT` —— 待 M0/M3（公网 hub）的 solution.md 定稿后冻结。

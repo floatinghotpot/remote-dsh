@@ -36,3 +36,6 @@ Thumbs.db
 
 # Local runtime state
 .rdsh/
+
+# One-off verification scripts (removed after MVP)
+spike/

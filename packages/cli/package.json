@@ -1,6 +1,6 @@
 {
   "name": "remote-dsh",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Secure remote access for DeepSeek Harness: rdsh serve / rdsh join / rdsh hub",
   "license": "MIT",
   "type": "module",
@@ -20,6 +20,9 @@
   ],
   "engines": {
     "node": ">=22"
+  },
+  "dependencies": {
+    "rdsh-gateway": "workspace:*"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
