@@ -66,7 +66,7 @@ rdsh serve: enter the pair code in the browser on your other device.
   "host": "0.0.0.0",
   "port": 8443,
   "session_ttl_seconds": 43200,
-  "tls": { "cert": "/path/cert.pem", "key": "/path/key.pem" },
+  "tls": { "cert": "/root/.acme.sh/example.com/fullchain.cer", "key": "/root/.acme.sh/example.com/example.com.key" },
   "allow_from": ["192.168.1.0/24"],
   "auth": {
     "mode": "password",
@@ -74,6 +74,23 @@ rdsh serve: enter the pair code in the browser on your other device.
     "users": [{ "name": "admin", "password_hash": "scrypt:..." }]
   }
 }
+```
+
+**证书来源**：`tls.cert/key` 接受任意 PEM —— acme.sh / Let's Encrypt / 云厂商证书均可。无配置时自动生成自签证书（浏览器需信任提示）。
+
+**两种 TLS 落地方式**：
+
+| 方式 | 配置 | 适用 |
+|---|---|---|
+| 内置 TLS | `tls.cert/key`（任意 PEM）或自动自签 | 快速起步 |
+| 反代 TLS（nginx/apache） | `behindProxy: true`，反代终止 TLS，rdsh 监听本地 http | 已有反代 / certbot 自动续期 |
+
+**acme.sh 集成（内置 TLS）**（证书 90 天续期）：续期后需重启 rdsh 服务重载证书 ——
+
+```bash
+acme.sh --issue -d example.com --webroot /var/www/html
+acme.sh --install-cert -d example.com \
+  --reloadcmd "rdsh service restart"     # 续期后自动重载证书
 ```
 
 **原则**：持久配置一律进 config.json，CLI 只做操作（`--reset`、`user`、`service`）。
@@ -99,18 +116,107 @@ rdsh service uninstall
 - 用户级安装，**无需 sudo**
 - 由系统进程管理器托管 rdsh（连带其 spawn 的 dsh）
 
-## 7. 云服务器部署（M2 起，规划中）
+## 7. 云服务器部署（M2 起，规划中）—— 三种用例
 
-```bash
-# 1. 配置 TLS + 密码认证（见 §4）
-# 2. 用户管理（见 §5）
-# 3. 服务化（见 §6）
-rdsh --config /etc/rdsh/config.json service install
+> 公共前置：`npm i -g remote-dsh`；`rdsh user add admin`（设密码）；config `auth.mode: password`。
+> 三种部署方式任选其一（博客 02/03/04 分别详解）。
+
+### 用例 1：rdsh 单独运行 + 自签证书（快速起步）
+
+```jsonc
+// ~/.rdsh/config.json
+{
+  "port": 8443,
+  "tls": { },                        // 留空 = 自动生成自签证书（~/.rdsh/）
+  "auth": { "mode": "password", "users": [{ "name": "admin", "password_hash": "..." }] }
+}
 ```
 
-- **headless 配对码替代**：密码认证免终端；部署时 `rdsh user add` 设一次
-- **IP 白名单**：config 的 `allow_from`（CIDR 列表）
-- **公网安全**：必须 TLS；多机场景推荐后续经 hub（M3，gateway 只出站不暴露）
+```bash
+rdsh service install                # 常驻（systemd/launchd）
+rdsh service status
+```
+
+- 浏览器首次访问提示证书不受信 → 手动信任
+- 适用：个人使用/内部测试，快速可用
+
+### 用例 2：rdsh 在 apache2 后面（apache2 管 HTTPS，cron + acme.sh 自动续期）
+
+```jsonc
+// ~/.rdsh/config.json
+{
+  "host": "127.0.0.1",               // 只监听本机，由 apache2 转发
+  "port": 8443,
+  "behind_proxy": true,              // 信任外部 TLS + X-Forwarded-For
+  "auth": { "mode": "password", "users": [{ "name": "admin", "password_hash": "..." }] }
+}
+```
+
+```apache
+# /etc/apache2/sites-available/rdsh.conf
+<VirtualHost *:443>
+    ServerName example.com
+    SSLEngine on
+    SSLCertificateFile      /etc/letsencrypt/live/example.com/fullchain.pem
+    SSLCertificateKeyFile   /etc/letsencrypt/live/example.com/privkey.pem
+
+    ProxyPreserveHost On
+    ProxyPass        / http://127.0.0.1:8443/
+    ProxyPassReverse / http://127.0.0.1:8443/
+    # WebSocket（DSH 依赖）：
+    RewriteEngine On
+    RewriteCond %{HTTP:Upgrade} =websocket [NC]
+    RewriteRule /(.*) ws://127.0.0.1:8443/$1 [P,L]
+</VirtualHost>
+```
+
+```bash
+# acme.sh 签发 + cron 自动续期
+acme.sh --issue -d example.com --webroot /var/www/html
+# cron 每 60 天跑一次续期（acme.sh 自带续期，未到期自动跳过）：
+# 0 3 * * 0 acme.sh --cron --home /root/.acme.sh > /dev/null
+```
+
+- 证书由 **certbot/acme.sh + cron** 全自动管理（90 天续期，rdsh 无需重启 —— 反代重载配置即可）
+- 适用：正式域名 + 自动续期 + 多服务共端口
+
+### 用例 3：rdsh 在 nginx 后面
+
+```jsonc
+// ~/.rdsh/config.json —— 同用例 2（behind_proxy: true，监听 127.0.0.1）
+```
+
+```nginx
+# /etc/nginx/sites-available/rdsh
+server {
+    listen 443 ssl;
+    server_name example.com;
+    ssl_certificate     /etc/letsencrypt/live/example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/example.com/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:8443;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;      # WebSocket（DSH 依赖）
+        proxy_set_header Connection "upgrade";
+    }
+}
+```
+
+- 与用例 2 同理，nginx 生态（certbot 插件自动续期）
+- 适用：已有 nginx / 偏好 nginx
+
+### 三种用例对比
+
+| 用例 | HTTPS | 证书续期 | 复杂度 | 适用 |
+|---|---|---|---|---|
+| ① rdsh 单独 + 自签 | rdsh 内置 | 手动（或 acme.sh hook） | 低 | 快速起步/个人 |
+| ② apache2 + cron acme.sh | apache2 | **cron 全自动** | 中 | 正式域名/多服务 |
+| ③ nginx | nginx | certbot/手动 | 中 | 已有 nginx |
+
+- **公网安全**：必须 TLS（①内置 / ②③反代）；多机场景推荐后续经 hub（M3，gateway 只出站不暴露）
 
 ## 8. 安全注意事项
 

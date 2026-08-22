@@ -48,6 +48,8 @@
   - **配置文件**：默认 `~/.rdsh/config.json`，支持 `--config <path>` 指定（全局参数，`serve`/`user`/`service` 共享；也可用 `RDSH_CONFIG` 环境变量）—— **持久配置的唯一来源**（host/port/session-ttl/TLS 证书/allow_from/auth），零依赖 JSON 解析。**CLI 结构**：`rdsh serve [--config <path>] [--reset]`（常驻主命令，持久参数从 config 读）+ `rdsh user add|passwd|ls|rm` / `rdsh service install|uninstall|status`（管理子命令）+ `--version/--help`（全局）
   - **服务化**：`rdsh service install / uninstall / status` —— 生成 systemd unit（Linux）/ launchd plist（macOS），开机自启 + 崩溃重启；不自带 fork 后台（交系统进程管理器托管 rdsh，连带其 spawn 的 dsh）
 - **验收**：云服务器 `rdsh service install` 后常驻；浏览器访问 https → 输密码 → 完整操作 DSH；`allow_from` 限定来源；错误密码限流生效
+- **部署用例**（三种，均覆盖）：① rdsh 单独 + 自签证书；② apache2 反代 + cron + acme.sh 自动续期；③ nginx 反代
+- **配套博客**（M2 落地后，双语）：02 单独+自签 / 03 apache2+cron acme.sh / 04 nginx
 - **相关决策**：安全基线（公网直连 = 必须 TLS + 密码认证，不做明文裸奔）；认证演进（OIDC 登录可作为后续增强，暂不排期）
 
 ### M3 公网 hub ⏳（原 M2 顺延）
