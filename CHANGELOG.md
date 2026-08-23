@@ -46,6 +46,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   change password, iframe host view (`/h/<hostId>`).
 - Multi-user host ownership with isolation; JWT sessions with ver-based instant
   revocation; host/refresh tokens stored as SHA-256 hashes.
+- Host access serves DSH at the root path: enter via `/h/<hostId>` (validate →
+  Set-Cookie `rdsh_host` → 302 root); DSH absolute paths (/assets, /api) work
+  unmodified. Portal moved to `/portal`. One browser context is on one host at
+  a time (cookie); multiple users/browsers are independent.
 - Fixes: HTTP method relay through tunnel (POST was downgraded to GET), stream
   lifecycle (GET responses hung), pending-code rate limiting, join findDsh,
   TLS handling for self-signed hubs.

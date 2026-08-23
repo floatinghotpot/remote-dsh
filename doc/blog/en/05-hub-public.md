@@ -93,6 +93,8 @@ Repeat on all three machines — your list now shows all of them with live onlin
 
 Open `https://hub.example.com` → sign in → see your machines (●online / ○offline) → click "Enter" → **the full DSH UI** (chat / tools / files / live event stream — WebSocket works through the tunnel too).
 
+> Tip: one browser tab is on a single host at a time (switching is fine — back to the list, then enter another machine). To watch several machines side by side, use separate browsers / incognito windows. Different people on their own browsers are fully independent.
+
 - Network drop or reboot? The machine reconnects automatically (exponential backoff), and the list updates live
 - Rename a machine from the list; when done, "Revoke" it (tunnel drops instantly, reconnects are rejected)
 
