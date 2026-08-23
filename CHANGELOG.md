@@ -28,6 +28,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Open-source docs: LICENSE (MIT), README (en/zh), CONTRIBUTING, CODE_OF_CONDUCT, NOTICE, CI workflow.
 - Product proposal (`doc/overview/proposal.md`) with decided roadmap Q1–Q10.
 
+## [0.4.3] - 2026-08-23
+
+### Fixed
+
+- Management commands (user/hub/service) now exit explicitly after finishing —
+  a leftover TTY stdin / handle kept the process hanging after interactive
+  password entry (visible on real terminals, e.g. password retry).
+
 ## [0.4.2] - 2026-08-23
 
 ### Added

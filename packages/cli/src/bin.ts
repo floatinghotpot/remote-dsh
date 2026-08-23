@@ -590,4 +590,5 @@ function nextPipeLine(): Promise<string> {
   });
 }
 
-void main();
+// 管理命令（serve/join 常驻不 resolve）完成后显式退出：避免 TTY stdin / 句柄残留导致进程挂住
+void main().then(() => process.exit(process.exitCode ?? 0));
