@@ -27,15 +27,16 @@ function serviceLogPath(): string {
   return join(homedir(), ".rdsh", "service.log");
 }
 
-/** systemd 用户级 unit 模板。 */
-export function systemdUnit(execStart: string, configPath: string): string {
+/** systemd 用户级 unit 模板。subcommandArgs 默认 ["serve"]（hub 用 ["hub","serve"]）。 */
+export function systemdUnit(execStart: string, configPath: string, subcommandArgs: string[] = ["serve"]): string {
+  const args = [...subcommandArgs, "--config", configPath].join(" ");
   return `[Unit]
 Description=rdsh — remote access for DeepSeek Harness
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=${execStart} serve --config ${configPath}
+ExecStart=${execStart} ${args}
 Restart=on-failure
 RestartSec=3
 
@@ -45,7 +46,8 @@ WantedBy=default.target
 }
 
 /** launchd plist 模板。 */
-export function launchdPlist(execStart: string, configPath: string): string {
+export function launchdPlist(execStart: string, configPath: string, subcommandArgs: string[] = ["serve"]): string {
+  const args = [...subcommandArgs, "--config", configPath].map((a) => `    <string>${a}</string>`).join("\n");
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -55,9 +57,7 @@ export function launchdPlist(execStart: string, configPath: string): string {
   <key>ProgramArguments</key>
   <array>
     <string>${execStart}</string>
-    <string>serve</string>
-    <string>--config</string>
-    <string>${configPath}</string>
+${args}
   </array>
   <key>RunAtLoad</key>
   <true/>
@@ -81,18 +81,18 @@ async function run(cmd: string, args: string[]): Promise<string> {
   }
 }
 
-/** 安装并启动服务（用户级）。 */
-export async function installService(configPath: string): Promise<string> {
+/** 安装并启动服务（用户级）。subcommandArgs 默认 ["serve"]（hub 用 ["hub","serve"]）。 */
+export async function installService(configPath: string, subcommandArgs: string[] = ["serve"]): Promise<string> {
   const execStart = `${process.execPath} ${process.argv[1]}`;
   if (isLinux()) {
     await mkdir(SYSTEMD_DIR, { recursive: true });
-    await writeFile(SYSTEMD_UNIT, systemdUnit(execStart, configPath), { mode: 0o600 });
+    await writeFile(SYSTEMD_UNIT, systemdUnit(execStart, configPath, subcommandArgs), { mode: 0o600 });
     await run("systemctl", ["--user", "daemon-reload"]);
     await run("systemctl", ["--user", "enable", "--now", SERVICE_NAME]);
     return `installed systemd user unit: ${SYSTEMD_UNIT}`;
   }
   await mkdir(LAUNCHD_DIR, { recursive: true });
-  await writeFile(LAUNCHD_PLIST, launchdPlist(execStart, configPath), { mode: 0o600 });
+  await writeFile(LAUNCHD_PLIST, launchdPlist(execStart, configPath, subcommandArgs), { mode: 0o600 });
   await run("launchctl", ["load", LAUNCHD_PLIST]);
   return `installed launchd plist: ${LAUNCHD_PLIST}`;
 }

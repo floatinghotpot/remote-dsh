@@ -2,7 +2,7 @@
 
 > **日期**: 2026-08-23
 > **来源**: `proposal.md` §8 里程碑 + §10 决策记录（Q1–Q10）
-> **状态**: M2 云服务器直连验收通过（2026-08-23）；下一里程碑 M3（公网 hub）
+> **状态**: M3 公网 hub 验收通过（2026-08-23）；下一里程碑 M4（多租户增强）
 
 ## 里程碑总览
 
@@ -11,7 +11,7 @@
 | **M0 需求确认** | discussion / req / solution / plan 定稿 | ✅ 完成（2026-08-22） |
 | **M1 MVP（LAN）** | `rdsh serve` 局域网认证网关 | ✅ 完成（2026-08-23，单测 33/33 + 端到端 14/14 + 双设备实测通过） |
 | **M2 云服务器直连** | TLS/https + 密码认证 + 配置文件 + 服务化 | ✅ 完成（2026-08-23，单测 57/57 + M2 e2e 43/43 + M1 回归 14/14） |
-| **M3 公网 hub** | rdsh-hub（认证/路由）+ `rdsh join` + rdsh-portal | ⏳ 未开始 |
+| **M3 公网 hub** | rdsh-hub（认证/路由）+ `rdsh join` + rdsh-portal | ✅ 完成（2026-08-23，单测 92/92 + M3 e2e 23/23 + M1/M2 回归 57） |
 | **M4 多租户增强** | 邮箱验证、2FA、共享授权、审计、限流 | ⏳ 未开始 |
 | **M5 移动端 App** | rdsh-app（Flutter，Android/iOS） | ⏳ 未开始 |
 | **M6 上线准备** | 域名备案、隐私政策、部署文档、压测 | ⏳ 未开始 |
@@ -52,10 +52,17 @@
 - **配套博客**（✅ 已写，双语）：[02 单独+内置 TLS](../blog/zh/02-cloud-single-tls.md) / [03 apache2+cron acme.sh](../blog/zh/03-cloud-apache-acme.md) / [04 nginx](../blog/zh/04-cloud-nginx.md)
 - **相关决策**：安全基线（公网直连 = 必须 TLS + 密码认证，不做明文裸奔）；认证演进（OIDC 登录可作为后续增强，暂不排期）
 
-### M3 公网 hub ⏳
+### M3 公网 hub ✅
 
 - **内容**：rdsh-hub（注册/登录/host 绑定/路由）+ `rdsh join`（出站隧道）+ rdsh-portal（门户页）
-- **验收**：异地浏览器登录 hub → 选择 host → 完整操作 DSH；token 吊销即时生效
+- **验收**：异地浏览器登录 hub → 选择 host → 完整操作 DSH；token 吊销即时生效 —— 全部达成
+- **进度**：
+  - ✅ 层 2 协议冻结 v1（PROTOCOL.md：payload 编码 + E2E 位预留）
+  - ✅ 层 1 API 冻结（login/refresh/logout/password/hosts/pending/bind/events/透传）
+  - ✅ `rdsh join`（配对码绑定/--token 直填/心跳/指数退避重连）；`rdsh hub serve/user/host/service`
+  - ✅ portal（React：登录/host 列表/iframe 进入/改密/绑定/吊销）
+  - ✅ 多用户 + host 归属（注册关闭，管理员建号防 bot）；JWT + SHA-256 摘要
+  - ✅ 实现期修复：method 透传、流生命周期、pending 限流计数、join findDsh/TLS
 - **前提**：层 1（hub 对外 API）与层 2（rdsh-tunnel）契约文档先行（协议先行纪律）
 - **相关决策**：Q6（提供 Docker 镜像，主分发 npm 包/单二进制）
 
@@ -88,12 +95,11 @@
 - **约束**：Flutter 不可用于小程序（平台硬约束）；原生实现最稳、审核风险最低
 - **相关决策**：Q3（小程序后置）
 
-## 当前焦点（M2 收尾 → M3 公网 hub）
+## 当前焦点（M3 收尾 → M4 多租户增强）
 
-1. **git 提交**：M2 代码与文档（Batch Plan 待确认）
-2. **发布**：`remote-dsh@0.3.0` + `rdsh-gateway@0.2.0`（serve 子命令、user/service、TLS）
-3. **博客**：云服务器三部署用例（双语，02/03/04）
-4. **M3 启动**：hub 对外 API（层 1）与 rdsh-tunnel（层 2）契约文档先行 → `rdsh join`
+1. **git 提交**：M3 代码与文档（Batch Plan 待确认）
+2. **发布**：`remote-dsh@0.4.0`（含 join/hub 子命令；gateway/hub/tunnel 版本同步）
+3. **M4 启动**：多租户增强（共享授权/邮箱验证/2FA 评审）；`--token` e2e 补测；join 孤儿 dsh 兜底
 
 ## 变更记录
 
@@ -103,5 +109,6 @@
 | 2026-08-23 | **M1 验收通过**：双设备实测 OK；新增 `--no-code`；四个运行时问题修复；单测 33/33、端到端 14/14 |
 | 2026-08-23 | **里程碑重排**：新增 M2 云服务器直连（TLS + headless + IP 白名单）；原 M2 起全部顺延（hub→M3，多租户→M4，App→M5，上线→M6，Go+E2E→M7，小程序→M8） |
 | 2026-08-23 | **M2 验收通过**：单测 57/57 + M2 e2e 43/43 + M1 回归 14/14；修订去自动自签（无证书即 http，password 无证书非反代拒绝启动）；修复 CLI 管道输入/config watch/dsh 回收 |
+| 2026-08-23 | **M3 验收通过**：层 1/层 2 契约冻结 + join 隧道 + hub + portal；单测 92/92 + M3 e2e 23/23 + M1/M2 回归 57；修复 method 透传/流生命周期/限流计数 |
 
 *关联文档：proposal.md | doc/overview/architecture.md | doc/feature/01-remote-access/*

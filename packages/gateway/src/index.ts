@@ -12,7 +12,7 @@ export { startGateway } from "./server.ts";
 export type { GatewayOptions, RunningGateway } from "./server.ts";
 export { findDsh, spawnDsh } from "./spawn-dsh.ts";
 export type { SpawnedDsh } from "./spawn-dsh.ts";
-export { forwardHttp, createUpgradeProxy } from "./proxy.ts";
+export { forwardHttp, createUpgradeProxy, rewriteHeadersForDsh } from "./proxy.ts";
 export type { ProxyTarget } from "./proxy.ts";
 export { loadConfig, normalizeConfig, resolveConfigPath, DEFAULT_CONFIG_PATH } from "./config.ts";
 export type { RdshConfig, AuthMode, AuthUser, AuthConfig, TlsConfig } from "./config.ts";
@@ -24,3 +24,5 @@ export { loginPageHtml } from "./login-page.ts";
 export { installService, uninstallService, serviceStatus, systemdUnit, launchdPlist } from "./service.ts";
 
 export const NAME = "rdsh-gateway";
+export { join } from "./join.ts";
+export type { JoinOptions } from "./join.ts";

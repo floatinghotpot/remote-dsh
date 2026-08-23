@@ -3,6 +3,8 @@
  * rdsh CLI 入口（手写参数解析，零依赖）。
  *
  *   rdsh serve [--config <path>] [--reset] [--port <n>] ...
+ *   rdsh join <hub-url> [--token <t>] [--dsh <path>]
+ *   rdsh hub serve|user|host|service ... [--config <path>]
  *   rdsh user add|passwd <name> | ls | rm <name>   [--config <path>]
  *   rdsh service install|uninstall|status          [--config <path>]
  *   rdsh --version | --help
@@ -10,29 +12,41 @@
 import { createInterface } from "node:readline";
 import {
   serve,
+  join,
   UserManager,
   resolveConfigPath,
   installService,
   uninstallService,
   serviceStatus,
 } from "rdsh-gateway";
-import type { ServeOptions } from "rdsh-gateway";
+import type { ServeOptions, JoinOptions } from "rdsh-gateway";
+import {
+  loadHubConfig,
+  resolveHubConfigPath,
+  HubDb,
+  hashPassword,
+  serveHub,
+} from "rdsh-hub";
+import type { HubServeOptions } from "rdsh-hub";
 import { VERSION } from "./index.js";
 
 const HELP = `rdsh — secure remote access for DeepSeek Harness
 
 Usage:
   rdsh serve [options]      Start the gateway (LAN auth or cloud HTTPS service)
-  rdsh user add <name>      Add a user (interactive password)
-  rdsh user passwd <name>   Change a user's password (revokes all sessions)
-  rdsh user ls              List users
-  rdsh user rm <name>       Remove a user
-  rdsh service install      Install as a systemd/launchd service (auto-start)
-  rdsh service status       Show service status
-  rdsh service uninstall    Stop and remove the service
+  rdsh join <hub-url>       Connect to a hub via outbound tunnel (no ports open)
+  rdsh hub serve            Start the hub server (cloud, multi-host)
+  rdsh hub user add <name>  Create a hub user (interactive password; --no-password for first-login setup)
+  rdsh hub user passwd <n>  Reset a user's password (admin)
+  rdsh hub user rm|ls
+  rdsh hub host ls|revoke   List / revoke hosts (revoke = tunnel drops instantly)
+  rdsh hub service ...      Install hub as a systemd/launchd service
+  rdsh user add|passwd|ls|rm    Gateway users (LAN/cloud HTTPS service)
+  rdsh service install|status|uninstall
 
 Global:
-  --config <path>           Config file (default ~/.rdsh/config.json; also $RDSH_CONFIG)
+  --config <path>           Gateway config (default ~/.rdsh/config.json; also $RDSH_CONFIG)
+                            For hub commands: hub config (default ~/.rdsh/hub.json; also $RDSH_HUB_CONFIG)
   --version, -v             Print version
   --help, -h                Print this help
 
@@ -45,9 +59,90 @@ Options (serve):
   --reset                   Rotate session keys (all devices must re-auth)
   --no-code                 Disable auth (trusted network ONLY!)
 
+Options (join):
+  --token <t>               Use an existing host token (skip pairing-code flow)
+  --dsh <path>              dsh executable path
+
+Options (hub serve):
+  --port <n>                Listen port (overrides hub config; default 8443)
+  --host <ip>               Bind address (overrides hub config; default 0.0.0.0)
+
 Config (persistent): host, port, sessionTtlSeconds, tls{cert,key}, behindProxy,
   allowFrom[], auth{mode: pair|password|none, pairCode, users[]}, dshPath.
+Hub config (~/.rdsh/hub.json): host, port, tls{cert,key}, dbPath, jwtKeyPath.
 `;
+
+/** 子命令级用法（`rdsh <cmd> --help`）。 */
+const SUB_HELP: Record<string, string> = {
+  serve: `Usage: rdsh serve [options]
+
+Start the gateway (LAN auth or cloud HTTPS service).
+
+Options:
+  --config <path>       Config file (default ~/.rdsh/config.json; also $RDSH_CONFIG)
+  --port <n>            Listen port (overrides config; default 8443)
+  --host <ip>           Bind address (overrides config; default 0.0.0.0)
+  --pair-code <code>    Preset pairing code (overrides config)
+  --session-ttl <sec>   Session cookie lifetime (overrides config; default 43200)
+  --dsh <path>          dsh executable path (overrides config)
+  --reset               Rotate session keys (all devices must re-auth)
+  --no-code             Disable auth (trusted network ONLY!)
+`,
+  join: `Usage: rdsh join <hub-url> [options]
+
+Connect to a hub via an outbound tunnel (no ports open on this machine).
+
+Options:
+  --token <t>           Use an existing host token (skip the pair-code flow)
+  --dsh <path>          dsh executable path
+  --insecure            Skip TLS certificate verification (self-signed hub)
+`,
+  hub: `Usage: rdsh hub <subcommand> [options]
+
+Run the hub server or manage it.
+
+Subcommands:
+  serve                 Start the hub server (TLS required)
+  user add|passwd|rm|ls Manage users (registration closed; admin creates accounts)
+  host ls|revoke        List / revoke hosts (revoke drops the tunnel instantly)
+  service install|status|uninstall   Run hub as a systemd/launchd service
+
+Options (serve):
+  --config <path>       Hub config (default ~/.rdsh/hub.json; also $RDSH_HUB_CONFIG)
+  --port <n>            Listen port (overrides hub config; default 8443)
+  --host <ip>           Bind address (overrides hub config; default 0.0.0.0)
+`,
+  user: `Usage: rdsh user <action> [name]
+
+Manage gateway users (LAN / cloud HTTPS service).
+
+Actions:
+  add <name>            Add a user (interactive password)
+  passwd <name>         Change a user's password (revokes all their sessions)
+  ls                    List users
+  rm <name>             Remove a user
+
+Options:
+  --config <path>       Config file (default ~/.rdsh/config.json; also $RDSH_CONFIG)
+`,
+  service: `Usage: rdsh service <action>
+
+Manage the gateway as a systemd/launchd service.
+
+Actions:
+  install               Install and start (auto-start on boot, restart on crash)
+  status                Show service status
+  uninstall             Stop and remove the service
+
+Options:
+  --config <path>       Config file (default ~/.rdsh/config.json; also $RDSH_CONFIG)
+`,
+};
+
+/** 参数里是否有 --help / -h。 */
+function hasHelp(args: string[]): boolean {
+  return args.includes("--help") || args.includes("-h");
+}
 
 interface CliOptions {
   configPath: string;
@@ -75,10 +170,23 @@ async function main(): Promise<void> {
   }
   const rest = cli.flags.slice(1);
   try {
+    if (hasHelp(rest)) {
+      console.log(SUB_HELP[command] ?? HELP);
+      return;
+    }
     switch (command) {
       case "serve": {
         const opts = parseServeArgs(rest, cli.configPath);
         await serve(opts);
+        return;
+      }
+      case "join": {
+        const opts = parseJoinArgs(rest);
+        await join(opts);
+        return;
+      }
+      case "hub": {
+        await handleHub(rest, cli.configPath);
         return;
       }
       case "user": {
@@ -164,6 +272,36 @@ function parseServeArgs(args: string[], configPath: string): ServeCliOptions {
   return opts;
 }
 
+function parseJoinArgs(args: string[]): JoinOptions {
+  const hubUrl = args[0];
+  if (hubUrl === undefined || !/^https?:\/\//.test(hubUrl)) {
+    throw new Error("usage: rdsh join <hub-url> [--token <t>] [--dsh <path>]");
+  }
+  const opts: JoinOptions = { hubUrl };
+  for (let i = 1; i < args.length; i++) {
+    const flag = args[i];
+    const value = (name: string): string => {
+      i += 1;
+      if (i >= args.length) throw new Error(`missing value for ${name}`);
+      return args[i] ?? "";
+    };
+    switch (flag) {
+      case "--token":
+        opts.token = value(flag);
+        break;
+      case "--dsh":
+        opts.dshPath = value(flag);
+        break;
+      case "--insecure":
+        opts.insecure = true;
+        break;
+      default:
+        throw new Error(`unknown option '${flag}'`);
+    }
+  }
+  return opts;
+}
+
 async function handleUser(args: string[], configPath: string): Promise<void> {
   const action = args[0];
   const um = new UserManager(configPath);
@@ -224,6 +362,179 @@ async function handleService(args: string[], configPath: string): Promise<void> 
       throw new Error("usage: rdsh service install|status|uninstall");
   }
 }
+
+/** 打开 hub 数据库（读 hub config 定位 dbPath）。 */
+async function openHubDb(configPath: string): Promise<HubDb> {
+  const hubConfigPath = resolveHubConfigPath(configPath);
+  const config = await loadHubConfig(hubConfigPath);
+  return new HubDb(config.dbPath);
+}
+
+async function handleHub(args: string[], configPath: string): Promise<void> {
+  const sub = args[0];
+  const rest = args.slice(1);
+  if (sub === undefined || hasHelp(rest)) {
+    console.log(SUB_HELP["hub"] ?? HELP);
+    return;
+  }
+  switch (sub) {
+    case "serve": {
+      const opts = parseHubServeArgs(rest, configPath);
+      await serveHub(opts);
+      return;
+    }
+    case "user": {
+      await handleHubUser(rest, configPath);
+      return;
+    }
+    case "host": {
+      await handleHubHost(rest, configPath);
+      return;
+    }
+    case "service": {
+      const action = rest[0];
+      const hubConfigPath = resolveHubConfigPath(configPath);
+      switch (action) {
+        case "install":
+          console.log(await installService(hubConfigPath, ["hub", "serve"]));
+          console.log("rdsh: hub service installed — starts on boot and restarts on crash.");
+          return;
+        case "status":
+          console.log(`rdsh hub service: ${await serviceStatus()}`);
+          return;
+        case "uninstall":
+          console.log(await uninstallService());
+          return;
+        default:
+          throw new Error("usage: rdsh hub service install|status|uninstall");
+      }
+    }
+    default:
+      throw new Error("usage: rdsh hub serve|user|host|service");
+  }
+}
+
+function parseHubServeArgs(args: string[], configPath: string): HubServeOptions {
+  const opts: HubServeOptions = { configPath };
+  for (let i = 0; i < args.length; i++) {
+    const flag = args[i];
+    const value = (name: string): string => {
+      i += 1;
+      if (i >= args.length) throw new Error(`missing value for ${name}`);
+      return args[i] ?? "";
+    };
+    switch (flag) {
+      case "--port": {
+        const v = Number(value(flag));
+        if (!Number.isInteger(v) || v < 0 || v > 65535) throw new Error(`invalid --port '${args[i]}'`);
+        opts.port = v;
+        break;
+      }
+      case "--host":
+        opts.host = value(flag);
+        break;
+      default:
+        throw new Error(`unknown option '${flag}'`);
+    }
+  }
+  return opts;
+}
+
+async function handleHubUser(args: string[], configPath: string): Promise<void> {
+  const action = args[0];
+  const db = await openHubDb(configPath);
+  switch (action) {
+    case "add": {
+      const name = args[1];
+      if (name === undefined) throw new Error("usage: rdsh hub user add <name> [--no-password]");
+      const noPassword = args.includes("--no-password");
+      const hubConfigPath = resolveHubConfigPath(configPath);
+      if (db.getUserByName(name) !== null) throw new Error(`user '${name}' already exists`);
+      if (noPassword) {
+        // 首次登录自设密码（must_change=1，密码占位不可用）
+        db.createUser(name, "scrypt:disabled", new Date().toISOString(), true);
+        console.log(`rdsh: user '${name}' created — they must set a password on first sign-in (${hubConfigPath})`);
+      } else {
+        const password = await promptPassword(`password for ${name}: `);
+        const again = await promptPassword("confirm: ");
+        if (password !== again) throw new Error("passwords do not match");
+        if (password.length < 8) throw new Error("password must be at least 8 characters");
+        db.createUser(name, await hashPassword(password));
+        console.log(`rdsh: user '${name}' created (hub db: ${db.path})`);
+      }
+      db.close();
+      return;
+    }
+    case "passwd": {
+      const name = args[1];
+      if (name === undefined) throw new Error("usage: rdsh hub user passwd <name>");
+      const user = db.getUserByName(name);
+      if (user === null) throw new Error(`user '${name}' not found`);
+      const password = await promptPassword(`new password for ${name}: `);
+      const again = await promptPassword("confirm: ");
+      if (password !== again) throw new Error("passwords do not match");
+      if (password.length < 8) throw new Error("password must be at least 8 characters");
+      db.setPassword(user.id, await hashPassword(password));
+      console.log(`rdsh: password reset for '${name}' (all their sessions revoked)`);
+      db.close();
+      return;
+    }
+    case "ls": {
+      const users = db.listUsers();
+      console.log(users.length > 0 ? users.map((u) => u.name).join("\n") : "(no users)");
+      db.close();
+      return;
+    }
+    case "rm": {
+      const name = args[1];
+      if (name === undefined) throw new Error("usage: rdsh hub user rm <name>");
+      const user = db.getUserByName(name);
+      if (user === null) throw new Error(`user '${name}' not found`);
+      db.removeUser(user.id);
+      console.log(`rdsh: user '${name}' removed (their hosts removed)`);
+      db.close();
+      return;
+    }
+    default:
+      db.close();
+      throw new Error("usage: rdsh hub user add|passwd|ls|rm");
+  }
+}
+
+async function handleHubHost(args: string[], configPath: string): Promise<void> {
+  const action = args[0];
+  const db = await openHubDb(configPath);
+  switch (action) {
+    case "ls": {
+      const hosts = db.listAllHosts();
+      if (hosts.length === 0) {
+        console.log("(no hosts)");
+      } else {
+        for (const h of hosts) {
+          const owner = db.getUserById(h.ownerId);
+          console.log(`${h.id}  ${h.name}  owner=${owner?.name ?? h.ownerId}  created=${h.createdAt}`);
+        }
+      }
+      db.close();
+      return;
+    }
+    case "revoke": {
+      const hostId = args[1];
+      if (hostId === undefined) throw new Error("usage: rdsh hub host revoke <hostId>");
+      const host = db.getHostById(hostId);
+      if (host === null) throw new Error(`host '${hostId}' not found`);
+      db.removeHost(hostId);
+      console.log(`rdsh: host '${hostId}' revoked — its tunnel will drop and reconnects are rejected`);
+      db.close();
+      return;
+    }
+    default:
+      db.close();
+      throw new Error("usage: rdsh hub host ls|revoke <hostId>");
+  }
+}
+
+
 
 /** 隐藏式密码输入（TTY raw 模式；非 TTY 时共享行队列读管道）。 */
 function promptPassword(prompt: string): Promise<string> {

@@ -23,6 +23,24 @@ export interface ForwardOptions {
   htmlInject?: string;
 }
 
+/**
+ * 重写转发头以通过 DSH 围栏（isTrustedApiRequest 要求 Host/Origin 一致且为 loopback）。
+ * - Host → 127.0.0.1:<port>（M1 事实：DSH 只信任 loopback/trusted Host）
+ * - Origin 同步改写为 http://127.0.0.1:<port>（浏览器视角仍同源，不影响 CORS）
+ * 供 forwardHttp / createUpgradeProxy / join.ts（隧道→本地转发）复用。
+ */
+export function rewriteHeadersForDsh(
+  headers: Record<string, string | string[] | undefined>,
+  target: ProxyTarget,
+): Record<string, string | string[] | undefined> {
+  const out = { ...headers };
+  out.host = `${target.host}:${target.port}`;
+  if (out.origin !== undefined) {
+    out.origin = `http://${target.host}:${target.port}`;
+  }
+  return out;
+}
+
 /** 转发一个 HTTP 请求（含 SSE：响应流式写回，零缓冲）。 */
 export function forwardHttp(
   req: IncomingMessage,
@@ -30,15 +48,7 @@ export function forwardHttp(
   target: ProxyTarget,
   opts?: ForwardOptions,
 ): void {
-  const headers: Record<string, string | string[] | undefined> = { ...req.headers };
-  headers.host = `${target.host}:${target.port}`;
-  // DSH 围栏（isTrustedApiRequest）要求 Origin.host === Host.host。
-  // 浏览器 Origin 是网关的 LAN 地址（如 http://192.168.x.x:8443），而 Host 已被
-  // 重写为 loopback —— 不一致会 403。改写 Origin 使其与 Host 一致；浏览器视角
-  // 请求仍是发往网关的同源请求，不影响 CORS。
-  if (headers.origin !== undefined) {
-    headers.origin = `http://${target.host}:${target.port}`;
-  }
+  const headers = rewriteHeadersForDsh(req.headers, target);
   const upstream = request(
     {
       host: target.host,
@@ -104,12 +114,7 @@ interface QueuedMessage {
 export function createUpgradeProxy(target: ProxyTarget) {
   const wss = new WebSocketServer({ noServer: true });
   wss.on("connection", (clientWs, req) => {
-    const headers: Record<string, string | string[] | undefined> = { ...req.headers };
-    headers.host = `${target.host}:${target.port}`;
-    // 同 forwardHttp：改写 Origin 使其与重写后的 Host 一致，通过 DSH 围栏校验
-    if (headers.origin !== undefined) {
-      headers.origin = `http://${target.host}:${target.port}`;
-    }
+    const headers = rewriteHeadersForDsh(req.headers, target);
     const upstreamUrl = `ws://${target.host}:${target.port}${req.url ?? "/"}`;
     const upstream = new WebSocket(upstreamUrl, { headers });
 

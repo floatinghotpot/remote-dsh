@@ -20,9 +20,15 @@ importers:
       rdsh-gateway:
         specifier: workspace:*
         version: link:../gateway
+      rdsh-hub:
+        specifier: workspace:*
+        version: link:../hub
 
   packages/gateway:
     dependencies:
+      rdsh-tunnel:
+        specifier: workspace:*
+        version: link:../tunnel
       ws:
         specifier: ^8.18.0
         version: 8.21.3
@@ -31,7 +37,18 @@ importers:
         specifier: ^8.5.0
         version: 8.18.1
 
-  packages/hub: {}
+  packages/hub:
+    dependencies:
+      rdsh-tunnel:
+        specifier: workspace:*
+        version: link:../tunnel
+      ws:
+        specifier: ^8.18.0
+        version: 8.21.3
+    devDependencies:
+      '@types/ws':
+        specifier: ^8.5.10
+        version: 8.18.1
 
   packages/portal:
     dependencies:

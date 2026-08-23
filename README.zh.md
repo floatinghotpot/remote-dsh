@@ -11,8 +11,8 @@
 
 ## 状态
 
-**M1 MVP 完成**（2026-08-23）：局域网网关（`rdsh serve`）已实现并通过真实双设备验证。下一里程碑：M2 云服务器直连（TLS）。
-需求管线见 [doc/feature/01-remote-access](doc/feature/)，路线图见 [doc/overview/roadmap.md](doc/overview/roadmap.md)，完整产品提案见 [doc/overview/proposal.md](doc/overview/proposal.md)。
+**M1–M3 完成**（2026-08-23）：局域网网关（`rdsh serve`）、云服务器直连（TLS + 密码）、公网 hub（`rdsh join` + `rdsh hub` + portal）均已实现并验收（单测 92/92，M3 e2e 23/23，M1/M2 回归 57）。下一里程碑：M4 多租户增强。
+需求管线见 [doc/feature/](doc/feature/)，路线图见 [doc/overview/roadmap.md](doc/overview/roadmap.md)，完整产品提案见 [doc/overview/proposal.md](doc/overview/proposal.md)。
 
 ## 功能清单
 
@@ -29,17 +29,20 @@
 - [x] 可选 `--no-code`（完全可信的网络可跳过配对）
 - [x] 干净退出（Ctrl+C / 关终端）—— 不留任何残留进程
 
-**M2 — 部署到租用的云服务器（如阿里云）（规划中）**
-- [ ] HTTPS（TLS）—— 公网安全直连
-- [ ] 用户名 + 密码登录（`rdsh user add/passwd`；scrypt 哈希；改密后全部会话失效）
-- [ ] IP 白名单（配置文件 `allow_from` 字段）加固
-- [ ] 配置文件（默认 `~/.rdsh/config.json`，可用 `--config <path>` 或 `$RDSH_CONFIG` 指定）
-- [ ] 作为系统服务运行（systemd / launchd —— 开机自启）
+**M2 — 部署到租用的云服务器（如阿里云）（已实现）**
+- [x] HTTPS（TLS）—— 公网安全直连（用户自备证书）
+- [x] 用户名 + 密码登录（`rdsh user add/passwd`；scrypt 哈希；改密后全部会话失效）
+- [x] IP 白名单（配置文件 `allowFrom` 字段）加固
+- [x] 配置文件（默认 `~/.rdsh/config.json`，可用 `--config <path>` 或 `$RDSH_CONFIG` 指定）
+- [x] 作为系统服务运行（systemd / launchd —— 开机自启）
 
-**M3 — 随时随地使用 DSH（规划中）**
-- [ ] 从公网访问你的任意机器 —— 无需公网 IP、无需路由器设置
-- [ ] 一个账号管理多台机器
-- [ ] 网页门户：查看并选择你的机器
+**M3 — 经 hub 随时随地使用 DSH（已实现）**
+- [x] 从公网访问你的任意机器 —— 无需公网 IP、无需路由器设置（`rdsh join` 出站隧道）
+- [x] 一个账号管理多台机器（host 归属账号；注册关闭，管理员建号防 bot）
+- [x] 网页门户：登录 / host 列表 / 进入 DSH / 改密 / 吊销（React）
+- [x] 配对码绑定（`rdsh join` 打印码 → 门户输码）或 `--token` 脚本化直填
+- [x] 吊销即时生效 —— host token 吊销后隧道立即断开、重连被拒
+- [x] 层 2 线协议（`packages/tunnel/PROTOCOL.md`）与层 1 对外 API 冻结
 
 **M4+ — 规划中**
 - [ ] 手机 App（Android / iOS）
@@ -47,7 +50,7 @@
 - [ ] 与团队成员共享一台机器
 - [ ] 端到端加密会话
 
-## 快速开始（MVP）
+## 快速开始
 
 ```bash
 npm install -g remote-dsh   # 与 dsh 一起安装；命令是 rdsh
@@ -98,6 +101,7 @@ rdsh serve                 # 启动局域网认证网关（自动拉起 dsh web�
   - [② rdsh 单独 + 内置 TLS：公网浏览器直接遥控](doc/blog/zh/02-cloud-single-tls.md)
   - [③ apache2 反代 + acme.sh 证书自动续期](doc/blog/zh/03-cloud-apache-acme.md)
   - [④ nginx 反代（443 共端口）](doc/blog/zh/04-cloud-nginx.md)
+  - [⑤ 多台机器，一个网址：公网 hub（出站隧道）](doc/blog/zh/05-hub-public.md)
 
 ## 开发
 

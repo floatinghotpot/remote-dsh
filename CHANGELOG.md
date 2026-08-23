@@ -30,4 +30,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_(M1 MVP: `rdsh serve` LAN gateway.)_
+### Added (M3 — public hub)
+
+- Public hub: `rdsh hub serve` (TLS required, SQLite control plane, portal static hosting).
+- Layer 2 wire protocol frozen v1 (`packages/tunnel/PROTOCOL.md`): framing,
+  payload encoding (open/data/close/ping/pong/error), E2E reserved flag passthrough.
+- Layer 1 public API frozen: auth (login/refresh/logout/password/first-password),
+  hosts (list/pending/bind/rename/revoke), WSS `/api/events`, `/h/<hostId>` relay.
+- `rdsh join <hub-url>`: outbound tunnel — pair-code binding (10 min, portal) or
+  `--token` for scripting; heartbeat; exponential-backoff reconnect; `--insecure`
+  for self-signed hubs.
+- `rdsh hub user add/passwd/rm/ls` (registration closed — admin-created users
+  block bots/spam), `rdsh hub host ls/revoke` (instant tunnel drop), `rdsh hub service ...`.
+- Portal (React): login, host list with live online status, bind, rename, revoke,
+  change password, iframe host view (`/h/<hostId>`).
+- Multi-user host ownership with isolation; JWT sessions with ver-based instant
+  revocation; host/refresh tokens stored as SHA-256 hashes.
+- Fixes: HTTP method relay through tunnel (POST was downgraded to GET), stream
+  lifecycle (GET responses hung), pending-code rate limiting, join findDsh,
+  TLS handling for self-signed hubs.
+
+## [0.2.0] - 2026-08-23

@@ -14,9 +14,11 @@ the internet.
 
 ## Status
 
-**M1 MVP complete** (2026-08-23): the LAN gateway (`rdsh serve`) is implemented
-and verified on real devices. Next milestone: M2 cloud-server direct access (TLS).
-See [doc/feature/01-remote-access](doc/feature/) for the requirements pipeline,
+**M1–M3 complete** (2026-08-23): the LAN gateway (`rdsh serve`), cloud-server
+direct access (TLS + password), and the public hub (`rdsh join` + `rdsh hub` +
+portal) are implemented and verified (unit 92/92, e2e M3 23/23, M1/M2 regression
+57). Next milestone: M4 multi-tenant enhancements.
+See [doc/feature/](doc/feature/) for the requirements pipeline,
 [doc/overview/roadmap.md](doc/overview/roadmap.md) for the roadmap, and
 [doc/overview/proposal.md](doc/overview/proposal.md) for the full product
 proposal.
@@ -36,17 +38,20 @@ Implemented `[x]` · planned `[ ]` — from the user's point of view
 - [x] Optional `--no-code` for fully trusted networks
 - [x] Quit cleanly (Ctrl+C / close terminal) — no leftover processes
 
-**M2 — Run it on a rented cloud server (e.g. Alibaba Cloud) (planned)**
-- [ ] HTTPS (TLS) — secure direct access over the public internet
-- [ ] User/password sign-in (`rdsh user add/passwd`; scrypt-hashed; changing password revokes all sessions)
-- [ ] IP allow-list (`allow_from` in config file) for extra hardening
-- [ ] Config file (default `~/.rdsh/config.json`, or `--config <path>` / `$RDSH_CONFIG`)
-- [ ] Run as a system service (systemd / launchd — auto-start on boot)
+**M2 — Run it on a rented cloud server (e.g. Alibaba Cloud) (implemented)**
+- [x] HTTPS (TLS) — secure direct access over the public internet (user-provided cert)
+- [x] User/password sign-in (`rdsh user add/passwd`; scrypt-hashed; changing password revokes all sessions)
+- [x] IP allow-list (`allowFrom` in config file) for extra hardening
+- [x] Config file (default `~/.rdsh/config.json`, or `--config <path>` / `$RDSH_CONFIG`)
+- [x] Run as a system service (systemd / launchd — auto-start on boot)
 
-**M3 — Use DSH from anywhere (planned)**
-- [ ] Reach any of your machines from the internet — no public IP or router setup
-- [ ] One account, manage multiple machines
-- [ ] Web portal to see and pick your machines
+**M3 — Use DSH from anywhere via the hub (implemented)**
+- [x] Reach any of your machines from the internet — no public IP or router setup (`rdsh join` outbound tunnel)
+- [x] One account, manage multiple machines (hosts belong to the account; registration closed, admin-created users)
+- [x] Web portal to see and pick your machines (login / host list / enter DSH / change password / revoke)
+- [x] Pair-code binding (`rdsh join` prints a code; enter it in the portal) or `--token` for scripting
+- [x] Instant revocation — a revoked host token drops the tunnel and blocks reconnects
+- [x] Frozen wire protocol (layer 2, `packages/tunnel/PROTOCOL.md`) and public API (layer 1)
 
 **M4+ — Planned**
 - [ ] Mobile apps (Android / iOS)
@@ -54,15 +59,17 @@ Implemented `[x]` · planned `[ ]` — from the user's point of view
 - [ ] Share a machine with your team
 - [ ] End-to-end encrypted sessions
 
-## Quick start (MVP)
+## Quick start
 
 ```bash
 npm install -g remote-dsh   # alongside dsh; command is `rdsh`
-rdsh serve                 # starts a LAN auth gateway that spawns dsh web
+rdsh serve                 # LAN: auth gateway that spawns dsh web
+rdsh hub serve             # public hub: multi-host outbound tunnels
+rdsh join <hub-url>        # on each machine: outbound tunnel to the hub
 ```
 
-Open `http://<your-ip>:<port>` from another laptop on the same network, enter
-the pairing code shown in your terminal, and you are in.
+LAN: open `http://<your-ip>:<port>`, enter the pairing code from your terminal.
+Public: open the hub URL, sign in, pick a machine — full DSH in the browser.
 
 ## Components
 
@@ -107,6 +114,7 @@ Scenario guides (中文 → [doc/blog/zh/](doc/blog/zh/), English → [doc/blog/
   - [② rdsh standalone + built-in TLS: remote-control from any browser](doc/blog/en/02-cloud-single-tls.md)
   - [③ Apache2 reverse proxy + acme.sh auto-renewed certs](doc/blog/en/03-cloud-apache-acme.md)
   - [④ nginx reverse proxy (shared port 443)](doc/blog/en/04-cloud-nginx.md)
+  - [⑤ Many machines, one URL: public hub (outbound tunnels)](doc/blog/en/05-hub-public.md)
 
 ## Development
 

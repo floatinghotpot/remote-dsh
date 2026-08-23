@@ -20,7 +20,8 @@
     "node": ">=22"
   },
   "dependencies": {
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "rdsh-tunnel": "workspace:*"
   },
   "devDependencies": {
     "@types/ws": "^8.5.0"

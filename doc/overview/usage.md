@@ -45,7 +45,7 @@ rdsh serve: enter the pair code in the browser on your other device.
 | `--reset` | 轮换会话密钥，全部设备重新配对 |
 | `--no-code` | ⚠ 跳过配对（仅限完全可信网络） |
 
-## 3. 认证模式（M2 起，规划中）
+## 3. 认证模式（M2 现状）
 
 `~/.rdsh/config.json` 的 `auth.mode` 决定：
 
@@ -57,7 +57,7 @@ rdsh serve: enter the pair code in the browser on your other device.
 
 > ⚠ **安全提示**：密码认证必须配合 HTTPS（TLS）使用 —— 明文 http 下输密码可被同网段嗅探。
 
-## 4. 配置文件（M2 起，规划中）
+## 4. 配置文件（M2 现状）
 
 默认 `~/.rdsh/config.json`；可用 `--config <path>` 或 `$RDSH_CONFIG` 指定（全局参数，serve/user/service 共享）。
 
@@ -95,7 +95,7 @@ acme.sh --install-cert -d example.com \
 
 **原则**：持久配置一律进 config.json，CLI 只做操作（`--reset`、`user`、`service`）。
 
-## 5. 用户管理（M2 起，规划中）
+## 5. 用户管理（M2 现状）
 
 ```bash
 rdsh user add admin        # 添加用户（交互设密码，scrypt 哈希存储）
@@ -104,7 +104,7 @@ rdsh user ls               # 列出用户
 rdsh user rm admin         # 删除用户
 ```
 
-## 6. 服务化（M2 起，规划中）
+## 6. 服务化（M2 现状）
 
 ```bash
 rdsh service install       # 生成并安装 systemd unit（Linux）/ launchd plist（macOS）
@@ -116,7 +116,7 @@ rdsh service uninstall
 - 用户级安装，**无需 sudo**
 - 由系统进程管理器托管 rdsh（连带其 spawn 的 dsh）
 
-## 7. 云服务器部署（M2 起，规划中）—— 三种用例
+## 7. 云服务器部署（M2 现状）—— 三种用例
 
 > 公共前置：`npm i -g remote-dsh`；`rdsh user add admin`（设密码）；config `auth.mode: password`。
 > 三种部署方式任选其一（博客 02/03/04 分别详解）。
@@ -218,7 +218,61 @@ server {
 
 - **公网安全**：必须 TLS（①内置 / ②③反代）；多机场景推荐后续经 hub（M3，gateway 只出站不暴露）
 
-## 8. 安全注意事项
+## 8. 公网 hub（M3 现状）
+
+> 里程碑：M3 公网 hub（2026-08-23 验收通过，单测 92 + e2e 23 + M1/M2 回归 57）。
+
+让无公网 IP 的开发机（gateway）经 hub **出站隧道**被异地浏览器访问；客户端永远只连 hub 一个域名。
+
+### 8.1 组件与命令
+
+```
+浏览器 ──https://hub.example.com──► rdsh-hub ──wss 隧道──► rdsh-gateway (join) ──► dsh web
+```
+
+```bash
+rdsh hub serve                     # 启动 hub（需要 tls.cert/key，公网必须 TLS）
+rdsh hub user add alice            # 管理员建号（注册关闭，防 bot；交互设初始密码）
+rdsh hub user add bob --no-password  # 不设密码，bob 首次登录自设
+rdsh hub user passwd|rm|ls
+rdsh hub host ls|revoke <hostId>   # revoke = 隧道立即断开、重连被拒
+rdsh hub service install           # hub 服务化（systemd/launchd）
+
+rdsh join https://hub.example.com  # 开发机：打印配对码 → 网页输码绑定 → 隧道
+rdsh join https://hub.example.com --token <hostToken> --insecure  # 脚本化/自签 hub
+```
+
+### 8.2 hub 配置（~/.rdsh/hub.json）
+
+```jsonc
+{
+  "host": "0.0.0.0",
+  "port": 8443,
+  "tls": { "cert": "/etc/letsencrypt/live/example.com/fullchain.pem",
+            "key": "/etc/letsencrypt/live/example.com/privkey.pem" },
+  "dbPath": "~/.rdsh/hub.db",      // node:sqlite；users/hosts/pending/tokens
+  "jwtKeyPath": "~/.rdsh/hub-jwt.key"  // 自动生成，0600
+}
+```
+
+路径：`--config <path>` > `$RDSH_HUB_CONFIG` > 默认 `~/.rdsh/hub.json`。
+
+### 8.3 账号与安全模型
+
+- **注册关闭**：账号只能 `rdsh hub user add` 创建（防 bot/垃圾注入）；登录失败限流 5 次/10 分钟
+- **JWT 会话**：access（1h，改密/吊销即时失效）+ refresh（7d 轮换）；host token 只存 SHA-256 摘要
+- **改密**：portal 自助（验证当前密码，全部会话失效）或 admin `hub user passwd` 重置
+- **host 归属**：host 归注册者所有，仅 owner 可见可管（共享授权在 M4）
+- **纯透传**：hub 只认证+路由，不解析/改写业务报文（dsh 版本兼容）
+
+### 8.4 层 1 API（冻结契约）
+
+`POST /api/auth/login|refresh|logout|password|first-password`、`GET /api/hosts`、
+`POST /api/hosts/pending|bind`、`PATCH/DELETE /api/hosts/:id`、`WSS /api/events`（在线推送）、
+`/h/<hostId>/...` 透传（HTTP + WS）。错误统一 `{error:{code,message}}`。
+
+## 9. 安全注意事项
+
 
 | 项 | 说明 |
 |---|---|
@@ -228,7 +282,7 @@ server {
 | 密钥文件 | `~/.rdsh/secret.key`（0600）—— 泄露=会话可伪造 |
 | 改密 | 改密会自动轮换密钥使旧会话失效 —— 这是特性不是 bug |
 
-## 9. 故障排查
+## 10. 故障排查
 
 | 症状 | 原因 | 处理 |
 |---|---|---|
@@ -240,7 +294,7 @@ server {
 | 手机打不开 | AP 隔离 / 防火墙 | 确认同一 WiFi、允许传入连接 |
 | 配对码在哪里 | 终端 `pair code:` 行 | 重启会生成新码 |
 
-## 10. 相关文档
+## 11. 相关文档
 
 - 架构：`architecture.md`
 - 路线图：`roadmap.md`（里程碑状态）
