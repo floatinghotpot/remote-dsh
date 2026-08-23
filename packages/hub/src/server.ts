@@ -51,25 +51,29 @@ const TUNNEL_PATH = "/tunnel";
 export const HOST_COOKIE = "rdsh_host";
 /** portal 根路径前缀。 */
 export const PORTAL_PREFIX = "/portal";
-const HOST_COOKIE_MAX_AGE = 3600;
+const HOST_COOKIE_MAX_AGE = 7 * 24 * 60 * 60; // 7 天（签名 host cookie，含会话版本）
 
-function hostCookie(hostId: string): string {
-  return `${HOST_COOKIE}=${hostId}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${HOST_COOKIE_MAX_AGE}`;
+function hostCookie(hostId: string, userId: number, auth: HubAuth): string {
+  const token = auth.signHostCookie(hostId, userId);
+  return `${HOST_COOKIE}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${HOST_COOKIE_MAX_AGE}`;
 }
 
 function clearHostCookie(): string {
   return `${HOST_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`;
 }
 
-function parseCookies(header?: string): Record<string, string> {
+/** 解析 Cookie 头（relay 复用）。 */
+export function parseCookies(header?: string): Record<string, string> {
   const out: Record<string, string> = {};
-  if (typeof header !== "string") return out;
+  if (typeof header !== 'string') return out;
   for (const part of header.split(";")) {
     const idx = part.indexOf("=");
     if (idx > 0) out[part.slice(0, idx).trim()] = part.slice(idx + 1).trim();
   }
   return out;
 }
+
+
 
 export async function startHubServer(opts: HubServerOptions): Promise<RunningHub> {
   const runtime: HubRuntime = {
@@ -119,7 +123,7 @@ export async function startHubServer(opts: HubServerOptions): Promise<RunningHub
       }
       // 有 host 上下文：根路径 WS（DSH 的 events.mux / events.host）
       if (hostId !== undefined) {
-        handleRelayUpgrade(req, socket, head, runtime, hostId, pathname + url.search);
+        handleRelayUpgrade(req, socket, head, runtime, pathname + url.search);
         return;
       }
       // /h/<hostId>/ 的 WS：进入瞬间（罕见）——校验后转发（cookie 由进入的 HTTP 请求已设）
@@ -130,7 +134,7 @@ export async function startHubServer(opts: HubServerOptions): Promise<RunningHub
           const hid = decodeURIComponent(h[1]!);
           const host = runtime.db.getHostById(hid);
           if (host !== null && host.ownerId === auth.userId) {
-            handleRelayUpgrade(req, socket, head, runtime, hid, `${h[2] ?? "/"}${url.search}`);
+            handleRelayUpgrade(req, socket, head, runtime, `${h[2] ?? "/"}${url.search}`);
             return;
           }
         }
@@ -177,7 +181,7 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse, runtime: Hu
 
   // 有 host 上下文：根路径全部转发给该 host（DSH 无感知，绝对路径 /assets /api 原样）
   if (hostId !== undefined) {
-    await handleRelay(req, res, runtime, hostId, pathname + url.search, { injectBackBar: true });
+    await handleRelay(req, res, runtime, pathname + url.search, { injectBackBar: true });
     return;
   }
 
@@ -210,8 +214,9 @@ async function handleEnterHost(
     writeError(res, 403, "FORBIDDEN", "host not owned by you");
     return;
   }
-  // Set-Cookie + 302：DSH 在根路径运行（绝对路径资源/API 正常）
-  res.writeHead(302, { location: `${rest}${search}`, "set-cookie": hostCookie(hostId) });
+  // Set-Cookie（HMAC 签名 host cookie）+ 302：DSH 在根路径运行；
+  // 后续 relay 只验签名 cookie（不受 access 1h 过期影响，改密即时失效）
+  res.writeHead(302, { location: `${rest}${search}`, "set-cookie": hostCookie(hostId, auth.userId, runtime.auth) });
   res.end();
 }
 

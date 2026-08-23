@@ -132,6 +132,43 @@ export class HubAuth {
     return true;
   }
 
+
+/** 签发 host 访问 cookie（HMAC 签名，7 天）。relay 后续只验此 cookie（含会话版本），
+ * 进入后 DSH 持续可用，不受 access 1h 过期影响；改密（ver+1）后旧 cookie 立即失效。 */
+signHostCookie(hostId: string, userId: number): string {
+  const ver = this.db.getUserById(userId)?.ver ?? 1;
+  const exp = Date.now() + 7 * 24 * 60 * 60 * 1000;
+  const payload = [hostId, userId, ver, exp].join('.');
+  const sig = this.hmac(payload);
+  return Buffer.from(payload + '.' + sig).toString('base64url');
+}
+
+/** 验证 host cookie；返回 {hostId, userId} 或 null（伪造/过期/ver 不匹配）。 */
+verifyHostCookie(cookie: string): { hostId: string; userId: number } | null {
+  try {
+    const raw = Buffer.from(cookie, 'base64url').toString('utf8');
+    const parts = raw.split('.');
+    if (parts.length !== 5) return null;
+    const [hostId, userIdStr, verStr, expStr, sig] = parts as [string, string, string, string, string];
+    const payload = [hostId, userIdStr, verStr, expStr].join('.');
+    if (sig !== this.hmac(payload)) return null;
+    const exp = Number(expStr);
+    const userId = Number(userIdStr);
+    const ver = Number(verStr);
+    if (!Number.isFinite(exp) || !Number.isFinite(userId) || !Number.isFinite(ver)) return null;
+    if (exp <= Date.now()) return null;
+    const user = this.db.getUserById(userId);
+    if (user === null || user.ver !== ver) return null;
+    return { hostId, userId };
+  } catch {
+    return null;
+  }
+}
+
+private hmac(payload: string): string {
+  return this.jwt.hmacSign(payload);
+}
+
   /** 校验 access JWT：签名 + 过期 + ver 与 DB 一致（改密/吊销即时失效）。 */
   verifyAccess(accessToken: string): { user: UserRow; claims: { sub: number; name: string; ver: number } } | null {
     const claims = this.jwt.verify(accessToken);

@@ -25,6 +25,12 @@
 - 开源文档：LICENSE（MIT）、README（中/英）、CONTRIBUTING、CODE_OF_CONDUCT、NOTICE、CI 工作流。
 - 产品提案（`doc/overview/proposal.md`），含 Q1–Q10 已定路线。
 
+## [0.4.8] - 2026-08-24
+
+### 修复
+
+- DSH host 访问不再受 1 小时 access token 过期影响：进入 host（`/h/<hostId>`）现在会签发 HMAC 签名 Cookie（7 天、绑定用户会话版本），relay 改由该 Cookie 认证，而非反复校验短期 access token。改密会使版本 +1，旧 Cookie 立即失效。（`rdsh-hub@0.2.4`）
+
 ## [0.4.7] - 2026-08-24
 
 ### 修复

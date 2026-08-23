@@ -8,10 +8,26 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocketServer } from "ws";
 import type { WebSocket } from "ws";
-import { authenticate, writeError } from "./api.ts";
+import { writeError } from "./api.ts";
+import { parseCookies, HOST_COOKIE } from "./server.ts";
 import type { HubRuntime } from "./api.ts";
 
 const wss = new WebSocketServer({ noServer: true });
+
+/**
+ * 授权 host 访问：验 HMAC 签名 host cookie（进入 host 时签发，7 天，绑定会话版本）。
+ * 不依赖 rdsh_session —— 进入后 DSH 持续可用；改密（ver+1）或吊销后立即失效。
+ */
+function authorizeHost(req: IncomingMessage, runtime: HubRuntime): { hostId: string; userId: number } | null {
+  const cookies = parseCookies(req.headers.cookie);
+  const raw = cookies[HOST_COOKIE];
+  if (raw === undefined) return null;
+  const v = runtime.auth.verifyHostCookie(raw);
+  if (v === null) return null;
+  const host = runtime.db.getHostById(v.hostId);
+  if (host === null || host.ownerId !== v.userId) return null;
+  return { hostId: v.hostId, userId: v.userId };
+}
 
 export interface RelayOptions {
   /** 向 text/html 响应注入返回条（host 转发的门户壳，M1 htmlInject 同款）。 */
@@ -24,17 +40,13 @@ export const BACK_BAR_HTML = `<a href="/portal" style="position:fixed;top:10px;r
 /**
  * HTTP/SSE 透传。返回是否已处理（false = 路径不属于数据面）。
  */
-export async function handleRelay(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime, hostId: string, path: string, opts?: RelayOptions): Promise<boolean> {
-  const auth = authenticate(req, runtime);
+export async function handleRelay(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime, path: string, opts?: RelayOptions): Promise<boolean> {
+  const auth = authorizeHost(req, runtime);
   if (auth === null) {
-    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
+    writeError(res, 401, "UNAUTHORIZED", "invalid host session");
     return true;
   }
-  const host = runtime.db.getHostById(hostId);
-  if (host === null || host.ownerId !== auth.userId) {
-    writeError(res, 403, "FORBIDDEN", "host not owned by you");
-    return true;
-  }
+  const hostId = auth.hostId;
   const conn = runtime.tunnels.get(hostId);
   if (conn === null) {
     writeError(res, 503, "HOST_OFFLINE", "host is offline");
@@ -122,19 +134,14 @@ function normalizeHeaders(headers: IncomingMessage["headers"]): Record<string, s
  * WebSocket upgrade 透传（DSH 依赖 /api/events.mux、events.host）。
  * 返回是否已处理。
  */
-export function handleRelayUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer, runtime: HubRuntime, hostId: string, path: string): boolean {
-  const auth = authenticate(req, runtime);
+export function handleRelayUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer, runtime: HubRuntime, path: string): boolean {
+  const auth = authorizeHost(req, runtime);
   if (auth === null) {
-    socket.write(`HTTP/1.1 401 Unauthorized\r\ncontent-type: application/json\r\n\r\n`);
+    socket.write(`HTTP/1.1 401 Unauthorized\r\n\r\n`);
     socket.destroy();
     return true;
   }
-  const host = runtime.db.getHostById(hostId);
-  if (host === null || host.ownerId !== auth.userId) {
-    socket.write(`HTTP/1.1 403 Forbidden\r\n\r\n`);
-    socket.destroy();
-    return true;
-  }
+  const hostId = auth.hostId;
   const conn = runtime.tunnels.get(hostId);
   if (conn === null) {
     socket.write(`HTTP/1.1 503 Service Unavailable\r\n\r\n`);

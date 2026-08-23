@@ -25,6 +25,11 @@ export class Jwt {
     this.key = key;
   }
 
+  /** 用本密钥做 HMAC-SHA256（host cookie 签名用；密钥不暴露）。 */
+  hmacSign(data: string): string {
+    return createHmac('sha256', this.key).update(data).digest('base64url');
+  }
+
   sign(claims: JwtClaims): string {
     const payload = Buffer.from(JSON.stringify(claims)).toString("base64url");
     const sig = createHmac("sha256", this.key).update(`${HEADER}.${payload}`).digest("base64url");

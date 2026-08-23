@@ -28,6 +28,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Open-source docs: LICENSE (MIT), README (en/zh), CONTRIBUTING, CODE_OF_CONDUCT, NOTICE, CI workflow.
 - Product proposal (`doc/overview/proposal.md`) with decided roadmap Q1–Q10.
 
+## [0.4.8] - 2026-08-24
+
+### Fixed
+
+- DSH host access no longer dies at the 1-hour access-token expiry: entering a
+  host (`/h/<hostId>`) now sets an HMAC-signed cookie (7-day, bound to the
+  user's session version), so the relay authenticates from that cookie instead
+  of re-checking the short-lived access token. Changing the password bumps the
+  version and invalidates the cookie immediately. (`rdsh-hub@0.2.4`)
+
 ## [0.4.7] - 2026-08-24
 
 ### Fixed
