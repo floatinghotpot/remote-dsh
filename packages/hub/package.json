@@ -1,6 +1,6 @@
 {
   "name": "rdsh-hub",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "rdsh server: control plane (auth, host registry, routing) + data plane (tunnel relay)",
   "license": "MIT",
   "type": "module",

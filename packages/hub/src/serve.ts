@@ -78,4 +78,7 @@ export async function serveHub(opts: HubServeOptions): Promise<void> {
   process.on("SIGINT", () => shutdown("SIGINT"));
   process.on("SIGTERM", () => shutdown("SIGTERM"));
   process.on("SIGHUP", () => shutdown("SIGHUP"));
+  // 常驻：进程靠信号退出（shutdown 里 process.exit）；防止函数返回后
+  // CLI 的 main().then(exit) 误退出服务进程
+  await new Promise<void>(() => {});
 }

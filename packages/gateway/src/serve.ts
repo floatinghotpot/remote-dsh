@@ -114,6 +114,9 @@ export async function serve(opts: ServeOptions): Promise<void> {
   process.on("SIGINT", () => void shutdown("SIGINT"));
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
   process.on("SIGHUP", () => void shutdown("SIGHUP"));
+  // 常驻：进程靠信号退出（shutdown 里 process.exit）；防止函数返回后
+  // CLI 的 main().then(exit) 误退出服务进程
+  await new Promise<void>(() => {});
 }
 
 function lanAddresses(): string[] {

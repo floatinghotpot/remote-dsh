@@ -28,6 +28,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Open-source docs: LICENSE (MIT), README (en/zh), CONTRIBUTING, CODE_OF_CONDUCT, NOTICE, CI workflow.
 - Product proposal (`doc/overview/proposal.md`) with decided roadmap Q1–Q10.
 
+## [0.4.5] - 2026-08-24
+
+### Fixed
+
+- Resident commands (`rdsh serve` / `rdsh join` / `rdsh hub serve`) keep the
+  process alive again: the 0.4.3 explicit-exit fix made them return and exit
+  after printing the startup banner. They now await a never-resolving promise
+  and exit only via signals (management commands still exit cleanly).
+
 ## [0.4.4] - 2026-08-24
 
 ### Fixed

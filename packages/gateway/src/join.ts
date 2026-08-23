@@ -129,6 +129,10 @@ export async function join(opts: JoinOptions): Promise<void> {
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
   process.on("SIGHUP", () => void shutdown("SIGHUP"));
 
+  // 常驻：进程靠信号退出（shutdown 里 process.exit）；防止函数返回后
+  // CLI 的 main().then(exit) 误退出服务进程
+  const keepAlive = new Promise<void>(() => {});
+
   function handleFrame(frame: Frame, client: WebSocket): void {
     switch (frame.type) {
       case FRAME_TYPE.PING: {
@@ -365,6 +369,8 @@ export async function join(opts: JoinOptions): Promise<void> {
   }
 
   connect();
+
+  await keepAlive;
 }
 
 function normalizeRespHeaders(headers: IncomingHttpHeaders): Record<string, string | string[]> {
