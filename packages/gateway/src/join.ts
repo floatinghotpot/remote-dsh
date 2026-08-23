@@ -149,7 +149,7 @@ export async function join(opts: JoinOptions): Promise<void> {
         const ws = wsStreams.get(frame.streamId);
         if (ws !== undefined) {
           if (ws.upstream.readyState === ws.upstream.OPEN) {
-            ws.upstream.send(frame.payload, { binary: true });
+            ws.upstream.send(frame.payload, { binary: false }); // DSH WS 为 text(JSON)，保持文本帧
           } else {
             ws.queue.push(frame.payload);
           }
@@ -277,7 +277,7 @@ export async function join(opts: JoinOptions): Promise<void> {
     wsStreams.set(streamId, { upstream, queue });
 
     upstream.on("open", () => {
-      for (const q of queue) upstream.send(q, { binary: true });
+      for (const q of queue) upstream.send(q, { binary: false });
       queue.length = 0;
     });
     upstream.on("message", (data, isBinary) => {

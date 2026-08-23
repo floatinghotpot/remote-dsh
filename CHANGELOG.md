@@ -28,6 +28,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Open-source docs: LICENSE (MIT), README (en/zh), CONTRIBUTING, CODE_OF_CONDUCT, NOTICE, CI workflow.
 - Product proposal (`doc/overview/proposal.md`) with decided roadmap Q1–Q10.
 
+## [0.4.7] - 2026-08-24
+
+### Fixed
+
+- WebSocket relay now forwards DSH WS messages as text frames. The tunnel sent
+  them as binary, so the DSH frontend dropped them ("malformed binary WebSocket
+  frame") and the UI never refreshed live — you had to reload to see new output.
+
 ## [0.4.6] - 2026-08-24
 
 ### Fixed

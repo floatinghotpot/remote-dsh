@@ -25,6 +25,12 @@
 - 开源文档：LICENSE（MIT）、README（中/英）、CONTRIBUTING、CODE_OF_CONDUCT、NOTICE、CI 工作流。
 - 产品提案（`doc/overview/proposal.md`），含 Q1–Q10 已定路线。
 
+## [0.4.7] - 2026-08-24
+
+### 修复
+
+- WebSocket 转发改为文本帧：隧道此前把 DSH 的 WS 消息当 binary 发，前端丢弃（"malformed binary WebSocket frame"）导致界面不实时刷新，需刷新页面才看到新输出。
+
 ## [0.4.6] - 2026-08-24
 
 ### 修复

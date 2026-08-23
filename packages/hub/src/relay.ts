@@ -146,7 +146,7 @@ export function handleRelayUpgrade(req: IncomingMessage, socket: Duplex, head: B
     const headers = normalizeHeaders(req.headers);
     const streamId = conn.openStream("ws", path, "GET", headers, {
       onData: (chunk) => {
-        if (clientWs.readyState === clientWs.OPEN) clientWs.send(chunk, { binary: true });
+        if (clientWs.readyState === clientWs.OPEN) clientWs.send(chunk, { binary: false }); // DSH WS 为 text(JSON)，转发必须保持文本帧
       },
       onClose: () => {
         try {

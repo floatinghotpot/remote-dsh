@@ -60,6 +60,9 @@
 
 - streamId 由 **hub 分配**（原子递增 uint32），gateway 在响应流中**原样回显**
 - 单隧道支持并发 HTTP / SSE / WebSocket 升级流（DSH 依赖 `/api/events.mux`、`events.host`）
+- **WS 流内容按文本帧转发**（2026-08-24 定案）：DSH 前端与 events.mux 为 text/JSON 协议；
+  隧道转发固定 binary 会把文本消息变成 binary 帧，前端会丢弃（表现为实时界面不刷新）。
+  未来若需二进制 WS 内容，再扩展帧类型。
 - 借鉴 DSH 自身 mux 帧设计（`/api/events.mux`）
 
 ## 心跳与重连
