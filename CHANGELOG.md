@@ -28,6 +28,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Open-source docs: LICENSE (MIT), README (en/zh), CONTRIBUTING, CODE_OF_CONDUCT, NOTICE, CI workflow.
 - Product proposal (`doc/overview/proposal.md`) with decided roadmap Q1–Q10.
 
+## [0.4.1] - 2026-08-23
+
+### Fixed
+
+- `rdsh --version` now reads the version from package.json (was hardcoded,
+  showed 0.2.0 after the 0.4.0 publish).
+
 ## [0.4.0] - 2026-08-23
 
 ### Added (M2 — cloud-server direct access)

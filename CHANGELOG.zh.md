@@ -25,6 +25,12 @@
 - 开源文档：LICENSE（MIT）、README（中/英）、CONTRIBUTING、CODE_OF_CONDUCT、NOTICE、CI 工作流。
 - 产品提案（`doc/overview/proposal.md`），含 Q1–Q10 已定路线。
 
+## [0.4.1] - 2026-08-23
+
+### 修复
+
+- `rdsh --version` 改为从 package.json 读取（原为硬编码，0.4.0 发布后仍显示 0.2.0）。
+
 ## [0.4.0] - 2026-08-23
 
 ### 新增（M2 — 云服务器直连）
