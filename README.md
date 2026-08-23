@@ -109,12 +109,17 @@ hub and gateway only — clients never implement it.
 
 Scenario guides (中文 → [doc/blog/zh/](doc/blog/zh/), English → [doc/blog/en/](doc/blog/en/)):
 
-- [Control your DSH agent from your phone, at home or in the office (LAN)](doc/blog/en/01-lan-access.md)
-- Cloud-server deployment series (bilingual):
-  - [② Put your DSH agent on a cloud server: sign in from any browser (own TLS cert)](doc/blog/en/02-cloud-single-tls.md)
-  - [③ Let Apache2 handle DSH HTTPS: real domain + automatic cert renewal](doc/blog/en/03-cloud-apache-acme.md)
-  - [④ Put DSH behind nginx: shared port 443, auto-renewed HTTPS](doc/blog/en/04-cloud-nginx.md)
-  - [⑤ No public IP? One URL to remote-control every DSH agent you own](doc/blog/en/05-hub-public.md)
+- Access a DSH on another host via LAN IP (LAN mode):
+  - [Control your DSH agent from your phone, at home or in the office (LAN)](doc/blog/en/01-01-lan-access.md)
+  - [On the road, still reach your home DSH: VPN back into the LAN](doc/blog/en/01-02-vpn-lan.md)
+- Remote-access a DSH on a cloud server via public IP or domain (cloud-server mode):
+  - [Put your DSH agent on a cloud server: sign in from any browser (own TLS cert)](doc/blog/en/02-01-cloud-single-tls.md)
+  - [Let Apache2 handle DSH HTTPS: real domain + automatic cert renewal](doc/blog/en/02-02-cloud-apache-acme.md)
+  - [Put DSH behind nginx: shared port 443, auto-renewed HTTPS](doc/blog/en/02-03-cloud-nginx.md)
+- Remote-control DSH on multiple hosts without a public IP (server relay mode):
+  - [Remote-control every DSH agent from anywhere — no public IP needed](doc/blog/en/03-01-hub-public.md)
+  - [Remote-control the DSH agent inside a VM: no network changes, one `rdsh join`](doc/blog/en/03-02-vm-ubuntu.md)
+  - [Remote-control DSH on embedded Linux (Raspberry Pi) from anywhere (concept, not yet tested)](doc/blog/en/03-03-embed-linux.md)
 
 ## Development
 

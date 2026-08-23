@@ -3,7 +3,7 @@
 > 2026-08-23 · remote-dsh 0.4.0
 > Scenario series: ① LAN control → ②/③/④ Cloud-server deployment → **⑤ Multi-machine + public hub (this post)** → ⑥ Mobile
 
-**中文版**：[中文](../zh/05-hub-public.md)
+**中文版**：[中文](../zh/03-01-hub-public.md)
 
 ---
 
@@ -23,8 +23,8 @@ You want: **from anywhere, open one URL in the browser, sign in once, and switch
 
 | Option | Use case | Notes |
 |---|---|---|
-| [① LAN control](../en/01-lan-access.md) | Single machine, same Wi-Fi | `rdsh serve` pairing code |
-| [②③④ Cloud-server direct](../en/02-cloud-single-tls.md) | Single machine with a public IP | `rdsh serve` + HTTPS / reverse proxy |
+| [① LAN control](../en/01-01-lan-access.md) | Single machine, same Wi-Fi | `rdsh serve` pairing code |
+| [②③④ Cloud-server direct](../en/02-01-cloud-single-tls.md) | Single machine with a public IP | `rdsh serve` + HTTPS / reverse proxy |
 | **⑤ Public hub (this post)** | **Multiple machines, no public IP** | `rdsh join` outbound tunnel + hub portal |
 
 ## Architecture

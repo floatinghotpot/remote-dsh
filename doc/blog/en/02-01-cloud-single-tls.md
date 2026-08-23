@@ -3,7 +3,7 @@
 > 2026-08-23 · remote-dsh 0.3.0
 > Cloud-server deployment series: ② rdsh standalone + built-in TLS (this post) → ③ Apache2 reverse proxy → ④ nginx reverse proxy
 
-**中文版**：[中文](../zh/02-cloud-single-tls.md)
+**中文版**：[中文](../zh/02-01-cloud-single-tls.md)
 
 ---
 
@@ -141,8 +141,8 @@ rdsh serve --reset        # rotate session keys (emergency: kick all sessions)
 | Need | Use |
 |---|---|
 | Single port, quick start | **This post: standalone + built-in TLS** |
-| Have a domain; standard 443; fully automatic cert renewal | [③ Apache2 reverse proxy](../en/03-cloud-apache-acme.md) |
-| Already running nginx for other sites; share port 443 | [④ nginx reverse proxy](../en/04-cloud-nginx.md) |
+| Have a domain; standard 443; fully automatic cert renewal | [③ Apache2 reverse proxy](../en/02-02-cloud-apache-acme.md) |
+| Already running nginx for other sites; share port 443 | [④ nginx reverse proxy](../en/02-03-cloud-nginx.md) |
 
 When multiple services share 443 and the reverse proxy manages certs, rdsh just needs `behindProxy: true` listening on 127.0.0.1 — see you there.
 

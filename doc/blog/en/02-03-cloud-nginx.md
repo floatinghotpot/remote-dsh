@@ -3,13 +3,13 @@
 > 2026-08-23 · remote-dsh 0.3.0
 > Cloud-server deployment series: ② rdsh standalone + built-in TLS → ③ Apache2 reverse proxy → ④ nginx reverse proxy (this post)
 
-**中文版**：[中文](../zh/04-cloud-nginx.md)
+**中文版**：[中文](../zh/02-03-cloud-nginx.md)
 
 ---
 
 ## The scenario
 
-Same goal as the previous post ([③ Apache2 reverse proxy](../en/03-cloud-apache-acme.md)): **standard port 443, automatic cert renewal, share one port across services**. The only difference is the reverse proxy is **nginx** — pick this if your server already runs nginx for other sites, or your team prefers the nginx ecosystem (certbot plugin, etc.).
+Same goal as the previous post ([③ Apache2 reverse proxy](../en/02-02-cloud-apache-acme.md)): **standard port 443, automatic cert renewal, share one port across services**. The only difference is the reverse proxy is **nginx** — pick this if your server already runs nginx for other sites, or your team prefers the nginx ecosystem (certbot plugin, etc.).
 
 ## Architecture
 
@@ -30,7 +30,7 @@ systemctl enable --now nginx
 
 ### ② Configure rdsh (localhost + behindProxy)
 
-The rdsh side is **identical** to the [Apache2 post](../en/03-cloud-apache-acme.md):
+The rdsh side is **identical** to the [Apache2 post](../en/02-02-cloud-apache-acme.md):
 
 ```bash
 npm install -g remote-dsh
@@ -118,8 +118,8 @@ nginx -t && systemctl reload nginx
 
 | Option | HTTPS | Cert renewal | Complexity | Use case |
 |---|---|---|---|---|
-| [② standalone + built-in TLS](../en/02-cloud-single-tls.md) | rdsh | Manual (or acme.sh hook) | Low | Quick start / personal |
-| [③ Apache2 + cron acme.sh](../en/03-cloud-apache-acme.md) | Apache2 | **Fully automatic via cron** | Medium | Real domain / multiple services |
+| [② standalone + built-in TLS](../en/02-01-cloud-single-tls.md) | rdsh | Manual (or acme.sh hook) | Low | Quick start / personal |
+| [③ Apache2 + cron acme.sh](../en/02-02-cloud-apache-acme.md) | Apache2 | **Fully automatic via cron** | Medium | Real domain / multiple services |
 | **④ nginx (this post)** | nginx | certbot/acme.sh automatic | Medium | Already on nginx |
 
 > Public-internet rule of thumb: **TLS + password auth, mandatory** (all three satisfy it); for multi-machine / cross-region access, later you can use the hub tunnel (M3 — rdsh only connects outbound, no ports exposed).

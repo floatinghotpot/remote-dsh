@@ -1,6 +1,6 @@
 # DSH 智能体的 HTTPS 交给 apache2：正式域名 + 证书 90 天全自动续期
 
-[English](../en/03-cloud-apache-acme.md) | **中文**
+[English](../en/02-02-cloud-apache-acme.md) | **中文**
 
 > 2026-08-23 · remote-dsh 0.3.0
 > 云服务器部署系列：② rdsh 单独 + 内置 TLS → ③ apache2 反代（本文）→ ④ nginx 反代
@@ -9,7 +9,7 @@
 
 ## 场景
 
-上一篇（[② 单独 + 内置 TLS](../zh/02-cloud-single-tls.md)）是最快路径，但正式使用有几个痛点：
+上一篇（[② 单独 + 内置 TLS](../zh/02-01-cloud-single-tls.md)）是最快路径，但正式使用有几个痛点：
 
 - 想在标准的 **443 端口**（不用带 `:8443` 后缀）
 - 服务器上可能**还有其他网站/服务**，想共用一个 443 统一管理
@@ -138,7 +138,7 @@ acme.sh --list                # 证书到期时间
 
 ## 下一篇
 
-想用 nginx？配置几乎一样（`proxy_pass` + upgrade 头），见 [④ nginx 反代](../zh/04-cloud-nginx.md)。
+想用 nginx？配置几乎一样（`proxy_pass` + upgrade 头），见 [④ nginx 反代](../zh/02-03-cloud-nginx.md)。
 
 ## 关于项目
 

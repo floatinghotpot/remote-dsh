@@ -96,12 +96,17 @@ rdsh serve                 # 启动局域网认证网关（自动拉起 dsh web�
 
 场景化教程（中文 → [doc/blog/zh/](doc/blog/zh/)，English → [doc/blog/en/](doc/blog/en/)）：
 
-- [在家或办公室，用手机/笔记本/台式机遥控开发机的 DSH 智能体（局域网篇）](doc/blog/zh/01-lan-access.md)
-- 云服务器部署系列（双语）：
-  - [② 把 DSH 智能体搬到云服务器：浏览器输密码就能遥控（证书自备）](doc/blog/zh/02-cloud-single-tls.md)
-  - [③ DSH 智能体的 HTTPS 交给 apache2：正式域名 + 证书全自动续期](doc/blog/zh/03-cloud-apache-acme.md)
-  - [④ 用 nginx 给 DSH 智能体套 HTTPS：443 共端口、证书自动续期](doc/blog/zh/04-cloud-nginx.md)
-  - [⑤ 没有公网 IP 也能远程操控：一个网址，统一访问所有机器上的 DSH 智能体](doc/blog/zh/05-hub-public.md)
+- 通过内网 IP，访问另一台主机上的 DSH（局域网模式）：
+  - [在家或办公室，用手机/笔记本/台式机遥控开发机的 DSH 智能体（局域网篇）](doc/blog/zh/01-01-lan-access.md)
+  - [出差在外也能访问家里的 DSH：VPN 连回局域网，配对码照用](doc/blog/zh/01-02-vpn-lan.md)
+- 通过公网 IP 或域名，远程访问云服务器中的 DSH（云服务器模式）：
+  - [把 DSH 智能体搬到云服务器：浏览器输密码就能遥控（证书自备）](doc/blog/zh/02-01-cloud-single-tls.md)
+  - [DSH 智能体的 HTTPS 交给 apache2：正式域名 + 证书全自动续期](doc/blog/zh/02-02-cloud-apache-acme.md)
+  - [用 nginx 给 DSH 智能体套 HTTPS：443 共端口、证书自动续期](doc/blog/zh/02-03-cloud-nginx.md)
+- 无公网 IP 远程操控多个主机 DSH（服务器转发模式）：
+  - [没有公网 IP，也能从任何地方远程访问所有 DSH 智能体](doc/blog/zh/03-01-hub-public.md)
+  - [虚拟机里的 DSH 智能体也能远程访问：不用改网络，一条 rdsh join 搞定](doc/blog/zh/03-02-vm-ubuntu.md)
+  - [从任何地方远程访问嵌入式 Linux（树莓派）上的 DSH 智能体（构想，未实测）](doc/blog/zh/03-03-embed-linux.md)
 
 ## 开发
 

@@ -3,13 +3,13 @@
 > 2026-08-23 · remote-dsh 0.3.0
 > Cloud-server deployment series: ② rdsh standalone + built-in TLS → ③ Apache2 reverse proxy (this post) → ④ nginx reverse proxy
 
-**中文版**：[中文](../zh/03-cloud-apache-acme.md)
+**中文版**：[中文](../zh/02-02-cloud-apache-acme.md)
 
 ---
 
 ## The scenario
 
-The previous post ([② standalone + built-in TLS](../en/02-cloud-single-tls.md)) is the fastest path, but production use has a few pain points:
+The previous post ([② standalone + built-in TLS](../en/02-01-cloud-single-tls.md)) is the fastest path, but production use has a few pain points:
 
 - You want the standard **443 port** (no `:8443` suffix)
 - The server may host **other sites/services** — share one 443 and manage them together
@@ -138,7 +138,7 @@ acme.sh --list                # cert expiry dates
 
 ## Next post
 
-Prefer nginx? The config is nearly identical (`proxy_pass` + upgrade headers), see [④ nginx reverse proxy](../en/04-cloud-nginx.md).
+Prefer nginx? The config is nearly identical (`proxy_pass` + upgrade headers), see [④ nginx reverse proxy](../en/02-03-cloud-nginx.md).
 
 ## About the project
 

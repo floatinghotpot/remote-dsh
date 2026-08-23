@@ -1,6 +1,6 @@
 # 把 DSH 智能体搬到云服务器：浏览器输密码就能遥控（HTTPS 证书自备）
 
-[English](../en/02-cloud-single-tls.md) | **中文**
+[English](../en/02-01-cloud-single-tls.md) | **中文**
 
 > 2026-08-23 · remote-dsh 0.3.0
 > 云服务器部署系列：② rdsh 单独 + 内置 TLS（本文）→ ③ apache2 反代 → ④ nginx 反代
@@ -141,8 +141,8 @@ rdsh serve --reset        # 轮换会话密钥（紧急踢掉所有会话）
 | 需求 | 用哪种 |
 |---|---|
 | 就想单端口快速用 | **本文：单独 + 内置 TLS** |
-| 已有域名，想 443 标准端口、证书全自动续期 | [③ apache2 反代](../zh/03-cloud-apache-acme.md) |
-| 已在用 nginx 管别的站点，想共端口 443 | [④ nginx 反代](../zh/04-cloud-nginx.md) |
+| 已有域名，想 443 标准端口、证书全自动续期 | [③ apache2 反代](../zh/02-02-cloud-apache-acme.md) |
+| 已在用 nginx 管别的站点，想共端口 443 | [④ nginx 反代](../zh/02-03-cloud-nginx.md) |
 
 多服务共 443、证书由反代统一管理时，rdsh 只需 `behindProxy: true` 监听 127.0.0.1 —— 下一站见。
 

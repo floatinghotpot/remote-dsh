@@ -1,6 +1,6 @@
 # 没有公网 IP 也能远程操控：一个网址，统一访问所有机器上的 DSH 智能体
 
-[English](../en/05-hub-public.md) | **中文**
+[English](../en/03-01-hub-public.md) | **中文**
 
 > 2026-08-23 · remote-dsh 0.4.0
 > 场景系列：① 局域网遥控 → ②/③/④ 云服务器部署 → **⑤ 多机 + 公网 hub（本文）** → ⑥ 移动端
@@ -23,8 +23,8 @@
 
 | 方案 | 适用 | 说明 |
 |---|---|---|
-| [① 局域网遥控](../zh/01-lan-access.md) | 单台机器、同一 WiFi | `rdsh serve` 配对码 |
-| [②③④ 云服务器直连](../zh/02-cloud-single-tls.md) | 单台、有公网 IP 的机器 | `rdsh serve` + HTTPS/反代 |
+| [① 局域网遥控](../zh/01-01-lan-access.md) | 单台机器、同一 WiFi | `rdsh serve` 配对码 |
+| [②③④ 云服务器直连](../zh/02-01-cloud-single-tls.md) | 单台、有公网 IP 的机器 | `rdsh serve` + HTTPS/反代 |
 | **⑤ 公网 hub（本文）** | **多台、无公网 IP** | `rdsh join` 出站隧道 + hub 门户 |
 
 ## 架构

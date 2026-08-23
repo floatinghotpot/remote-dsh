@@ -1,6 +1,6 @@
 # 用 nginx 给 DSH 智能体套 HTTPS：443 共端口、证书自动续期
 
-[English](../en/04-cloud-nginx.md) | **中文**
+[English](../en/02-03-cloud-nginx.md) | **中文**
 
 > 2026-08-23 · remote-dsh 0.3.0
 > 云服务器部署系列：② rdsh 单独 + 内置 TLS → ③ apache2 反代 → ④ nginx 反代（本文）
@@ -9,7 +9,7 @@
 
 ## 场景
 
-和前一篇（[③ apache2 反代](../zh/03-cloud-apache-acme.md)）目标一致：**443 标准端口、证书自动续期、多服务共端口**。区别只是反代换成 **nginx** —— 如果你服务器上已经在用 nginx 管别的站点，或团队偏好 nginx 生态（certbot 插件等），选这篇。
+和前一篇（[③ apache2 反代](../zh/02-02-cloud-apache-acme.md)）目标一致：**443 标准端口、证书自动续期、多服务共端口**。区别只是反代换成 **nginx** —— 如果你服务器上已经在用 nginx 管别的站点，或团队偏好 nginx 生态（certbot 插件等），选这篇。
 
 ## 架构
 
@@ -30,7 +30,7 @@ systemctl enable --now nginx
 
 ### ② 配置 rdsh（监听本机 + behindProxy）
 
-与 [③ apache2 篇](../zh/03-cloud-apache-acme.md) 完全相同的 rdsh 侧配置：
+与 [③ apache2 篇](../zh/02-02-cloud-apache-acme.md) 完全相同的 rdsh 侧配置：
 
 ```bash
 npm install -g remote-dsh
@@ -118,8 +118,8 @@ nginx -t && systemctl reload nginx
 
 | 方案 | HTTPS | 证书续期 | 复杂度 | 适用 |
 |---|---|---|---|---|
-| [② 单独 + 内置 TLS](../zh/02-cloud-single-tls.md) | rdsh | 手动（或 acme.sh hook） | 低 | 快速起步/个人 |
-| [③ apache2 + cron acme.sh](../zh/03-cloud-apache-acme.md) | apache2 | **cron 全自动** | 中 | 正式域名/多服务 |
+| [② 单独 + 内置 TLS](../zh/02-01-cloud-single-tls.md) | rdsh | 手动（或 acme.sh hook） | 低 | 快速起步/个人 |
+| [③ apache2 + cron acme.sh](../zh/02-02-cloud-apache-acme.md) | apache2 | **cron 全自动** | 中 | 正式域名/多服务 |
 | **④ nginx（本文）** | nginx | certbot/acme.sh 自动 | 中 | 已有 nginx |
 
 > 公网安全铁律：**必须 TLS + 密码认证**（三种方案都满足）；多机/跨地域场景后续可走 hub 隧道（M3，rdsh 只出站不暴露端口）。
