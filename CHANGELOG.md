@@ -28,7 +28,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Open-source docs: LICENSE (MIT), README (en/zh), CONTRIBUTING, CODE_OF_CONDUCT, NOTICE, CI workflow.
 - Product proposal (`doc/overview/proposal.md`) with decided roadmap Q1–Q10.
 
-## [Unreleased]
+## [0.4.0] - 2026-08-23
+
+### Added (M2 — cloud-server direct access)
+
+- HTTPS with user-provided certs (`tls.cert/key`); no cert = plain http;
+  `auth.mode: password` refuses to start without TLS (unless behindProxy).
+- Password auth: scrypt hashes, login page, rate limiting (5/10min),
+  password change revokes all sessions (versioned).
+- Config file (`~/.rdsh/config.json`, `--config` / `$RDSH_CONFIG`), IP
+  allow-list (`allowFrom` CIDR), systemd/launchd service templates.
+- CLI: `serve` subcommand, `rdsh user add/passwd/ls/rm`, `rdsh service ...`.
 
 ### Added (M3 — public hub)
 

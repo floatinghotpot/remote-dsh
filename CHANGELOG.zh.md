@@ -25,7 +25,14 @@
 - 开源文档：LICENSE（MIT）、README（中/英）、CONTRIBUTING、CODE_OF_CONDUCT、NOTICE、CI 工作流。
 - 产品提案（`doc/overview/proposal.md`），含 Q1–Q10 已定路线。
 
-## [未发布]
+## [0.4.0] - 2026-08-23
+
+### 新增（M2 — 云服务器直连）
+
+- HTTPS（用户自备证书 `tls.cert/key`）；无证书即 http；`auth.mode: password` 无证书拒绝启动（behindProxy 例外）。
+- 密码认证：scrypt 哈希、登录页、限流（5 次/10 分钟）、改密吊销全部会话（版本化）。
+- 配置文件（`~/.rdsh/config.json`、`--config` / `$RDSH_CONFIG`）、IP 白名单（`allowFrom` CIDR）、systemd/launchd 服务化。
+- CLI：`serve` 子命令、`rdsh user add/passwd/ls/rm`、`rdsh service ...`。
 
 ### 新增（M3 — 公网 hub）
 
