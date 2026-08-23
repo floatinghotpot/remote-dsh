@@ -135,13 +135,13 @@ export async function join(opts: JoinOptions): Promise<void> {
   let reconnectDelay = RECONNECT_BASE_MS;
   let heartbeat: NodeJS.Timeout | undefined;
 
-  const shutdown = async (signal: string): Promise<void> => {
+  const shutdown = async (signal: string, code = 0): Promise<void> => {
     if (shuttingDown) return;
     shuttingDown = true;
-    console.log(`\nrdsh: received ${signal}, shutting down...`);
+    if (signal !== "") console.log(`\nrdsh: received ${signal}, shutting down...`);
     if (heartbeat !== undefined) clearInterval(heartbeat);
     await dsh.stop();
-    process.exit(0);
+    process.exit(code);
   };
   process.on("SIGINT", () => void shutdown("SIGINT"));
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
@@ -402,8 +402,16 @@ export async function join(opts: JoinOptions): Promise<void> {
       }
       wsStreams.clear();
       if (shuttingDown) return;
-      if (tokenRejected && opts.token === undefined) {
-        void rebindAndReconnect();
+      if (tokenRejected) {
+        if (opts.token === undefined) {
+          // 持久化 token 被拒 → 删旧文件 + 回退配对码
+          void rebindAndReconnect();
+          return;
+        }
+        // 显式 --token 被拒 = 永久失败（token 不会再变有效）→ fail-fast，
+        // 让脚本/systemd 拿到非零退出码与明确报错，而非静默无限重连
+        console.error("rdsh join: host token rejected by hub (revoked or removed); exiting.");
+        void shutdown("", 1);
         return;
       }
       console.log(`rdsh join: tunnel lost — reconnecting in ${Math.round(reconnectDelay / 1000)}s...`);

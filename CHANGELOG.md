@@ -36,7 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reuses it on restart, so a gateway restart no longer forces re-pairing or
   accumulates dead host entries on the hub. A revoked token (401) falls back to
   the pair-code flow automatically; `--reset` forgets the persisted token.
-  (`rdsh-gateway@0.2.3`)
+  A rejected explicit `--token` exits with a clear error instead of silently
+  retrying forever. (`rdsh-gateway@0.2.3`)
 
 ## [0.4.8] - 2026-08-24
 
