@@ -255,7 +255,8 @@ rdsh join https://hub.example.com --token <hostToken> --insecure  # 脚本化/�
   "tls": { "cert": "/etc/letsencrypt/live/example.com/fullchain.pem",
             "key": "/etc/letsencrypt/live/example.com/privkey.pem" },
   "dbPath": "~/.rdsh/hub.db",      // node:sqlite；users/hosts/pending/tokens
-  "jwtKeyPath": "~/.rdsh/hub-jwt.key"  // 自动生成，0600
+  "jwtKeyPath": "~/.rdsh/hub-jwt.key",  // 自动生成，0600
+  "behindProxy": false             // true = 反代终止 TLS（apache2/nginx），hub 监听 http、免证书
 }
 ```
 

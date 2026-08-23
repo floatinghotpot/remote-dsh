@@ -58,6 +58,18 @@ function parseCookies(header?: string): Record<string, string> {
   return out;
 }
 
+/** 客户端真实 IP（behindProxy 时取 XFF，仅连接来自回环时信任 —— 防伪造）。 */
+function clientIp(req: IncomingMessage, runtime: HubRuntime): string {
+  const remote = req.socket.remoteAddress ?? "unknown";
+  if (runtime.config.behindProxy && (remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1")) {
+    const xff = req.headers["x-forwarded-for"];
+    if (typeof xff === "string" && xff.length > 0) {
+      return xff.split(",")[0]!.trim();
+    }
+  }
+  return remote;
+}
+
 /** 主入口：处理 /api/*（含 /api/auth/*）；返回是否已处理。 */
 export async function handleApi(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<boolean> {
   const url = new URL(req.url ?? "/", "http://rdsh.local");
@@ -129,7 +141,7 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, runti
 }
 
 async function handleLogin(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
-  const ip = req.socket.remoteAddress ?? "unknown";
+  const ip = clientIp(req, runtime);
   let limiter = loginLimiters.get(ip);
   if (limiter === undefined) {
     limiter = createLoginLimiter();
@@ -171,7 +183,7 @@ async function handleLogin(req: IncomingMessage, res: ServerResponse, runtime: H
 
 async function handleFirstPassword(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
   // 激活流程：--no-password 建号的用户首次设密码（仅 must_change=1 可用一次）
-  const ip = req.socket.remoteAddress ?? "unknown";
+  const ip = clientIp(req, runtime);
   let limiter = loginLimiters.get(ip);
   if (limiter === undefined) {
     limiter = createLoginLimiter(5, 10 * 60 * 1000);
@@ -272,7 +284,7 @@ async function handleListHosts(req: IncomingMessage, res: ServerResponse, runtim
 
 async function handleCreatePending(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
   // gateway 未认证调用（还没有 token）—— IP 限流防滥用（10 次/分钟）
-  const ip = req.socket.remoteAddress ?? "unknown";
+  const ip = clientIp(req, runtime);
   const now = Date.now();
   const hit = pendingRate.get(ip);
   if (hit !== undefined && now - hit.windowStart < PENDING_RATE_LIMIT.windowMs) {

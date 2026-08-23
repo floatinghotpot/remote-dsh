@@ -39,7 +39,8 @@ export async function serveHub(opts: HubServeOptions): Promise<void> {
   const host = opts.host ?? config.host;
   const port = opts.port ?? config.port;
 
-  const tls = await loadHubTls(config.tls);
+  // behindProxy：反代终止 TLS，hub 监听 http（无需证书）
+  const tls = config.behindProxy ? undefined : await loadHubTls(config.tls);
   const db = new HubDb(config.dbPath);
   const jwt = new Jwt(await loadJwtKey(config.jwtKeyPath));
   const auth = new HubAuth(db, jwt);
@@ -58,7 +59,8 @@ export async function serveHub(opts: HubServeOptions): Promise<void> {
     portalDir,
   });
 
-  console.log(`rdsh hub serve: hub on https://${host === "0.0.0.0" ? "0.0.0.0" : host}:${actualPort}`);
+  const scheme = tls ? "https" : "http";
+  console.log(`rdsh hub serve: hub on ${scheme}://${host === "0.0.0.0" ? "0.0.0.0" : host}:${actualPort}`);
   console.log(`rdsh hub serve: db: ${config.dbPath}`);
   console.log(`rdsh hub serve: portal: ${portalDir}`);
   console.log(`rdsh hub serve: users managed via 'rdsh hub user add|rm|ls' (registration closed)`);

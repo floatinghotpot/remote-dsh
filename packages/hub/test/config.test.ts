@@ -41,3 +41,10 @@ test("非法字段明确报错", () => {
   assert.throws(() => normalizeHubConfig({ tls: { cert: "/c" } }), /"tls.cert" and "tls.key"/);
   assert.throws(() => normalizeHubConfig("nope"), /expected a JSON object/);
 });
+
+test("behindProxy 字段（默认 false / 可配置 / 非法报错）", async () => {
+  assert.equal(normalizeHubConfig({}).behindProxy, false);
+  assert.equal(normalizeHubConfig({ behindProxy: true }).behindProxy, true);
+  assert.equal(normalizeHubConfig({ behindProxy: false }).behindProxy, false);
+  assert.throws(() => normalizeHubConfig({ behindProxy: "yes" }), /"behindProxy" must be boolean/);
+});

@@ -31,6 +31,7 @@
 
 **M2 — 部署到租用的云服务器（如阿里云）（已实现）**
 - [x] HTTPS（TLS）—— 公网安全直连（用户自备证书）
+- [x] 部署在 apache2 / nginx 反代后面（反代终止 TLS；标准 443 端口 + 证书自动续期）
 - [x] 用户名 + 密码登录（`rdsh user add/passwd`；scrypt 哈希；改密后全部会话失效）
 - [x] IP 白名单（配置文件 `allowFrom` 字段）加固
 - [x] 配置文件（默认 `~/.rdsh/config.json`，可用 `--config <path>` 或 `$RDSH_CONFIG` 指定）
@@ -43,6 +44,7 @@
 - [x] 配对码绑定（`rdsh join` 打印码 → 门户输码）或 `--token` 脚本化直填
 - [x] 吊销即时生效 —— host token 吊销后隧道立即断开、重连被拒
 - [x] 层 2 线协议（`packages/tunnel/PROTOCOL.md`）与层 1 对外 API 冻结
+- [x] hub 支持内置 TLS，或部署在 apache2 / nginx 后面（443 + 证书自动续期）
 
 **M4+ — 规划中**
 - [ ] 手机 App（Android / iOS）
@@ -105,8 +107,8 @@ rdsh serve                 # 启动局域网认证网关（自动拉起 dsh web�
   - [用 nginx 给 DSH 智能体套 HTTPS：443 共端口、证书自动续期](doc/blog/zh/02-03-cloud-nginx.md)
 - 无公网 IP 远程操控多个主机 DSH（服务器转发模式）：
   - [没有公网 IP，也能从任何地方远程访问所有 DSH 智能体](doc/blog/zh/03-01-hub-public.md)
-  - [虚拟机里的 DSH 智能体也能远程访问：不用改网络，一条 rdsh join 搞定](doc/blog/zh/03-02-vm-ubuntu.md)
-  - [从任何地方远程访问嵌入式 Linux（树莓派）上的 DSH 智能体（构想，未实测）](doc/blog/zh/03-03-embed-linux.md)
+  - [hub 反代部署：把 rdsh-hub 放到 apache2 后面（443 + 证书自动续期）](doc/blog/zh/03-02-hub-behind-apache-https.md)
+  - [hub 反代部署：把 rdsh-hub 放到 nginx 后面（443 共端口 + 证书自动续期）](doc/blog/zh/03-03-hub-behind-nginx.md)
 
 ## 开发
 

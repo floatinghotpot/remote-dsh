@@ -40,6 +40,7 @@ Implemented `[x]` · planned `[ ]` — from the user's point of view
 
 **M2 — Run it on a rented cloud server (e.g. Alibaba Cloud) (implemented)**
 - [x] HTTPS (TLS) — secure direct access over the public internet (user-provided cert)
+- [x] Deploy behind Apache2 / nginx reverse proxy (TLS terminated by the proxy; standard port 443, auto-renewed certs)
 - [x] User/password sign-in (`rdsh user add/passwd`; scrypt-hashed; changing password revokes all sessions)
 - [x] IP allow-list (`allowFrom` in config file) for extra hardening
 - [x] Config file (default `~/.rdsh/config.json`, or `--config <path>` / `$RDSH_CONFIG`)
@@ -52,6 +53,7 @@ Implemented `[x]` · planned `[ ]` — from the user's point of view
 - [x] Pair-code binding (`rdsh join` prints a code; enter it in the portal) or `--token` for scripting
 - [x] Instant revocation — a revoked host token drops the tunnel and blocks reconnects
 - [x] Frozen wire protocol (layer 2, `packages/tunnel/PROTOCOL.md`) and public API (layer 1)
+- [x] Run the hub with built-in TLS, or behind Apache2 / nginx (443, auto-renewed certs)
 
 **M4+ — Planned**
 - [ ] Mobile apps (Android / iOS)
@@ -118,8 +120,8 @@ Scenario guides (中文 → [doc/blog/zh/](doc/blog/zh/), English → [doc/blog/
   - [Put DSH behind nginx: shared port 443, auto-renewed HTTPS](doc/blog/en/02-03-cloud-nginx.md)
 - Remote-control DSH on multiple hosts without a public IP (server relay mode):
   - [Remote-control every DSH agent from anywhere — no public IP needed](doc/blog/en/03-01-hub-public.md)
-  - [Remote-control the DSH agent inside a VM: no network changes, one `rdsh join`](doc/blog/en/03-02-vm-ubuntu.md)
-  - [Remote-control DSH on embedded Linux (Raspberry Pi) from anywhere (concept, not yet tested)](doc/blog/en/03-03-embed-linux.md)
+  - [Deploy rdsh-hub behind Apache2 (443 + auto-renewed certs)](doc/blog/en/03-02-hub-behind-apache-https.md)
+  - [Deploy rdsh-hub behind nginx (shared 443 + auto-renewed HTTPS)](doc/blog/en/03-03-hub-behind-nginx.md)
 
 ## Development
 

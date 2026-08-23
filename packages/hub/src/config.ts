@@ -17,6 +17,8 @@ export interface HubConfig {
   dbPath: string;
   /** JWT 签名密钥路径（自动生成，0600） */
   jwtKeyPath: string;
+  /** 反代终止 TLS（apache2/nginx）：hub 监听 http，限流按 X-Forwarded-For（仅回环信任） */
+  behindProxy: boolean;
 }
 
 export const DEFAULT_HUB_CONFIG_PATH = join(homedir(), ".rdsh", "hub.json");
@@ -26,6 +28,7 @@ const DEFAULTS = {
   port: 8443,
   dbPath: join(homedir(), ".rdsh", "hub.db"),
   jwtKeyPath: join(homedir(), ".rdsh", "hub-jwt.key"),
+  behindProxy: false,
 };
 
 /** 解析配置文件路径（--config > $RDSH_HUB_CONFIG > 默认）。 */
@@ -80,6 +83,10 @@ export function normalizeHubConfig(raw: unknown, source = "config"): HubConfig {
   if (cfg.jwtKeyPath !== undefined) {
     if (typeof cfg.jwtKeyPath !== "string") throw new Error(`${source}: "jwtKeyPath" must be a string`);
     out.jwtKeyPath = cfg.jwtKeyPath;
+  }
+  if (cfg.behindProxy !== undefined) {
+    if (typeof cfg.behindProxy !== "boolean") throw new Error(`${source}: "behindProxy" must be boolean`);
+    out.behindProxy = cfg.behindProxy;
   }
   return out;
 }

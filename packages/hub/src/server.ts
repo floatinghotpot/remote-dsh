@@ -32,6 +32,8 @@ export interface HubServerOptions {
   host: string;
   port: number;
   tls?: { cert: string; key: string };
+  /** 反代终止 TLS：信任回环连接的 X-Forwarded-For（限流按真实 IP） */
+  behindProxy?: boolean;
   db: HubDb;
   auth: HubAuth;
   tunnels: TunnelRegistry;
@@ -77,6 +79,7 @@ export async function startHubServer(opts: HubServerOptions): Promise<RunningHub
       tls: opts.tls,
       dbPath: "",
       jwtKeyPath: "",
+      behindProxy: opts.behindProxy === true,
     },
     db: opts.db,
     auth: opts.auth,
