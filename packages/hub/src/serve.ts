@@ -52,6 +52,7 @@ export async function serveHub(opts: HubServeOptions): Promise<void> {
     host,
     port,
     tls,
+    behindProxy: config.behindProxy,
     db,
     auth,
     tunnels,
