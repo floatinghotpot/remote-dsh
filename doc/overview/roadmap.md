@@ -2,7 +2,7 @@
 
 > **日期**: 2026-08-23
 > **来源**: `proposal.md` §8 里程碑 + §10 决策记录（Q1–Q10）
-> **状态**: M3 公网 hub 验收通过（2026-08-23）；下一里程碑 M4（多租户增强）
+> **状态**: M3 公网 hub 验收通过（2026-08-23）；下一里程碑 M4（dsh-plugin-rdsh 插件）
 
 ## 里程碑总览
 
@@ -12,11 +12,12 @@
 | **M1 MVP（LAN）** | `rdsh serve` 局域网认证网关 | ✅ 完成（2026-08-23，单测 33/33 + 端到端 14/14 + 双设备实测通过） |
 | **M2 云服务器直连** | TLS/https + 密码认证 + 配置文件 + 服务化 | ✅ 完成（2026-08-23，单测 57/57 + M2 e2e 43/43 + M1 回归 14/14） |
 | **M3 公网 hub** | rdsh-hub（认证/路由）+ `rdsh join` + rdsh-portal | ✅ 完成（2026-08-23，单测 92/92 + M3 e2e 23/23 + M1/M2 回归 57） |
-| **M4 多租户增强** | 邮箱验证、2FA、共享授权、审计、限流 | ⏳ 未开始 |
-| **M5 移动端 App** | rdsh-app（Flutter，Android/iOS） | ⏳ 未开始 |
+| **M4 dsh-plugin-rdsh** | DSH 插件形态的 rdsh-gateway：`dsh plugin add dsh-plugin-rdsh` 即获网关/join，免装 CLI | ⏳ 未开始（下一步） |
+| **M5 多租户增强** | 邮箱验证、2FA、共享授权、审计、限流 | ⏳ 未开始 |
 | **M6 上线准备** | 域名备案、隐私政策、部署文档、压测 | ⏳ 未开始 |
 | **M7 hub Go 化 + E2E** | rdsh-hub Go 单二进制 + conformance；公共 SaaS 化时实现 E2E | ⏳ 未开始 |
-| **M8 微信小程序** | rdsh-weapp（原生小程序，wss 直连 hub API） | ⏳ 未开始 |
+| **M8 移动端 App** | rdsh-app（Flutter，Android/iOS） | ⏳ 未开始 |
+| **M9 微信小程序** | rdsh-weapp（原生小程序，wss 直连 hub API） | ⏳ 未开始 |
 
 ## 各里程碑详情
 
@@ -66,16 +67,18 @@
 - **前提**：层 1（hub 对外 API）与层 2（rdsh-tunnel）契约文档先行（协议先行纪律）
 - **相关决策**：Q6（提供 Docker 镜像，主分发 npm 包/单二进制）
 
-### M4 多租户增强 ⏳
+### M4 dsh-plugin-rdsh ⏳（2026-08-23 新增）
+
+- **背景**：host 侧接入目前需 `npm i -g remote-dsh` + `rdsh serve/join`；DSH 插件生态（Cordis）允许把 gateway 能力做进插件 —— 用户 `dsh plugin add dsh-plugin-rdsh` 即获同能力，免装 CLI
+- **内容**：`dsh-plugin-rdsh`（npm 包，`dsh-*` 插件规范）—— 复用 M3 已验证的 gateway/join 能力（spawn dsh、配对码/密码认证、join 隧道、转发内核）；dsh 启动即网关可用（配置进 dsh 设置或插件配置文件）
+- **验收**：在 dsh 里装插件 → 局域网配对（`rdsh serve` 等价）与公网 join（`rdsh join` 等价）均可工作，无需单独安装 rdsh CLI
+- **前置调研**（discussion 阶段）：dsh 插件规范（Cordis service/command 注册）、插件能否 spawn 子进程/监听端口、`dsh plugin add` 安装流程、与 CLI 版共存策略
+- **相关决策**：插件与 CLI 双通道分发（CLI 保留）；命名 `dsh-plugin-rdsh`（dsh 生态 `dsh-*` 前缀）
+
+### M5 多租户增强 ⏳
 
 - **内容**：邮箱验证、2FA（TOTP 或 passkey）、共享授权（owner/member）、审计日志、登录风控
 - **验收**：安全加固项逐条过验收
-
-### M5 移动端 App ⏳
-
-- **内容**：rdsh-app（Flutter + WebView 壳）
-- **验收**：App 登录后可访问 host 的 DSH
-- **相关决策**：Q7（首版纯 WebView 壳，验收须含剪贴板/输入法验证）
 
 ### M6 上线准备 ⏳
 
@@ -87,7 +90,13 @@
 - **内容**：rdsh-hub 用 Go 重写（单二进制，go:embed portal）+ TS↔Go conformance 测试；公共 SaaS 化时实现 E2E（帧格式加密位已预留）
 - **验收**：单二进制部署；互操作测试通过；E2E 需求评审
 
-### M8 微信小程序 ⏳
+### M8 移动端 App ⏳
+
+- **内容**：rdsh-app（Flutter + WebView 壳）
+- **验收**：App 登录后可访问 host 的 DSH
+- **相关决策**：Q7（首版纯 WebView 壳，验收须含剪贴板/输入法验证）
+
+### M9 微信小程序 ⏳
 
 - **内容**：rdsh-weapp（原生小程序）—— host 列表、会话读写、wss 直连 hub 对外 API（层 1）
 - **验收**：小程序登录后可访问 host 的 DSH 轻量操作
@@ -95,11 +104,11 @@
 - **约束**：Flutter 不可用于小程序（平台硬约束）；原生实现最稳、审核风险最低
 - **相关决策**：Q3（小程序后置）
 
-## 当前焦点（M3 收尾 → M4 多租户增强）
+## 当前焦点（M3 收尾 → M4 dsh-plugin-rdsh）
 
-1. **git 提交**：M3 代码与文档（Batch Plan 待确认）
-2. **发布**：`remote-dsh@0.4.0`（含 join/hub 子命令；gateway/hub/tunnel 版本同步）
-3. **M4 启动**：多租户增强（共享授权/邮箱验证/2FA 评审）；`--token` e2e 补测；join 孤儿 dsh 兜底
+1. **发布收尾**：四包已发布（tunnel 0.1.0 / hub 0.1.0 / gateway 0.2.0 / remote-dsh 0.4.1），0.4.0 已 deprecate
+2. **M4 启动**：dsh-plugin-rdsh —— 先调研 dsh 插件规范（Cordis 插件 API、`dsh plugin add` 流程、子进程/端口能力），再定 discussion → req → plan
+3. **顺手项**：`--token` e2e 补测；join 孤儿 dsh 兜底；300 MB 压测（可并入 M7）
 
 ## 变更记录
 
@@ -110,5 +119,7 @@
 | 2026-08-23 | **里程碑重排**：新增 M2 云服务器直连（TLS + headless + IP 白名单）；原 M2 起全部顺延（hub→M3，多租户→M4，App→M5，上线→M6，Go+E2E→M7，小程序→M8） |
 | 2026-08-23 | **M2 验收通过**：单测 57/57 + M2 e2e 43/43 + M1 回归 14/14；修订去自动自签（无证书即 http，password 无证书非反代拒绝启动）；修复 CLI 管道输入/config watch/dsh 回收 |
 | 2026-08-23 | **M3 验收通过**：层 1/层 2 契约冻结 + join 隧道 + hub + portal；单测 92/92 + M3 e2e 23/23 + M1/M2 回归 57；修复 method 透传/流生命周期/限流计数 |
+| 2026-08-23 | **里程碑重排**：新增 M4 dsh-plugin-rdsh（DSH 插件形态的 gateway，免装 CLI，复用 M3 能力）；原 M4 起全部顺延（多租户→M5，App→M6，上线→M7，Go+E2E→M8，小程序→M9） |
+| 2026-08-23 | **里程碑重排**：移动端 App 移至 hub Go 化之后（M8）—— 纯 npm 包配合浏览器访问 hub URL 已够用，App 后置；序列：M6 上线准备 → M7 hub Go 化 → M8 移动端 App → M9 小程序 |
 
 *关联文档：proposal.md | doc/overview/architecture.md | doc/feature/01-remote-access/*
