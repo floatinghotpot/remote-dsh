@@ -25,6 +25,13 @@
 - 开源文档：LICENSE（MIT）、README（中/英）、CONTRIBUTING、CODE_OF_CONDUCT、NOTICE、CI 工作流。
 - 产品提案（`doc/overview/proposal.md`），含 Q1–Q10 已定路线。
 
+## [0.4.2] - 2026-08-23
+
+### 新增
+
+- hub `behindProxy` 反代模式：rdsh-hub 部署在 apache2/nginx 后面（监听本机 http，仅回环信任 X-Forwarded-For —— 限流按真实 IP）。
+- 博客 03-02/03-03：hub 经 apache2 / nginx 反代部署（443 + 证书自动续期）。
+
 ## [0.4.1] - 2026-08-23
 
 ### 修复

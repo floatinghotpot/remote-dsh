@@ -28,6 +28,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Open-source docs: LICENSE (MIT), README (en/zh), CONTRIBUTING, CODE_OF_CONDUCT, NOTICE, CI workflow.
 - Product proposal (`doc/overview/proposal.md`) with decided roadmap Q1–Q10.
 
+## [0.4.2] - 2026-08-23
+
+### Added
+
+- Hub `behindProxy` mode: run rdsh-hub behind Apache2/nginx (plain http on
+  localhost, trust X-Forwarded-For from loopback only — rate limiting by real IP).
+- Blogs 03-02/03-03: deploy the hub behind Apache2 / nginx (443 + auto-renewed certs).
+
 ## [0.4.1] - 2026-08-23
 
 ### Fixed
