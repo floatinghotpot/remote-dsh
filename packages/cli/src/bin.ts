@@ -440,103 +440,110 @@ function parseHubServeArgs(args: string[], configPath: string): HubServeOptions 
   return opts;
 }
 
+
+/** 交互输入密码两次（一致校验）；不匹配重试（最多 3 次），仍失败抛错。 */
+async function promptPasswordTwice(firstPrompt: string): Promise<string> {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const password = await promptPassword(firstPrompt);
+    const again = await promptPassword("confirm: ");
+    if (password === again) {
+      if (password.length < 8) throw new Error("password must be at least 8 characters");
+      return password;
+    }
+    console.error(`passwords do not match (attempt ${attempt}/3), try again`);
+  }
+  throw new Error("passwords do not match after 3 attempts");
+}
+
 async function handleHubUser(args: string[], configPath: string): Promise<void> {
   const action = args[0];
   const db = await openHubDb(configPath);
-  switch (action) {
-    case "add": {
-      const name = args[1];
-      if (name === undefined) throw new Error("usage: rdsh hub user add <name> [--no-password]");
-      const noPassword = args.includes("--no-password");
-      const hubConfigPath = resolveHubConfigPath(configPath);
-      if (db.getUserByName(name) !== null) throw new Error(`user '${name}' already exists`);
-      if (noPassword) {
-        // 首次登录自设密码（must_change=1，密码占位不可用）
-        db.createUser(name, "scrypt:disabled", new Date().toISOString(), true);
-        console.log(`rdsh: user '${name}' created — they must set a password on first sign-in (${hubConfigPath})`);
-      } else {
-        const password = await promptPassword(`password for ${name}: `);
-        const again = await promptPassword("confirm: ");
-        if (password !== again) throw new Error("passwords do not match");
-        if (password.length < 8) throw new Error("password must be at least 8 characters");
-        db.createUser(name, await hashPassword(password));
-        console.log(`rdsh: user '${name}' created (hub db: ${db.path})`);
+  try {
+    switch (action) {
+      case "add": {
+        const name = args[1];
+        if (name === undefined) throw new Error("usage: rdsh hub user add <name> [--no-password]");
+        const noPassword = args.includes("--no-password");
+        const hubConfigPath = resolveHubConfigPath(configPath);
+        if (db.getUserByName(name) !== null) throw new Error(`user '${name}' already exists`);
+        if (noPassword) {
+          // 首次登录自设密码（must_change=1，密码占位不可用）
+          db.createUser(name, "scrypt:disabled", new Date().toISOString(), true);
+          console.log(`rdsh: user '${name}' created — they must set a password on first sign-in (${hubConfigPath})`);
+        } else {
+          const password = await promptPasswordTwice(`password for ${name}: `);
+          db.createUser(name, await hashPassword(password));
+          console.log(`rdsh: user '${name}' created (hub db: ${db.path})`);
+        }
+        return;
       }
-      db.close();
-      return;
+      case "passwd": {
+        const name = args[1];
+        if (name === undefined) throw new Error("usage: rdsh hub user passwd <name>");
+        const user = db.getUserByName(name);
+        if (user === null) throw new Error(`user '${name}' not found`);
+        const password = await promptPasswordTwice(`new password for ${name}: `);
+        db.setPassword(user.id, await hashPassword(password));
+        console.log(`rdsh: password reset for '${name}' (all their sessions revoked)`);
+        return;
+      }
+      case "ls": {
+        const users = db.listUsers();
+        console.log(users.length > 0 ? users.map((u) => u.name).join("\n") : "(no users)");
+        return;
+      }
+      case "rm": {
+        const name = args[1];
+        if (name === undefined) throw new Error("usage: rdsh hub user rm <name>");
+        const user = db.getUserByName(name);
+        if (user === null) throw new Error(`user '${name}' not found`);
+        db.removeUser(user.id);
+        console.log(`rdsh: user '${name}' removed (their hosts removed)`);
+        return;
+      }
+      default:
+        throw new Error("usage: rdsh hub user add|passwd|ls|rm");
     }
-    case "passwd": {
-      const name = args[1];
-      if (name === undefined) throw new Error("usage: rdsh hub user passwd <name>");
-      const user = db.getUserByName(name);
-      if (user === null) throw new Error(`user '${name}' not found`);
-      const password = await promptPassword(`new password for ${name}: `);
-      const again = await promptPassword("confirm: ");
-      if (password !== again) throw new Error("passwords do not match");
-      if (password.length < 8) throw new Error("password must be at least 8 characters");
-      db.setPassword(user.id, await hashPassword(password));
-      console.log(`rdsh: password reset for '${name}' (all their sessions revoked)`);
-      db.close();
-      return;
-    }
-    case "ls": {
-      const users = db.listUsers();
-      console.log(users.length > 0 ? users.map((u) => u.name).join("\n") : "(no users)");
-      db.close();
-      return;
-    }
-    case "rm": {
-      const name = args[1];
-      if (name === undefined) throw new Error("usage: rdsh hub user rm <name>");
-      const user = db.getUserByName(name);
-      if (user === null) throw new Error(`user '${name}' not found`);
-      db.removeUser(user.id);
-      console.log(`rdsh: user '${name}' removed (their hosts removed)`);
-      db.close();
-      return;
-    }
-    default:
-      db.close();
-      throw new Error("usage: rdsh hub user add|passwd|ls|rm");
+  } finally {
+    db.close();   // 抛错路径也必须关闭 SQLite 句柄（否则进程挂住）
   }
 }
 
 async function handleHubHost(args: string[], configPath: string): Promise<void> {
   const action = args[0];
   const db = await openHubDb(configPath);
-  switch (action) {
-    case "ls": {
-      const hosts = db.listAllHosts();
-      if (hosts.length === 0) {
-        console.log("(no hosts)");
-      } else {
-        for (const h of hosts) {
-          const owner = db.getUserById(h.ownerId);
-          console.log(`${h.id}  ${h.name}  owner=${owner?.name ?? h.ownerId}  created=${h.createdAt}`);
+  try {
+    switch (action) {
+      case "ls": {
+        const hosts = db.listAllHosts();
+        if (hosts.length === 0) {
+          console.log("(no hosts)");
+        } else {
+          for (const h of hosts) {
+            const owner = db.getUserById(h.ownerId);
+            console.log(`${h.id}  ${h.name}  owner=${owner?.name ?? h.ownerId}  created=${h.createdAt}`);
+          }
         }
+        return;
       }
-      db.close();
-      return;
+      case "revoke": {
+        const hostId = args[1];
+        if (hostId === undefined) throw new Error("usage: rdsh hub host revoke <hostId>");
+        const host = db.getHostById(hostId);
+        if (host === null) throw new Error(`host '${hostId}' not found`);
+        db.removeHost(hostId);
+        console.log(`rdsh: host '${hostId}' revoked — its tunnel will drop and reconnects are rejected`);
+        return;
+      }
+      default:
+        throw new Error("usage: rdsh hub host ls|revoke <hostId>");
     }
-    case "revoke": {
-      const hostId = args[1];
-      if (hostId === undefined) throw new Error("usage: rdsh hub host revoke <hostId>");
-      const host = db.getHostById(hostId);
-      if (host === null) throw new Error(`host '${hostId}' not found`);
-      db.removeHost(hostId);
-      console.log(`rdsh: host '${hostId}' revoked — its tunnel will drop and reconnects are rejected`);
-      db.close();
-      return;
-    }
-    default:
-      db.close();
-      throw new Error("usage: rdsh hub host ls|revoke <hostId>");
+  } finally {
+    db.close();
   }
 }
 
 
-
-/** 隐藏式密码输入（TTY raw 模式；非 TTY 时共享行队列读管道）。 */
 function promptPassword(prompt: string): Promise<string> {
   const stdin = process.stdin;
   if (stdin.isTTY && typeof stdin.setRawMode === "function") {
