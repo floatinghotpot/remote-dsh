@@ -158,7 +158,9 @@ gateway: rdsh join https://hub        hub:
 
 ### 5.4 portal（packages/portal）
 
-- 路由：`/`（未认证 → 登录）`/login` `/hosts` `/host/:id`（iframe `/h/<hostId>/` + 返回条）`/settings/password`
+- 部署在 **`/portal` 前缀**（根路径归 host 转发的 DSH）；路由：`/portal/login` `/portal/hosts` `/portal/settings/password`
+- **进入 host = 整页跳转** `location.href = "/h/<hostId>/"`（hub 302 + Set-Cookie `rdsh_host` → 根路径；**2026-08-23 修订**：替代 iframe —— DSH 是 Cordis 插件化动态加载，前缀内容改写不可控，根路径方案 DSH 零改动）
+- 单 host 限制：同一浏览器一次一个 host 上下文（cookie 单值），串行使用正常
 - API client：`fetch /api/*` + `credentials: "include"`；**httpOnly Cookie 会话**（登录 Set-Cookie `rdsh_session`，同源自动带）；原生壳用 `Authorization: Bearer`
 - 绑定弹窗：输 6 位码 → `/api/hosts/bind`
 - host 行操作：改名（PATCH /api/hosts/:id）、吊销（DELETE /api/hosts/:id → 立即离线）

@@ -29,7 +29,7 @@
 | R2 | **层 2 协议定稿**：PROTOCOL.md 从 DRAFT → 冻结（帧头 + payload 格式 + open/data/close/ping/pong/error 语义 + WS upgrade 帧）；**E2E 预留 bit0 忽略透传** | 文档先行；TS 双端（hub↔gateway）按同一协议实现并通过协议一致性测试 |
 | R3 | **`rdsh join <hub>`**：gateway 出站 WSS 隧道；单 host 一条长连接；断线自动重连（指数退避+抖动）；应用层心跳 | join 后 hub 侧 host 显示在线；kill 隧道 → 自动重连恢复；心跳超时判定离线 |
 | R4 | **host 绑定**：`rdsh join` 打印一次性配对码（10 分钟有效）→ 用户登录 hub 网页输码绑定 → 生成长期 **host token**（仅 gateway 持有）；另支持 `rdsh join --token <hostToken>` 直填（脚本化部署） | 输码绑定成功；过期码拒绝；--token 直填可跳过网页；host token 吊销后隧道立即断开且无法重连 |
-| R5 | **层 1 API**（冻结契约，文档先行）：`POST /api/auth/login`（返回 access+refresh JWT）、`POST /api/auth/refresh`、`POST /api/auth/logout`、`POST /api/auth/password`（自助改密：当前密码 + 新密码，成功后该用户全部会话失效需重登）、`GET /api/hosts`（我的机器：在线/离线、名称、hostId）、`WSS /api/events`（host 在线/离线推送）、`/h/<hostId>/...` 透传；**无开放注册端点**（账号由管理员 `rdsh hub user add` 创建，防 bot/垃圾注入） | 全套端点按契约文档实现；错误统一 `{error:{code,message}}`；时间 ISO 8601；`POST /api/auth/register` 不存在（404）；改密后旧 refresh/access 立即失效 |
+| R5 | **层 1 API**（冻结契约，文档先行）：`POST /api/auth/login`（返回 access+refresh JWT）、`POST /api/auth/refresh`、`POST /api/auth/logout`、`POST /api/auth/password`（自助改密：当前密码 + 新密码，成功后该用户全部会话失效需重登）、`GET /api/hosts`（我的机器：在线/离线、名称、hostId）、`WSS /api/events`（host 在线/离线推送）、`/h/<hostId>/...` 进入 host（**2026-08-23 修订**：校验归属 → Set-Cookie `rdsh_host` → 302 根路径；DSH 在根路径运行，之后根路径流量按 cookie 路由到该 host）；**无开放注册端点**（账号由管理员 `rdsh hub user add` 创建，防 bot/垃圾注入） | 全套端点按契约文档实现；错误统一 `{error:{code,message}}`；时间 ISO 8601；`POST /api/auth/register` 不存在（404）；改密后旧 refresh/access 立即失效 |
 | R6 | **portal（React）**：登录页 + host 列表（在线状态/名称/延迟）+ 进入 host（透传 DSH UI 原样显示）+ **host 改名 / 吊销 host token 入口** + **修改密码入口**（自助改密，验证当前密码） | 浏览器全流程走通：登录 → 绑定 host → 进入 DSH 完整操作；改名/吊销即时生效；改密后需重新登录 |
 | R7 | **令牌与安全**：用户 access（1h）+ refresh（7d 轮换、可吊销、登出即吊销）；host token 服务端只存 **SHA-256 摘要**；登录失败限流（复用 M2 限流模式） | 代码审查 + 测试：refresh 轮换后旧 refresh 失效；吊销 refresh → 立即失效；DB 无明文 token |
 | R8 | **数据面路由**：隧道注册表 `hostId → 活跃隧道`（断开自动摘除/重连自动恢复）；客户端 `/h/<hostId>/...` 剥前缀 → 经对应隧道转 gateway → 还原 `127.0.0.1:<port>` 本地请求；**纯透传不改写业务报文**；同一隧道多并发流（streamId 复用） | 两客户端同时访问同一 host 各自独立工作；SSE 流式 + WS upgrade 经隧道全通；hub 不解析业务报文（代码审查） |
@@ -73,20 +73,21 @@
 - `[⋯]` 菜单：改名、吊销 host token（吊销后该 host 立即离线、需重新绑定）
 - `[绑定新机器]`：输入配对码 → 绑定 → 列表出现新 host
 
-**页面 3 — 进入 host（DSH 界面透传）**：
+**页面 3 — 进入 host（DSH 界面整页透传，根路径运行）**：
 
 ```
 ┌──────────────────────────────────────────────┐
 │  ← 返回列表     dev-ubuntu                    │
 │  ──────────────────────────────────────────── │
 │  （DSH 完整界面原样透传：对话/工具/文件/实时流 │
-│    —— 走 /h/<hostId>/... 反向代理 + 隧道）    │
+│    —— 根路径运行，/assets /api 绝对路径原生可用）│
 └──────────────────────────────────────────────┘
 ```
 
-- 进入后浏览器地址为 `https://hub.example.com/h/<hostId>/`，DSH 前端与 API 全部经 hub 透传到该 host 的 gateway → 本地 dsh web
+- 进入流程：浏览器访问 `https://hub.example.com/h/<hostId>/` → hub 校验归属 → Set-Cookie `rdsh_host` → **302 到根路径** → DSH 在根路径运行（`/assets`、`/api` 绝对路径原生可用，**零前端改动**；这是 2026-08-23 架构修订，替代 iframe 方案——DSH 为 Cordis 插件化动态加载，前缀改写不可控）
 - `window.__DSH_BOOT__` 引导机制不变；WebSocket（events.mux/events.host）同样透传
-- 顶部细条保留"返回列表"（portal 注入的最小壳，不侵入 DSH 界面）
+- **同一浏览器一次只能在一个 host 上下文**（cookie 单值；多标签页并行需多浏览器/隐身窗口）；多用户（不同浏览器）互不影响
+- hub 在根路径转发时向 text/html 注入右上角"← rdsh · 返回"悬浮条（portal 壳，不侵入业务内容；M1 htmlInject 同款）
 
 **页面 4 — 修改密码**（用户菜单 → 修改密码；自助改密，无需找 admin）：
 

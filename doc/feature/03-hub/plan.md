@@ -129,8 +129,8 @@ T15（最后）
 | T10 提取 Host 重写 | ✅ done（proxy 单测 5/5 回归；join 复用 rewriteHeadersForDsh） |
 | T11 join.ts | ✅ done（findDsh 修复 + --insecure + 绑定轮询 + 重连退避 + 心跳） |
 | T12 CLI | ✅ done（join/hub serve/user/host/service 子命令；service.ts subcommandArgs 扩展） |
-| T13 portal | ✅ done（React 四页面 + api client + iframe 进入；vite build 通过） |
-| T14 e2e-m3 + verification | ✅ done（e2e 23/23：绑定/转发/WS/并发/隔离/改密/吊销/断连重连；回归 M1 14/14 + M2 43/43） |
+| T13 portal | ✅ done（React 页面 + api client + **2026-08-23 架构修订**：/portal 前缀 + 整页进入 host（302+cookie 根路径），替代 iframe） |
+| T14 e2e-m3 + verification | ✅ done（e2e 26/26：绑定/进入 302+cookie/根路径转发/WS/并发/隔离/改密/吊销/断连重连；回归 M1 14/14 + M2 43/43） |
 | T15 文档收尾 | ⏳ pending（usage/roadmap/README/CHANGELOG） |
 
 > **实现期修复**（2026-08-23）：relay 未传 method（POST 被转成 GET → dsh 400）；req end 误删流 handler（GET 响应挂起）；pending 限流计数 bug（60s 内 1 次）；join 漏 findDsh。

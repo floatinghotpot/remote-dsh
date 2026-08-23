@@ -27,10 +27,25 @@ const CONTENT_TYPES: Record<string, string> = {
   ".map": "application/json",
 };
 
-/** 服务 portal 静态文件；返回是否已处理（false = 交给 404 兜底）。 */
+/** 服务 portal 静态文件；返回是否已处理（false = 交给 404 兜底）。
+ * portal 部署在 /portal 前缀下（host 转发的 DSH 占用根路径）；历史裸路径
+ * （/login /hosts 等）兼容重定向到 /portal。 */
 export async function servePortal(req: IncomingMessage, res: ServerResponse, portalDir: string): Promise<boolean> {
   const url = new URL(req.url ?? "/", "http://rdsh.local");
   let pathname = decodeURIComponent(url.pathname);
+  if (pathname === "/" || pathname === "/index.html") {
+    // 根路径归 host 转发；无 host 时 portal 兜底（历史路径 /login 等）
+    res.writeHead(302, { location: "/portal" });
+    res.end();
+    return true;
+  }
+  if (pathname.startsWith("/portal")) {
+    pathname = pathname.slice("/portal".length) || "/";
+  } else if (pathname === "/login" || pathname === "/hosts" || pathname.startsWith("/host/") || pathname.startsWith("/settings/")) {
+    res.writeHead(302, { location: `/portal${pathname}` });
+    res.end();
+    return true;
+  }
   if (pathname === "/") pathname = "/index.html";
 
   // 防目录穿越：解析后必须仍在 portalDir 内

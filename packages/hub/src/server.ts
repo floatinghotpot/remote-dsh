@@ -1,12 +1,13 @@
 /**
  * server.ts — hub HTTP(S) 服务器：路由 + 隧道 upgrade + events upgrade + portal 静态。
  *
- * 路由：
- *   /api/*            → 层 1 API（handleApi）
- *   /h/<hostId>/*     → 数据面透传（handleRelay / handleRelayUpgrade）
+ * 路由（2026-08-23 架构修订：host 访问用"根路径 + cookie 选 host"，DSH 零改动）：
+ *   /api/*            → 无 rdsh_host cookie 时为层 1 API；有则为当前 host 的 DSH API
+ *   /portal*          → portal 静态（进入 portal 即清除 rdsh_host）
+ *   /h/<hostId>/*     → 进入该 host：校验归属 → Set-Cookie rdsh_host → 302 到根路径
+ *   其余（/、/assets/* 等）→ 有 rdsh_host 转发该 host；无 → portal
  *   /tunnel?token=    → gateway 出站隧道（层 2）
- *   /api/events       → WSS 在线推送（登录态）
- *   其余              → portal 静态
+ *   /api/events       → portal 在线推送（无 rdsh_host 时）
  *
  * 安全：无 TLS 证书 → 拒绝启动（公网 hub 必须 TLS，req R1/R10）。
  */
@@ -44,6 +45,29 @@ export interface RunningHub {
 }
 
 const TUNNEL_PATH = "/tunnel";
+/** 选中 host 的 cookie：DSH 在根路径运行，由该 cookie 路由到对应隧道。 */
+export const HOST_COOKIE = "rdsh_host";
+/** portal 根路径前缀。 */
+export const PORTAL_PREFIX = "/portal";
+const HOST_COOKIE_MAX_AGE = 3600;
+
+function hostCookie(hostId: string): string {
+  return `${HOST_COOKIE}=${hostId}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${HOST_COOKIE_MAX_AGE}`;
+}
+
+function clearHostCookie(): string {
+  return `${HOST_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`;
+}
+
+function parseCookies(header?: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (typeof header !== "string") return out;
+  for (const part of header.split(";")) {
+    const idx = part.indexOf("=");
+    if (idx > 0) out[part.slice(0, idx).trim()] = part.slice(idx + 1).trim();
+  }
+  return out;
+}
 
 export async function startHubServer(opts: HubServerOptions): Promise<RunningHub> {
   const runtime: HubRuntime = {
@@ -77,19 +101,38 @@ export async function startHubServer(opts: HubServerOptions): Promise<RunningHub
   server.on("upgrade", (req, socket, head) => {
     const url = new URL(req.url ?? "/", "http://rdsh.local");
     try {
-      if (url.pathname === TUNNEL_PATH) {
+      const pathname = url.pathname;
+      const cookies = parseCookies(req.headers.cookie);
+      const hostId = cookies[HOST_COOKIE];
+
+      if (pathname === TUNNEL_PATH) {
         handleTunnelUpgrade(req, socket, head, runtime, url);
         return;
       }
-      if (url.pathname === "/api/events") {
+      // portal 的在线推送（无 host 上下文时）
+      if (pathname === "/api/events" && hostId === undefined) {
         handleEventsUpgrade(req, socket, head, runtime, eventsServer);
         return;
       }
-      const h = /^\/h\/([^/]+)(\/.*)?$/.exec(url.pathname);
+      // 有 host 上下文：根路径 WS（DSH 的 events.mux / events.host）
+      if (hostId !== undefined) {
+        handleRelayUpgrade(req, socket, head, runtime, hostId, pathname + url.search);
+        return;
+      }
+      // /h/<hostId>/ 的 WS：进入瞬间（罕见）——校验后转发（cookie 由进入的 HTTP 请求已设）
+      const h = /^\/h\/([^/]+)(\/.*)?$/.exec(pathname);
       if (h !== null) {
-        const hostId = decodeURIComponent(h[1]!);
-        const rest = h[2] ?? "/";
-        handleRelayUpgrade(req, socket, head, runtime, hostId, `${rest}${url.search}`);
+        const auth = authenticate(req, runtime);
+        if (auth !== null) {
+          const hid = decodeURIComponent(h[1]!);
+          const host = runtime.db.getHostById(hid);
+          if (host !== null && host.ownerId === auth.userId) {
+            handleRelayUpgrade(req, socket, head, runtime, hid, `${h[2] ?? "/"}${url.search}`);
+            return;
+          }
+        }
+        socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+        socket.destroy();
         return;
       }
       socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
@@ -111,20 +154,62 @@ export async function startHubServer(opts: HubServerOptions): Promise<RunningHub
 async function handleHttp(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime, portalDir: string): Promise<void> {
   const url = new URL(req.url ?? "/", "http://rdsh.local");
   const pathname = url.pathname;
+  const cookies = parseCookies(req.headers.cookie);
+  const hostId = cookies[HOST_COOKIE];
 
+  // portal 区域：进入 portal 即退出 host 上下文（清 cookie）
+  if (pathname === PORTAL_PREFIX || pathname.startsWith(PORTAL_PREFIX + "/")) {
+    if (hostId !== undefined) res.setHeader("set-cookie", clearHostCookie());
+    const handled = await servePortal(req, res, portalDir);
+    if (!handled) writeError(res, 404, "NOT_FOUND", "not found");
+    return;
+  }
+
+  // 进入 host：/h/<hostId>/... → 校验归属 → Set-Cookie + 302 根路径
+  const h = /^\/h\/([^/]+)(\/.*)?$/.exec(pathname);
+  if (h !== null) {
+    await handleEnterHost(req, res, runtime, decodeURIComponent(h[1]!), h[2] ?? "/", url.search);
+    return;
+  }
+
+  // 有 host 上下文：根路径全部转发给该 host（DSH 无感知，绝对路径 /assets /api 原样）
+  if (hostId !== undefined) {
+    await handleRelay(req, res, runtime, hostId, pathname + url.search, { injectBackBar: true });
+    return;
+  }
+
+  // hub API（无 host 上下文）
   if (pathname.startsWith("/api/")) {
     await handleApi(req, res, runtime);
     return;
   }
-  const h = /^\/h\/([^/]+)(\/.*)?$/.exec(pathname);
-  if (h !== null) {
-    const hostId = decodeURIComponent(h[1]!);
-    const rest = h[2] ?? "/";
-    await handleRelay(req, res, runtime, hostId, `${rest}${url.search}`);
-    return;
-  }
+
+  // 无上下文：portal（历史路径兼容 /login /hosts）
   const handled = await servePortal(req, res, portalDir);
   if (!handled) writeError(res, 404, "NOT_FOUND", "not found");
+}
+
+async function handleEnterHost(
+  req: IncomingMessage,
+  res: ServerResponse,
+  runtime: HubRuntime,
+  hostId: string,
+  rest: string,
+  search: string,
+): Promise<void> {
+  const auth = authenticate(req, runtime);
+  if (auth === null) {
+    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
+    return;
+  }
+  const host = runtime.db.getHostById(hostId);
+  if (host === null || host.ownerId !== auth.userId) {
+    writeError(res, 403, "FORBIDDEN", "host not owned by you");
+    return;
+  }
+  // Set-Cookie + 302：DSH 在根路径运行（绝对路径资源/API 正常）
+  res.writeHead(302, { location: `${rest}${search}`, "set-cookie": hostCookie(hostId) });
+  res.end();
 }
 
 function handleTunnelUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer, runtime: HubRuntime, url: URL): void {

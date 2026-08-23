@@ -10,8 +10,11 @@ import type { HostInfo } from "./api.ts";
 
 const REFRESH_KEY = "rdsh_refresh";
 
+/** portal 部署在 /portal 前缀下（host 转发的 DSH 占用根路径）。 */
+const BASE = "/portal";
+
 function navigate(path: string): void {
-  window.history.pushState({}, "", path);
+  window.history.pushState({}, "", `${BASE}${path}`);
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
@@ -26,12 +29,12 @@ export function useRoute(): string {
 }
 
 export function App(): React.JSX.Element {
-  const path = useRoute();
+  const full = useRoute();
+  const path = full.startsWith(BASE) ? full.slice(BASE.length) || "/" : "/";
   if (path === "/login") return <Login />;
-  if (path.startsWith("/host/")) return <HostView hostId={decodeURIComponent(path.slice(6))} />;
   if (path === "/settings/password") return <PasswordPage />;
-  if (path === "/hosts") return <HostsPage />;
-  return <Login />; // 默认登录页（含 first=1 设密模式）
+  if (path === "/hosts" || path === "/") return <HostsPage />;
+  return <HostsPage />; // 未知路径兜底 host 列表
 }
 
 function Shell({ title, children, onLogout }: { title: string; children: React.ReactNode; onLogout?: () => void }): React.JSX.Element {
@@ -211,7 +214,7 @@ function HostsPage(): React.JSX.Element {
               <span style={{ fontWeight: 500 }}>{h.name}</span>
               <span style={{ color: "#666", fontSize: 12 }}>{h.online ? "在线" : "离线"}</span>
               <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
-                <button onClick={() => navigate(`/host/${h.id}`)} style={btnStyle()}>进入</button>
+                <button onClick={() => enterHost(h.id)} style={btnStyle()}>进入</button>
                 <button onClick={() => { setRenameId(h.id); setRenameName(h.name); }} style={btnStyle("ghost")}>改名</button>
                 <button onClick={() => revoke(h.id)} style={btnStyle("danger")}>吊销</button>
               </div>
@@ -238,18 +241,10 @@ function logout(): void {
   navigate("/login");
 }
 
-// ---- 进入 host（iframe 透传 DSH） ----
+// ---- 进入 host：整页跳转 /h/<hostId>/（hub 校验归属 → Set-Cookie → 302 根路径，DSH 在根路径运行） ----
 
-function HostView({ hostId }: { hostId: string }): React.JSX.Element {
-  return (
-    <div style={{ height: "100vh", display: "flex", flexDirection: "column", fontFamily: "system-ui, sans-serif" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 16px", borderBottom: "1px solid #ddd", fontSize: 14 }}>
-        <button onClick={() => navigate("/hosts")} style={btnStyle("ghost")}>← 返回列表</button>
-        <span style={{ color: "#666" }}>rdsh · {hostId.slice(0, 8)}</span>
-      </div>
-      <iframe src={`/h/${hostId}/`} style={{ flex: 1, border: 0, width: "100%" }} title="dsh" />
-    </div>
-  );
+function enterHost(hostId: string): void {
+  window.location.href = `/h/${encodeURIComponent(hostId)}/`;
 }
 
 // ---- 修改密码 ----

@@ -224,6 +224,10 @@ server {
 
 让无公网 IP 的开发机（gateway）经 hub **出站隧道**被异地浏览器访问；客户端永远只连 hub 一个域名。
 
+**进入 host 的访问架构**（2026-08-23 定案）：点"进入" → 浏览器访问 `/h/<hostId>/` → hub 校验归属 → Set-Cookie `rdsh_host` → **302 到根路径** → DSH 在根路径运行（绝对路径 /assets /api 原生可用，**零前端改动**）。portal 部署在 `/portal` 前缀。
+
+> ⚠ **同一浏览器一次只能在一个 host 上下文**（cookie 单值）：串行使用（进 A → 返回 → 进 B）正常；多标签页并行看不同 host 需多浏览器/隐身窗口。**多用户（不同浏览器/设备）互不影响**。
+
 ### 8.1 组件与命令
 
 ```
@@ -269,7 +273,7 @@ rdsh join https://hub.example.com --token <hostToken> --insecure  # 脚本化/�
 
 `POST /api/auth/login|refresh|logout|password|first-password`、`GET /api/hosts`、
 `POST /api/hosts/pending|bind`、`PATCH/DELETE /api/hosts/:id`、`WSS /api/events`（在线推送）、
-`/h/<hostId>/...` 透传（HTTP + WS）。错误统一 `{error:{code,message}}`。
+`/h/<hostId>/...` 进入 host（校验归属 → Set-Cookie → 302 根路径；之后根路径流量按 `rdsh_host` cookie 路由）。错误统一 `{error:{code,message}}`。
 
 ## 9. 安全注意事项
 

@@ -13,10 +13,18 @@ import type { HubRuntime } from "./api.ts";
 
 const wss = new WebSocketServer({ noServer: true });
 
+export interface RelayOptions {
+  /** 向 text/html 响应注入返回条（host 转发的门户壳，M1 htmlInject 同款）。 */
+  injectBackBar?: boolean;
+}
+
+/** 返回条：悬浮在 DSH 界面右上角，回 portal。 */
+export const BACK_BAR_HTML = `<a href="/portal" style="position:fixed;top:10px;right:14px;z-index:99999;background:rgba(15,23,42,.85);color:#e2e8f0;padding:6px 12px;border-radius:8px;text-decoration:none;font:13px system-ui,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.3);">← rdsh · 返回</a>`;
+
 /**
- * HTTP/SSE 透传。返回是否已处理（false = 路径不属于 /h/ 数据面）。
+ * HTTP/SSE 透传。返回是否已处理（false = 路径不属于数据面）。
  */
-export async function handleRelay(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime, hostId: string, path: string): Promise<boolean> {
+export async function handleRelay(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime, hostId: string, path: string, opts?: RelayOptions): Promise<boolean> {
   const auth = authenticate(req, runtime);
   if (auth === null) {
     writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
@@ -35,16 +43,43 @@ export async function handleRelay(req: IncomingMessage, res: ServerResponse, run
 
   const headers = normalizeHeaders(req.headers);
   let responded = false;
-  const streamId = conn.openStream("http", path, req.method ?? "GET", headers, {
+  let streamId = 0;
+  // 返回条注入：text/html 响应缓冲（KB 级）后注入；其余流量流式
+  let htmlBuf: Buffer[] | null = null;
+  streamId = conn.openStream("http", path, req.method ?? "GET", headers, {
     onResponse: (status, _reason, respHeaders) => {
       responded = true;
-      res.writeHead(status, respHeaders as Record<string, string | string[]>);
+      const ct = typeof respHeaders["content-type"] === "string" ? (respHeaders["content-type"] as string) : "";
+      const canInject =
+        opts?.injectBackBar === true &&
+        ct.includes("text/html") &&
+        respHeaders["content-encoding"] === undefined &&
+        respHeaders["transfer-encoding"] === undefined;
+      if (canInject) {
+        htmlBuf = [];
+        // 缓冲注入时去掉 content-length（回写时重算）
+        const h: Record<string, string | string[]> = { ...respHeaders };
+        delete h["content-length"];
+        res.writeHead(status, h);
+      } else {
+        res.writeHead(status, respHeaders as Record<string, string | string[]>);
+      }
     },
     onData: (chunk) => {
-      if (!res.destroyed) res.write(chunk);
+      if (res.destroyed) return;
+      if (htmlBuf !== null) htmlBuf.push(chunk);
+      else res.write(chunk);
     },
     onClose: (_code, _message) => {
-      if (!res.destroyed) res.end();
+      if (res.destroyed) return;
+      if (htmlBuf !== null) {
+        let html = Buffer.concat(htmlBuf).toString("utf8");
+        html = html.replace("</head>", `${BACK_BAR_HTML}</head>`);
+        if (!html.includes(BACK_BAR_HTML)) html = `${BACK_BAR_HTML}${html}`;
+        res.end(html);
+      } else {
+        res.end();
+      }
     },
     onError: (code, message) => {
       if (!responded) {

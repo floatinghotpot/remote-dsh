@@ -15,7 +15,7 @@
 | R5 层 1 API（冻结契约） | T5, T6 | ✅ | api 单测 10/10：login/refresh/logout/password/first-password/hosts/pending/bind/隔离/404 |
 | R6 portal | T13 | ✅ | vite build 通过；e2e 全流程（登录→绑定→进入→改密）走浏览器同款 HTTP；iframe 方案（dsh 无 frame 头，已查档） |
 | R7 令牌与安全 | T4, T5 | ✅ | auth 单测 9/9：JWT 签名/ver 失效/refresh 轮换/改密吊销/限流/哈希摘要存储 |
-| R8 数据面 | T7 | ✅ | e2e：首页 200 + session.list 200 + WS events.mux OPEN + 连续访问（多流）；hub 纯透传（代码审查：relay 不解析业务报文） |
+| R8 数据面 | T7 | ✅ | e2e：进入 /h/ 302 + cookie 路由 → 根路径首页 200 + session.list 200 + WS OPEN + 连续访问（多流）；hub 纯透传（代码审查：relay 不解析业务报文，仅 HTML 注入返回条壳） |
 | R9 多用户 + host 归属 | T4, T6 | ✅ | api 单测 + e2e：bob 看不到/访问不了 admin 的 host（403） |
 | R10 安全基线 | T4, T5, T6 | ✅ | 密码 scrypt、host/refresh token SHA-256 摘要（单测断言无明文）；日志无密码/token（审查）；注册关闭 404；限流 429 |
 | R11 协议一致性测试 | T2, T3, T14 | ✅ | frame 单测 + e2e 双端一致（hub↔gateway 同一冻结协议） |
@@ -73,7 +73,11 @@
 | 真实公网服务器验收未做 | P3 | 用户有云服务器时按 usage.md M3 节手工部署 |
 | pending 限流按 IP（多 gateway 同 NAT 会共享额度） | P3 | 自托管可接受；后续可加共享密钥预认证 |
 
-## 6. 结论
+## 6. 架构修订（2026-08-23，实现期发现）
+
+**进入 host 的访问架构**：黑屏问题（DSH 绝对路径 /assets /api 与 /h/ 前缀冲突）→ 查档确认 DSH 是 Cordis 插件化动态模块加载（前缀内容改写不可控）→ 定案**根路径 + cookie 选 host**：`/h/<hostId>/` 校验归属 → Set-Cookie `rdsh_host` → 302 根路径，DSH 在根路径运行（与 M1 同形态，零前端改动）。portal 移 /portal 前缀。同一浏览器一次一个 host 上下文（cookie 单值，串行正常；多浏览器可并行）；多用户（不同浏览器）互不影响。
+
+## 7. 结论
 
 **M3 公网 hub 验收通过**（2026-08-23）：
 
