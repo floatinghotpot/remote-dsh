@@ -1,4 +1,4 @@
-# Many machines, one URL: remote-control all your DSH agents from the public internet with rdsh hub
+# No public IP? One URL to remote-control every DSH agent you own
 
 > 2026-08-23 · remote-dsh 0.4.0
 > Scenario series: ① LAN control → ②/③/④ Cloud-server deployment → **⑤ Multi-machine + public hub (this post)** → ⑥ Mobile

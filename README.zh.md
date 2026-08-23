@@ -101,7 +101,7 @@ rdsh serve                 # 启动局域网认证网关（自动拉起 dsh web�
   - [② rdsh 单独 + 内置 TLS：公网浏览器直接遥控](doc/blog/zh/02-cloud-single-tls.md)
   - [③ apache2 反代 + acme.sh 证书自动续期](doc/blog/zh/03-cloud-apache-acme.md)
   - [④ nginx 反代（443 共端口）](doc/blog/zh/04-cloud-nginx.md)
-  - [⑤ 多台机器，一个网址：公网 hub（出站隧道）](doc/blog/zh/05-hub-public.md)
+  - [⑤ 没有公网 IP 也能远程操控：一个网址，统一访问所有机器上的 DSH 智能体](doc/blog/zh/05-hub-public.md)
 
 ## 开发
 

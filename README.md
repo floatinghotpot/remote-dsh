@@ -114,7 +114,7 @@ Scenario guides (中文 → [doc/blog/zh/](doc/blog/zh/), English → [doc/blog/
   - [② rdsh standalone + built-in TLS: remote-control from any browser](doc/blog/en/02-cloud-single-tls.md)
   - [③ Apache2 reverse proxy + acme.sh auto-renewed certs](doc/blog/en/03-cloud-apache-acme.md)
   - [④ nginx reverse proxy (shared port 443)](doc/blog/en/04-cloud-nginx.md)
-  - [⑤ Many machines, one URL: public hub (outbound tunnels)](doc/blog/en/05-hub-public.md)
+  - [⑤ No public IP? One URL to remote-control every DSH agent you own](doc/blog/en/05-hub-public.md)
 
 ## Development
 
