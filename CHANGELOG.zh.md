@@ -29,13 +29,8 @@
 
 ### 修复
 
-- `rdsh join` 现在把 host token 持久化到 `~/.rdsh/join-*.token`（0600）并在重启时复用：gateway 重启不再强制重新配对，也不再在 hub 上累积死条目。token 被吊销（401）时自动回退配对码流程；`--reset` 可忘记已持久化的 token。显式 `--token` 被拒时明确报错退出，不再静默无限重连。（`rdsh-gateway@0.2.3`）
-
-## [0.4.8] - 2026-08-24
-
-### 修复
-
 - DSH host 访问不再受 1 小时 access token 过期影响：进入 host（`/h/<hostId>`）现在会签发 HMAC 签名 Cookie（7 天、绑定用户会话版本），relay 改由该 Cookie 认证，而非反复校验短期 access token。改密会使版本 +1，旧 Cookie 立即失效。（`rdsh-hub@0.2.4`）
+- `rdsh join` 现在把 host token 持久化到 `~/.rdsh/join-*.token`（0600）并在重启时复用：gateway 重启不再强制重新配对，也不再在 hub 上累积死条目。token 被吊销（401）时自动回退配对码流程；`--reset` 可忘记已持久化的 token。显式 `--token` 被拒时明确报错退出，不再静默无限重连。（`rdsh-gateway@0.2.3`）
 
 ## [0.4.7] - 2026-08-24
 
