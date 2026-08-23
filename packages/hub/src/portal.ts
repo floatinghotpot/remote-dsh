@@ -12,7 +12,8 @@ import { fileURLToPath } from "node:url";
 
 /** monorepo 内 portal dist 的解析路径（dev 与构建后 dist/ 一致：相对本文件 ../../portal/dist）。 */
 export function defaultPortalDir(): string {
-  return resolve(fileURLToPath(new URL("../../portal/dist", import.meta.url)));
+  // hub 包内 portal/（构建时从 packages/portal/dist 复制；随 npm 包分发）
+  return resolve(fileURLToPath(new URL("../portal", import.meta.url)));
 }
 
 const CONTENT_TYPES: Record<string, string> = {

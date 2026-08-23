@@ -25,6 +25,12 @@
 - 开源文档：LICENSE（MIT）、README（中/英）、CONTRIBUTING、CODE_OF_CONDUCT、NOTICE、CI 工作流。
 - 产品提案（`doc/overview/proposal.md`），含 Q1–Q10 已定路线。
 
+## [0.4.6] - 2026-08-24
+
+### 修复
+
+- portal 静态资源已打包进 hub 包内（构建时从 packages/portal/dist 复制）。此前 npm 安装的 hub 的 `/portal` 返回 404（dist 只存在于 workspace）。
+
 ## [0.4.5] - 2026-08-24
 
 ### 修复

@@ -28,6 +28,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Open-source docs: LICENSE (MIT), README (en/zh), CONTRIBUTING, CODE_OF_CONDUCT, NOTICE, CI workflow.
 - Product proposal (`doc/overview/proposal.md`) with decided roadmap Q1–Q10.
 
+## [0.4.6] - 2026-08-24
+
+### Fixed
+
+- Portal assets are now bundled inside the hub package (built from
+  packages/portal/dist at build time). npm-installed hubs previously served
+  `/portal` as 404 because the dist lived only in the workspace.
+
 ## [0.4.5] - 2026-08-24
 
 ### Fixed
