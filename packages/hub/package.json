@@ -28,6 +28,6 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/copy-portal.mjs",
-    "test": "node --test test/"
+    "test": "node --test \"test/*.test.ts\""
   }
 }
