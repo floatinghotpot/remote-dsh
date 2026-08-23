@@ -145,7 +145,7 @@ function hasHelp(args: string[]): boolean {
 }
 
 interface CliOptions {
-  configPath: string;
+  configPath?: string;
   flags: string[];
 }
 
@@ -220,7 +220,8 @@ function parseGlobal(argv: string[]): CliOptions {
       flags.push(argv[i]!);
     }
   }
-  return { configPath: resolveConfigPath(configPath), flags };
+  // 返回原始值（undefined 或显式 --config）；gateway/hub 子命令分别按自己的默认路径 resolve
+  return { configPath, flags };
 }
 
 interface ServeCliOptions extends ServeOptions {
@@ -228,7 +229,7 @@ interface ServeCliOptions extends ServeOptions {
   noCode?: boolean;
 }
 
-function parseServeArgs(args: string[], configPath: string): ServeCliOptions {
+function parseServeArgs(args: string[], configPath?: string): ServeCliOptions {
   const opts: ServeCliOptions = { configPath };
   for (let i = 0; i < args.length; i++) {
     const flag = args[i];
@@ -302,9 +303,9 @@ function parseJoinArgs(args: string[]): JoinOptions {
   return opts;
 }
 
-async function handleUser(args: string[], configPath: string): Promise<void> {
+async function handleUser(args: string[], configPath?: string): Promise<void> {
   const action = args[0];
-  const um = new UserManager(configPath);
+  const um = new UserManager(resolveConfigPath(configPath));
   switch (action) {
     case "add": {
       const name = args[1];
@@ -345,11 +346,11 @@ async function handleUser(args: string[], configPath: string): Promise<void> {
   }
 }
 
-async function handleService(args: string[], configPath: string): Promise<void> {
+async function handleService(args: string[], configPath?: string): Promise<void> {
   const action = args[0];
   switch (action) {
     case "install":
-      console.log(await installService(configPath));
+      console.log(await installService(resolveConfigPath(configPath)));
       console.log("rdsh: service installed — it starts on boot and restarts on crash.");
       return;
     case "status":
@@ -364,13 +365,13 @@ async function handleService(args: string[], configPath: string): Promise<void> 
 }
 
 /** 打开 hub 数据库（读 hub config 定位 dbPath）。 */
-async function openHubDb(configPath: string): Promise<HubDb> {
+async function openHubDb(configPath?: string): Promise<HubDb> {
   const hubConfigPath = resolveHubConfigPath(configPath);
   const config = await loadHubConfig(hubConfigPath);
   return new HubDb(config.dbPath);
 }
 
-async function handleHub(args: string[], configPath: string): Promise<void> {
+async function handleHub(args: string[], configPath?: string): Promise<void> {
   const sub = args[0];
   const rest = args.slice(1);
   if (sub === undefined || hasHelp(rest)) {
@@ -414,7 +415,7 @@ async function handleHub(args: string[], configPath: string): Promise<void> {
   }
 }
 
-function parseHubServeArgs(args: string[], configPath: string): HubServeOptions {
+function parseHubServeArgs(args: string[], configPath?: string): HubServeOptions {
   const opts: HubServeOptions = { configPath };
   for (let i = 0; i < args.length; i++) {
     const flag = args[i];
@@ -455,7 +456,7 @@ async function promptPasswordTwice(firstPrompt: string): Promise<string> {
   throw new Error("passwords do not match after 3 attempts");
 }
 
-async function handleHubUser(args: string[], configPath: string): Promise<void> {
+async function handleHubUser(args: string[], configPath?: string): Promise<void> {
   const action = args[0];
   const db = await openHubDb(configPath);
   try {
@@ -509,7 +510,7 @@ async function handleHubUser(args: string[], configPath: string): Promise<void> 
   }
 }
 
-async function handleHubHost(args: string[], configPath: string): Promise<void> {
+async function handleHubHost(args: string[], configPath?: string): Promise<void> {
   const action = args[0];
   const db = await openHubDb(configPath);
   try {

@@ -28,6 +28,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Open-source docs: LICENSE (MIT), README (en/zh), CONTRIBUTING, CODE_OF_CONDUCT, NOTICE, CI workflow.
 - Product proposal (`doc/overview/proposal.md`) with decided roadmap Q1–Q10.
 
+## [0.4.4] - 2026-08-24
+
+### Fixed
+
+- `rdsh hub serve` (and other hub commands) without `--config` now resolve the
+  hub config path (`~/.rdsh/hub.json`) correctly. parseGlobal used the gateway
+  resolver (`~/.rdsh/config.json`), so the hub silently fell back to an empty
+  config and refused to start ("hub requires TLS").
+
 ## [0.4.3] - 2026-08-23
 
 ### Fixed

@@ -25,6 +25,12 @@
 - 开源文档：LICENSE（MIT）、README（中/英）、CONTRIBUTING、CODE_OF_CONDUCT、NOTICE、CI 工作流。
 - 产品提案（`doc/overview/proposal.md`），含 Q1–Q10 已定路线。
 
+## [0.4.4] - 2026-08-24
+
+### 修复
+
+- `rdsh hub serve` 等 hub 命令在未传 `--config` 时正确解析 hub 配置路径（`~/.rdsh/hub.json`）。原 parseGlobal 用了 gateway 的解析器（`~/.rdsh/config.json`），导致 hub 静默回退到空配置并拒绝启动（"hub requires TLS"）。
+
 ## [0.4.3] - 2026-08-23
 
 ### 修复
