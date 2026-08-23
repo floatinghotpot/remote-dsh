@@ -109,6 +109,8 @@ rdsh serve                 # 启动局域网认证网关（自动拉起 dsh web�
   - [没有公网 IP，也能从任何地方远程访问所有 DSH 智能体](doc/blog/zh/03-01-hub-public.md)
   - [hub 反代部署：把 rdsh-hub 放到 apache2 后面（443 + 证书自动续期）](doc/blog/zh/03-02-hub-behind-apache-https.md)
   - [hub 反代部署：把 rdsh-hub 放到 nginx 后面（443 共端口 + 证书自动续期）](doc/blog/zh/03-03-hub-behind-nginx.md)
+- 把 hub 与 gateway 常驻化（systemd 用户服务，免 sudo、开机自启、崩溃重启）：
+  - [把 rdsh-hub 与 rdsh-join 部署为 systemd 用户服务（免 sudo、开机自启、崩溃重启）](doc/blog/zh/04-01-run-as-user-service-ubuntu.md)
 
 ## 开发
 

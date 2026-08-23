@@ -122,6 +122,8 @@ Scenario guides (中文 → [doc/blog/zh/](doc/blog/zh/), English → [doc/blog/
   - [Remote-control every DSH agent from anywhere — no public IP needed](doc/blog/en/03-01-hub-public.md)
   - [Deploy rdsh-hub behind Apache2 (443 + auto-renewed certs)](doc/blog/en/03-02-hub-behind-apache-https.md)
   - [Deploy rdsh-hub behind nginx (shared 443 + auto-renewed HTTPS)](doc/blog/en/03-03-hub-behind-nginx.md)
+- Run the hub & gateway as always-on services (ops):
+  - [Run rdsh-hub & rdsh-join as systemd user services (no sudo)](doc/blog/en/04-01-run-as-user-service-ubuntu.md)
 
 ## Development
 
