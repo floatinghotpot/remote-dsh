@@ -15,11 +15,14 @@ import type { Frame } from "rdsh-tunnel";
 import { findDsh, spawnDsh } from "./spawn-dsh.ts";
 import { rewriteHeadersForDsh } from "./proxy.ts";
 import type { ProxyTarget } from "./proxy.ts";
+import { clearPersistedToken, persistToken, readPersistedToken } from "./token-store.ts";
 
 export interface JoinOptions {
   hubUrl: string;
   /** 直填 host token（跳过配对码绑定流程） */
   token?: string;
+  /** 清除持久化 token 并强制重新配对 */
+  reset?: boolean;
   dshPath?: string;
   /** 跳过 TLS 证书校验（自签 hub 用；正式证书无需） */
   insecure?: boolean;
@@ -103,7 +106,22 @@ export async function join(opts: JoinOptions): Promise<void> {
   }
   const dsh = await spawnDsh(foundDsh);
   const target: ProxyTarget = { host: "127.0.0.1", port: dsh.port };
-  const token = opts.token ?? (await bind(opts.hubUrl, opts.insecure === true));
+  // token 来源优先级：--token 直填 > 持久化复用 > 配对码绑定（绑定成功后落盘）。
+  // 进程重启后复用已绑定 token，避免重复配对；被吊销时（401）自动回退重配对。
+  let token: string;
+  if (opts.token !== undefined) {
+    token = opts.token;
+  } else {
+    if (opts.reset === true) clearPersistedToken(opts.hubUrl);
+    const persisted = readPersistedToken(opts.hubUrl);
+    if (persisted !== null) {
+      token = persisted;
+      console.log("rdsh join: reusing persisted host token");
+    } else {
+      token = await bind(opts.hubUrl, opts.insecure === true);
+      persistToken(opts.hubUrl, token);
+    }
+  }
   console.log(`rdsh join: dsh web on 127.0.0.1:${dsh.port}`);
   console.log(`rdsh join: connecting to ${opts.hubUrl}...`);
 
@@ -300,10 +318,39 @@ export async function join(opts: JoinOptions): Promise<void> {
     upstream.on("error", cleanup);
   }
 
+  /** 持久化 token 被 hub 拒绝（吊销/重置）→ 删旧文件 → 重新配对 → 重连。 */
+  async function rebindAndReconnect(): Promise<void> {
+    clearPersistedToken(opts.hubUrl);
+    console.log("rdsh join: host token rejected (revoked?) — re-pairing...");
+    try {
+      token = await bind(opts.hubUrl, opts.insecure === true);
+      persistToken(opts.hubUrl, token);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`rdsh join: re-pairing failed (${msg}); retrying in ${RECONNECT_BASE_MS / 1000}s...`);
+      setTimeout(() => void rebindAndReconnect(), RECONNECT_BASE_MS);
+      return;
+    }
+    reconnectDelay = RECONNECT_BASE_MS;
+    connect();
+  }
+
   function connect(): void {
     if (shuttingDown) return;
     const url = `${hubWsBase}/tunnel?token=${encodeURIComponent(token)}`;
     const client = new WebSocket(url, { rejectUnauthorized: opts.insecure !== true });
+
+    // 401/403 = token 被拒（吊销/不存在）。监听此事件后 ws 不再自动 abort，
+    // 需手动 terminate → 触发 close → 决定「重配对」还是「普通重连」。
+    let tokenRejected = false;
+    client.on("unexpected-response", (_req, res) => {
+      if (res.statusCode === 401 || res.statusCode === 403) tokenRejected = true;
+      try {
+        client.terminate();
+      } catch {
+        /* 已关闭 */
+      }
+    });
 
     client.on("open", () => {
       reconnectDelay = RECONNECT_BASE_MS;
@@ -355,6 +402,10 @@ export async function join(opts: JoinOptions): Promise<void> {
       }
       wsStreams.clear();
       if (shuttingDown) return;
+      if (tokenRejected && opts.token === undefined) {
+        void rebindAndReconnect();
+        return;
+      }
       console.log(`rdsh join: tunnel lost — reconnecting in ${Math.round(reconnectDelay / 1000)}s...`);
       setTimeout(connect, reconnectDelay + Math.random() * 500);
       reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS);

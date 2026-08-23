@@ -244,6 +244,10 @@ rdsh hub service install           # hub 服务化（systemd/launchd）
 
 rdsh join https://hub.example.com  # 开发机：打印配对码 → 网页输码绑定 → 隧道
 rdsh join https://hub.example.com --token <hostToken> --insecure  # 脚本化/自签 hub
+rdsh join https://hub.example.com --reset  # 忘记已持久化的 host token，强制重新配对
+
+# 绑定成功后 host token 持久化到 ~/.rdsh/join-<host>.token（0600）：
+# 进程重启/崩溃恢复后自动复用，无需重新配对；被吊销（401）时自动删旧文件、回退配对码流程。
 ```
 
 ### 8.2 hub 配置（~/.rdsh/hub.json）

@@ -28,6 +28,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Open-source docs: LICENSE (MIT), README (en/zh), CONTRIBUTING, CODE_OF_CONDUCT, NOTICE, CI workflow.
 - Product proposal (`doc/overview/proposal.md`) with decided roadmap Q1–Q10.
 
+## [0.4.9] - 2026-08-24
+
+### Fixed
+
+- `rdsh join` now persists the host token to `~/.rdsh/join-*.token` (0600) and
+  reuses it on restart, so a gateway restart no longer forces re-pairing or
+  accumulates dead host entries on the hub. A revoked token (401) falls back to
+  the pair-code flow automatically; `--reset` forgets the persisted token.
+  (`rdsh-gateway@0.2.3`)
+
 ## [0.4.8] - 2026-08-24
 
 ### Fixed

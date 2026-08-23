@@ -3,7 +3,7 @@
  * rdsh CLI 入口（手写参数解析，零依赖）。
  *
  *   rdsh serve [--config <path>] [--reset] [--port <n>] ...
- *   rdsh join <hub-url> [--token <t>] [--dsh <path>]
+ *   rdsh join <hub-url> [--token <t>] [--reset] [--dsh <path>]
  *   rdsh hub serve|user|host|service ... [--config <path>]
  *   rdsh user add|passwd <name> | ls | rm <name>   [--config <path>]
  *   rdsh service install|uninstall|status          [--config <path>]
@@ -61,6 +61,7 @@ Options (serve):
 
 Options (join):
   --token <t>               Use an existing host token (skip pairing-code flow)
+  --reset                   Forget the persisted host token and re-pair
   --dsh <path>              dsh executable path
 
 Options (hub serve):
@@ -94,6 +95,7 @@ Connect to a hub via an outbound tunnel (no ports open on this machine).
 
 Options:
   --token <t>           Use an existing host token (skip the pair-code flow)
+  --reset               Forget the persisted host token and re-pair
   --dsh <path>          dsh executable path
   --insecure            Skip TLS certificate verification (self-signed hub)
 `,
@@ -289,6 +291,9 @@ function parseJoinArgs(args: string[]): JoinOptions {
     switch (flag) {
       case "--token":
         opts.token = value(flag);
+        break;
+      case "--reset":
+        opts.reset = true;
         break;
       case "--dsh":
         opts.dshPath = value(flag);
