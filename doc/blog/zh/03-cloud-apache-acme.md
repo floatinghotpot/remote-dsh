@@ -1,4 +1,4 @@
-# 云服务器部署 DSH 智能体：apache2 反代 + acme.sh 证书自动续期
+# DSH 智能体的 HTTPS 交给 apache2：正式域名 + 证书 90 天全自动续期
 
 [English](../en/03-cloud-apache-acme.md) | **中文**
 

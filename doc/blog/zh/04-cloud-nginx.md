@@ -1,4 +1,4 @@
-# 云服务器部署 DSH 智能体：nginx 反代（443 共端口）
+# 用 nginx 给 DSH 智能体套 HTTPS：443 共端口、证书自动续期
 
 [English](../en/04-cloud-nginx.md) | **中文**
 

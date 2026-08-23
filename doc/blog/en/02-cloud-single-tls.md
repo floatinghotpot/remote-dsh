@@ -1,4 +1,4 @@
-# Deploy your DSH agent on a cloud server and remote-control it from any browser (standalone + built-in TLS)
+# Put your DSH agent on a cloud server: sign in from any browser (bring your own TLS cert)
 
 > 2026-08-23 · remote-dsh 0.3.0
 > Cloud-server deployment series: ② rdsh standalone + built-in TLS (this post) → ③ Apache2 reverse proxy → ④ nginx reverse proxy

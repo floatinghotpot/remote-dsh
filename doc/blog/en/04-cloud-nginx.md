@@ -1,4 +1,4 @@
-# Deploy your DSH agent on a cloud server: nginx reverse proxy (shared port 443)
+# Put DSH behind nginx: shared port 443, auto-renewed HTTPS
 
 > 2026-08-23 · remote-dsh 0.3.0
 > Cloud-server deployment series: ② rdsh standalone + built-in TLS → ③ Apache2 reverse proxy → ④ nginx reverse proxy (this post)

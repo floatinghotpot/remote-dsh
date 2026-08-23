@@ -1,4 +1,4 @@
-# Deploy your DSH agent on a cloud server: Apache2 reverse proxy + acme.sh auto-renewed certs
+# Let Apache2 handle DSH HTTPS: real domain + fully automatic cert renewal (acme.sh)
 
 > 2026-08-23 · remote-dsh 0.3.0
 > Cloud-server deployment series: ② rdsh standalone + built-in TLS → ③ Apache2 reverse proxy (this post) → ④ nginx reverse proxy

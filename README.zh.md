@@ -98,9 +98,9 @@ rdsh serve                 # 启动局域网认证网关（自动拉起 dsh web�
 
 - [在家或办公室，用手机/笔记本/台式机遥控开发机的 DSH 智能体（局域网篇）](doc/blog/zh/01-lan-access.md)
 - 云服务器部署系列（双语）：
-  - [② rdsh 单独 + 内置 TLS：公网浏览器直接遥控](doc/blog/zh/02-cloud-single-tls.md)
-  - [③ apache2 反代 + acme.sh 证书自动续期](doc/blog/zh/03-cloud-apache-acme.md)
-  - [④ nginx 反代（443 共端口）](doc/blog/zh/04-cloud-nginx.md)
+  - [② 把 DSH 智能体搬到云服务器：浏览器输密码就能遥控（证书自备）](doc/blog/zh/02-cloud-single-tls.md)
+  - [③ DSH 智能体的 HTTPS 交给 apache2：正式域名 + 证书全自动续期](doc/blog/zh/03-cloud-apache-acme.md)
+  - [④ 用 nginx 给 DSH 智能体套 HTTPS：443 共端口、证书自动续期](doc/blog/zh/04-cloud-nginx.md)
   - [⑤ 没有公网 IP 也能远程操控：一个网址，统一访问所有机器上的 DSH 智能体](doc/blog/zh/05-hub-public.md)
 
 ## 开发

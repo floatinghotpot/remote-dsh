@@ -111,9 +111,9 @@ Scenario guides (中文 → [doc/blog/zh/](doc/blog/zh/), English → [doc/blog/
 
 - [Control your DSH agent from your phone, at home or in the office (LAN)](doc/blog/en/01-lan-access.md)
 - Cloud-server deployment series (bilingual):
-  - [② rdsh standalone + built-in TLS: remote-control from any browser](doc/blog/en/02-cloud-single-tls.md)
-  - [③ Apache2 reverse proxy + acme.sh auto-renewed certs](doc/blog/en/03-cloud-apache-acme.md)
-  - [④ nginx reverse proxy (shared port 443)](doc/blog/en/04-cloud-nginx.md)
+  - [② Put your DSH agent on a cloud server: sign in from any browser (own TLS cert)](doc/blog/en/02-cloud-single-tls.md)
+  - [③ Let Apache2 handle DSH HTTPS: real domain + automatic cert renewal](doc/blog/en/03-cloud-apache-acme.md)
+  - [④ Put DSH behind nginx: shared port 443, auto-renewed HTTPS](doc/blog/en/04-cloud-nginx.md)
   - [⑤ No public IP? One URL to remote-control every DSH agent you own](doc/blog/en/05-hub-public.md)
 
 ## Development
