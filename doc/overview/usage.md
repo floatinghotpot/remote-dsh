@@ -254,8 +254,8 @@ rdsh join https://hub.example.com --token <hostToken> --insecure  # 脚本化/�
   "port": 8443,
   "tls": { "cert": "/etc/letsencrypt/live/example.com/fullchain.pem",
             "key": "/etc/letsencrypt/live/example.com/privkey.pem" },
-  "dbPath": "~/.rdsh/hub.db",      // node:sqlite；users/hosts/pending/tokens
-  "jwtKeyPath": "~/.rdsh/hub-jwt.key",  // 自动生成，0600
+  // dbPath / jwtKeyPath 省略时默认 ~/.rdsh/hub.db、~/.rdsh/hub-jwt.key（node:sqlite；自动生成，0600）
+  // 注意：config 字段值不展开 "~"，自定义路径必须写绝对路径
   "behindProxy": false             // true = 反代终止 TLS（apache2/nginx），hub 监听 http、免证书
 }
 ```

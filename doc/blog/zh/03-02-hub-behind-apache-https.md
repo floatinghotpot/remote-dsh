@@ -2,7 +2,7 @@
 
 [English](../en/03-02-hub-behind-apache-https.md) | **中文**
 
-> 2026-08-23 · remote-dsh 0.4.1
+> 2026-08-24 · remote-dsh 0.4.8（含生产部署实测更新）
 > 服务器转发模式系列：③ hub 公网直连（内置 TLS）→ **本文：hub 经 apache2 反代**
 
 ---
@@ -47,9 +47,9 @@ systemctl restart apache2
 {
   "host": "127.0.0.1",        // 只监听本机，由 apache2 转发
   "port": 8443,
-  "behindProxy": true,        // 信任反代终止的 TLS，hub 无需证书（监听 http）
-  "dbPath": "~/.rdsh/hub.db",
-  "jwtKeyPath": "~/.rdsh/hub-jwt.key"
+  "behindProxy": true         // 信任反代终止的 TLS，hub 无需证书（监听 http）
+  // dbPath / jwtKeyPath 省略时默认 ~/.rdsh/hub.db、~/.rdsh/hub-jwt.key（自动生成）
+  // 注意：config 字段值不展开 "~"，自定义路径必须写绝对路径
 }
 ```
 
@@ -70,6 +70,8 @@ acme.sh --install-cert -d hub.example.com \
 ```
 
 acme.sh 自带 cron，90 天续期零手动。
+
+> **非 root 部署变体**（rdsh 与 acme.sh 以普通用户运行，如 `<user>`）：证书目录换成**用户可写**路径（如 `~/.rdsh/`），`--reloadcmd` 需要提权 —— `--reloadcmd "sudo systemctl reload apache2"`（前提：该用户在 `/etc/sudoers.d/` 配了 NOPASSWD sudo）。
 
 ### ④ apache2 vhost：443 → 127.0.0.1:8443（含 WebSocket）
 
@@ -116,7 +118,7 @@ systemctl reload apache2
 - **XFF 只信回环**：hub 只有确认连接来自 127.0.0.1 才采信 `X-Forwarded-For`，公网直连 8443 伪造无效（何况 8443 没对外开）
 - **防火墙**：只开 443；`host: 127.0.0.1` 保证 hub 不能被绕过反代直接访问
 - **证书续期**：不用碰 hub（apache2 reload 即可）；改证书路径才重启 hub
-- **实测程度**：`behindProxy` 模式（http 启动 + XFF 限流）2026-08-23 已实现并验证；apache2 反代配置与 [02-02 apache2 篇](../zh/02-02-cloud-apache-acme.md) 同模式
+- **实测程度**：`behindProxy` 模式（http 启动 + XFF 限流）2026-08-23 实现验证；**2026-08-24 已在阿里云 ECS（Ubuntu 26.04，remote-dsh 0.4.8）生产部署实测通过**：443 反代 + WS 全通 + acme.sh 续期闭环（非 root 变体）；apache2 配置与 [02-02 apache2 篇](../zh/02-02-cloud-apache-acme.md) 同模式
 
 ## 关于项目
 

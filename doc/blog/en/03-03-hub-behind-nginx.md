@@ -43,9 +43,9 @@ npm install -g remote-dsh
 {
   "host": "127.0.0.1",        // localhost only; nginx forwards to it
   "port": 8443,
-  "behindProxy": true,        // trust the nginx-terminated TLS; no cert needed (plain http)
-  "dbPath": "~/.rdsh/hub.db",
-  "jwtKeyPath": "~/.rdsh/hub-jwt.key"
+  "behindProxy": true         // trust the nginx-terminated TLS; no cert needed (plain http)
+  // dbPath / jwtKeyPath default to ~/.rdsh/hub.db and ~/.rdsh/hub-jwt.key (auto-created)
+  // Note: config values are NOT "~"-expanded — use absolute paths when customizing
 }
 ```
 
@@ -74,6 +74,8 @@ acme.sh --install-cert -d hub.example.com \
   --key-file      /etc/letsencrypt/live/hub.example.com/privkey.pem \
   --reloadcmd     "systemctl reload nginx"
 ```
+
+> **Non-root variant** (rdsh and acme.sh run as an unprivileged user, e.g. `<user>`): deploy the cert to a **user-writable** directory (e.g. `~/.rdsh/`) and make `--reloadcmd` escalate — `--reloadcmd "sudo systemctl reload nginx"` (requires NOPASSWD sudo via `/etc/sudoers.d/`).
 
 ### ④ nginx server block: 443 → 127.0.0.1:8443
 
@@ -126,7 +128,7 @@ nginx -t && systemctl reload nginx
 - **XFF trusted from loopback only**: the hub only honors `X-Forwarded-For` from 127.0.0.1 connections; forging on public 8443 is useless
 - **Firewall**: 443 only; `host: 127.0.0.1` guarantees the hub can't be reached around the proxy
 - **Renewals never touch the hub** (nginx reloads)
-- **Tested**: `behindProxy` mode implemented and verified; the nginx setup mirrors [02-03 nginx post](../en/02-03-cloud-nginx.md)
+- **Tested**: `behindProxy` mode implemented and verified; **the Apache2 variant was production-tested 2026-08-24 on Alibaba Cloud ECS (Ubuntu 26.04, remote-dsh 0.4.8)**; the nginx setup mirrors [02-03 nginx post](../en/02-03-cloud-nginx.md) (behavior identical to the Apache2 post)
 
 ## About the project
 

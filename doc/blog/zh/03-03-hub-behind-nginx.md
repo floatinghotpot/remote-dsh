@@ -43,9 +43,9 @@ npm install -g remote-dsh
 {
   "host": "127.0.0.1",        // 只监听本机，由 nginx 转发
   "port": 8443,
-  "behindProxy": true,        // 信任 nginx 终止的 TLS，hub 无需证书（监听 http）
-  "dbPath": "~/.rdsh/hub.db",
-  "jwtKeyPath": "~/.rdsh/hub-jwt.key"
+  "behindProxy": true         // 信任 nginx 终止的 TLS，hub 无需证书（监听 http）
+  // dbPath / jwtKeyPath 省略时默认 ~/.rdsh/hub.db、~/.rdsh/hub-jwt.key（自动生成）
+  // 注意：config 字段值不展开 "~"，自定义路径必须写绝对路径
 }
 ```
 
@@ -74,6 +74,8 @@ acme.sh --install-cert -d hub.example.com \
   --key-file      /etc/letsencrypt/live/hub.example.com/privkey.pem \
   --reloadcmd     "systemctl reload nginx"
 ```
+
+> **非 root 部署变体**（rdsh 与 acme.sh 以普通用户运行，如 `<user>`）：证书目录换成**用户可写**路径（如 `~/.rdsh/`），`--reloadcmd` 需要提权 —— `--reloadcmd "sudo systemctl reload nginx"`（前提：该用户在 `/etc/sudoers.d/` 配了 NOPASSWD sudo）。
 
 ### ④ nginx server 块：443 → 127.0.0.1:8443
 
@@ -126,7 +128,7 @@ nginx -t && systemctl reload nginx
 - **XFF 只信回环**：hub 只有连接来自 127.0.0.1 才采信 `X-Forwarded-For`；公网直连 8443 伪造无效（8443 没对外开）
 - **防火墙**：只开 443；`host: 127.0.0.1` 保证 hub 不能被绕过反代直接访问
 - **证书续期**：不动 hub（nginx reload 即可）
-- **实测程度**：`behindProxy` 模式已实现并验证；nginx 反代配置与 [02-03 nginx 篇](../zh/02-03-cloud-nginx.md) 同模式
+- **实测程度**：`behindProxy` 模式已实现并验证；**apache2 反代方案已于 2026-08-24 在阿里云 ECS（Ubuntu 26.04，remote-dsh 0.4.8）生产部署实测通过**；nginx 反代配置与 [02-03 nginx 篇](../zh/02-03-cloud-nginx.md) 同模式（行为与 apache2 篇一致）
 
 ## 关于项目
 
