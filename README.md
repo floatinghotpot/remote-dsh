@@ -109,12 +109,12 @@ Public: open the hub URL, sign in, pick a machine — full DSH in the browser.
 
 ## Blog
 
-Scenario guides, organized by use case — full index: [English](doc/blog/README.md) · [中文](doc/blog/README.zh.md)
+Scenario guides, from simple to complex — full index: [English](doc/blog/README.md) · [中文](doc/blog/README.zh.md)
 
-- [Add a new host to your hub with a join token — portal, then one command on the machine (recommended)](doc/blog/en/03-04-join-token.md)
 - [Control your DSH from any device on the same LAN (pair code)](doc/blog/en/01-01-lan-access.md)
-- [Put your DSH agent on a cloud server: HTTPS + password (own cert)](doc/blog/en/02-01-cloud-single-tls.md)
-- [Deploy the hub behind Apache2 (443 + auto-renewed certs)](doc/blog/en/03-02-hub-behind-apache-https.md)
+- [Put your DSH on a cloud server: HTTPS + password (own cert)](doc/blog/en/02-01-cloud-single-tls.md)
+- [No public IP? Relay through a hub — add a host with a join token (recommended)](doc/blog/en/03-04-join-token.md)
+- [Run your own hub relay: Apache2 (443 + auto-renewed certs)](doc/blog/en/03-02-hub-behind-apache-https.md)
 
 ## Development
 

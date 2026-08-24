@@ -100,12 +100,12 @@ rdsh host join <hub-url>    # 或接入 hub（出站隧道）
 
 ## 博客
 
-场景化教程，按使用场景索引 — 完整索引：[中文](doc/blog/README.zh.md) · [English](doc/blog/README.md)
+场景化教程，从简单到复杂 — 完整索引：[中文](doc/blog/README.zh.md) · [English](doc/blog/README.md)
 
-- [用 join token 把新主机接入 hub：portal 生成 → 机器一条命令（推荐）](doc/blog/zh/03-04-join-token.md)
 - [在家/办公室用任意设备遥控开发机的 DSH（局域网配对码）](doc/blog/zh/01-01-lan-access.md)
 - [把 DSH 搬上云服务器：HTTPS + 密码直连（证书自备）](doc/blog/zh/02-01-cloud-single-tls.md)
-- [把 hub 放到 apache2 后面（443 + 证书自动续期）](doc/blog/zh/03-02-hub-behind-apache-https.md)
+- [无法 IP 直连？通过 hub 服务转发、一个账号管理多个主机（推荐）](doc/blog/zh/03-04-join-token.md)
+- [搭建你自己的 hub 转发服务：apache2（443 + 证书自动续期）](doc/blog/zh/03-02-hub-behind-apache-https.md)
 
 ## 开发
 
