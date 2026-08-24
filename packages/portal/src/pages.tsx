@@ -6,7 +6,7 @@
  */
 import { useEffect, useState } from "react";
 import { api, ApiError, subscribeEvents } from "./api.ts";
-import type { HostInfo } from "./api.ts";
+import type { HostInfo, JoinTokenInfo } from "./api.ts";
 
 const REFRESH_KEY = "rdsh_refresh";
 
@@ -33,6 +33,7 @@ export function App(): React.JSX.Element {
   const path = full.startsWith(BASE) ? full.slice(BASE.length) || "/" : "/";
   if (path === "/login") return <Login />;
   if (path === "/settings/password") return <PasswordPage />;
+  if (path === "/add-host") return <AddHostPage />;
   if (path === "/hosts" || path === "/") return <HostsPage />;
   return <HostsPage />; // 未知路径兜底 host 列表
 }
@@ -185,8 +186,9 @@ function HostsPage(): React.JSX.Element {
   return (
     <Shell title="rdsh · 我的机器" onLogout={logout}>
       {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
-      <div style={{ marginBottom: 16 }}>
-        <button onClick={() => setBindOpen(true)} style={btnStyle()}>绑定新机器</button>
+      <div style={{ marginBottom: 16, display: "flex", gap: 8 }}>
+        <button onClick={() => navigate("/add-host")} style={btnStyle()}>添加主机（免配对码）</button>
+        <button onClick={() => setBindOpen(true)} style={btnStyle("ghost")}>配对码绑定</button>
       </div>
 
       {bindOpen && (
@@ -245,6 +247,97 @@ function logout(): void {
 
 function enterHost(hostId: string): void {
   window.location.href = `/h/${encodeURIComponent(hostId)}/`;
+}
+
+// ---- 添加主机：生成用户级 join token + 接入命令（明文只显示一次）----
+
+function AddHostPage(): React.JSX.Element {
+  const [tokens, setTokens] = useState<JoinTokenInfo[]>([]);
+  const [name, setName] = useState("");
+  const [service, setService] = useState(false);
+  const [ttl, setTtl] = useState(30 * 24 * 3600);
+  const [generated, setGenerated] = useState<string | null>(null);
+  const { err, run } = useError();
+
+  const load = (): void => {
+    void run(async () => {
+      const r = await api.listJoinTokens();
+      setTokens(r.tokens.filter((t) => !t.revoked));
+    });
+  };
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  const generate = (): void => {
+    void run(async () => {
+      const r = await api.createJoinToken(name.trim() || null, ttl);
+      const hub = `https://${window.location.host}`;
+      const args = `--token ${r.token}${name.trim() ? ` --name ${name.trim()}` : ""}`;
+      setGenerated(service ? `rdsh host service install ${hub} ${args}` : `rdsh host join ${hub} ${args}`);
+      load();
+    });
+  };
+
+  const revoke = (id: string): void => {
+    if (!window.confirm("吊销该 join token？已注册主机不受影响，仅阻止未来注册。")) return;
+    void run(async () => {
+      await api.revokeJoinToken(id);
+      load();
+    });
+  };
+
+  const copy = (): void => {
+    if (generated !== null) void navigator.clipboard.writeText(generated).catch(() => undefined);
+  };
+
+  return (
+    <Shell title="rdsh · 添加主机" onLogout={logout}>
+      {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
+      <div style={{ border: "1px solid #ccc", borderRadius: 8, padding: 16, marginBottom: 16 }}>
+        {field("机器名（可选，默认取主机 hostname）", name, setName)}
+        <label style={{ display: "block", marginBottom: 12, fontSize: 13 }}>
+          <input type="checkbox" checked={service} onChange={(e) => setService(e.target.checked)} /> 常驻服务（服务器 7×24）
+        </label>
+        <label style={{ display: "block", marginBottom: 16, fontSize: 13 }}>
+          <span style={{ display: "block", marginBottom: 4 }}>有效期</span>
+          <select value={ttl} onChange={(e) => setTtl(Number(e.target.value))} style={inputStyle()}>
+            <option value={86400}>1 天</option>
+            <option value={7 * 86400}>7 天</option>
+            <option value={30 * 86400}>30 天（默认）</option>
+            <option value={90 * 86400}>90 天</option>
+            <option value={365 * 86400}>1 年</option>
+          </select>
+        </label>
+        <button onClick={generate} style={btnStyle()}>生成接入命令</button>
+      </div>
+
+      {generated !== null && (
+        <div style={{ border: "1px solid #16a34a", borderRadius: 8, padding: 16, marginBottom: 16, background: "#f0fdf4" }}>
+          <p style={{ marginTop: 0, fontSize: 13, fontWeight: 600 }}>接入命令（明文只显示这一次，请立即复制）</p>
+          <pre style={{ background: "#fff", border: "1px solid #ccc", borderRadius: 6, padding: 10, fontSize: 12, overflowX: "auto" }}>{generated}</pre>
+          <button onClick={copy} style={btnStyle()}>复制命令</button>
+          <p style={{ fontSize: 12, color: "#666", marginBottom: 0 }}>在机器终端粘贴执行（未装 rdsh 时先 <code>npm i -g remote-dsh</code>）。</p>
+        </div>
+      )}
+
+      <p style={{ fontSize: 13, color: "#666" }}>已有 join token（可注册多台主机；吊销只阻止未来注册）：</p>
+      {tokens.length === 0 ? (
+        <p style={{ color: "#999", fontSize: 13 }}>（无）</p>
+      ) : (
+        <div>
+          {tokens.map((t) => (
+            <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", border: "1px solid #eee", borderRadius: 8, marginBottom: 8 }}>
+              <span style={{ fontWeight: 500 }}>{t.label ?? "（未命名）"}</span>
+              <span style={{ color: "#666", fontSize: 12 }}>到期 {new Date(t.expiresAt).toLocaleDateString()}</span>
+              <button onClick={() => revoke(t.id)} style={{ ...btnStyle("danger"), marginLeft: "auto" }}>吊销</button>
+            </div>
+          ))}
+        </div>
+      )}
+    </Shell>
+  );
 }
 
 // ---- 修改密码 ----

@@ -137,12 +137,14 @@ export async function selfRevoke(hubUrl: string, token: string, insecure: boolea
   }
 }
 
-/** 解析 host token（--token 直填 > 持久化复用 > 配对码绑定）+ 自动检测证书；供 CLI 配置命令与 join() 复用。 */
+/** 解析 host token（--token 注册 > 持久化复用 > 配对码绑定）+ 自动检测证书；供 CLI 配置命令与 join() 复用。 */
 export async function registerJoin(opts: JoinOptions): Promise<RegisterOutcome> {
   const insecure = opts.insecure === true || (await detectInsecure(opts.hubUrl));
   let token: string;
   if (opts.token !== undefined) {
-    token = opts.token;
+    // --token = join token（或旧 host token）→ register 端点换 host token
+    const { hostToken } = await register(opts.hubUrl, opts.token, opts.name, insecure);
+    token = hostToken;
     persistToken(opts.hubUrl, token);
   } else {
     if (opts.reset === true) clearPersistedToken(opts.hubUrl);
@@ -156,6 +158,25 @@ export async function registerJoin(opts: JoinOptions): Promise<RegisterOutcome> 
     }
   }
   return { token, insecure };
+}
+
+/** 调 register 端点：join token → host token（对旧 host token 幂等返回同一 token）。 */
+async function register(
+  hubUrl: string,
+  joinToken: string,
+  name: string | undefined,
+  insecure: boolean,
+): Promise<{ hostId: string; hostToken: string }> {
+  const res = await hubRequest(hubUrl, "/api/hosts/register", { method: "POST", insecure, body: { token: joinToken, name } });
+  if (!res.ok) {
+    const msg = (res.body as { error?: { message?: string } }).error?.message ?? `HTTP ${res.status}`;
+    throw new Error(`hub rejected register: ${msg}`);
+  }
+  const b = res.body as { hostId?: string; hostToken?: string };
+  if (typeof b.hostId !== "string" || typeof b.hostToken !== "string") {
+    throw new Error("hub register returned malformed response");
+  }
+  return { hostId: b.hostId, hostToken: b.hostToken };
 }
 
 export async function join(opts: JoinOptions): Promise<void> {

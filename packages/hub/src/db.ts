@@ -46,6 +46,16 @@ export interface RefreshRow {
   createdAt: number;
 }
 
+export interface JoinTokenRow {
+  id: string;
+  label: string | null;
+  ownerId: number;
+  tokenHash: string;
+  expiresAt: number;
+  revoked: number;
+  createdAt: string;
+}
+
 export class HubDb {
   readonly db: DatabaseSync;
   /** 数据库文件路径（:memory: 测试用） */
@@ -88,6 +98,15 @@ export class HubDb {
         expires_at INTEGER NOT NULL,
         revoked INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS join_tokens (
+        id TEXT PRIMARY KEY,
+        label TEXT,
+        owner_id INTEGER NOT NULL REFERENCES users(id),
+        token_hash TEXT UNIQUE NOT NULL,
+        expires_at INTEGER NOT NULL,
+        revoked INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL
       );
     `);
   }
@@ -135,6 +154,18 @@ export class HubDb {
       expiresAt: Number(row.expires_at),
       revoked: Number(row.revoked),
       createdAt: Number(row.created_at),
+    };
+  }
+
+  private mapJoinToken(row: Record<string, unknown>): JoinTokenRow {
+    return {
+      id: String(row.id),
+      label: row.label === null || row.label === undefined ? null : String(row.label),
+      ownerId: Number(row.owner_id),
+      tokenHash: String(row.token_hash),
+      expiresAt: Number(row.expires_at),
+      revoked: Number(row.revoked),
+      createdAt: String(row.created_at),
     };
   }
 
@@ -296,5 +327,38 @@ export class HubDb {
   /** 清理过期 refresh token。 */
   pruneExpiredRefresh(now = Date.now()): void {
     this.db.prepare("DELETE FROM refresh_tokens WHERE expires_at < ? OR revoked = 1").run(now);
+  }
+
+  // ---- join tokens（用户级注册凭证，05-join-easy）----
+
+  createJoinToken(id: string, label: string | null, ownerId: number, tokenHash: string, expiresAt: number, now = new Date().toISOString()): JoinTokenRow {
+    this.db
+      .prepare("INSERT INTO join_tokens (id, label, owner_id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(id, label, ownerId, tokenHash, expiresAt, now);
+    const row = this.db.prepare("SELECT * FROM join_tokens WHERE id = ?").get(id);
+    return this.mapJoinToken(row as unknown as Record<string, unknown>);
+  }
+
+  listJoinTokens(ownerId: number): JoinTokenRow[] {
+    return (this.db.prepare("SELECT * FROM join_tokens WHERE owner_id = ? ORDER BY created_at").all(ownerId) as unknown as Array<Record<string, unknown>>).map((r) => this.mapJoinToken(r));
+  }
+
+  getJoinTokenById(id: string): JoinTokenRow | null {
+    const row = this.db.prepare("SELECT * FROM join_tokens WHERE id = ?").get(id);
+    return row === undefined ? null : this.mapJoinToken(row as unknown as Record<string, unknown>);
+  }
+
+  getJoinTokenByHash(tokenHash: string): JoinTokenRow | null {
+    const row = this.db.prepare("SELECT * FROM join_tokens WHERE token_hash = ?").get(tokenHash);
+    return row === undefined ? null : this.mapJoinToken(row as unknown as Record<string, unknown>);
+  }
+
+  revokeJoinToken(id: string): boolean {
+    const info = this.db.prepare("UPDATE join_tokens SET revoked = 1 WHERE id = ?").run(id);
+    return info.changes > 0;
+  }
+
+  pruneExpiredJoinTokens(now = Date.now()): void {
+    this.db.prepare("DELETE FROM join_tokens WHERE expires_at < ?").run(now);
   }
 }

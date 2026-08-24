@@ -287,8 +287,11 @@ rdsh hub service install|status|uninstall      # hub 服务化（rdsh-hub.servic
 ### 8.4 层 1 API（冻结契约）
 
 `POST /api/auth/login|refresh|logout|password|first-password`、`GET /api/hosts`、
-`POST /api/hosts/pending|bind`、`PATCH/DELETE /api/hosts/:id`、`WSS /api/events`（在线推送）、
+`POST /api/hosts/pending|bind|register|self-revoke|join-token`、`GET /api/hosts/join-tokens`、
+`DELETE /api/hosts/join-tokens/:id`、`PATCH/DELETE /api/hosts/:id`、`WSS /api/events`（在线推送）、
 `/h/<hostId>/...` 进入 host（校验归属 → Set-Cookie → 302 根路径；之后根路径流量按 `rdsh_host` cookie 路由）。错误统一 `{error:{code,message}}`。
+
+其中 `join-token`（需登录，生成用户级 join token，明文只显示一次）、`register`（gateway 持 join token 注册换 host token，未认证+限流）、`self-revoke`（host 持自己的 token 注销）为 05-join-easy 新增。
 
 ## 9. 安全注意事项
 

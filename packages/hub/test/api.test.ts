@@ -172,6 +172,69 @@ test("self-revoke：host 持自己的 token 注销（未认证端点）", async 
   assert.equal(again.status, 401);
 });
 
+test("join token 创建/列表/吊销", async () => {
+  const login = await post("/api/auth/login", { name: "alice", password: "pw123456" });
+  const cookie = `rdsh_session=${login.json.accessToken}`;
+  const created = await post("/api/hosts/join-token", { label: "my-token" }, cookie);
+  assert.equal(created.status, 200);
+  const id = created.json.id as string;
+  const token = created.json.token as string;
+  assert.ok(token.length >= 32);
+  assert.equal(typeof created.json.expiresAt, "number");
+  // 未认证创建 → 401
+  assert.equal((await post("/api/hosts/join-token", {})).status, 401);
+  // 列表
+  const list = await get("/api/hosts/join-tokens", cookie);
+  const tokens = list.json.tokens as Array<Record<string, unknown>>;
+  assert.equal(tokens.length, 1);
+  assert.equal(tokens[0]!.label, "my-token");
+  assert.equal(tokens[0]!.revoked, false);
+  // 吊销
+  const revoke = await fetch(base + `/api/hosts/join-tokens/${id}`, { method: "DELETE", headers: { cookie } });
+  assert.equal(revoke.status, 200);
+  const list2 = await get("/api/hosts/join-tokens", cookie);
+  assert.equal((list2.json.tokens as Array<Record<string, unknown>>)[0]!.revoked, true);
+});
+
+test("register：join token → host（多用途）；host token 幂等；无效 401", async () => {
+  const login = await post("/api/auth/login", { name: "alice", password: "pw123456" });
+  const cookie = `rdsh_session=${login.json.accessToken}`;
+  const created = await post("/api/hosts/join-token", {}, cookie);
+  const joinToken = created.json.token as string;
+
+  // 用 join token 注册
+  const reg = await post("/api/hosts/register", { token: joinToken, name: "my-ecs" });
+  assert.equal(reg.status, 200);
+  const hostId = reg.json.hostId as string;
+  const hostToken = reg.json.hostToken as string;
+  assert.ok(hostId.length > 0 && hostToken.length >= 32);
+  const hosts = await get("/api/hosts", cookie);
+  assert.ok((hosts.json.hosts as Array<Record<string, unknown>>).some((h) => h.id === hostId));
+
+  // host token 幂等 → 返回同一 hostId
+  const reg2 = await post("/api/hosts/register", { token: hostToken });
+  assert.equal(reg2.status, 200);
+  assert.equal(reg2.json.hostId, hostId);
+
+  // 同一 join token 多用途 → 第二台
+  const reg3 = await post("/api/hosts/register", { token: joinToken, name: "my-ecs-2" });
+  assert.equal(reg3.status, 200);
+  assert.notEqual(reg3.json.hostId, hostId);
+
+  // 无效 token → 401
+  assert.equal((await post("/api/hosts/register", { token: randomToken() })).status, 401);
+});
+
+test("register：吊销的 join token 被拒", async () => {
+  const login = await post("/api/auth/login", { name: "alice", password: "pw123456" });
+  const cookie = `rdsh_session=${login.json.accessToken}`;
+  const created = await post("/api/hosts/join-token", {}, cookie);
+  const id = created.json.id as string;
+  const joinToken = created.json.token as string;
+  await fetch(base + `/api/hosts/join-tokens/${id}`, { method: "DELETE", headers: { cookie } });
+  assert.equal((await post("/api/hosts/register", { token: joinToken })).status, 401);
+});
+
 test("隔离：user B 不能访问 user A 的 host（403）", async () => {
   db.createUser("bob", await hashPassword("bobpw123"));
   const hostId = "host-for-alice";

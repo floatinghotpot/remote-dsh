@@ -291,6 +291,16 @@ async function handleHostJoin(args: string[], configPath?: string): Promise<void
   }
   if (code && opts.token !== undefined) throw new Error("不能同时使用 --code 与 --token");
   if (code) opts.reset = true; // 强制配对码：清除持久化后走绑定
+  else if (opts.token === undefined && readPersistedToken(hubUrl) === null) {
+    // 无 --token 且无持久化 session：TTY 交互粘贴 token；非 TTY 报错不 hang
+    if (process.stdin.isTTY) {
+      const pasted = (await promptLine("Paste your join token (hub portal → Add host): ")).trim();
+      if (pasted === "") throw new Error("需要 join token（hub portal → 添加主机 生成），或用 `--code` 走配对码");
+      opts.token = pasted;
+    } else {
+      throw new Error("无持久化 session 且未提供 --token；交互式运行粘贴 token，或 `--code` 用配对码");
+    }
+  }
 
   const outcome = await registerJoin(opts);
   const target = resolveConfigPath(configPath);
@@ -321,22 +331,53 @@ async function handleHostServe(_args: string[], configPath?: string): Promise<vo
 async function handleHostService(args: string[], configPath?: string): Promise<void> {
   const action = args[0];
   const target = resolveConfigPath(configPath);
-  const config = await loadConfig(target);
-  const name = config.mode === "join" ? JOIN_SERVICE_NAME : HOST_SERVICE_NAME;
   switch (action) {
-    case "install":
+    case "install": {
+      await maybeRegisterForServiceInstall(args, target);
+      const config = await loadConfig(target);
+      const name = config.mode === "join" ? JOIN_SERVICE_NAME : HOST_SERVICE_NAME;
       console.log(await installService({ name, args: ["host", "serve"], configPath: target }));
       console.log(`rdsh: host service installed (${name}) —— 开机自启 + 崩溃重启。`);
       return;
-    case "status":
+    }
+    case "status": {
+      const config = await loadConfig(target);
+      const name = config.mode === "join" ? JOIN_SERVICE_NAME : HOST_SERVICE_NAME;
       console.log(`rdsh host service (${name}): ${await serviceStatus(name)}`);
       return;
-    case "uninstall":
+    }
+    case "uninstall": {
+      const config = await loadConfig(target);
+      const name = config.mode === "join" ? JOIN_SERVICE_NAME : HOST_SERVICE_NAME;
       console.log(await uninstallService(name));
       return;
+    }
     default:
       throw new Error("usage: rdsh host service install|status|uninstall");
   }
+}
+
+/** 一行接入：`host service install <hub-url> --token <t> [--name <n>]` → 注册 + 写 host.json（再装服务）。 */
+async function maybeRegisterForServiceInstall(args: string[], target: string): Promise<void> {
+  const maybeHub = args[1];
+  if (maybeHub === undefined || !/^https?:\/\//.test(maybeHub)) return; // 无 <hub>，走读 host.json 路径
+  const joinOpts: JoinOptions = { hubUrl: maybeHub };
+  for (let i = 2; i < args.length; i++) {
+    const flag = args[i];
+    if (flag === "--token") joinOpts.token = args[++i];
+    else if (flag === "--name") joinOpts.name = args[++i];
+    else if (flag === "--dsh") joinOpts.dshPath = args[++i];
+    else if (flag === "--insecure") joinOpts.insecure = true;
+    else throw new Error(`unknown option '${flag}'`);
+  }
+  const outcome = await registerJoin(joinOpts);
+  const cfg = await loadConfig(target);
+  cfg.mode = "join";
+  cfg.hub = maybeHub;
+  cfg.name = joinOpts.name ?? osHostname();
+  cfg.insecure = outcome.insecure;
+  cfg.dshPath = joinOpts.dshPath ?? findDsh() ?? cfg.dshPath;
+  await saveConfig(target, cfg);
 }
 
 /** `rdsh host leave`：self-revoke + 清 session + 删 host.json → 未配置。 */
@@ -612,6 +653,18 @@ function promptPassword(prompt: string): Promise<string> {
 }
 
 let pipeLines: string[] | null = null;
+
+/** 读取一行（echo，用于粘贴 token 等非敏感输入）。 */
+function promptLine(prompt: string): Promise<string> {
+  process.stdout.write(prompt);
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise<string>((resolve) => {
+    rl.question("", (answer) => {
+      rl.close();
+      resolve(answer);
+    });
+  });
+}
 
 function nextPipeLine(): Promise<string> {
   if (pipeLines !== null) {

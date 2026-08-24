@@ -8,6 +8,13 @@ export interface HostInfo {
   createdAt: string;
 }
 
+export interface JoinTokenInfo {
+  id: string;
+  label: string | null;
+  expiresAt: number;
+  revoked: boolean;
+}
+
 export interface LoginResponse {
   accessToken: string;
   refreshToken: string;
@@ -80,6 +87,15 @@ export const api = {
   },
   revokeHost(hostId: string): Promise<{ ok: boolean }> {
     return jsonFetch(`/api/hosts/${hostId}`, { method: "DELETE" });
+  },
+  createJoinToken(label: string | null, ttlSeconds: number): Promise<{ id: string; token: string; expiresAt: number }> {
+    return jsonFetch("/api/hosts/join-token", { method: "POST", body: JSON.stringify({ label, ttlSeconds }) });
+  },
+  listJoinTokens(): Promise<{ tokens: JoinTokenInfo[] }> {
+    return jsonFetch("/api/hosts/join-tokens");
+  },
+  revokeJoinToken(id: string): Promise<{ ok: boolean }> {
+    return jsonFetch(`/api/hosts/join-tokens/${id}`, { method: "DELETE" });
   },
 };
 

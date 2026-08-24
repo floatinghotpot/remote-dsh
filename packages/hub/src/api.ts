@@ -17,6 +17,9 @@ import { randomToken, sha256 } from "./jwt.ts";
 export const SESSION_COOKIE = "rdsh_session";
 const PAIR_CODE_TTL_MS = 10 * 60 * 1000; // 配对码 10 分钟
 const PENDING_RATE_LIMIT = { max: 10, windowMs: 60 * 1000 }; // pending 创建防滥用：10 次/分钟/IP
+const JOIN_TOKEN_DEFAULT_TTL = 30 * 24 * 3600; // join token 默认 30 天（秒）
+const JOIN_TOKEN_MAX_TTL = 365 * 24 * 3600; // join token 上限 1 年（秒）
+const REGISTER_RATE_LIMIT = { max: 10, windowMs: 60 * 1000 }; // register 未认证端点：10 次/分钟/IP
 
 export interface HubRuntime {
   config: HubConfig;
@@ -120,6 +123,23 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, runti
   }
   if (path === "/api/hosts/self-revoke" && method === "POST") {
     await handleSelfRevoke(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/hosts/register" && method === "POST") {
+    await handleRegister(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/hosts/join-token" && method === "POST") {
+    await handleCreateJoinToken(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/hosts/join-tokens" && method === "GET") {
+    await handleListJoinTokens(req, res, runtime);
+    return true;
+  }
+  const joinTokenMatch = /^\/api\/hosts\/join-tokens\/([^/]+)$/.exec(path);
+  if (joinTokenMatch !== null && method === "DELETE") {
+    await handleRevokeJoinToken(req, res, runtime, decodeURIComponent(joinTokenMatch[1]!));
     return true;
   }
   const pendingMatch = /^\/api\/hosts\/pending\/([^/]+)$/.exec(path);
@@ -312,6 +332,7 @@ const pendingRate = new Map<string, { count: number; windowStart: number }>();
 const loginLimiters = new Map<string, ReturnType<typeof createLoginLimiter>>();
 const SELF_REVOKE_RATE_LIMIT = { max: 10, windowMs: 60 * 1000 }; // 未认证端点：10 次/分钟/IP
 const selfRevokeRate = new Map<string, { count: number; windowStart: number }>();
+const registerRate = new Map<string, { count: number; windowStart: number }>();
 
 function generateUniqueCode(runtime: HubRuntime): string {
   for (let i = 0; i < 100; i++) {
@@ -446,6 +467,107 @@ async function handleSelfRevoke(req: IncomingMessage, res: ServerResponse, runti
   revokeHost(runtime, host.id, host.ownerId);
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({ ok: true, revoked: host.id }));
+}
+
+/** 创建用户级 join token（需登录）：{label?, ttlSeconds?} → 返回明文一次，服务端只存 SHA-256。 */
+async function handleCreateJoinToken(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const auth = authenticate(req, runtime);
+  if (auth === null) {
+    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
+    return;
+  }
+  const body = await readJsonBody(req);
+  const label = typeof body?.label === "string" && body.label.length > 0 ? body.label.slice(0, 64) : null;
+  let ttlSeconds = JOIN_TOKEN_DEFAULT_TTL;
+  if (body?.ttlSeconds !== undefined) {
+    if (!Number.isInteger(body.ttlSeconds) || (body.ttlSeconds as number) <= 0 || (body.ttlSeconds as number) > JOIN_TOKEN_MAX_TTL) {
+      writeError(res, 400, "BAD_REQUEST", `ttlSeconds must be 1..${JOIN_TOKEN_MAX_TTL}`);
+      return;
+    }
+    ttlSeconds = body.ttlSeconds as number;
+  }
+  const id = randomUUID();
+  const token = randomToken();
+  const expiresAt = Date.now() + ttlSeconds * 1000;
+  runtime.db.createJoinToken(id, label, auth.userId, sha256(token), expiresAt);
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ id, token, expiresAt }));
+}
+
+/** join token 列表（需登录，仅 owner）。 */
+async function handleListJoinTokens(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const auth = authenticate(req, runtime);
+  if (auth === null) {
+    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
+    return;
+  }
+  const tokens = runtime.db.listJoinTokens(auth.userId).map((t) => ({
+    id: t.id,
+    label: t.label,
+    expiresAt: t.expiresAt,
+    revoked: t.revoked === 1,
+  }));
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ tokens }));
+}
+
+/** 吊销 join token（需登录，仅 owner）→ 只阻止未来注册，已注册主机不受影响。 */
+async function handleRevokeJoinToken(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime, id: string): Promise<void> {
+  const auth = authenticate(req, runtime);
+  if (auth === null) {
+    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
+    return;
+  }
+  const token = runtime.db.getJoinTokenById(id);
+  if (token === null || token.ownerId !== auth.userId) {
+    writeError(res, 403, "FORBIDDEN", "not owned by you");
+    return;
+  }
+  runtime.db.revokeJoinToken(id);
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ ok: true, revoked: id }));
+}
+
+/** register：gateway 持 join token 注册（未认证 + IP 限流）→ 建 host → 返回 host token。 */
+async function handleRegister(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const ip = clientIp(req, runtime);
+  const now = Date.now();
+  const hit = registerRate.get(ip);
+  if (hit !== undefined && now - hit.windowStart < REGISTER_RATE_LIMIT.windowMs) {
+    if (hit.count >= REGISTER_RATE_LIMIT.max) {
+      writeError(res, 429, "RATE_LIMITED", "too many register requests");
+      return;
+    }
+    hit.count += 1;
+  } else {
+    registerRate.set(ip, { count: 1, windowStart: now });
+  }
+  const body = await readJsonBody(req);
+  if (body === null || typeof body.token !== "string" || body.token.length < 16) {
+    writeError(res, 400, "BAD_REQUEST", "invalid body (token required)");
+    return;
+  }
+  const name = typeof body.name === "string" && body.name.length > 0 ? body.name.slice(0, 64) : undefined;
+  const hash = sha256(body.token);
+
+  // 1) 已是 host token → 幂等返回（兼容旧 --token <hostToken>）
+  const existing = runtime.db.findHostByTokenHash(hash);
+  if (existing !== null) {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ hostId: existing.id, hostToken: body.token }));
+    return;
+  }
+  // 2) join token → 校验 + 建 host（预留账号配额检查点，SaaS 时在此加 host 数限制）
+  const jt = runtime.db.getJoinTokenByHash(hash);
+  if (jt === null || jt.revoked === 1 || jt.expiresAt <= now) {
+    writeError(res, 401, "UNAUTHORIZED", "join token invalid, expired, or revoked");
+    return;
+  }
+  const hostId = randomUUID();
+  const hostToken = randomToken();
+  runtime.db.createHost(hostId, jt.ownerId, name ?? `host-${hostId.slice(0, 8)}`, sha256(hostToken));
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ hostId, hostToken }));
 }
 
 function sessionCookie(accessToken: string): string {
