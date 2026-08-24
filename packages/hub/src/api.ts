@@ -504,6 +504,7 @@ async function handleListJoinTokens(req: IncomingMessage, res: ServerResponse, r
   const tokens = runtime.db.listJoinTokens(auth.userId).map((t) => ({
     id: t.id,
     label: t.label,
+    fingerprint: `${t.tokenHash.slice(0, 6)}…${t.tokenHash.slice(-4)}`,
     expiresAt: t.expiresAt,
     revoked: t.revoked === 1,
   }));

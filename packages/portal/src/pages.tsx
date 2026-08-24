@@ -325,14 +325,15 @@ function AddHostPage(): React.JSX.Element {
         </div>
       )}
 
-      <p style={{ fontSize: 13, color: "#666" }}>已有 join token（可注册多台主机；吊销只阻止未来注册）：</p>
+      <p style={{ fontSize: 13, color: "#666", fontWeight: 600 }}>Auth Tokens</p>
       {tokens.length === 0 ? (
         <p style={{ color: "#999", fontSize: 13 }}>（无）</p>
       ) : (
         <div>
           {tokens.map((t) => (
             <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", border: "1px solid #eee", borderRadius: 8, marginBottom: 8 }}>
-              <span style={{ fontWeight: 500 }}>{t.label ?? "（未命名）"}</span>
+              <span style={{ fontWeight: 500 }}>{t.label ?? "未命名"}</span>
+              <code style={{ fontSize: 12, color: "#666", background: "#f3f4f6", padding: "2px 6px", borderRadius: 4 }}>{t.fingerprint}</code>
               <span style={{ color: "#666", fontSize: 12 }}>到期 {new Date(t.expiresAt).toLocaleDateString()}</span>
               <button onClick={() => revoke(t.id)} style={{ ...btnStyle("danger"), marginLeft: "auto" }}>吊销</button>
             </div>

@@ -11,6 +11,7 @@ export interface HostInfo {
 export interface JoinTokenInfo {
   id: string;
   label: string | null;
+  fingerprint: string;
   expiresAt: number;
   revoked: boolean;
 }
