@@ -1,9 +1,9 @@
 # 06-dsh-plugin — 讨论（discussion.md）
 
 > **日期**: 2026-08-24
-> **范围**: M4 —— DSH 插件形态的 rdsh-gateway：`dsh plugin add` 一个插件即获网关/join，免装 CLI
+> **范围**: M4 —— DSH 插件形态的 rdsh-gateway：`dsh plugin add dsh-web-remote` 即获网关/join，免装 CLI
 > **来源**: `doc/overview/roadmap.md`（M4）；04-cli-refactor / 05-join-easy 讨论中留的钩子（05 §2.6、D13）
-> **状态**: 讨论记录（草稿；前置调研进行中；命名未定稿）
+> **状态**: 讨论记录（主名已定稿 `dsh-web-remote`；前置调研 P1/P3/P5 进行中）
 
 ---
 
@@ -102,10 +102,10 @@ scoped（保留空间，免疫抢注，未做）：`@remote-dsh/…` / `@rdsh/�
 
 ### 4.3 决策状态
 
-- **已预留 3 名**（0.0.0）：`dsh-plugin-rdsh` / `dsh-tunnel` / `dsh-web-remote`；
-- **主名未定稿**：在已预留 3 名里定一个（倾向 `dsh-plugin-rdsh`），其余留作占位/备胎；
+- **主名已定稿：`dsh-web-remote`**（2026-08-24 定案；已预留 0.0.0）；
+- 其余已预留（占位/备胎）：`dsh-plugin-rdsh` / `dsh-tunnel`；
 - **待办 P6**：创建 `remote-dsh`（或 `rdsh`）npm org 锁 scope（若走 scoped 路线）；
-- **文档纪律**：README / roadmap 在定稿前不写全名（只写 `dsh plugin add`）；本 discussion 持续记录命名决策。
+- **文档纪律**：README / roadmap 在**实现前**不写全名（只写 `dsh plugin add`）。
 
 ## 5. 关键设计问题（待决，进 req/solution）
 
