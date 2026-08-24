@@ -256,7 +256,7 @@ function AddHostPage(): React.JSX.Element {
   const [name, setName] = useState("");
   const [service, setService] = useState(false);
   const [ttl, setTtl] = useState(30 * 24 * 3600);
-  const [generated, setGenerated] = useState<string | null>(null);
+  const [generated, setGenerated] = useState<{ token: string; command: string } | null>(null);
   const { err, run } = useError();
 
   const load = (): void => {
@@ -275,7 +275,10 @@ function AddHostPage(): React.JSX.Element {
       const r = await api.createJoinToken(name.trim() || null, ttl);
       const hub = `https://${window.location.host}`;
       const args = `--token ${r.token}${name.trim() ? ` --name ${name.trim()}` : ""}`;
-      setGenerated(service ? `rdsh host service install ${hub} ${args}` : `rdsh host join ${hub} ${args}`);
+      setGenerated({
+        token: r.token,
+        command: service ? `rdsh host service install ${hub} ${args}` : `rdsh host join ${hub} ${args}`,
+      });
       load();
     });
   };
@@ -288,8 +291,8 @@ function AddHostPage(): React.JSX.Element {
     });
   };
 
-  const copy = (): void => {
-    if (generated !== null) void navigator.clipboard.writeText(generated).catch(() => undefined);
+  const copy = (text: string): void => {
+    void navigator.clipboard.writeText(text).catch(() => undefined);
   };
 
   return (
@@ -319,8 +322,11 @@ function AddHostPage(): React.JSX.Element {
       {generated !== null && (
         <div style={{ border: "1px solid #16a34a", borderRadius: 8, padding: 16, marginBottom: 16, background: "#f0fdf4" }}>
           <p style={{ marginTop: 0, fontSize: 13, fontWeight: 600 }}>接入命令（明文只显示这一次，请立即复制）</p>
-          <pre style={{ background: "#fff", border: "1px solid #ccc", borderRadius: 6, padding: 10, fontSize: 12, overflowX: "auto" }}>{generated}</pre>
-          <button onClick={copy} style={btnStyle()}>复制命令</button>
+          <pre style={{ background: "#fff", border: "1px solid #ccc", borderRadius: 6, padding: 10, fontSize: 12, overflowX: "auto" }}>{generated.command}</pre>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={() => copy(generated.command)} style={btnStyle()}>复制命令</button>
+            <button onClick={() => copy(generated.token)} style={btnStyle("ghost")}>复制 token</button>
+          </div>
           <p style={{ fontSize: 12, color: "#666", marginBottom: 0 }}>在机器终端粘贴执行（未装 rdsh 时先 <code>npm i -g remote-dsh</code>）。</p>
         </div>
       )}
