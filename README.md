@@ -114,7 +114,7 @@ Scenario guides, from simple to complex — full index: [English](doc/blog/READM
 - [Control your DSH from any device on the same LAN (pair code)](doc/blog/en/01-01-lan-access.md)
 - [Put your DSH on a cloud server: HTTPS + password (own cert)](doc/blog/en/02-01-cloud-single-tls.md)
 - [No public IP? Relay through a hub — add a host with a join token (recommended)](doc/blog/en/03-04-join-token.md)
-- [Run your own hub relay: Apache2 (443 + auto-renewed certs)](doc/blog/en/03-02-hub-behind-apache-https.md)
+- [Run your own hub relay: hub + Apache2 (443 + auto-renewed certs)](doc/blog/en/03-02-hub-behind-apache-https.md)
 
 ## Development
 

@@ -105,7 +105,7 @@ rdsh host join <hub-url>    # 或接入 hub（出站隧道）
 - [在家/办公室用任意设备遥控开发机的 DSH（局域网配对码）](doc/blog/zh/01-01-lan-access.md)
 - [把 DSH 搬上云服务器：HTTPS + 密码直连（证书自备）](doc/blog/zh/02-01-cloud-single-tls.md)
 - [无法 IP 直连？通过 hub 服务转发、一个账号管理多个主机（推荐）](doc/blog/zh/03-04-join-token.md)
-- [搭建你自己的 hub 转发服务：apache2（443 + 证书自动续期）](doc/blog/zh/03-02-hub-behind-apache-https.md)
+- [搭建你自己的 hub 转发服务：hub + apache2（443 + 证书自动续期）](doc/blog/zh/03-02-hub-behind-apache-https.md)
 
 ## 开发
 
