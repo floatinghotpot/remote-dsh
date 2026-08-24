@@ -2,7 +2,7 @@
 
 > **日期**: 2026-08-23
 > **来源**: `proposal.md` §8 里程碑 + §10 决策记录（Q1–Q10）
-> **状态**: M3 公网 hub 验收通过（2026-08-23）；下一里程碑 M4（dsh-plugin-rdsh 插件）
+> **状态**: M3 公网 hub 验收通过（2026-08-23）；下一工作：**04-cli-refactor → 05-join-easy → M4（dsh-plugin-rdsh 插件）**
 
 ## 里程碑总览
 
@@ -67,6 +67,23 @@
 - **前提**：层 1（hub 对外 API）与层 2（rdsh-tunnel）契约文档先行（协议先行纪律）
 - **相关决策**：Q6（提供 Docker 镜像，主分发 npm 包/单二进制）
 
+### 前置特性：04-cli-refactor + 05-join-easy（2026-08-24 新增，M4 之前）
+
+> 两个非里程碑 feature，排在 M4 之前完成（顺序：**04 → 05 → M4**）。
+
+#### 04-cli-refactor ⏳
+
+- **内容**：CLI 组件化重构 —— `rdsh host {setup lan|cloud, join, serve, service, leave, user}` + `rdsh hub *`；`~/.rdsh/host.json` 唯一配置（**3 模式 lan/cloud/join**）；`config.json` 自动迁移；**self-revoke 端点**；证书自动检测；服务名对齐（`rdsh-host` / `rdsh-join` / `rdsh-hub`）
+- **来源**：`doc/feature/04-cli-refactor/`（discussion ✅、req ✅ 待批准，2026-08-24）
+- **验收**：命令树正确；host.json 读写/迁移；`setup lan/cloud`、`join` 配置向导；`serve` 按 mode 分发；`leave` 自注销回未配置；证书自动检测；三服务名互不覆盖；hub 命令行为不变
+
+#### 05-join-easy ⏳
+
+- **内容**：join 接入体验 —— portal 自助生成**用户级 join token**（30 天默认可配、只显示一次、可吊销、哈希存储）；`rdsh host join <hub>` 交互注册免配对；`rdsh host service install --token/--name`；portal「添加主机」页（生成/复制命令）
+- **依赖**：04-cli-refactor（命令树）+ `doc/fix/20260824-portal-apikey-pastebox`（P1，API key 归 DSH 管理）
+- **来源**：`doc/feature/05-join-easy/`（discussion ✅、req ✅ 待批准，2026-08-24）
+- **验收**：portal 生成 → 机器粘贴 → 注册 → 在线；重启免配；吊销/过期被拒；配对码保留（`--code`）；API key 由 DSH 自管
+
 ### M4 dsh-plugin-rdsh ⏳（2026-08-23 新增）
 
 - **背景**：host 侧接入目前需 `npm i -g remote-dsh` + `rdsh serve/join`；DSH 插件生态（Cordis）允许把 gateway 能力做进插件 —— 用户 `dsh plugin add dsh-plugin-rdsh` 即获同能力，免装 CLI
@@ -104,11 +121,13 @@
 - **约束**：Flutter 不可用于小程序（平台硬约束）；原生实现最稳、审核风险最低
 - **相关决策**：Q3（小程序后置）
 
-## 当前焦点（M3 收尾 → M4 dsh-plugin-rdsh）
+## 当前焦点（M3 收尾 → 04-cli-refactor → 05-join-easy → M4 dsh-plugin-rdsh）
 
-1. **发布收尾**：四包已发布（tunnel 0.1.0 / hub 0.1.0 / gateway 0.2.0 / remote-dsh 0.4.1），0.4.0 已 deprecate
-2. **M4 启动**：dsh-plugin-rdsh —— 先调研 dsh 插件规范（Cordis 插件 API、`dsh plugin add` 流程、子进程/端口能力），再定 discussion → req → plan
-3. **顺手项**：`--token` e2e 补测；join 孤儿 dsh 兜底；300 MB 压测（可并入 M7）
+1. **发布收尾**：待发布 `rdsh-hub@0.2.4`、`rdsh-gateway@0.2.3`、`remote-dsh@0.4.9`（host cookie + join token 持久化 + fail-fast + join service install 已实现）
+2. **04-cli-refactor**：discussion/req ✅（待批准）→ solution → plan → 实现
+3. **05-join-easy**：discussion/req ✅（待批准，依赖 04）→ solution → plan → 实现
+4. **M4 启动**：dsh-plugin-rdsh —— 先调研 dsh 插件规范（Cordis 插件 API、`dsh plugin add` 流程、子进程/端口能力）；**插件命名待定**（候选 `dsh-plugin-rdsh` / `dsh-remote-visit`；第三方已占 `dsh-plugin-remote`、`dsh-remote-access`、`dsh-remote-gateway`）
+5. **顺手项**：paste-box 修复（P1，`doc/fix/20260824-portal-apikey-pastebox`）；join 孤儿 dsh 兜底；300 MB 压测（可并入 M7）
 
 ## 变更记录
 
@@ -121,5 +140,6 @@
 | 2026-08-23 | **M3 验收通过**：层 1/层 2 契约冻结 + join 隧道 + hub + portal；单测 92/92 + M3 e2e 23/23 + M1/M2 回归 57；修复 method 透传/流生命周期/限流计数 |
 | 2026-08-23 | **里程碑重排**：新增 M4 dsh-plugin-rdsh（DSH 插件形态的 gateway，免装 CLI，复用 M3 能力）；原 M4 起全部顺延（多租户→M5，App→M6，上线→M7，Go+E2E→M8，小程序→M9） |
 | 2026-08-23 | **里程碑重排**：移动端 App 移至 hub Go 化之后（M8）—— 纯 npm 包配合浏览器访问 hub URL 已够用，App 后置；序列：M6 上线准备 → M7 hub Go 化 → M8 移动端 App → M9 小程序 |
+| 2026-08-24 | **新增前置特性 04/05（M4 之前）**：04-cli-refactor（CLI 组件化 `rdsh host *` + host.json 3 模式 + self-revoke + 自动迁移 + 证书自动检测）与 05-join-easy（用户级 join token + `host join` 交互注册免配对 + portal「添加主机」页）；discussion/req 已定（待批准）；发布收尾（hub 0.2.4 / gateway 0.2.3 / cli 0.4.9 待发） |
 
 *关联文档：proposal.md | doc/overview/architecture.md | doc/feature/01-remote-access/*

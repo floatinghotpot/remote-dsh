@@ -6,22 +6,55 @@ Make your DeepSeek Harness available anywhere.
 
 ![rdsh logo](media/rdsh256.png)
 
+## Summary
+
 **remote-dsh** adds a secure remote-access layer on top of
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH):
 run `dsh web` as usual on your machine, then operate it from any device —
 another laptop or phone in the same LAN, and (with the hub) from anywhere on
 the internet.
 
+## Architecture
+
+```
+        Client (browser / app / weapp)
+                    │
+                    │  HTTPS/WSS — layer 1: hub public API
+                    ▼
+                rdsh-hub
+                    │
+                    │  WSS tunnel — layer 2: rdsh-tunnel
+                    ▼
+             rdsh-gateway
+                    │
+                    │  HTTP (loopback)
+                    ▼
+          dsh web (127.0.0.1)
+```
+
+Two protocol layers: **layer 1** (hub public API, JSON over HTTPS + WSS events)
+is the only contract clients implement; **layer 2** (`rdsh-tunnel`) runs between
+hub and gateway only — clients never implement it.
+
+## Components
+
+| Component | Name | Role |
+|---|---|---|
+| CLI | `rdsh` | `rdsh serve` (LAN) / `rdsh join <hub>` (public) / `rdsh hub ...` |
+| Server | rdsh-hub | control plane (auth, host registry, routing) + data plane (tunnel relay) |
+| Host agent | rdsh-gateway | LAN auth gateway / outbound tunnel endpoint; spawns `dsh web` |
+| Tunnel protocol | rdsh-tunnel | wire protocol: framing, multiplexing, heartbeat |
+| Portal | rdsh-portal | web login + host list (Vite + React) |
+| Mobile app | rdsh-app | Flutter (Android/iOS) |
+| WeChat mini program | rdsh-weapp | lightweight client |
+
 ## Status
 
 **M1–M3 complete** (2026-08-23): the LAN gateway (`rdsh serve`), cloud-server
 direct access (TLS + password), and the public hub (`rdsh join` + `rdsh hub` +
 portal) are implemented and verified (unit 92/92, e2e M3 23/23, M1/M2 regression
-57). Next milestone: M4 multi-tenant enhancements.
-See [doc/feature/](doc/feature/) for the requirements pipeline,
-[doc/overview/roadmap.md](doc/overview/roadmap.md) for the roadmap, and
-[doc/overview/proposal.md](doc/overview/proposal.md) for the full product
-proposal.
+57). Next milestone: **M4 dsh-plugin-rdsh** (gateway/join as a DSH plugin — no
+CLI install).
 
 ## Features
 
@@ -56,6 +89,7 @@ Implemented `[x]` · planned `[ ]` — from the user's point of view
 - [x] Run the hub with built-in TLS, or behind Apache2 / nginx (443, auto-renewed certs)
 
 **M4+ — Planned**
+- [ ] Use it as a DSH plugin: add it with `dsh plugin add` — remote access with no CLI install
 - [ ] Mobile apps (Android / iOS)
 - [ ] WeChat mini program
 - [ ] Share a machine with your team
@@ -73,43 +107,9 @@ rdsh join <hub-url>        # on each machine: outbound tunnel to the hub
 LAN: open `http://<your-ip>:<port>`, enter the pairing code from your terminal.
 Public: open the hub URL, sign in, pick a machine — full DSH in the browser.
 
-## Components
-
-| Component | Name | Role |
-|---|---|---|
-| CLI | `rdsh` | `rdsh serve` (LAN) / `rdsh join <hub>` (public) / `rdsh hub ...` |
-| Server | rdsh-hub | control plane (auth, host registry, routing) + data plane (tunnel relay) |
-| Host agent | rdsh-gateway | LAN auth gateway / outbound tunnel endpoint; spawns `dsh web` |
-| Tunnel protocol | rdsh-tunnel | wire protocol: framing, multiplexing, heartbeat |
-| Portal | rdsh-portal | web login + host list (Vite + React) |
-| Mobile app | rdsh-app | Flutter (Android/iOS) |
-| WeChat mini program | rdsh-weapp | lightweight client |
-
-## Architecture
-
-```
-        Client (browser / app / weapp)
-                    │
-                    │  HTTPS/WSS — layer 1: hub public API
-                    ▼
-                rdsh-hub
-                    │
-                    │  WSS tunnel — layer 2: rdsh-tunnel
-                    ▼
-             rdsh-gateway
-                    │
-                    │  HTTP (loopback)
-                    ▼
-          dsh web (127.0.0.1)
-```
-
-Two protocol layers: **layer 1** (hub public API, JSON over HTTPS + WSS events)
-is the only contract clients implement; **layer 2** (`rdsh-tunnel`) runs between
-hub and gateway only — clients never implement it.
-
 ## Blog
 
-Scenario guides (中文 → [doc/blog/zh/](doc/blog/zh/), English → [doc/blog/en/](doc/blog/en/)):
+Scenario guides:
 
 - Access a DSH on another host via LAN IP (LAN mode):
   - [Control your DSH agent from your phone, at home or in the office (LAN)](doc/blog/en/01-01-lan-access.md)
@@ -131,10 +131,6 @@ Scenario guides (中文 → [doc/blog/zh/](doc/blog/zh/), English → [doc/blog/
 - TypeScript monorepo (`packages/*`), Flutter app (`apps/app`), WeChat mini
   program (`apps/weapp`), future Go hub (`go/`)
 - See [CONTRIBUTING.md](CONTRIBUTING.md) and the internal docs under `doc/`
-
-## Maintainers
-
-- [Liming Xie](https://github.com/floatinghotpot) — liming.xie@gmail.com
 
 ## License
 
