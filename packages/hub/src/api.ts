@@ -118,6 +118,10 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, runti
     await handleBind(req, res, runtime);
     return true;
   }
+  if (path === "/api/hosts/self-revoke" && method === "POST") {
+    await handleSelfRevoke(req, res, runtime);
+    return true;
+  }
   const pendingMatch = /^\/api\/hosts\/pending\/([^/]+)$/.exec(path);
   if (pendingMatch !== null && method === "GET") {
     await handlePollPending(req, res, runtime, decodeURIComponent(pendingMatch[1]!));
@@ -306,6 +310,8 @@ async function handleCreatePending(req: IncomingMessage, res: ServerResponse, ru
 
 const pendingRate = new Map<string, { count: number; windowStart: number }>();
 const loginLimiters = new Map<string, ReturnType<typeof createLoginLimiter>>();
+const SELF_REVOKE_RATE_LIMIT = { max: 10, windowMs: 60 * 1000 }; // 未认证端点：10 次/分钟/IP
+const selfRevokeRate = new Map<string, { count: number; windowStart: number }>();
 
 function generateUniqueCode(runtime: HubRuntime): string {
   for (let i = 0; i < 100; i++) {
@@ -399,14 +405,47 @@ async function handleRevokeHost(req: IncomingMessage, res: ServerResponse, runti
     writeError(res, 403, "FORBIDDEN", "host not owned by you");
     return;
   }
+  revokeHost(runtime, hostId, auth.userId);
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ ok: true, revoked: hostId }));
+}
+
+/** 删除 host + 断隧道 + 摘注册表 + 推送 offline（用户吊销 / host 自吊销共用）。 */
+function revokeHost(runtime: HubRuntime, hostId: string, ownerId: number): void {
   runtime.db.removeHost(hostId);
-  // 立即断开隧道（重连也会因 token 已删被拒）
   const conn = runtime.tunnels.get(hostId);
   if (conn !== null) conn.terminate();
   runtime.tunnels.unregister(hostId);
-  runtime.events.pushToUser(auth.userId, { type: "host.offline", hostId });
+  runtime.events.pushToUser(ownerId, { type: "host.offline", hostId });
+}
+
+/** host 自吊销：持自己的 host token 注销（未认证端点，IP 限流）。`rdsh host leave` 调用。 */
+async function handleSelfRevoke(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const ip = clientIp(req, runtime);
+  const now = Date.now();
+  const hit = selfRevokeRate.get(ip);
+  if (hit !== undefined && now - hit.windowStart < SELF_REVOKE_RATE_LIMIT.windowMs) {
+    if (hit.count >= SELF_REVOKE_RATE_LIMIT.max) {
+      writeError(res, 429, "RATE_LIMITED", "too many self-revoke requests");
+      return;
+    }
+    hit.count += 1;
+  } else {
+    selfRevokeRate.set(ip, { count: 1, windowStart: now });
+  }
+  const body = await readJsonBody(req);
+  if (body === null || typeof body.token !== "string" || body.token.length < 16) {
+    writeError(res, 400, "BAD_REQUEST", "invalid body (token required)");
+    return;
+  }
+  const host = runtime.db.findHostByTokenHash(sha256(body.token));
+  if (host === null) {
+    writeError(res, 401, "UNAUTHORIZED", "host token not found");
+    return;
+  }
+  revokeHost(runtime, host.id, host.ownerId);
   res.writeHead(200, { "content-type": "application/json" });
-  res.end(JSON.stringify({ ok: true, revoked: hostId }));
+  res.end(JSON.stringify({ ok: true, revoked: host.id }));
 }
 
 function sessionCookie(accessToken: string): string {

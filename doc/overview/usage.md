@@ -235,26 +235,29 @@ server {
 ```
 
 ```bash
-rdsh hub serve                     # 启动 hub（需要 tls.cert/key，公网必须 TLS）
-rdsh hub user add alice            # 管理员建号（注册关闭，防 bot；交互设初始密码）
-rdsh hub user add bob --no-password  # 不设密码，bob 首次登录自设
+# ---- 本机（DSH 主机）：rdsh host ----
+rdsh host setup lan                            # 配置为 LAN 网关（pair + http）
+rdsh host setup cloud --tls-cert <c> --tls-key <k> [--port <n>] [--allow-from <cidr,...>]
+                                               # 配置为云 HTTPS 网关（password + tls + allowFrom）
+rdsh host join https://hub.example.com          # 连 hub：粘贴 join token（--token 脚本 / --code 配对码）
+rdsh host serve                                # 前台运行（读 host.json，按 mode 分发 join/lan/cloud）
+rdsh host service install|status|uninstall     # 服务化（rdsh-host.service / rdsh-join.service）
+rdsh host leave                                # 从 hub 注销（self-revoke + 清理，回到未配置）
+rdsh host user add|passwd|ls|rm                # 本机网关用户（写 host.json auth.users）
+
+# ---- 服务器：rdsh hub ----
+rdsh hub serve                                 # 启动 hub（需 tls.cert/key，公网必须 TLS）
+rdsh hub user add alice [--no-password]        # 管理员建号（注册关闭，防 bot）
 rdsh hub user passwd|rm|ls
-rdsh hub host ls|revoke <hostId>   # revoke = 隧道立即断开、重连被拒
-rdsh hub service install           # hub 服务化（systemd/launchd）
+rdsh hub host ls|revoke <hostId>               # revoke = 隧道立即断开、重连被拒
+rdsh hub service install|status|uninstall      # hub 服务化（rdsh-hub.service）
 
-rdsh join https://hub.example.com  # 开发机：打印配对码 → 网页输码绑定 → 隧道
-rdsh join https://hub.example.com --token <hostToken> --insecure  # 脚本化/自签 hub
-rdsh join https://hub.example.com --reset  # 忘记已持久化的 host token，强制重新配对
-
-rdsh join service install https://hub.example.com [--dsh <path>] [--insecure]
-# 常驻化：生成 rdsh-join.service（systemd 用户级，独立于 hub 的 rdsh.service）
-#   - 自动探测 dsh 并内嵌 --dsh <绝对路径>（规避 systemd 的 PATH 坑）
-#   - 开机自启 + Restart=on-failure；复用持久化 token 免配对恢复
-#   - 可选环境文件 ~/.rdsh/join.env（0600，缺省不报错），放 DEEPSEEK_API_KEY 等
-rdsh join service status|uninstall
-
-# 绑定成功后 host token 持久化到 ~/.rdsh/join-<host>.token（0600）：
-# 进程重启/崩溃恢复后自动复用，无需重新配对；被吊销（401）时自动删旧文件、回退配对码流程。
+# host 配置唯一事实源 ~/.rdsh/host.json（mode: lan|cloud|join；token 只进 session 文件）
+#   { "mode": "lan", "host": "0.0.0.0", "port": 8443, "auth": { "mode": "pair", ... } }
+#   { "mode": "cloud", "tls": {...}, "auth": { "mode": "password" }, "allowFrom": [...] }
+#   { "mode": "join", "hub": "https://...", "name": "my-ecs", "insecure": false }
+# 旧 ~/.rdsh/config.json 自动迁移到 host.json（按 tls/password 推断 mode）；--config <path> 可指定。
+# join 后 host token 持久化到 ~/.rdsh/join-<host>.token（0600），重启/服务化自动复用免配。
 ```
 
 ### 8.2 hub 配置（~/.rdsh/hub.json）

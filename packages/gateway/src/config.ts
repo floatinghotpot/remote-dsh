@@ -1,14 +1,17 @@
 /**
- * config.ts — 配置加载/默认/校验。持久配置唯一来源（~/.rdsh/config.json）。
+ * config.ts — host 配置加载/默认/校验/迁移。持久配置唯一来源（~/.rdsh/host.json，3 模式）。
  *
+ * 模式：`mode = "lan" | "cloud" | "join"`（lan/cloud = 独立服务；join = 出站隧道）。
  * 优先级：CLI 参数 > config 文件 > 默认值。
- * 路径：`--config <path>` > `$RDSH_CONFIG` > 默认 `~/.rdsh/config.json`。
+ * 路径：`--config <path>` > `$RDSH_CONFIG` > 默认 `~/.rdsh/host.json`。
+ * 迁移：默认路径下 host.json 不存在但旧 `~/.rdsh/config.json` 存在时，按 tls/auth.mode 推断 mode 并写回 host.json（原文件保留）。
  */
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile, rename } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 export type AuthMode = "pair" | "password" | "none";
+export type HostMode = "lan" | "cloud" | "join";
 
 export interface TlsConfig {
   cert: string;
@@ -29,6 +32,8 @@ export interface AuthConfig {
 }
 
 export interface RdshConfig {
+  /** 运行模式：lan/cloud = 独立服务；join = 出站隧道 */
+  mode: HostMode;
   host: string;
   port: number;
   sessionTtlSeconds: number;
@@ -37,13 +42,20 @@ export interface RdshConfig {
   allowFrom: string[];
   auth: AuthConfig;
   dshPath?: string;
+  /** join 模式字段 */
+  hub?: string;
+  name?: string;
+  insecure?: boolean;
 }
 
-export const DEFAULT_CONFIG_PATH = join(homedir(), ".rdsh", "config.json");
+export const DEFAULT_HOST_CONFIG_PATH = join(homedir(), ".rdsh", "host.json");
+/** 旧版 serve 配置（迁移源，保留不删）。 */
+const LEGACY_CONFIG_PATH = join(homedir(), ".rdsh", "config.json");
 
 const DEFAULT_AUTH: AuthConfig = { mode: "pair", version: 1, users: [] };
 
 const DEFAULTS: RdshConfig = {
+  mode: "lan",
   host: "0.0.0.0",
   port: 8443,
   sessionTtlSeconds: 12 * 3600,
@@ -52,12 +64,19 @@ const DEFAULTS: RdshConfig = {
   auth: DEFAULT_AUTH,
 };
 
-/** 解析配置文件路径（--config > $RDSH_CONFIG > 默认）。 */
+/** 解析配置文件路径（--config > $RDSH_CONFIG > 默认 host.json）。 */
 export function resolveConfigPath(cliPath?: string, env: NodeJS.ProcessEnv = process.env): string {
-  return cliPath ?? env.RDSH_CONFIG ?? DEFAULT_CONFIG_PATH;
+  return cliPath ?? env.RDSH_CONFIG ?? DEFAULT_HOST_CONFIG_PATH;
 }
 
-/** 加载并校验配置；文件不存在时返回默认值。 */
+/** 原子写回配置（tmp + rename，0600）。 */
+export async function saveConfig(path: string, config: RdshConfig): Promise<void> {
+  const tmp = `${path}.tmp`;
+  await writeFile(tmp, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+  await rename(tmp, path);
+}
+
+/** 加载并校验配置；默认路径下文件不存在时尝试迁移旧 config.json，否则返回默认值。 */
 export async function loadConfig(path: string): Promise<RdshConfig> {
   let raw: unknown = {};
   try {
@@ -67,9 +86,27 @@ export async function loadConfig(path: string): Promise<RdshConfig> {
     if (code !== "ENOENT") {
       throw new Error(`failed to read config ${path}: ${(err as Error).message}`);
     }
-    // ENOENT → 默认配置
+    // ENOENT：默认路径下迁移旧 config.json → host.json（幂等：写回含 mode 的规范化配置）
+    if (path === DEFAULT_HOST_CONFIG_PATH) {
+      const legacy = await readLegacyConfig();
+      if (legacy !== null) {
+        await writeFile(path, `${JSON.stringify(normalizeConfig(legacy, LEGACY_CONFIG_PATH), null, 2)}\n`, { mode: 0o600 });
+        raw = legacy;
+      }
+    }
   }
   return normalizeConfig(raw, path);
+}
+
+/** 读取旧 ~/.rdsh/config.json（不存在 → null；坏 JSON → 抛错）。 */
+async function readLegacyConfig(): Promise<unknown | null> {
+  try {
+    return JSON.parse(await readFile(LEGACY_CONFIG_PATH, "utf8"));
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return null;
+    throw new Error(`failed to read legacy config ${LEGACY_CONFIG_PATH}: ${(err as Error).message}`);
+  }
 }
 
 /** 校验并规范化任意输入（测试/CLI 覆盖复用）。 */
@@ -82,6 +119,18 @@ export function normalizeConfig(raw: unknown, source = "config"): RdshConfig {
     ...DEFAULTS,
     auth: { ...DEFAULT_AUTH, users: [] },
   };
+
+  // ---- mode（三态；缺省按 tls/auth.mode 推断，兼容旧 config.json）----
+  if (cfg.mode !== undefined) {
+    if (cfg.mode !== "lan" && cfg.mode !== "cloud" && cfg.mode !== "join") {
+      throw new Error(`${source}: "mode" must be lan|cloud|join`);
+    }
+    out.mode = cfg.mode;
+  } else {
+    const tls = cfg.tls;
+    const authMode = (cfg.auth as Record<string, unknown> | undefined)?.mode;
+    out.mode = tls !== undefined || authMode === "password" ? "cloud" : "lan";
+  }
 
   if (cfg.host !== undefined) {
     assertString(cfg.host, "host", source);
@@ -145,6 +194,19 @@ export function normalizeConfig(raw: unknown, source = "config"): RdshConfig {
         return { name: user.name, passwordHash: user.passwordHash };
       });
     }
+  }
+  // ---- join 字段 ----
+  if (cfg.hub !== undefined) {
+    assertString(cfg.hub, "hub", source);
+    out.hub = cfg.hub;
+  }
+  if (cfg.name !== undefined) {
+    assertString(cfg.name, "name", source);
+    out.name = cfg.name;
+  }
+  if (cfg.insecure !== undefined) {
+    if (typeof cfg.insecure !== "boolean") throw new Error(`${source}: "insecure" must be boolean`);
+    out.insecure = cfg.insecure;
   }
   if (cfg.dshPath !== undefined) {
     assertString(cfg.dshPath, "dshPath", source);

@@ -152,6 +152,26 @@ test("改名 / 吊销（owner）", async () => {
   assert.equal((after.json.hosts as Array<Record<string, unknown>>).length, 0);
 });
 
+test("self-revoke：host 持自己的 token 注销（未认证端点）", async () => {
+  const hostId = "self-host";
+  const hostToken = randomToken();
+  db.createHost(hostId, 1, "self-host", sha256(hostToken)); // alice(id=1) 的 host
+
+  // 缺 token → 400
+  const bad = await post("/api/hosts/self-revoke", {});
+  assert.equal(bad.status, 400);
+  // 错误 token → 401
+  const wrong = await post("/api/hosts/self-revoke", { token: randomToken() });
+  assert.equal(wrong.status, 401);
+  // 正确 token → 200，host 被删
+  const ok = await post("/api/hosts/self-revoke", { token: hostToken });
+  assert.equal(ok.status, 200);
+  assert.equal(db.getHostById(hostId), null);
+  // 再次自吊销 → 401（已删）
+  const again = await post("/api/hosts/self-revoke", { token: hostToken });
+  assert.equal(again.status, 401);
+});
+
 test("隔离：user B 不能访问 user A 的 host（403）", async () => {
   db.createUser("bob", await hashPassword("bobpw123"));
   const hostId = "host-for-alice";

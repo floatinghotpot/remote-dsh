@@ -24,8 +24,38 @@ export interface JoinOptions {
   /** 清除持久化 token 并强制重新配对 */
   reset?: boolean;
   dshPath?: string;
-  /** 跳过 TLS 证书校验（自签 hub 用；正式证书无需） */
+  /** 跳过 TLS 证书校验（自签 hub 用；正式证书无需，缺省自动检测） */
   insecure?: boolean;
+  /** 主机名（注册命名 / host.json） */
+  name?: string;
+}
+
+/** 注册/接入结果：解析出的 host token + 是否需 insecure。 */
+export interface RegisterOutcome {
+  token: string;
+  insecure: boolean;
+}
+
+/** 判断错误是否为 TLS 证书类错误（自签/过期/域名不匹配）。 */
+function isCertError(err: unknown): boolean {
+  const code = (err as { code?: string } | null)?.code ?? "";
+  return (
+    code.includes("CERT_") ||
+    code.includes("TLS") ||
+    code.includes("SELF_SIGNED") ||
+    code.includes("UNABLE_TO_VERIFY") ||
+    code.includes("DEPTH_ZERO")
+  );
+}
+
+/** 探测 hub 是否需 insecure：以严格校验握手一次；证书错误 → true（需 insecure）。 */
+export async function detectInsecure(hubUrl: string): Promise<boolean> {
+  try {
+    await hubRequest(hubUrl, "/api/auth/login", { method: "GET", insecure: false });
+    return false; // TLS 握手成功
+  } catch (err) {
+    return isCertError(err);
+  }
 }
 
 const PENDING_POLL_MS = 5_000;
@@ -64,7 +94,7 @@ async function bind(hubUrl: string, insecure: boolean): Promise<string> {
 function hubRequest(
   baseUrl: string,
   path: string,
-  opts: { method: string; insecure: boolean },
+  opts: { method: string; insecure: boolean; body?: unknown },
 ): Promise<{ ok: boolean; status: number; body: Record<string, unknown> }> {
   const url = new URL(baseUrl + path);
   const lib = url.protocol === "https:" ? httpsRequest : httpRequest;
@@ -94,8 +124,38 @@ function hubRequest(
       },
     );
     req.on("error", reject);
-    req.end(opts.method === "POST" ? "{}" : undefined);
+    req.end(opts.method === "POST" ? JSON.stringify(opts.body ?? {}) : undefined);
   });
+}
+
+/** 调用 hub self-revoke 注销本机（host 持自己的 host token）。`rdsh host leave` 使用。 */
+export async function selfRevoke(hubUrl: string, token: string, insecure: boolean): Promise<void> {
+  const res = await hubRequest(hubUrl, "/api/hosts/self-revoke", { method: "POST", insecure, body: { token } });
+  if (!res.ok) {
+    const msg = (res.body as { error?: { message?: string } }).error?.message ?? `HTTP ${res.status}`;
+    throw new Error(`hub rejected self-revoke: ${msg}`);
+  }
+}
+
+/** 解析 host token（--token 直填 > 持久化复用 > 配对码绑定）+ 自动检测证书；供 CLI 配置命令与 join() 复用。 */
+export async function registerJoin(opts: JoinOptions): Promise<RegisterOutcome> {
+  const insecure = opts.insecure === true || (await detectInsecure(opts.hubUrl));
+  let token: string;
+  if (opts.token !== undefined) {
+    token = opts.token;
+    persistToken(opts.hubUrl, token);
+  } else {
+    if (opts.reset === true) clearPersistedToken(opts.hubUrl);
+    const persisted = readPersistedToken(opts.hubUrl);
+    if (persisted !== null) {
+      token = persisted;
+      console.log("rdsh join: reusing persisted host token");
+    } else {
+      token = await bind(opts.hubUrl, insecure);
+      persistToken(opts.hubUrl, token);
+    }
+  }
+  return { token, insecure };
 }
 
 export async function join(opts: JoinOptions): Promise<void> {
@@ -106,22 +166,9 @@ export async function join(opts: JoinOptions): Promise<void> {
   }
   const dsh = await spawnDsh(foundDsh);
   const target: ProxyTarget = { host: "127.0.0.1", port: dsh.port };
-  // token 来源优先级：--token 直填 > 持久化复用 > 配对码绑定（绑定成功后落盘）。
-  // 进程重启后复用已绑定 token，避免重复配对；被吊销时（401）自动回退重配对。
-  let token: string;
-  if (opts.token !== undefined) {
-    token = opts.token;
-  } else {
-    if (opts.reset === true) clearPersistedToken(opts.hubUrl);
-    const persisted = readPersistedToken(opts.hubUrl);
-    if (persisted !== null) {
-      token = persisted;
-      console.log("rdsh join: reusing persisted host token");
-    } else {
-      token = await bind(opts.hubUrl, opts.insecure === true);
-      persistToken(opts.hubUrl, token);
-    }
-  }
+  // 解析 host token（含证书自动检测 + 持久化）；进程重启后复用，避免重复配对。
+  const { token: initialToken, insecure } = await registerJoin(opts);
+  let token = initialToken;
   console.log(`rdsh join: dsh web on 127.0.0.1:${dsh.port}`);
   console.log(`rdsh join: connecting to ${opts.hubUrl}...`);
 
@@ -323,7 +370,7 @@ export async function join(opts: JoinOptions): Promise<void> {
     clearPersistedToken(opts.hubUrl);
     console.log("rdsh join: host token rejected (revoked?) — re-pairing...");
     try {
-      token = await bind(opts.hubUrl, opts.insecure === true);
+      token = await bind(opts.hubUrl, insecure);
       persistToken(opts.hubUrl, token);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -338,7 +385,7 @@ export async function join(opts: JoinOptions): Promise<void> {
   function connect(): void {
     if (shuttingDown) return;
     const url = `${hubWsBase}/tunnel?token=${encodeURIComponent(token)}`;
-    const client = new WebSocket(url, { rejectUnauthorized: opts.insecure !== true });
+    const client = new WebSocket(url, { rejectUnauthorized: !insecure });
 
     // 401/403 = token 被拒（吊销/不存在）。监听此事件后 ws 不再自动 abort，
     // 需手动 terminate → 触发 close → 决定「重配对」还是「普通重连」。

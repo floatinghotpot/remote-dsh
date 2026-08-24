@@ -46,7 +46,7 @@
 
 ## 状态
 
-**M1–M3 完成**（2026-08-23）：局域网网关（`rdsh serve`）、云服务器直连（TLS + 密码）、公网 hub（`rdsh join` + `rdsh hub` + portal）均已实现并验收（单测 92/92，M3 e2e 23/23，M1/M2 回归 57）。下一里程碑：**M4 dsh-plugin-rdsh**（DSH 插件形态的网关/join，免装 CLI）。
+**M1–M3 完成**（2026-08-23）：局域网网关（`rdsh host serve`）、云服务器直连（TLS + 密码）、公网 hub（`rdsh host join` + `rdsh hub` + portal）均已实现并验收（单测 92/92，M3 e2e 23/23，M1/M2 回归 57）。下一里程碑：**M4 dsh-plugin-rdsh**（DSH 插件形态的网关/join，免装 CLI）。
 
 ## 功能清单
 
@@ -91,7 +91,9 @@
 
 ```bash
 npm install -g remote-dsh   # 与 dsh 一起安装；命令是 rdsh
-rdsh serve                 # 启动局域网认证网关（自动拉起 dsh web）
+rdsh host setup lan         # 配置本机为局域网认证网关
+rdsh host serve             # 前台运行（自动拉起 dsh web）
+rdsh host join <hub-url>    # 或接入 hub（出站隧道）
 ```
 
 同网络下另一台笔记本浏览器打开 `http://<你的IP>:<端口>`，输入终端显示的配对码即可使用。

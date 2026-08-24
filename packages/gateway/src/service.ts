@@ -19,6 +19,10 @@ const execFileP = promisify(execFile);
 export const SERVICE_NAME = "rdsh";
 /** join 的独立服务名（同机可与 hub 的 rdsh.service 并存）。 */
 export const JOIN_SERVICE_NAME = "rdsh-join";
+/** host 独立服务（lan/cloud）的独立服务名。 */
+export const HOST_SERVICE_NAME = "rdsh-host";
+/** hub 的独立服务名（与 host/join 区分，避免共用 rdsh.service）。 */
+export const HUB_SERVICE_NAME = "rdsh-hub";
 
 const SYSTEMD_DIR = join(homedir(), ".config", "systemd", "user");
 const LAUNCHD_DIR = join(homedir(), "Library", "LaunchAgents");

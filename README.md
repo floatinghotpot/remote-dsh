@@ -50,8 +50,8 @@ hub and gateway only — clients never implement it.
 
 ## Status
 
-**M1–M3 complete** (2026-08-23): the LAN gateway (`rdsh serve`), cloud-server
-direct access (TLS + password), and the public hub (`rdsh join` + `rdsh hub` +
+**M1–M3 complete** (2026-08-23): the LAN gateway (`rdsh host serve`), cloud-server
+direct access (TLS + password), and the public hub (`rdsh host join` + `rdsh hub` +
 portal) are implemented and verified (unit 92/92, e2e M3 23/23, M1/M2 regression
 57). Next milestone: **M4 dsh-plugin-rdsh** (gateway/join as a DSH plugin — no
 CLI install).
@@ -99,9 +99,9 @@ Implemented `[x]` · planned `[ ]` — from the user's point of view
 
 ```bash
 npm install -g remote-dsh   # alongside dsh; command is `rdsh`
-rdsh serve                 # LAN: auth gateway that spawns dsh web
-rdsh hub serve             # public hub: multi-host outbound tunnels
-rdsh join <hub-url>        # on each machine: outbound tunnel to the hub
+rdsh host setup lan         # LAN: configure this machine as an auth gateway
+rdsh host serve             # run it (spawns dsh web)
+rdsh host join <hub-url>    # or connect to a hub (outbound tunnel)
 ```
 
 LAN: open `http://<your-ip>:<port>`, enter the pairing code from your terminal.

@@ -2,30 +2,35 @@
 /**
  * rdsh CLI 入口（手写参数解析，零依赖）。
  *
- *   rdsh serve [--config <path>] [--reset] [--port <n>] ...
- *   rdsh join <hub-url> [--token <t>] [--reset] [--dsh <path>]
- *   rdsh join service install|status|uninstall <hub-url>
+ *   rdsh host setup lan|cloud
+ *   rdsh host join <hub-url> [--token <t>] [--name <n>] [--dsh <p>] [--insecure] [--code]
+ *   rdsh host serve | service install|status|uninstall | leave | user ...
  *   rdsh hub serve|user|host|service ... [--config <path>]
- *   rdsh user add|passwd <name> | ls | rm <name>   [--config <path>]
- *   rdsh service install|uninstall|status          [--config <path>]
  *   rdsh --version | --help
  */
 import { createInterface } from "node:readline";
-import { homedir } from "node:os";
-import { resolve as resolvePath, join as joinPath } from "node:path";
+import { rm } from "node:fs/promises";
+import { hostname as osHostname } from "node:os";
 import {
   serve,
   join,
+  registerJoin,
   findDsh,
+  selfRevoke,
+  readPersistedToken,
+  clearPersistedToken,
   UserManager,
   resolveConfigPath,
+  loadConfig,
+  saveConfig,
   installService,
   uninstallService,
   serviceStatus,
-  SERVICE_NAME,
+  HOST_SERVICE_NAME,
   JOIN_SERVICE_NAME,
+  HUB_SERVICE_NAME,
 } from "rdsh-gateway";
-import type { ServeOptions, JoinOptions } from "rdsh-gateway";
+import type { JoinOptions } from "rdsh-gateway";
 import {
   loadHubConfig,
   resolveHubConfigPath,
@@ -39,79 +44,42 @@ import { VERSION } from "./index.js";
 const HELP = `rdsh — secure remote access for DeepSeek Harness
 
 Usage:
-  rdsh serve [options]      Start the gateway (LAN auth or cloud HTTPS service)
-  rdsh join <hub-url>       Connect to a hub via outbound tunnel (no ports open)
-  rdsh join service ...     Run the join tunnel as a systemd/launchd service
-  rdsh hub serve            Start the hub server (cloud, multi-host)
-  rdsh hub user add <name>  Create a hub user (interactive password; --no-password for first-login setup)
-  rdsh hub user passwd <n>  Reset a user's password (admin)
-  rdsh hub user rm|ls
-  rdsh hub host ls|revoke   List / revoke hosts (revoke = tunnel drops instantly)
-  rdsh hub service ...      Install hub as a systemd/launchd service
-  rdsh user add|passwd|ls|rm    Gateway users (LAN/cloud HTTPS service)
-  rdsh service install|status|uninstall
+  rdsh host setup lan|cloud   Configure this machine (LAN / cloud HTTPS gateway)
+  rdsh host join <hub-url>    Connect this machine to a hub (outbound tunnel)
+  rdsh host serve             Run the configured mode in the foreground
+  rdsh host service ...       Run as a systemd/launchd service
+  rdsh host leave             Unregister this machine from the hub
+  rdsh host user ...          Manage gateway users (LAN/cloud password auth)
+  rdsh hub serve              Start the hub server (cloud, multi-host)
+  rdsh hub user add|passwd|rm|ls
+  rdsh hub host ls|revoke     List / revoke hosts (revoke drops the tunnel instantly)
+  rdsh hub service ...        Run hub as a systemd/launchd service
 
 Global:
-  --config <path>           Gateway config (default ~/.rdsh/config.json; also $RDSH_CONFIG)
-                            For hub commands: hub config (default ~/.rdsh/hub.json; also $RDSH_HUB_CONFIG)
-  --version, -v             Print version
-  --help, -h                Print this help
-
-Options (serve):
-  --port <n>                Listen port (overrides config; default 8443)
-  --host <ip>               Bind address (overrides config; default 0.0.0.0)
-  --pair-code <code>        Preset pairing code (overrides config)
-  --session-ttl <sec>       Session cookie lifetime (overrides config; default 43200)
-  --dsh <path>              dsh executable path (overrides config)
-  --reset                   Rotate session keys (all devices must re-auth)
-  --no-code                 Disable auth (trusted network ONLY!)
-
-Options (join):
-  --token <t>               Use an existing host token (skip pairing-code flow)
-  --reset                   Forget the persisted host token and re-pair
-  --dsh <path>              dsh executable path
-
-Options (hub serve):
-  --port <n>                Listen port (overrides hub config; default 8443)
-  --host <ip>               Bind address (overrides hub config; default 0.0.0.0)
-
-Config (persistent): host, port, sessionTtlSeconds, tls{cert,key}, behindProxy,
-  allowFrom[], auth{mode: pair|password|none, pairCode, users[]}, dshPath.
-Hub config (~/.rdsh/hub.json): host, port, tls{cert,key}, dbPath, jwtKeyPath.
+  --config <path>             Host config (default ~/.rdsh/host.json; also $RDSH_CONFIG)
+                              For hub commands: hub config (default ~/.rdsh/hub.json; also $RDSH_HUB_CONFIG)
+  --version, -v               Print version
+  --help, -h                  Print this help
 `;
 
 /** 子命令级用法（`rdsh <cmd> --help`）。 */
 const SUB_HELP: Record<string, string> = {
-  serve: `Usage: rdsh serve [options]
+  host: `Usage: rdsh host <subcommand>
 
-Start the gateway (LAN auth or cloud HTTPS service).
+Configure and run this machine (the DSH host).
 
-Options:
-  --config <path>       Config file (default ~/.rdsh/config.json; also $RDSH_CONFIG)
-  --port <n>            Listen port (overrides config; default 8443)
-  --host <ip>           Bind address (overrides config; default 0.0.0.0)
-  --pair-code <code>    Preset pairing code (overrides config)
-  --session-ttl <sec>   Session cookie lifetime (overrides config; default 43200)
-  --dsh <path>          dsh executable path (overrides config)
-  --reset               Rotate session keys (all devices must re-auth)
-  --no-code             Disable auth (trusted network ONLY!)
-`,
-  join: `Usage: rdsh join <hub-url> [options]
-       rdsh join service install|status|uninstall <hub-url>
+Subcommands:
+  setup lan              Configure a LAN gateway (pair auth, plain http)
+  setup cloud            Configure a cloud HTTPS gateway (password + TLS + allowFrom)
+  join <hub-url>         Connect to a hub (interactive token paste; --token for scripts)
+  serve                  Run the configured mode in the foreground
+  service install|status|uninstall   Run as a systemd/launchd service
+  leave                  Unregister this machine from the hub
+  user add|passwd|ls|rm  Manage gateway users
 
-Connect to a hub via an outbound tunnel (no ports open on this machine).
-
-Options:
-  --token <t>           Use an existing host token (skip the pair-code flow)
-  --reset               Forget the persisted host token and re-pair
-  --dsh <path>          dsh executable path
-  --insecure            Skip TLS certificate verification (self-signed hub)
-
-Service:
-  install <hub-url>     Install join as a systemd/launchd service (auto-detects
-                        dsh and embeds --dsh <abs path>; --insecure for self-signed hub)
-  status                Show the join service status
-  uninstall             Stop and remove the join service
+Options (setup lan):   --port <n> [--pair-code <code>]
+Options (setup cloud):  --tls-cert <path> --tls-key <path> [--port <n>] [--allow-from <cidr,...>]
+Options (join):         --token <t> --name <n> --dsh <path> --insecure --code
 `,
   hub: `Usage: rdsh hub <subcommand> [options]
 
@@ -127,31 +95,6 @@ Options (serve):
   --config <path>       Hub config (default ~/.rdsh/hub.json; also $RDSH_HUB_CONFIG)
   --port <n>            Listen port (overrides hub config; default 8443)
   --host <ip>           Bind address (overrides hub config; default 0.0.0.0)
-`,
-  user: `Usage: rdsh user <action> [name]
-
-Manage gateway users (LAN / cloud HTTPS service).
-
-Actions:
-  add <name>            Add a user (interactive password)
-  passwd <name>         Change a user's password (revokes all their sessions)
-  ls                    List users
-  rm <name>             Remove a user
-
-Options:
-  --config <path>       Config file (default ~/.rdsh/config.json; also $RDSH_CONFIG)
-`,
-  service: `Usage: rdsh service <action>
-
-Manage the gateway as a systemd/launchd service.
-
-Actions:
-  install               Install and start (auto-start on boot, restart on crash)
-  status                Show service status
-  uninstall             Stop and remove the service
-
-Options:
-  --config <path>       Config file (default ~/.rdsh/config.json; also $RDSH_CONFIG)
 `,
 };
 
@@ -191,30 +134,12 @@ async function main(): Promise<void> {
       return;
     }
     switch (command) {
-      case "serve": {
-        const opts = parseServeArgs(rest, cli.configPath);
-        await serve(opts);
-        return;
-      }
-      case "join": {
-        if (rest[0] === "service") {
-          await handleJoinService(rest.slice(1));
-          return;
-        }
-        const opts = parseJoinArgs(rest);
-        await join(opts);
+      case "host": {
+        await handleHost(rest, cli.configPath);
         return;
       }
       case "hub": {
         await handleHub(rest, cli.configPath);
-        return;
-      }
-      case "user": {
-        await handleUser(rest, cli.configPath);
-        return;
-      }
-      case "service": {
-        await handleService(rest, cli.configPath);
         return;
       }
       default:
@@ -240,65 +165,115 @@ function parseGlobal(argv: string[]): CliOptions {
       flags.push(argv[i]!);
     }
   }
-  // 返回原始值（undefined 或显式 --config）；gateway/hub 子命令分别按自己的默认路径 resolve
   return { configPath, flags };
 }
 
-interface ServeCliOptions extends ServeOptions {
-  reset?: boolean;
-  noCode?: boolean;
+function parsePort(v: string | undefined): number {
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < 0 || n > 65535) throw new Error(`invalid port '${v}'`);
+  return n;
 }
 
-function parseServeArgs(args: string[], configPath?: string): ServeCliOptions {
-  const opts: ServeCliOptions = { configPath };
-  for (let i = 0; i < args.length; i++) {
-    const flag = args[i];
-    const value = (name: string): string => {
-      i += 1;
-      if (i >= args.length) throw new Error(`missing value for ${name}`);
-      return args[i] ?? "";
-    };
-    switch (flag) {
-      case "--port": {
-        const v = Number(value(flag));
-        if (!Number.isInteger(v) || v < 0 || v > 65535) throw new Error(`invalid --port '${args[i]}'`);
-        opts.port = v;
-        break;
-      }
-      case "--host":
-        opts.host = value(flag);
-        break;
-      case "--pair-code":
-        opts.pairCode = value(flag);
-        break;
-      case "--session-ttl": {
-        const v = Number(value(flag));
-        if (!Number.isInteger(v) || v <= 0) throw new Error(`invalid --session-ttl '${args[i]}'`);
-        opts.sessionTtlSeconds = v;
-        break;
-      }
-      case "--dsh":
-        opts.dshPath = value(flag);
-        break;
-      case "--reset":
-        opts.reset = true;
-        break;
-      case "--no-code":
-        opts.noCode = true;
-        break;
-      default:
-        throw new Error(`unknown option '${flag}'`);
-    }
+async function handleHost(args: string[], configPath?: string): Promise<void> {
+  const sub = args[0];
+  const rest = args.slice(1);
+  if (sub === undefined || hasHelp(rest)) {
+    console.log(SUB_HELP["host"] ?? HELP);
+    return;
   }
-  return opts;
+  switch (sub) {
+    case "setup":
+      await handleHostSetup(rest, configPath);
+      return;
+    case "join":
+      await handleHostJoin(rest, configPath);
+      return;
+    case "serve":
+      await handleHostServe(rest, configPath);
+      return;
+    case "service":
+      await handleHostService(rest, configPath);
+      return;
+    case "leave":
+      await handleHostLeave(rest, configPath);
+      return;
+    case "user":
+      await handleHostUser(rest, configPath);
+      return;
+    default:
+      throw new Error("usage: rdsh host setup|join|serve|service|leave|user");
+  }
 }
 
-function parseJoinArgs(args: string[]): JoinOptions {
+/** `rdsh host setup lan|cloud`：写 host.json（mode + 预设字段），配置完退出。 */
+async function handleHostSetup(args: string[], configPath?: string): Promise<void> {
+  const which = args[0];
+  const target = resolveConfigPath(configPath);
+  const config = await loadConfig(target);
+
+  if (which === "lan") {
+    let port = config.port;
+    let pairCode = config.auth.pairCode;
+    for (let i = 1; i < args.length; i++) {
+      const flag = args[i];
+      if (flag === "--port") port = parsePort(args[++i]);
+      else if (flag === "--pair-code") pairCode = args[++i];
+      else throw new Error(`unknown option '${flag}'`);
+    }
+    config.mode = "lan";
+    config.port = port;
+    config.tls = undefined;
+    config.behindProxy = false;
+    config.allowFrom = [];
+    config.auth.mode = "pair";
+    config.auth.pairCode = pairCode;
+    config.dshPath = config.dshPath ?? findDsh() ?? undefined;
+    await saveConfig(target, config);
+    console.log(`rdsh: host 配置为 LAN 网关（pair，端口 ${port}）→ ${target}`);
+    console.log("rdsh: 运行 `rdsh host serve` 前台启动，或 `rdsh host service install` 常驻。");
+    return;
+  }
+
+  if (which === "cloud") {
+    let port = config.port;
+    let cert: string | undefined;
+    let key: string | undefined;
+    let allowFrom: string[] = [];
+    for (let i = 1; i < args.length; i++) {
+      const flag = args[i];
+      if (flag === "--port") port = parsePort(args[++i]);
+      else if (flag === "--tls-cert") cert = args[++i];
+      else if (flag === "--tls-key") key = args[++i];
+      else if (flag === "--allow-from") allowFrom = (args[++i] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+      else throw new Error(`unknown option '${flag}'`);
+    }
+    if (cert === undefined || key === undefined) {
+      throw new Error("usage: rdsh host setup cloud --tls-cert <path> --tls-key <path> [--port <n>] [--allow-from <cidr,...>]");
+    }
+    config.mode = "cloud";
+    config.port = port;
+    config.tls = { cert, key };
+    config.behindProxy = false;
+    config.allowFrom = allowFrom;
+    config.auth.mode = "password";
+    config.dshPath = config.dshPath ?? findDsh() ?? undefined;
+    await saveConfig(target, config);
+    console.log(`rdsh: host 配置为云 HTTPS 网关（password，端口 ${port}）→ ${target}`);
+    console.log("rdsh: 用 `rdsh host user add <name>` 建用户，再 `rdsh host serve` / `rdsh host service install`。");
+    return;
+  }
+
+  throw new Error("usage: rdsh host setup lan|cloud");
+}
+
+/** `rdsh host join <hub>`：注册（token 直填/持久化/配对码）→ 写 host.json + session，配置完退出。 */
+async function handleHostJoin(args: string[], configPath?: string): Promise<void> {
   const hubUrl = args[0];
   if (hubUrl === undefined || !/^https?:\/\//.test(hubUrl)) {
-    throw new Error("usage: rdsh join <hub-url> [--token <t>] [--dsh <path>]");
+    throw new Error("usage: rdsh host join <hub-url> [--token <t>] [--name <n>] [--dsh <p>] [--insecure] [--code]");
   }
   const opts: JoinOptions = { hubUrl };
+  let code = false;
   for (let i = 1; i < args.length; i++) {
     const flag = args[i];
     const value = (name: string): string => {
@@ -306,43 +281,101 @@ function parseJoinArgs(args: string[]): JoinOptions {
       if (i >= args.length) throw new Error(`missing value for ${name}`);
       return args[i] ?? "";
     };
-    switch (flag) {
-      case "--token":
-        opts.token = value(flag);
-        break;
-      case "--reset":
-        opts.reset = true;
-        break;
-      case "--dsh":
-        opts.dshPath = value(flag);
-        break;
-      case "--insecure":
-        opts.insecure = true;
-        break;
-      default:
-        throw new Error(`unknown option '${flag}'`);
-    }
+    if (flag === "--token") opts.token = value(flag);
+    else if (flag === "--name") opts.name = value(flag);
+    else if (flag === "--dsh") opts.dshPath = value(flag);
+    else if (flag === "--insecure") opts.insecure = true;
+    else if (flag === "--code") code = true;
+    else if (flag === "--reset") opts.reset = true;
+    else throw new Error(`unknown option '${flag}'`);
   }
-  return opts;
+  if (code && opts.token !== undefined) throw new Error("不能同时使用 --code 与 --token");
+  if (code) opts.reset = true; // 强制配对码：清除持久化后走绑定
+
+  const outcome = await registerJoin(opts);
+  const target = resolveConfigPath(configPath);
+  const config = await loadConfig(target);
+  config.mode = "join";
+  config.hub = hubUrl;
+  config.name = opts.name ?? osHostname();
+  config.insecure = outcome.insecure;
+  config.dshPath = opts.dshPath ?? findDsh() ?? config.dshPath;
+  await saveConfig(target, config);
+  console.log(`rdsh: host 已接入 ${hubUrl}（${config.name}）—— session 已保存`);
+  console.log("rdsh: 运行 `rdsh host serve` 前台启动，或 `rdsh host service install` 常驻。");
 }
 
-async function handleUser(args: string[], configPath?: string): Promise<void> {
+/** `rdsh host serve`：前台常驻，读 host.json 按 mode 分发（join→隧道，lan/cloud→网关）。 */
+async function handleHostServe(_args: string[], configPath?: string): Promise<void> {
+  const target = resolveConfigPath(configPath);
+  const config = await loadConfig(target);
+  if (config.mode === "join") {
+    if (config.hub === undefined) throw new Error("host.json 缺 hub（join 模式）；先 `rdsh host join <hub>`");
+    await join({ hubUrl: config.hub, name: config.name, insecure: config.insecure, dshPath: config.dshPath });
+    return;
+  }
+  await serve({ configPath: target });
+}
+
+/** `rdsh host service install|status|uninstall`：读 host.json mode 装对应服务（unit 不含 token）。 */
+async function handleHostService(args: string[], configPath?: string): Promise<void> {
+  const action = args[0];
+  const target = resolveConfigPath(configPath);
+  const config = await loadConfig(target);
+  const name = config.mode === "join" ? JOIN_SERVICE_NAME : HOST_SERVICE_NAME;
+  switch (action) {
+    case "install":
+      console.log(await installService({ name, args: ["host", "serve"], configPath: target }));
+      console.log(`rdsh: host service installed (${name}) —— 开机自启 + 崩溃重启。`);
+      return;
+    case "status":
+      console.log(`rdsh host service (${name}): ${await serviceStatus(name)}`);
+      return;
+    case "uninstall":
+      console.log(await uninstallService(name));
+      return;
+    default:
+      throw new Error("usage: rdsh host service install|status|uninstall");
+  }
+}
+
+/** `rdsh host leave`：self-revoke + 清 session + 删 host.json → 未配置。 */
+async function handleHostLeave(_args: string[], configPath?: string): Promise<void> {
+  const target = resolveConfigPath(configPath);
+  const config = await loadConfig(target);
+  if (config.mode !== "join" || config.hub === undefined) {
+    throw new Error("当前不是 join 模式（或缺 hub），无需 leave");
+  }
+  const token = readPersistedToken(config.hub);
+  if (token === null) {
+    console.log("rdsh: 本地无 session 文件，仅清理配置");
+  } else {
+    await selfRevoke(config.hub, token, config.insecure === true);
+    console.log("rdsh: 已在 hub 自吊销本机");
+  }
+  clearPersistedToken(config.hub);
+  await rm(target, { force: true });
+  console.log(`rdsh: host 已注销（清理 ${target}）—— 回到未配置状态`);
+}
+
+/** `rdsh host user add|passwd|ls|rm`：本机网关用户（写 host.json auth.users）。 */
+async function handleHostUser(args: string[], configPath?: string): Promise<void> {
   const action = args[0];
   const um = new UserManager(resolveConfigPath(configPath));
   switch (action) {
     case "add": {
       const name = args[1];
-      if (name === undefined) throw new Error("usage: rdsh user add <name>");
+      if (name === undefined) throw new Error("usage: rdsh host user add <name>");
       const password = await promptPassword(`password for ${name}: `);
       const again = await promptPassword("confirm: ");
       if (password !== again) throw new Error("passwords do not match");
       await um.add(name, password);
-      console.log(`rdsh: user '${name}' added (config: ${configPath})`);
+      console.log(`rdsh: user '${name}' added`);
       return;
     }
     case "passwd": {
       const name = args[1];
-      if (name === undefined) throw new Error("usage: rdsh user passwd <name>");
+      if (name === undefined) throw new Error("usage: rdsh host user passwd <name>");
       const password = await promptPassword(`new password for ${name}: `);
       const again = await promptPassword("confirm: ");
       if (password !== again) throw new Error("passwords do not match");
@@ -358,85 +391,14 @@ async function handleUser(args: string[], configPath?: string): Promise<void> {
     }
     case "rm": {
       const name = args[1];
-      if (name === undefined) throw new Error("usage: rdsh user rm <name>");
+      if (name === undefined) throw new Error("usage: rdsh host user rm <name>");
       const ok = await um.remove(name);
       if (!ok) throw new Error(`user '${name}' not found`);
       console.log(`rdsh: user '${name}' removed`);
       return;
     }
     default:
-      throw new Error("usage: rdsh user add|passwd|ls|rm");
-  }
-}
-
-async function handleService(args: string[], configPath?: string): Promise<void> {
-  const action = args[0];
-  switch (action) {
-    case "install":
-      console.log(await installService({ name: SERVICE_NAME, args: ["serve"], configPath: resolveConfigPath(configPath) }));
-      console.log("rdsh: service installed — it starts on boot and restarts on crash.");
-      return;
-    case "status":
-      console.log(`rdsh service: ${await serviceStatus()}`);
-      return;
-    case "uninstall":
-      console.log(await uninstallService());
-      return;
-    default:
-      throw new Error("usage: rdsh service install|status|uninstall");
-  }
-}
-
-/** join 服务化的环境文件（可选，0600；放 DEEPSEEK_API_KEY 等，缺省不报错）。 */
-function joinEnvPath(): string {
-  return joinPath(homedir(), ".rdsh", "join.env");
-}
-
-/** 解析 dsh 路径为绝对路径：--dsh 优先，否则 PATH 探测；找不到抛错。 */
-function resolveDshPath(dshPath?: string): string {
-  const found = dshPath ?? findDsh();
-  if (found === undefined || found === null || found === "") {
-    throw new Error("cannot find 'dsh' in PATH; pass --dsh <path> to 'rdsh join service install'");
-  }
-  return resolvePath(found);
-}
-
-async function handleJoinService(args: string[]): Promise<void> {
-  const action = args[0];
-  switch (action) {
-    case "install": {
-      const hubUrl = args[1];
-      if (hubUrl === undefined || !/^https?:\/\//.test(hubUrl)) {
-        throw new Error("usage: rdsh join service install <hub-url> [--dsh <path>] [--insecure]");
-      }
-      let dshPath: string | undefined;
-      let insecure = false;
-      for (let i = 2; i < args.length; i++) {
-        const flag = args[i];
-        if (flag === "--dsh") {
-          i += 1;
-          dshPath = args[i];
-          if (dshPath === undefined) throw new Error("missing value for --dsh");
-        } else if (flag === "--insecure") {
-          insecure = true;
-        } else {
-          throw new Error(`'${flag}' not supported by 'rdsh join service install' (only --dsh / --insecure)`);
-        }
-      }
-      // 服务化时内嵌 --dsh 绝对路径：systemd 环境 PATH 可能不含 dsh，规避 PATH 坑
-      const joinArgs = ["join", hubUrl, "--dsh", resolveDshPath(dshPath), ...(insecure ? ["--insecure"] : [])];
-      console.log(await installService({ name: JOIN_SERVICE_NAME, args: joinArgs, envFile: joinEnvPath() }));
-      console.log("rdsh: join service installed — starts on boot, reuses the persisted host token, restarts on crash.");
-      return;
-    }
-    case "status":
-      console.log(`rdsh join service: ${await serviceStatus(JOIN_SERVICE_NAME)}`);
-      return;
-    case "uninstall":
-      console.log(await uninstallService(JOIN_SERVICE_NAME));
-      return;
-    default:
-      throw new Error("usage: rdsh join service install|status|uninstall");
+      throw new Error("usage: rdsh host user add|passwd|ls|rm");
   }
 }
 
@@ -473,14 +435,14 @@ async function handleHub(args: string[], configPath?: string): Promise<void> {
       const hubConfigPath = resolveHubConfigPath(configPath);
       switch (action) {
         case "install":
-          console.log(await installService({ name: SERVICE_NAME, args: ["hub", "serve"], configPath: hubConfigPath }));
-          console.log("rdsh: hub service installed — starts on boot and restarts on crash.");
+          console.log(await installService({ name: HUB_SERVICE_NAME, args: ["hub", "serve"], configPath: hubConfigPath }));
+          console.log(`rdsh: hub service installed (${HUB_SERVICE_NAME}) —— 开机自启 + 崩溃重启。`);
           return;
         case "status":
-          console.log(`rdsh hub service: ${await serviceStatus()}`);
+          console.log(`rdsh hub service (${HUB_SERVICE_NAME}): ${await serviceStatus(HUB_SERVICE_NAME)}`);
           return;
         case "uninstall":
-          console.log(await uninstallService());
+          console.log(await uninstallService(HUB_SERVICE_NAME));
           return;
         default:
           throw new Error("usage: rdsh hub service install|status|uninstall");
@@ -517,7 +479,6 @@ function parseHubServeArgs(args: string[], configPath?: string): HubServeOptions
   return opts;
 }
 
-
 /** 交互输入密码两次（一致校验）；不匹配重试（最多 3 次），仍失败抛错。 */
 async function promptPasswordTwice(firstPrompt: string): Promise<string> {
   for (let attempt = 1; attempt <= 3; attempt++) {
@@ -544,7 +505,6 @@ async function handleHubUser(args: string[], configPath?: string): Promise<void>
         const hubConfigPath = resolveHubConfigPath(configPath);
         if (db.getUserByName(name) !== null) throw new Error(`user '${name}' already exists`);
         if (noPassword) {
-          // 首次登录自设密码（must_change=1，密码占位不可用）
           db.createUser(name, "scrypt:disabled", new Date().toISOString(), true);
           console.log(`rdsh: user '${name}' created — they must set a password on first sign-in (${hubConfigPath})`);
         } else {
@@ -582,7 +542,7 @@ async function handleHubUser(args: string[], configPath?: string): Promise<void>
         throw new Error("usage: rdsh hub user add|passwd|ls|rm");
     }
   } finally {
-    db.close();   // 抛错路径也必须关闭 SQLite 句柄（否则进程挂住）
+    db.close();
   }
 }
 
@@ -620,7 +580,6 @@ async function handleHubHost(args: string[], configPath?: string): Promise<void>
   }
 }
 
-
 function promptPassword(prompt: string): Promise<string> {
   const stdin = process.stdin;
   if (stdin.isTTY && typeof stdin.setRawMode === "function") {
@@ -648,7 +607,6 @@ function promptPassword(prompt: string): Promise<string> {
     });
   }
   // 非 TTY（管道/重定向）：一次性读完 stdin（EOF），逐行消费。
-  // 注意：不能每次调用新建 readline —— 第二个 interface 会读不到剩余行。
   process.stdout.write(prompt);
   return nextPipeLine();
 }
@@ -667,5 +625,6 @@ function nextPipeLine(): Promise<string> {
   });
 }
 
-// 管理命令（serve/join 常驻不 resolve）完成后显式退出：避免 TTY stdin / 句柄残留导致进程挂住
+// 管理命令（host setup/join/leave/service/user 完成后）显式退出：
+// 常驻命令（host serve / hub serve）不 resolve，靠信号退出。
 void main().then(() => process.exit(process.exitCode ?? 0));
