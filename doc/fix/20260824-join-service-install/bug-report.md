@@ -12,7 +12,7 @@
 
 - `rdsh service install`（serve/LAN 网关）与 `rdsh hub service install`（hub）均已实现，一条命令即可生成 systemd/launchd 服务；
 - **`rdsh join service install` 不存在**：`rdsh join` 的选项里没有 service 相关子命令，执行会报 `usage: rdsh join <hub-url> [--token <t>] [--dsh <path>]`；
-- 用户想把 join 常驻化（开机自启/崩溃重启），只能**手写 unit**（见 `doc/blog/{zh,en}/04-01-run-as-user-service-ubuntu.md`），且必须手工处理 PATH、环境变量注入等坑。
+- 用户想把 join 常驻化（开机自启/崩溃重启），只能**手写 unit**（当时见博客 04-01，该博客已移除——服务化要点现见 `doc/overview/usage.md` §8.5），且必须手工处理 PATH、环境变量注入等坑。
 
 ## 2. 复现步骤
 
@@ -66,5 +66,5 @@
 ## 7. 参考
 
 - 相关代码：`packages/cli/src/bin.ts`（join/hub 分发、parseJoinArgs）、`packages/gateway/src/service.ts`（模板与 installService）、`packages/gateway/src/join.ts:100-103`（findDsh 与 --dsh）
-- 关联文档：`doc/blog/{zh,en}/04-01-run-as-user-service-ubuntu.md`（当前手写 unit 方案）、`doc/overview/usage.md` §8
+- 关联文档：`doc/overview/usage.md` §8.5（服务化要点；原手写方案博客 04-01 已移除）
 - 关联修复：`doc/fix/20260824-join-token-persist/bug-report.md`（join 重启免配对，本需求的前置）
