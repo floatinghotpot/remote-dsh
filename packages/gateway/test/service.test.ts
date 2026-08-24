@@ -39,6 +39,17 @@ test("join 服务 unit：join+hubUrl+--dsh、无 --config、含 EnvironmentFile�
   assert.ok(unit.includes("Restart=on-failure"));
 });
 
+test("host 服务 unit 含 Environment=PATH（nvm 防 dsh shebang 127）", () => {
+  const unit = systemdUnit("/usr/bin/node /usr/lib/rdsh/bin.js", {
+    name: JOIN_SERVICE_NAME,
+    args: ["host", "serve"],
+    configPath: "/home/u/.rdsh/host.json",
+    pathEnv: "/home/u/.nvm/versions/node/v22/bin:/usr/local/bin:/usr/bin:/bin",
+  });
+  assert.ok(unit.includes("Environment=PATH=/home/u/.nvm/versions/node/v22/bin:/usr/local/bin:/usr/bin:/bin"));
+  assert.ok(unit.includes("ExecStart=/usr/bin/node /usr/lib/rdsh/bin.js host serve --config /home/u/.rdsh/host.json"));
+});
+
 test("join 服务 launchd plist：Label com.rdsh-join、含 join args、无 --config", () => {
   const plist = launchdPlist("/usr/local/bin/node /usr/local/bin/rdsh", {
     name: JOIN_SERVICE_NAME,

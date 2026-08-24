@@ -54,6 +54,8 @@ export interface ServiceSpec {
   configPath?: string;
   /** 环境文件路径；提供则在 systemd unit 追加 `EnvironmentFile=-<path>`（launchd 暂不支持，忽略）。 */
   envFile?: string;
+  /** 子进程（spawn dsh）所需的 PATH（nvm/自装 node 环境下补 node 目录，防 dsh shebang 127）。 */
+  pathEnv?: string;
 }
 
 /** 命令参数（是否追加 --config）。 */
@@ -64,13 +66,14 @@ function commandArgs(spec: ServiceSpec): string[] {
 /** systemd 用户级 unit 模板。 */
 export function systemdUnit(execStart: string, spec: ServiceSpec): string {
   const envLine = spec.envFile !== undefined ? `EnvironmentFile=-${spec.envFile}\n` : "";
+  const pathLine = spec.pathEnv !== undefined ? `Environment=PATH=${spec.pathEnv}\n` : "";
   return `[Unit]
 Description=rdsh — remote access for DeepSeek Harness
 After=network.target
 
 [Service]
 Type=simple
-${envLine}ExecStart=${execStart} ${commandArgs(spec).join(" ")}
+${envLine}${pathLine}ExecStart=${execStart} ${commandArgs(spec).join(" ")}
 Restart=on-failure
 RestartSec=3
 
@@ -82,6 +85,15 @@ WantedBy=default.target
 /** launchd plist 模板。 */
 export function launchdPlist(execStart: string, spec: ServiceSpec): string {
   const args = commandArgs(spec).map((a) => `    <string>${a}</string>`).join("\n");
+  const envBlock =
+    spec.pathEnv !== undefined
+      ? `  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>${spec.pathEnv}</string>
+  </dict>
+`
+      : "";
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -97,7 +109,7 @@ ${args}
   <true/>
   <key>KeepAlive</key>
   <true/>
-  <key>StandardOutPath</key>
+${envBlock}  <key>StandardOutPath</key>
   <string>${serviceLogPath(spec.name)}</string>
   <key>StandardErrorPath</key>
   <string>${serviceLogPath(spec.name)}</string>

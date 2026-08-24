@@ -11,6 +11,7 @@
 import { createInterface } from "node:readline";
 import { rm } from "node:fs/promises";
 import { hostname as osHostname } from "node:os";
+import { dirname } from "node:path";
 import {
   serve,
   join,
@@ -174,6 +175,11 @@ function parsePort(v: string | undefined): number {
   return n;
 }
 
+/** 服务 unit 的子进程 PATH：node 目录（nvm/自装）+ 系统路径，保证 spawn dsh 时 shebang 能解析 node。 */
+function nodePathEnv(): string {
+  return `${dirname(process.execPath)}:/usr/local/bin:/usr/bin:/bin`;
+}
+
 async function handleHost(args: string[], configPath?: string): Promise<void> {
   const sub = args[0];
   const rest = args.slice(1);
@@ -332,7 +338,8 @@ async function handleHostService(args: string[], configPath?: string): Promise<v
       await maybeRegisterForServiceInstall(args, target);
       const config = await loadConfig(target);
       const name = config.mode === "join" ? JOIN_SERVICE_NAME : HOST_SERVICE_NAME;
-      console.log(await installService({ name, args: ["host", "serve"], configPath: target }));
+      // host 服务会 spawn dsh（shebang `#!/usr/bin/env node`），nvm/自装 node 下需补 node 目录到 PATH（防 127）
+      console.log(await installService({ name, args: ["host", "serve"], configPath: target, pathEnv: nodePathEnv() }));
       console.log(`rdsh: host service installed (${name}) —— 开机自启 + 崩溃重启。`);
       return;
     }
