@@ -136,8 +136,6 @@ function Login(): React.JSX.Element {
 function HostsPage(): React.JSX.Element {
   const [hosts, setHosts] = useState<HostInfo[]>([]);
   const [loading, setLoading] = useState(true);
-  const [bindOpen, setBindOpen] = useState(false);
-  const [code, setCode] = useState("");
   const [renameId, setRenameId] = useState<string | null>(null);
   const [renameName, setRenameName] = useState("");
   const { err, run } = useError();
@@ -158,17 +156,8 @@ function HostsPage(): React.JSX.Element {
     return unsub;
   }, []);
 
-  const bind = (): void => {
-    void run(async () => {
-      await api.bind(code.trim());
-      setBindOpen(false);
-      setCode("");
-      load();
-    });
-  };
-
   const revoke = (hostId: string): void => {
-    if (!window.confirm("吊销该 host？其隧道立即断开，需重新绑定。")) return;
+    if (!window.confirm("吊销该 host？其隧道立即断开，需重新接入。")) return;
     void run(async () => {
       await api.revokeHost(hostId);
       load();
@@ -186,23 +175,9 @@ function HostsPage(): React.JSX.Element {
   return (
     <Shell title="rdsh · 我的机器" onLogout={logout}>
       {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
-      <div style={{ marginBottom: 16, display: "flex", gap: 8 }}>
+      <div style={{ marginBottom: 16 }}>
         <button onClick={() => navigate("/add-host")} style={btnStyle()}>添加主机 / 接入 token</button>
-        <button onClick={() => setBindOpen(true)} style={btnStyle("ghost")}>配对码绑定</button>
       </div>
-
-      {bindOpen && (
-        <div style={{ border: "1px solid #ccc", borderRadius: 8, padding: 16, marginBottom: 16 }}>
-          <p style={{ marginTop: 0, fontSize: 13 }}>
-            在机器上运行 <code>rdsh join https://{window.location.host}</code>，把终端显示的 6 位配对码填到下面（10 分钟内有效）：
-          </p>
-          <div style={{ display: "flex", gap: 8 }}>
-            <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="配对码" style={{ ...inputStyle(), width: 160 }} maxLength={6} />
-            <button onClick={bind} style={btnStyle()}>绑定</button>
-            <button onClick={() => setBindOpen(false)} style={btnStyle("ghost")}>取消</button>
-          </div>
-        </div>
-      )}
 
       {loading ? (
         <p style={{ color: "#666" }}>加载中…</p>

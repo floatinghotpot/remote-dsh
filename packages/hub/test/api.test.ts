@@ -89,48 +89,8 @@ test("host 列表（含在线状态）", async () => {
   assert.equal(hosts.length, 0);
 });
 
-test("配对码流程：pending → bind → gateway 轮询取 token", async () => {
-  const login = await post("/api/auth/login", { name: "alice", password: "pw123456" });
-  const cookie = `rdsh_session=${login.json.accessToken}`;
-
-  const pending = await post("/api/hosts/pending", {});
-  assert.equal(pending.status, 200);
-  const pendingId = pending.json.pendingId as string;
-  const code = pending.json.code as string;
-  assert.match(code, /^\d{6}$/);
-
-  // 未绑定时轮询 → pending
-  const poll1 = await get(`/api/hosts/pending/${pendingId}`);
-  assert.equal(poll1.json.status, "pending");
-
-  // 错误码 → 400
-  const badBind = await post("/api/hosts/bind", { code: "000000" }, cookie);
-  assert.equal(badBind.status, 400);
-
-  // 绑定
-  const bind = await post("/api/hosts/bind", { code }, cookie);
-  assert.equal(bind.status, 200);
-  const hostId = bind.json.hostId as string;
-  assert.ok(hostId.length > 0);
-
-  // gateway 轮询 → bound + token
-  const poll2 = await get(`/api/hosts/pending/${pendingId}`);
-  assert.equal(poll2.json.status, "bound");
-  const hostToken = poll2.json.token as string;
-  assert.ok(hostToken.length >= 32);
-  // token 只取一次
-  const poll3 = await get(`/api/hosts/pending/${pendingId}`);
-  assert.equal(poll3.status, 410);
-
-  // host 出现在列表（离线）
-  const hosts = await get("/api/hosts", cookie);
-  const list = hosts.json.hosts as Array<Record<string, unknown>>;
-  assert.equal(list.length, 1);
-  assert.equal(list[0]!.id, hostId);
-  assert.equal(list[0]!.online, false);
-});
-
 test("改名 / 吊销（owner）", async () => {
+  db.createHost("host-rename", 1, "rename-me", sha256(randomToken()));
   const login = await post("/api/auth/login", { name: "alice", password: "pw123456" });
   const cookie = `rdsh_session=${login.json.accessToken}`;
   const hosts = await get("/api/hosts", cookie);

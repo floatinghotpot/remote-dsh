@@ -3,7 +3,7 @@
  * rdsh CLI 入口（手写参数解析，零依赖）。
  *
  *   rdsh host setup lan|cloud
- *   rdsh host join <hub-url> [--token <t>] [--name <n>] [--dsh <p>] [--insecure] [--code]
+ *   rdsh host join <hub-url> [--token <t>] [--name <n>] [--dsh <p>] [--insecure]
  *   rdsh host serve | service install|status|uninstall | leave | user ...
  *   rdsh hub serve|user|host|service ... [--config <path>]
  *   rdsh --version | --help
@@ -79,7 +79,7 @@ Subcommands:
 
 Options (setup lan):   --port <n> [--pair-code <code>]
 Options (setup cloud):  --tls-cert <path> --tls-key <path> [--port <n>] [--allow-from <cidr,...>]
-Options (join):         --token <t> --name <n> --dsh <path> --insecure --code
+Options (join):         --token <t> --name <n> --dsh <path> --insecure
 `,
   hub: `Usage: rdsh hub <subcommand> [options]
 
@@ -266,14 +266,13 @@ async function handleHostSetup(args: string[], configPath?: string): Promise<voi
   throw new Error("usage: rdsh host setup lan|cloud");
 }
 
-/** `rdsh host join <hub>`：注册（token 直填/持久化/配对码）→ 写 host.json + session，配置完退出。 */
+/** `rdsh host join <hub>`：注册（join token）→ 写 host.json + session，配置完退出。 */
 async function handleHostJoin(args: string[], configPath?: string): Promise<void> {
   const hubUrl = args[0];
   if (hubUrl === undefined || !/^https?:\/\//.test(hubUrl)) {
-    throw new Error("usage: rdsh host join <hub-url> [--token <t>] [--name <n>] [--dsh <p>] [--insecure] [--code]");
+    throw new Error("usage: rdsh host join <hub-url> [--token <t>] [--name <n>] [--dsh <p>] [--insecure]");
   }
   const opts: JoinOptions = { hubUrl };
-  let code = false;
   for (let i = 1; i < args.length; i++) {
     const flag = args[i];
     const value = (name: string): string => {
@@ -285,20 +284,17 @@ async function handleHostJoin(args: string[], configPath?: string): Promise<void
     else if (flag === "--name") opts.name = value(flag);
     else if (flag === "--dsh") opts.dshPath = value(flag);
     else if (flag === "--insecure") opts.insecure = true;
-    else if (flag === "--code") code = true;
     else if (flag === "--reset") opts.reset = true;
     else throw new Error(`unknown option '${flag}'`);
   }
-  if (code && opts.token !== undefined) throw new Error("不能同时使用 --code 与 --token");
-  if (code) opts.reset = true; // 强制配对码：清除持久化后走绑定
-  else if (opts.token === undefined && readPersistedToken(hubUrl) === null) {
+  if (opts.token === undefined && readPersistedToken(hubUrl) === null) {
     // 无 --token 且无持久化 session：TTY 交互粘贴 token；非 TTY 报错不 hang
     if (process.stdin.isTTY) {
       const pasted = (await promptLine("Paste your join token (hub portal → Add host): ")).trim();
-      if (pasted === "") throw new Error("需要 join token（hub portal → 添加主机 生成），或用 `--code` 走配对码");
+      if (pasted === "") throw new Error("需要 join token（hub portal → 添加主机 生成）");
       opts.token = pasted;
     } else {
-      throw new Error("无持久化 session 且未提供 --token；交互式运行粘贴 token，或 `--code` 用配对码");
+      throw new Error("无持久化 session 且未提供 --token；交互式运行粘贴 token");
     }
   }
 

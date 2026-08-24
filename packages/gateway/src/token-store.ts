@@ -2,7 +2,7 @@
  * token-store.ts — `rdsh join` host token 持久化（~/.rdsh/join-<host>[-<port>].token，0600）。
  *
  * 目的：进程重启/崩溃恢复后复用已绑定的 host token，避免每次重新配对；
- * 被 hub 拒绝（吊销/重置）时由 join 删除该文件并回退到配对码流程。
+ * 被 hub 拒绝（吊销/重置）时由 join 删除该文件并提示重新接入（无自动重配）。
  *
  * 安全：明文 token 只落 gateway 本地（0600），hub 侧仍只存 SHA-256 摘要。
  */

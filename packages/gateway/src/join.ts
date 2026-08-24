@@ -1,7 +1,7 @@
 /**
  * join.ts — `rdsh join <hub-url>`：出站隧道客户端（公网模式，M3）。
  *
- * 流程：spawn dsh（复用）→ 绑定（配对码轮询 或 --token 直填）→ WSS 隧道（?token=）
+ * 流程：spawn dsh（复用）→ 注册（join token → host token）→ WSS 隧道（?token=）
  * → 帧循环（OPEN http/ws → 本地 dsh 转发 → 响应帧回传）→ 断线指数退避重连。
  *
  * 安全：只出站（不监听任何入站端口）；hub 认证在层 1，gateway 侧只认隧道内来源。
@@ -19,7 +19,7 @@ import { clearPersistedToken, persistToken, readPersistedToken } from "./token-s
 
 export interface JoinOptions {
   hubUrl: string;
-  /** 直填 host token（跳过配对码绑定流程） */
+  /** join token（用户级，register 换 host token） */
   token?: string;
   /** 清除持久化 token 并强制重新配对 */
   reset?: boolean;
@@ -58,37 +58,9 @@ export async function detectInsecure(hubUrl: string): Promise<boolean> {
   }
 }
 
-const PENDING_POLL_MS = 5_000;
-const BIND_TIMEOUT_MS = 10 * 60 * 1000; // 配对码 10 分钟
 const HEARTBEAT_MS = 30_000;
 const RECONNECT_BASE_MS = 1_000;
 const RECONNECT_MAX_MS = 60_000;
-
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-
-/** 绑定流程：POST /api/hosts/pending → 打印配对码 → 轮询取 host token。 */
-async function bind(hubUrl: string, insecure: boolean): Promise<string> {
-  const pendingRes = await hubRequest(hubUrl, "/api/hosts/pending", { method: "POST", insecure });
-  if (!pendingRes.ok) {
-    throw new Error(`hub rejected pending request: HTTP ${pendingRes.status}`);
-  }
-  const pending = pendingRes.body as { pendingId: string; code: string };
-  console.log(`rdsh join: pair code: ${pending.code}`);
-  console.log(`rdsh join: sign in to ${hubUrl} and enter this code (10 min) to bind this host.`);
-  console.log(`rdsh join: waiting for binding...`);
-  const deadline = Date.now() + BIND_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    await sleep(PENDING_POLL_MS);
-    const res = await hubRequest(hubUrl, `/api/hosts/pending/${pending.pendingId}`, { method: "GET", insecure });
-    if (!res.ok) continue;
-    const body = res.body as { status: string; token?: string };
-    if (body.status === "bound" && typeof body.token === "string") {
-      console.log("rdsh join: bound — establishing tunnel...");
-      return body.token;
-    }
-  }
-  throw new Error("binding timed out (10 min): re-run rdsh join to get a new code");
-}
 
 /** hub HTTP 调用（node:https 支持自签跳过校验 —— undici fetch 不受 NODE_TLS_REJECT_UNAUTHORIZED 影响）。 */
 function hubRequest(
@@ -137,7 +109,7 @@ export async function selfRevoke(hubUrl: string, token: string, insecure: boolea
   }
 }
 
-/** 解析 host token（--token 注册 > 持久化复用 > 配对码绑定）+ 自动检测证书；供 CLI 配置命令与 join() 复用。 */
+/** 解析 host token（--token 注册 > 持久化复用）+ 自动检测证书；供 CLI 配置命令与 join() 复用。 */
 export async function registerJoin(opts: JoinOptions): Promise<RegisterOutcome> {
   const insecure = opts.insecure === true || (await detectInsecure(opts.hubUrl));
   let token: string;
@@ -153,8 +125,7 @@ export async function registerJoin(opts: JoinOptions): Promise<RegisterOutcome> 
       token = persisted;
       console.log("rdsh join: reusing persisted host token");
     } else {
-      token = await bind(opts.hubUrl, insecure);
-      persistToken(opts.hubUrl, token);
+      throw new Error("未接入：无持久化 session 且未提供 --token；先 `rdsh host join <hub>` 生成/粘贴 join token");
     }
   }
   return { token, insecure };
@@ -386,23 +357,6 @@ export async function join(opts: JoinOptions): Promise<void> {
     upstream.on("error", cleanup);
   }
 
-  /** 持久化 token 被 hub 拒绝（吊销/重置）→ 删旧文件 → 重新配对 → 重连。 */
-  async function rebindAndReconnect(): Promise<void> {
-    clearPersistedToken(opts.hubUrl);
-    console.log("rdsh join: host token rejected (revoked?) — re-pairing...");
-    try {
-      token = await bind(opts.hubUrl, insecure);
-      persistToken(opts.hubUrl, token);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`rdsh join: re-pairing failed (${msg}); retrying in ${RECONNECT_BASE_MS / 1000}s...`);
-      setTimeout(() => void rebindAndReconnect(), RECONNECT_BASE_MS);
-      return;
-    }
-    reconnectDelay = RECONNECT_BASE_MS;
-    connect();
-  }
-
   function connect(): void {
     if (shuttingDown) return;
     const url = `${hubWsBase}/tunnel?token=${encodeURIComponent(token)}`;
@@ -471,14 +425,10 @@ export async function join(opts: JoinOptions): Promise<void> {
       wsStreams.clear();
       if (shuttingDown) return;
       if (tokenRejected) {
-        if (opts.token === undefined) {
-          // 持久化 token 被拒 → 删旧文件 + 回退配对码
-          void rebindAndReconnect();
-          return;
-        }
-        // 显式 --token 被拒 = 永久失败（token 不会再变有效）→ fail-fast，
-        // 让脚本/systemd 拿到非零退出码与明确报错，而非静默无限重连
-        console.error("rdsh join: host token rejected by hub (revoked or removed); exiting.");
+        // token 被拒（吊销/删除）= 永久失败，无法自动恢复（已移除配对码重配）
+        // → 删旧 session + fail-fast，让 systemd/脚本拿到非零退出码与明确报错。
+        clearPersistedToken(opts.hubUrl);
+        console.error("rdsh join: host token rejected by hub (revoked or removed); re-run `rdsh host join <hub>` with a new join token.");
         void shutdown("", 1);
         return;
       }

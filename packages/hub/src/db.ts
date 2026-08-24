@@ -1,7 +1,7 @@
 /**
  * db.ts — hub 持久化（node:sqlite，零外部依赖）。
  *
- * 表：users / hosts / pending / refresh_tokens。
+ * 表：users / hosts / refresh_tokens / join_tokens。
  * 安全基线（req R10）：密码 scrypt 哈希、host token / refresh token 只存 SHA-256 摘要。
  */
 import { DatabaseSync } from "node:sqlite";
@@ -25,16 +25,6 @@ export interface HostRow {
   name: string;
   tokenHash: string;
   createdAt: string;
-}
-
-export interface PendingRow {
-  id: string;
-  code: string;
-  expiresAt: number;
-  used: number;
-  createdAt: number;
-  /** 绑定后明文 host token（仅 gateway 轮询取走一次，随后清 NULL；不长期落盘） */
-  tokenPlain: string | null;
 }
 
 export interface RefreshRow {
@@ -83,14 +73,6 @@ export class HubDb {
         token_hash TEXT UNIQUE NOT NULL,
         created_at TEXT NOT NULL
       );
-      CREATE TABLE IF NOT EXISTS pending (
-        id TEXT PRIMARY KEY,
-        code TEXT UNIQUE NOT NULL,
-        expires_at INTEGER NOT NULL,
-        used INTEGER NOT NULL DEFAULT 0,
-        created_at INTEGER NOT NULL,
-        token_plain TEXT
-      );
       CREATE TABLE IF NOT EXISTS refresh_tokens (
         id INTEGER PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id),
@@ -132,17 +114,6 @@ export class HubDb {
       name: String(row.name),
       tokenHash: String(row.token_hash),
       createdAt: String(row.created_at),
-    };
-  }
-
-  private mapPending(row: Record<string, unknown>): PendingRow {
-    return {
-      id: String(row.id),
-      code: String(row.code),
-      expiresAt: Number(row.expires_at),
-      used: Number(row.used),
-      createdAt: Number(row.created_at),
-      tokenPlain: row.token_plain === null || row.token_plain === undefined ? null : String(row.token_plain),
     };
   }
 
@@ -254,48 +225,6 @@ export class HubDb {
   removeHost(id: string): boolean {
     const info = this.db.prepare("DELETE FROM hosts WHERE id = ?").run(id);
     return info.changes > 0;
-  }
-
-  // ---- pending（配对码）----
-
-  createPending(id: string, code: string, expiresAt: number, now = Date.now()): PendingRow {
-    this.db.prepare("INSERT INTO pending (id, code, expires_at, created_at) VALUES (?, ?, ?, ?)").run(
-      id,
-      code,
-      expiresAt,
-      now,
-    );
-    const row = this.db.prepare("SELECT * FROM pending WHERE id = ?").get(id);
-    return this.mapPending(row as unknown as Record<string, unknown>);
-  }
-
-  getPendingById(id: string): PendingRow | null {
-    const row = this.db.prepare("SELECT * FROM pending WHERE id = ?").get(id);
-    return row === undefined ? null : this.mapPending(row as unknown as Record<string, unknown>);
-  }
-
-  getPendingByCode(code: string): PendingRow | null {
-    const row = this.db.prepare("SELECT * FROM pending WHERE code = ?").get(code);
-    return row === undefined ? null : this.mapPending(row as unknown as Record<string, unknown>);
-  }
-
-  markPendingUsed(id: string): void {
-    this.db.prepare("UPDATE pending SET used = 1 WHERE id = ?").run(id);
-  }
-
-  /** 绑定后暂存明文 host token（仅 gateway 轮询取走）。 */
-  setPendingToken(id: string, tokenPlain: string): void {
-    this.db.prepare("UPDATE pending SET token_plain = ? WHERE id = ?").run(tokenPlain, id);
-  }
-
-  /** gateway 轮询取走后清空（明文 token 不长期落盘）。 */
-  clearPendingToken(id: string): void {
-    this.db.prepare("UPDATE pending SET token_plain = NULL WHERE id = ?").run(id);
-  }
-
-  /** 清理过期 pending（配对码 10 分钟超时）。 */
-  pruneExpiredPending(now = Date.now()): void {
-    this.db.prepare("DELETE FROM pending WHERE expires_at < ? OR used = 1").run(now);
   }
 
   // ---- refresh tokens ----

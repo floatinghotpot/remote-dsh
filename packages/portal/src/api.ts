@@ -77,12 +77,6 @@ export const api = {
   listHosts(): Promise<{ hosts: HostInfo[] }> {
     return jsonFetch("/api/hosts");
   },
-  createPending(): Promise<{ pendingId: string; code: string; expiresInSeconds: number }> {
-    return jsonFetch("/api/hosts/pending", { method: "POST", body: "{}" });
-  },
-  bind(code: string): Promise<{ hostId: string; name: string }> {
-    return jsonFetch("/api/hosts/bind", { method: "POST", body: JSON.stringify({ code }) });
-  },
   renameHost(hostId: string, name: string): Promise<{ ok: boolean }> {
     return jsonFetch(`/api/hosts/${hostId}`, { method: "PATCH", body: JSON.stringify({ name }) });
   },

@@ -15,8 +15,6 @@ import type { EventHub } from "./events.ts";
 import { randomToken, sha256 } from "./jwt.ts";
 
 export const SESSION_COOKIE = "rdsh_session";
-const PAIR_CODE_TTL_MS = 10 * 60 * 1000; // 配对码 10 分钟
-const PENDING_RATE_LIMIT = { max: 10, windowMs: 60 * 1000 }; // pending 创建防滥用：10 次/分钟/IP
 const JOIN_TOKEN_DEFAULT_TTL = 30 * 24 * 3600; // join token 默认 30 天（秒）
 const JOIN_TOKEN_MAX_TTL = 365 * 24 * 3600; // join token 上限 1 年（秒）
 const REGISTER_RATE_LIMIT = { max: 10, windowMs: 60 * 1000 }; // register 未认证端点：10 次/分钟/IP
@@ -113,14 +111,6 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, runti
     await handleListHosts(req, res, runtime);
     return true;
   }
-  if (path === "/api/hosts/pending" && method === "POST") {
-    await handleCreatePending(req, res, runtime);
-    return true;
-  }
-  if (path === "/api/hosts/bind" && method === "POST") {
-    await handleBind(req, res, runtime);
-    return true;
-  }
   if (path === "/api/hosts/self-revoke" && method === "POST") {
     await handleSelfRevoke(req, res, runtime);
     return true;
@@ -140,11 +130,6 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, runti
   const joinTokenMatch = /^\/api\/hosts\/join-tokens\/([^/]+)$/.exec(path);
   if (joinTokenMatch !== null && method === "DELETE") {
     await handleRevokeJoinToken(req, res, runtime, decodeURIComponent(joinTokenMatch[1]!));
-    return true;
-  }
-  const pendingMatch = /^\/api\/hosts\/pending\/([^/]+)$/.exec(path);
-  if (pendingMatch !== null && method === "GET") {
-    await handlePollPending(req, res, runtime, decodeURIComponent(pendingMatch[1]!));
     return true;
   }
   const hostMatch = /^\/api\/hosts\/([^/]+)$/.exec(path);
@@ -306,93 +291,10 @@ async function handleListHosts(req: IncomingMessage, res: ServerResponse, runtim
   res.end(JSON.stringify({ hosts: out }));
 }
 
-async function handleCreatePending(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
-  // gateway 未认证调用（还没有 token）—— IP 限流防滥用（10 次/分钟）
-  const ip = clientIp(req, runtime);
-  const now = Date.now();
-  const hit = pendingRate.get(ip);
-  if (hit !== undefined && now - hit.windowStart < PENDING_RATE_LIMIT.windowMs) {
-    if (hit.count >= PENDING_RATE_LIMIT.max) {
-      writeError(res, 429, "RATE_LIMITED", "too many pending requests");
-      return;
-    }
-    hit.count += 1;
-  } else {
-    pendingRate.set(ip, { count: 1, windowStart: now });
-  }
-  runtime.db.pruneExpiredPending();
-  const pendingId = randomUUID();
-  const code = generateUniqueCode(runtime);
-  runtime.db.createPending(pendingId, code, now + PAIR_CODE_TTL_MS);
-  res.writeHead(200, { "content-type": "application/json" });
-  res.end(JSON.stringify({ pendingId, code, expiresInSeconds: PAIR_CODE_TTL_MS / 1000 }));
-}
-
-const pendingRate = new Map<string, { count: number; windowStart: number }>();
 const loginLimiters = new Map<string, ReturnType<typeof createLoginLimiter>>();
 const SELF_REVOKE_RATE_LIMIT = { max: 10, windowMs: 60 * 1000 }; // 未认证端点：10 次/分钟/IP
 const selfRevokeRate = new Map<string, { count: number; windowStart: number }>();
 const registerRate = new Map<string, { count: number; windowStart: number }>();
-
-function generateUniqueCode(runtime: HubRuntime): string {
-  for (let i = 0; i < 100; i++) {
-    const code = String(100000 + Math.floor(Math.random() * 900000)); // 6 位数字
-    if (runtime.db.getPendingByCode(code) === null) return code;
-  }
-  throw new Error("failed to generate unique pair code");
-}
-
-async function handleBind(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
-  const auth = authenticate(req, runtime);
-  if (auth === null) {
-    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
-    return;
-  }
-  const body = await readJsonBody(req);
-  if (body === null || typeof body.code !== "string" || !/^\d{6}$/.test(body.code)) {
-    writeError(res, 400, "BAD_REQUEST", "invalid pair code");
-    return;
-  }
-  const pending = runtime.db.getPendingByCode(body.code);
-  if (pending === null || pending.used === 1 || pending.expiresAt <= Date.now()) {
-    writeError(res, 400, "BAD_CODE", "pair code invalid or expired");
-    return;
-  }
-  const hostId = randomUUID();
-  const hostToken = randomToken();
-  runtime.db.createHost(hostId, auth.userId, `host-${hostId.slice(0, 8)}`, sha256(hostToken));
-  runtime.db.setPendingToken(pending.id, hostToken);
-  runtime.db.markPendingUsed(pending.id);
-  res.writeHead(200, { "content-type": "application/json" });
-  res.end(JSON.stringify({ hostId, name: `host-${hostId.slice(0, 8)}` }));
-}
-
-async function handlePollPending(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime, pendingId: string): Promise<void> {
-  const pending = runtime.db.getPendingById(pendingId);
-  if (pending === null) {
-    writeError(res, 404, "NOT_FOUND", "pending not found");
-    return;
-  }
-  if (pending.used === 0) {
-    res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ status: "pending" }));
-    return;
-  }
-  if (pending.expiresAt <= Date.now()) {
-    writeError(res, 410, "EXPIRED", "pending expired");
-    return;
-  }
-  const token = pending.tokenPlain;
-  if (token === null) {
-    writeError(res, 410, "TOKEN_TAKEN", "host token already taken");
-    return;
-  }
-  runtime.db.clearPendingToken(pending.id);
-  // 从 hosts 取 hostId
-  const host = runtime.db.findHostByTokenHash(sha256(token));
-  res.writeHead(200, { "content-type": "application/json" });
-  res.end(JSON.stringify({ status: "bound", hostId: host?.id ?? null, token }));
-}
 
 async function handleRenameHost(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime, hostId: string): Promise<void> {
   const auth = authenticate(req, runtime);
