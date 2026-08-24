@@ -1,60 +1,34 @@
-# remote-dsh blog index (by use case)
+# Your DSH, anywhere — a scenario guide
 
-> All posts are bilingual (`doc/blog/zh/` 中文 / `doc/blog/en/` English).
-> Organized by "**how you reach your DSH**": pick your scenario, then the post.
+> All tutorials are bilingual ([English](en/) / [中文](zh/)).
+> Start with one question: **which machine is your DSH on, and where do you want to reach it from?** Then follow the path below — every path has a one-command option.
 
 ---
 
-## 1. LAN / VPN: direct IP access
+## At home or in the office: the same Wi-Fi is enough
 
-| Scenario | Post |
-|---|---|
-| 1.1 Same Wi-Fi/LAN — browse the dev machine's IP from any device (pair code) | [LAN direct access](en/01-01-lan-access.md) |
-| 1.2 On the road — VPN back into the LAN, then access by IP | [VPN back into the LAN](en/01-02-vpn-lan.md) |
+Your DSH runs on the dev machine, but you're on the couch, in a meeting room, or at another desk? No public IP and no hub needed:
 
-## 2. Cloud server (ECS): direct public IP / domain access
+- **On the same Wi-Fi**, open `http://<dev-machine-ip>:8443` in any browser and type the pair code shown in the terminal — the full DSH (chat, tools, files, live streams) is yours — [LAN direct access (pair code)](en/01-01-lan-access.md)
+- **On the road**? VPN back into the LAN first, then it works exactly like being at home — [VPN back into the LAN](en/01-02-vpn-lan.md)
 
-| Scenario | Post |
-|---|---|
-| 2.1 Standalone with built-in cert / HTTPS (simplest) | [Cloud server direct (built-in TLS)](en/02-01-cloud-single-tls.md) |
-| 2.2 Host behind Apache2 (443 + auto-renewed certs) | [Host behind Apache2](en/02-02-cloud-apache-acme.md) |
-| 2.3 Host behind nginx | [Host behind nginx](en/02-03-cloud-nginx.md) |
+## On a cloud server: public IP, go straight to HTTPS
 
-## 3. No public IP (NAT / inner VM): relayed via a hub (host onboarding)
+Your DSH runs on a machine with a public IP (Alibaba Cloud ECS and friends), and you want to sign in from any browser (username + password). Three flavors, pick one:
 
-### 3.1 Add hosts (hosts belong to the hub user)
+- **Simplest**: rdsh holds its own cert, one port, no nginx/apache — [Cloud server direct (built-in TLS)](en/02-01-cloud-single-tls.md)
+- **Standard 443 + fully auto-renewed certs**, HTTPS handled by a reverse proxy: [Apache2 (cron + acme.sh auto-renew)](en/02-02-cloud-apache-acme.md) or [nginx](en/02-03-cloud-nginx.md)
 
-| Scenario | Post |
-|---|---|
-| 3.1.1 Sign up | ⏳ planned (see roadmap); currently accounts are created by the hub admin |
-| 3.1.2 Sign in to the portal (user / password) | see usage.md §8.3 |
-| 3.1.3 Add a host (join token): | |
-| 3.1.3.1 Foreground (`rdsh host join <hub> --token <t>`) | [Join token one-click onboarding](en/03-04-join-token.md) |
-| 3.1.3.2 Always-on service (`rdsh host service install`, boot-start / crash-restart) | [Join token one-click onboarding](en/03-04-join-token.md) (service variant) + [usage.md §8.5 service tips](../overview/usage.md) |
+## No public IP (behind NAT / inner VM): let a hub relay for you
 
-> No hub available yet? Run your own — see **Chapter 4** (run your own hub).
+The machine is behind NAT or inside a private network — nothing can reach it from outside. The fix: a **public hub** acts as the "switchboard". Machines only connect **outbound** to the hub (no public IP, no open ports), and you reach any machine from anywhere through the hub. Pick your role:
 
-## 4. Run your own hub (relay service, hub admin)
+**You're a host user** (adding a machine to the hub) — one path:
+- [Join with a join token: generate in the portal, paste one command on the machine, done](en/03-04-join-token.md). After registration the token is persisted — restarts need no re-pairing; the same post covers the always-on service variant (boot-start + crash-restart).
+- Where do accounts come from? The hub admin creates them for now (self sign-up is on the roadmap); you sign in to the portal with username + password.
 
-### 4.1 Deploy the hub
-
-| Scenario | Post |
-|---|---|
-| 4.1.1 Deploy hub on an ECS (built-in TLS) | [Hub public deployment](en/03-01-hub-public.md) (deployment part; host onboarding: see 3.1.3) |
-| 4.1.2 Hub behind Apache2 | [Hub behind Apache2](en/03-02-hub-behind-apache-https.md) |
-| 4.1.3 Hub behind nginx | [Hub behind nginx](en/03-03-hub-behind-nginx.md) |
-
-### 4.2 Hub user management (create / password / revoke)
-
-| Scenario | Post |
-|---|---|
-| 4.2.1 User management | see [usage.md §8.3](../overview/usage.md) |
-
-> Once the hub is up, onboarding hosts is **Chapter 3** (relayed via a hub).
-
-## 5. Manuals
-
-| Doc | What |
-|---|---|
-| [usage.md](../overview/usage.md) | Full operations manual (install / config / commands / security / troubleshooting) |
-| [roadmap](../overview/roadmap.md) | Milestones & plans (sign-up, multi-tenant, mobile, …) |
+**You're a hub admin** (running a hub for your team / yourself) — three deployment routes + user management:
+- [Deploy the hub on an ECS (built-in TLS, fastest)](en/03-01-hub-public.md)
+- [Hub behind Apache2 (443 + auto-renewed certs)](en/03-02-hub-behind-apache-https.md)
+- [Hub behind nginx](en/03-03-hub-behind-nginx.md)
+- User management (create / password / revoke hosts) — see [usage.md §8.3](../overview/usage.md)
