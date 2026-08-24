@@ -28,6 +28,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Open-source docs: LICENSE (MIT), README (en/zh), CONTRIBUTING, CODE_OF_CONDUCT, NOTICE, CI workflow.
 - Product proposal (`doc/overview/proposal.md`) with decided roadmap Q1–Q10.
 
+## [0.5.0] - 2026-08-24
+
+### Added
+
+- Component-oriented CLI: `rdsh host {setup lan|cloud, join, serve, service, leave, user}`; `rdsh hub` unchanged. (`remote-dsh@0.5.0`)
+- `~/.rdsh/host.json` (mode `lan` | `cloud` | `join`) replaces `config.json` with automatic migration.
+- User-level join token: generate / copy / list / revoke in the portal (30-day default, 1d–1y configurable, shown once, hash-only). (`rdsh-hub@0.3.0`)
+- `POST /api/hosts/register` (join token → host token, rate-limited, idempotent for host tokens) + `POST /api/hosts/self-revoke`.
+- `rdsh host join` interactive token paste; TLS certificate auto-detection (no `--insecure` needed).
+- Portal "add host" page (generate + copy join command or token, list/revoke tokens).
+- Distinct service names (`rdsh-host` / `rdsh-join` / `rdsh-hub`), with node's PATH injected into host service units (nvm fix, `#! /usr/bin/env node` 127). (`rdsh-gateway@0.3.0`)
+
+### Removed (breaking)
+
+- Pair-code join flow (`--code`, `/api/hosts/pending` + `/api/hosts/bind`) — join now uses only the join token; pair code remains only for the LAN/cloud gateway's pair auth.
+- Old top-level `rdsh serve` / `rdsh join` / `rdsh user` / `rdsh service` commands.
+
 ## [0.4.9] - 2026-08-24
 
 ### Fixed

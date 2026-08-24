@@ -25,6 +25,23 @@
 - 开源文档：LICENSE（MIT）、README（中/英）、CONTRIBUTING、CODE_OF_CONDUCT、NOTICE、CI 工作流。
 - 产品提案（`doc/overview/proposal.md`），含 Q1–Q10 已定路线。
 
+## [0.5.0] - 2026-08-24
+
+### 新增
+
+- 组件化 CLI：`rdsh host {setup lan|cloud, join, serve, service, leave, user}`；`rdsh hub` 不变。（`remote-dsh@0.5.0`）
+- `~/.rdsh/host.json`（mode `lan` | `cloud` | `join`）取代 `config.json`，自动迁移。
+- 用户级 join token：portal 生成 / 复制 / 列表 / 吊销（默认 30 天，可配 1 天–1 年，只显示一次，哈希存储）。（`rdsh-hub@0.3.0`）
+- `POST /api/hosts/register`（join token → host token，限流，对 host token 幂等）+ `POST /api/hosts/self-revoke`。
+- `rdsh host join` 交互粘贴 token；TLS 证书自动检测（无需 `--insecure`）。
+- portal「添加主机」页（生成/复制接入命令或 token、token 列表/吊销）。
+- 服务名独立（`rdsh-host` / `rdsh-join` / `rdsh-hub`），host 服务 unit 注入 node PATH（nvm 下 `#! /usr/bin/env node` 127 修复）。（`rdsh-gateway@0.3.0`）
+
+### 移除（breaking）
+
+- join 的配对码流程（`--code`、`/api/hosts/pending` + `/api/hosts/bind`）——join 现在只用 join token；配对码仅保留给 LAN/cloud 网关的 pair 认证。
+- 旧顶层命令 `rdsh serve` / `rdsh join` / `rdsh user` / `rdsh service`。
+
 ## [0.4.9] - 2026-08-24
 
 ### 修复
