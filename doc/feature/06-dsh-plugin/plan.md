@@ -21,7 +21,7 @@
 | T9 | 文档：CHANGELOG（zh/en） | `CHANGELOG.md`、`CHANGELOG.zh.md` | ✅ |
 | T10 | verification.md + summary.md + TODO.md + RTTM 复核 | `doc/feature/06-dsh-plugin/` | ✅ |
 | T11 | 真实 DSH 冒烟：`dsh plugin add` → 面板出现 → 接入/断开/注销 | 用户本机 DSH 实测 | ✅（2026-08-24：面板出现 + 接入 hub.unicgames.com「已连接」+ 断开/注销；i18n/DSH 主题/提示/遮罩令牌对齐） |
-| T12 | 发布 `rdsh-gateway@0.4.0` + `dsh-web-remote@0.1.0`（覆盖 0.0.0 占位） | npm（用户终端 + passkey） | ⏭️ |
+| T12 | 发布 `rdsh-gateway@0.4.0` + `dsh-web-remote@0.1.0`（覆盖 0.0.0 占位） | npm（用户终端 + passkey） | ✅（2026-08-24 发布；`dsh plugin --profile web add dsh-web-remote` 验证通过） |
 
 ## 2. RTTM（req → 任务追溯）
 

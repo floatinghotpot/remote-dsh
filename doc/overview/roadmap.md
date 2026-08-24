@@ -2,7 +2,7 @@
 
 > **日期**: 2026-08-24
 > **来源**: `proposal.md` §8 里程碑 + §10 决策记录（Q1–Q10）
-> **状态**: 04-cli-refactor、05-join-easy 已完成并发布（2026-08-24）；**M4 dsh 插件（远程访问 `dsh-web-remote`）已实现 + 真实 DSH 冒烟通过**；待 npm 发布（gateway 0.4.0 + 插件 0.1.0）
+> **状态**: 04-cli-refactor、05-join-easy 已完成并发布（2026-08-24）；**M4 dsh 插件（远程访问 `dsh-web-remote`）已实现 + 冒烟通过 + 发布**（`rdsh-gateway@0.4.0` + `dsh-web-remote@0.1.0`）
 
 ## 里程碑总览
 
@@ -12,7 +12,7 @@
 | **M1 MVP（LAN）** | `rdsh serve` 局域网认证网关 | ✅ 完成（2026-08-23，单测 33/33 + 端到端 14/14 + 双设备实测通过） |
 | **M2 云服务器直连** | TLS/https + 密码认证 + 配置文件 + 服务化 | ✅ 完成（2026-08-23，单测 57/57 + M2 e2e 43/43 + M1 回归 14/14） |
 | **M3 公网 hub** | rdsh-hub（认证/路由）+ `rdsh join` + rdsh-portal | ✅ 完成（2026-08-23，单测 92/92 + M3 e2e 23/23 + M1/M2 回归 57） |
-| **M4 dsh 插件（远程访问）** | DSH 插件形态的 rdsh-gateway：`dsh plugin add dsh-web-remote` 即获网关/join，免装 CLI | ✅ 已实现 + 冒烟通过（待 npm 发布） |
+| **M4 dsh 插件（远程访问）** | DSH 插件形态的 rdsh-gateway：`dsh plugin add dsh-web-remote` 即获网关/join，免装 CLI | ✅ 已发布（2026-08-24：gateway 0.4.0 + 插件 0.1.0） |
 | **M5 多租户增强** | 邮箱验证、2FA、共享授权、审计、限流 | ⏳ 未开始 |
 | **M6 上线准备** | 域名备案、隐私政策、部署文档、压测 | ⏳ 未开始 |
 | **M7 hub Go 化 + E2E** | rdsh-hub Go 单二进制 + conformance；公共 SaaS 化时实现 E2E | ⏳ 未开始 |
@@ -84,12 +84,12 @@
 - **来源**：`doc/feature/05-join-easy/`（discussion/req/solution/plan；实现完成）
 - **验收**：portal 生成 → 机器粘贴 → 注册 → 在线；重启免配；吊销/过期被拒；API key 由 DSH 自管 —— 达成（发布 `rdsh-hub@0.3.0` / `rdsh-gateway@0.3.0` / `remote-dsh@0.5.0` / `rdsh-tunnel@0.1.0`）
 
-### M4 dsh 插件（远程访问）✅（2026-08-23 新增，2026-08-24 实现 + 冒烟通过）
+### M4 dsh 插件（远程访问）✅（2026-08-23 新增，2026-08-24 实现 + 冒烟通过 + 发布）
 
 - **背景**：host 侧接入目前需 `npm i -g remote-dsh` + `rdsh serve/join`；DSH 插件生态（Cordis）允许把 gateway 能力做进插件 —— 用户 `dsh plugin add` 即获同能力，免装 CLI
 - **内容**：`dsh-*` 插件（npm 包）—— **内嵌 join 核心**（不 spawn，转发到本进程 dsh `127.0.0.1:<port>`）+ 复用 05 已验证的 join 隧道/转发内核；DSH 界面「远程访问」面板（接入/断开/注销 + 实时状态点 + 外部托管只读）；与 CLI 双通道分发
 - **验收**：在 dsh 里装插件 → 面板粘贴 hub URL + join token → 接入 → hub 在线；断开/注销可用；无需单独安装 rdsh CLI
-- **进度**：`doc/feature/06-dsh-plugin/` 全流程（discussion/req/solution/plan/verification/summary/TODO）；D1–D6 决议、P1–P5 查证、P6（npm org）推迟；**2026-08-24 真实 DSH 冒烟通过**（面板 + 接入 + 断开/注销 + i18n/DSH 主题对齐）；待 npm 发布（gateway 0.4.0 + 插件 0.1.0）
+- **进度**：`doc/feature/06-dsh-plugin/` 全流程（discussion/req/solution/plan/verification/summary/TODO）；D1–D6 决议、P1–P5 查证、P6（npm org）推迟；**2026-08-24 真实 DSH 冒烟通过 + 发布**（`rdsh-gateway@0.4.0` + `dsh-web-remote@0.1.0`）
 - **相关决策**：插件与 CLI 双通道分发（CLI 保留）；单身份铁律（host.json 唯一 + pid 锁防双隧道）；MVP 面板四态 + 外部托管只读；RPC 走 `connection.rpc`（非 `/api` 内置契约）
 
 ### M5 多租户增强 ⏳
@@ -121,12 +121,11 @@
 - **约束**：Flutter 不可用于小程序（平台硬约束）；原生实现最稳、审核风险最低
 - **相关决策**：Q3（小程序后置）
 
-## 当前焦点（M4 已实现，待发布）
+## 当前焦点（M4 已完成并发布）
 
-1. **M4 dsh 插件（远程访问 `dsh-web-remote`）**：已实现 + 真实 DSH 冒烟通过（2026-08-24）；待 **npm 发布** `rdsh-gateway@0.4.0` + `dsh-web-remote@0.1.0`（覆盖 0.0.0 占位，用户终端 + passkey）
-2. **已发布**（2026-08-24）：`rdsh-hub@0.3.0` / `rdsh-gateway@0.3.0` / `remote-dsh@0.5.0` / `rdsh-tunnel@0.1.0`（04/05 落地）
-3. **命名**：M4 插件名 `dsh-web-remote`（已实现，公开）；npm org 锁 scope（P6）推迟到将来
-4. **待办**：远程验证（阿里云 host 升级 `remote-dsh@0.5.0` + 重装服务）；join 孤儿 dsh 兜底；300 MB 压测（可并入 M7）
+1. **M4 dsh 插件（远程访问 `dsh-web-remote`）**：✅ 已发布（2026-08-24）：`rdsh-gateway@0.4.0` + `dsh-web-remote@0.1.0`（`dsh plugin --profile web add dsh-web-remote` 即用）
+2. **已发布**（2026-08-24）：`rdsh-hub@0.3.0` / `rdsh-gateway@0.4.0` / `remote-dsh@0.5.0` / `rdsh-tunnel@0.1.0` / `dsh-web-remote@0.1.0`
+3. **待办**：远程验证（阿里云 host 升级 `remote-dsh@0.5.0` + 重装服务）；join 孤儿 dsh 兜底；300 MB 压测（可并入 M7）；npm org 锁 scope（P6，推迟）
 
 ## 变更记录
 
@@ -142,5 +141,6 @@
 | 2026-08-24 | **新增前置特性 04/05（M4 之前）**：04-cli-refactor（CLI 组件化 `rdsh host *` + host.json 3 模式 + self-revoke + 自动迁移 + 证书自动检测）与 05-join-easy（用户级 join token + `host join` 交互注册免配对 + portal「添加主机」页）；discussion/req 已定（待批准）；发布收尾（hub 0.2.4 / gateway 0.2.3 / cli 0.4.9 待发） |
 | 2026-08-24 | **04/05 完成并发布**：`rdsh-hub@0.3.0` / `rdsh-gateway@0.3.0` / `remote-dsh@0.5.0` / `rdsh-tunnel@0.1.0`；join token 取代 hub 侧配对码 bind（`pending`/`bind` 移除）；**M4（06-dsh-plugin）规划定稿**：discussion ✅ / req ✅（已批准）/ solution 待批准，命名已定稿（实现前不公开全名），P6（npm org）推迟 |
 | 2026-08-24 | **M4（06-dsh-plugin）实现 + 冒烟通过**：gateway `startJoin`（no-spawn/可停止/onState/onLog）+ pid 锁 `lock.ts`（gateway 0.4.0）；插件包 `dsh-web-remote`（server 半 `connection.rpc` + client 半 React 面板，i18n/DSH 设计令牌）；真实 DSH 冒烟通过（面板 + 接入 hub.unicgames.com + 断开/注销）；待 npm 发布 gateway 0.4.0 + 插件 0.1.0 |
+| 2026-08-24 | **M4 发布**：`rdsh-gateway@0.4.0` + `dsh-web-remote@0.1.0` 上线 npm；`dsh plugin --profile web add dsh-web-remote` 即用；修复 profile 残留 file: 依赖导致的 workspace 解析问题 |
 
 *关联文档：proposal.md | doc/overview/architecture.md | doc/feature/01-remote-access/*

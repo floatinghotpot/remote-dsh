@@ -31,7 +31,7 @@
 | # | 差距 | 严重度 | 处置 |
 |---|---|---|---|
 | G1 | client.js + server 半的 DSH 集成冒烟（`dsh plugin add` → 面板 → 接入/断开/注销） | ~~P1~~ ✅ | **已解决**：2026-08-24 用户本机 DSH 实测通过（面板出现 + 接入 hub.unicgames.com「已连接」+ 断开/注销 + i18n/DSH 主题对齐） |
-| G2 | `rdsh-gateway@0.4.0` + `dsh-web-remote@0.1.0` 未发布（插件依赖 `rdsh-gateway`，发布前不可用） | **P1** | 用户终端 npm 发布（T12） |
+| G2 | `rdsh-gateway@0.4.0` + `dsh-web-remote@0.1.0` 发布 | ~~P1~~ ✅ | **已解决**：2026-08-24 发布到 npm；`dsh plugin --profile web add dsh-web-remote` 验证通过 |
 | G3 | pid 存活探测（`process.kill(pid,0)`）未在 Windows 实测 | P3 | Linux/macOS 已测；Windows 语义待补 |
 | G4 | `@deepseek-ai/cordis` 未作运行时依赖（server 半用函数插件形态规避）——若将来要 `Service` 子类需补 peerDep | P3 | 已在 solution §2.4 记录 |
 | G5 | 注销后 host.json 回退为 `mode:"lan"`（清 hub/name/insecure），与 CLI `leave`（删文件）略有差异 | P3 | 已在 solution §7 记录，按选择实现 |
@@ -39,6 +39,6 @@
 ## 4. 结论
 
 - 核心（gateway `startJoin` + pid 锁）已实现、构建/单测全绿、CLI 零回归 —— **达标**。
-- 插件包（server + client 半）已实现、**真实 DSH 冒烟通过**（2026-08-24）；剩余 P1 差距仅 **发布（G2）**，须用户 npm 终端完成（见 TODO.md）。
+- 插件包（server + client 半）已实现、**真实 DSH 冒烟通过 + 发布**（2026-08-24，`rdsh-gateway@0.4.0` + `dsh-web-remote@0.1.0`）—— 无剩余 P1 差距。
 
 *关联文档：req.md | solution.md | plan.md*

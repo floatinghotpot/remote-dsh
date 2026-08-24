@@ -27,8 +27,8 @@
 - CHANGELOG（en/zh）加 `[Unreleased]` 条目；roadmap/README 遵守命名纪律（实现前不泄全名）。
 - Feature Pipeline：discussion → req（已批准）→ solution（已批准）→ plan → verification → summary → TODO 齐全。
 
-## 未完成（待用户）
+## 状态
 
-见 [TODO.md](TODO.md)：T12 npm 发布（P1，`rdsh-gateway@0.4.0` + `dsh-web-remote@0.1.0`）。
+全部完成并发布（2026-08-24）：`rdsh-gateway@0.4.0` + `dsh-web-remote@0.1.0` 上线 npm；`dsh plugin --profile web add dsh-web-remote` 验证通过。[TODO.md](TODO.md) 为空。
 
 *关联文档：discussion.md | req.md | solution.md | plan.md | verification.md*
