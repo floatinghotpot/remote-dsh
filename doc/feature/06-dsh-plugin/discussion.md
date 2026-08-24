@@ -78,33 +78,33 @@ dsh plugin --profile default add <plugin>
 
 **实测**：`@remote-dsh`、`@rdsh`、`@floatinghotpot` 等 scope 下目前均无包（大概率可注册 org；**创建 org 才是真正的保留动作**——待办 P6）。
 
-### 4.2 候选（裸名 + scoped 两套）
+### 4.2 候选 + 预留状态
 
-裸名（开放空间，可预留多个但**不防未来抢注**）：
+**已预留（2026-08-24 发布占位 0.0.0，脚本 `scripts/reserve-name.sh`）**：
 
-| 候选 | 状态 | 风格 |
-|---|---|---|
-| `dsh-plugin-rdsh` | ✅ 空闲 | 品牌 + `dsh-plugin-` 生态前缀 |
-| `dsh-remote-visit` | ✅ 空闲 | 描述·友好（"visit your DSH from anywhere"，正确英语） |
-| `dsh-remote-host` | ✅ 空闲 | 描述·贴合 host/gateway 角色 |
-| `dsh-tunnel` | ✅ 空闲 | 描述·技术 |
-| `dsh-rdsh` | ✅ 空闲 | 短品牌（代号） |
-| `dsh-remote-dsh` | ✅ 空闲 | 冗余（dsh 叠词），不推荐 |
+| 候选 | 风格 |
+|---|---|
+| `dsh-plugin-rdsh` | 品牌 + `dsh-plugin-` 生态前缀 |
+| `dsh-tunnel` | 描述·技术（核心是隧道） |
+| `dsh-web-remote` | 描述·Web 视角（语义略偏「web UI」，作占位备选） |
+
+其他空闲候选（未预留）：
+
+| 候选 | 风格 |
+|---|---|
+| `dsh-remote-visit` | 描述·友好（"visit your DSH from anywhere"） |
+| `dsh-remote-host` | 描述·host/gateway 角色 |
+| `dsh-rdsh` | 短品牌（代号） |
 
 被占（同类远程访问）：`dsh-plugin-remote` / `dsh-remote-access` / `dsh-remote-gateway` / `dsh-gateway` / `dsh-remote` / `dsh-host` / `dsh-anywhere` / `dsh-remote-tunnel` / `dsh-pocket`。
 
-scoped（保留空间，免疫抢注）：
-
-```
-@remote-dsh/dsh-remote-visit
-@remote-dsh/plugin-rdsh
-@rdsh/dsh-...                # 或短代号 scope
-```
+scoped（保留空间，免疫抢注，未做）：`@remote-dsh/…` / `@rdsh/…` —— 需先建 org（P6）。
 
 ### 4.3 决策状态
 
-- **未定稿**：主名（裸名 vs scoped；品牌 vs 描述）待继续讨论；
-- **待办 P6**：尽快创建 `remote-dsh`（或 `rdsh`）npm org，锁定 scope（先到先得）；
+- **已预留 3 名**（0.0.0）：`dsh-plugin-rdsh` / `dsh-tunnel` / `dsh-web-remote`；
+- **主名未定稿**：在已预留 3 名里定一个（倾向 `dsh-plugin-rdsh`），其余留作占位/备胎；
+- **待办 P6**：创建 `remote-dsh`（或 `rdsh`）npm org 锁 scope（若走 scoped 路线）；
 - **文档纪律**：README / roadmap 在定稿前不写全名（只写 `dsh plugin add`）；本 discussion 持续记录命名决策。
 
 ## 5. 关键设计问题（待决，进 req/solution）
