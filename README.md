@@ -109,21 +109,12 @@ Public: open the hub URL, sign in, pick a machine — full DSH in the browser.
 
 ## Blog
 
-Scenario guides:
+Scenario guides, organized by use case — full index: [English](doc/blog/README.md) · [中文](doc/blog/README.zh.md)
 
-- Access a DSH on another host via LAN IP (LAN mode):
-  - [Control your DSH agent from your phone, at home or in the office (LAN)](doc/blog/en/01-01-lan-access.md)
-  - [On the road, still reach your home DSH: VPN back into the LAN](doc/blog/en/01-02-vpn-lan.md)
-- Remote-access a DSH on a cloud server via public IP or domain (cloud-server mode):
-  - [Put your DSH agent on a cloud server: sign in from any browser (own TLS cert)](doc/blog/en/02-01-cloud-single-tls.md)
-  - [Let Apache2 handle DSH HTTPS: real domain + automatic cert renewal](doc/blog/en/02-02-cloud-apache-acme.md)
-  - [Put DSH behind nginx: shared port 443, auto-renewed HTTPS](doc/blog/en/02-03-cloud-nginx.md)
-- Remote-control DSH on multiple hosts without a public IP (server relay mode):
-  - [Remote-control every DSH agent from anywhere — no public IP needed](doc/blog/en/03-01-hub-public.md)
-  - [Deploy rdsh-hub behind Apache2 (443 + auto-renewed certs)](doc/blog/en/03-02-hub-behind-apache-https.md)
-  - [Deploy rdsh-hub behind nginx (shared 443 + auto-renewed HTTPS)](doc/blog/en/03-03-hub-behind-nginx.md)
-- Run the hub & gateway as always-on services (ops):
-  - [Run rdsh-hub & rdsh-join as systemd user services (no sudo)](doc/blog/en/04-01-run-as-user-service-ubuntu.md)
+- [Add a new host to your hub with a join token — portal, then one command on the machine (recommended)](doc/blog/en/03-04-join-token.md)
+- [Control your DSH from any device on the same LAN (pair code)](doc/blog/en/01-01-lan-access.md)
+- [Put your DSH agent on a cloud server: HTTPS + password (own cert)](doc/blog/en/02-01-cloud-single-tls.md)
+- [Deploy the hub behind Apache2 (443 + auto-renewed certs)](doc/blog/en/03-02-hub-behind-apache-https.md)
 
 ## Development
 

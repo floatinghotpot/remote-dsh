@@ -100,21 +100,12 @@ rdsh host join <hub-url>    # 或接入 hub（出站隧道）
 
 ## 博客
 
-场景化教程：
+场景化教程，按使用场景索引 — 完整索引：[中文](doc/blog/README.zh.md) · [English](doc/blog/README.md)
 
-- 通过内网 IP，访问另一台主机上的 DSH（局域网模式）：
-  - [在家或办公室，用手机/笔记本/台式机遥控开发机的 DSH 智能体（局域网篇）](doc/blog/zh/01-01-lan-access.md)
-  - [出差在外也能访问家里的 DSH：VPN 连回局域网，配对码照用](doc/blog/zh/01-02-vpn-lan.md)
-- 通过公网 IP 或域名，远程访问云服务器中的 DSH（云服务器模式）：
-  - [把 DSH 智能体搬到云服务器：浏览器输密码就能遥控（证书自备）](doc/blog/zh/02-01-cloud-single-tls.md)
-  - [DSH 智能体的 HTTPS 交给 apache2：正式域名 + 证书全自动续期](doc/blog/zh/02-02-cloud-apache-acme.md)
-  - [用 nginx 给 DSH 智能体套 HTTPS：443 共端口、证书自动续期](doc/blog/zh/02-03-cloud-nginx.md)
-- 无公网 IP 远程操控多个主机 DSH（服务器转发模式）：
-  - [没有公网 IP，也能从任何地方远程访问所有 DSH 智能体](doc/blog/zh/03-01-hub-public.md)
-  - [hub 反代部署：把 rdsh-hub 放到 apache2 后面（443 + 证书自动续期）](doc/blog/zh/03-02-hub-behind-apache-https.md)
-  - [hub 反代部署：把 rdsh-hub 放到 nginx 后面（443 共端口 + 证书自动续期）](doc/blog/zh/03-03-hub-behind-nginx.md)
-- 把 hub 与 gateway 常驻化（systemd 用户服务，免 sudo、开机自启、崩溃重启）：
-  - [把 rdsh-hub 与 rdsh-join 部署为 systemd 用户服务（免 sudo、开机自启、崩溃重启）](doc/blog/zh/04-01-run-as-user-service-ubuntu.md)
+- [用 join token 把新主机接入 hub：portal 生成 → 机器一条命令（推荐）](doc/blog/zh/03-04-join-token.md)
+- [在家/办公室用任意设备遥控开发机的 DSH（局域网配对码）](doc/blog/zh/01-01-lan-access.md)
+- [把 DSH 搬上云服务器：HTTPS + 密码直连（证书自备）](doc/blog/zh/02-01-cloud-single-tls.md)
+- [把 hub 放到 apache2 后面（443 + 证书自动续期）](doc/blog/zh/03-02-hub-behind-apache-https.md)
 
 ## 开发
 

@@ -293,6 +293,36 @@ rdsh hub service install|status|uninstall      # hub 服务化（rdsh-hub.servic
 
 其中 `join-token`（需登录，生成用户级 join token，明文只显示一次）、`register`（gateway 持 join token 注册换 host token，未认证+限流）、`self-revoke`（host 持自己的 token 注销）为 05-join-easy 新增；**join 的配对码（pending/bind）流程已移除**——join 只走 join token，配对码仅保留给 LAN/cloud 网关的 pair 认证。
 
+### 8.5 服务化要点（linger / PATH / 运维速查）
+
+`rdsh host service install <hub> --token <t>` 一条命令即可把本机常驻化（生成 `rdsh-join.service`，unit 不含 token，`rdsh host serve` 读 host.json 运行）。三个必知点：
+
+- **开机免登录自启（linger）**：用户级服务默认只在登录期间运行 —— 忘了这步，"开机自启"是假的：
+  ```bash
+  sudo loginctl enable-linger <user>
+  loginctl show-user <user> | grep Linger    # 期望 Linger=yes
+  ```
+- **nvm/自装 Node 的 PATH 坑**：systemd 用户服务环境的默认 PATH 不含 node 目录，`rdsh host serve` spawn 的 dsh（`#!/usr/bin/env node`）会起不来（`dsh exited before reporting a port (code 127)`）。workaround：服务 drop-in 补 PATH：
+  ```bash
+  mkdir -p ~/.config/systemd/user/rdsh-join.service.d
+  cat > ~/.config/systemd/user/rdsh-join.service.d/env.conf <<'EOF'
+  [Service]
+  Environment=PATH=<node-bin-dir>:/usr/local/bin:/usr/bin:/bin
+  EOF
+  systemctl --user daemon-reload && systemctl --user restart rdsh-join
+  ```
+  （已报 bug `doc/fix/20260824-join-service-path/bug-report.md`，后续版本自动处理。）
+- **systemctl --user 运维速查**：
+  | 操作 | 命令 |
+  |---|---|
+  | 启动/停止/重启 | `systemctl --user start|stop|restart rdsh-join` |
+  | 开机自启 | `systemctl --user enable/disable rdsh-join` |
+  | 状态/日志 | `systemctl --user status rdsh-join` / `journalctl --user -u rdsh-join -f` |
+  | 服务环境属性 | `systemctl --user show rdsh-join -p Environment` |
+  | 进程真实环境 | `tr '\0' '\n' < /proc/<pid>/environ` |
+
+  需要给 dsh 注入环境变量（如 `DEEPSEEK_API_KEY`）时用 `EnvironmentFile=-<绝对路径>`（0600 文件，`~` 不展开）；API key 更推荐由 DSH 自管（portal 内粘贴，见 `doc/fix/20260824-portal-apikey-pastebox`）。
+
 ## 9. 安全注意事项
 
 
