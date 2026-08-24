@@ -77,6 +77,12 @@ importers:
 
   packages/tunnel: {}
 
+  packages/web-remote:
+    dependencies:
+      rdsh-gateway:
+        specifier: workspace:*
+        version: link:../gateway
+
 packages:
 
   '@babel/code-frame@7.29.7':

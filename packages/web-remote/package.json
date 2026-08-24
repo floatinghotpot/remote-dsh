@@ -1,0 +1,47 @@
+{
+  "name": "dsh-web-remote",
+  "version": "0.1.0",
+  "description": "Remote access for DeepSeek Harness: join a rdsh hub from the DSH web UI (plugin, no CLI)",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./client": {
+      "default": "./client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "client.js",
+    "cordis.patch.yml"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "rdsh-gateway": "workspace:*"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-locale"
+      ],
+      "platform": "web"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  }
+}

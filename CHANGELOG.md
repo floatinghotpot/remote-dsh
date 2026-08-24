@@ -7,6 +7,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - 2026-08-24
+
+### Added
+
+- M4 plugin `dsh-web-remote@0.1.0` (new package): `dsh plugin add dsh-web-remote`
+  installs a "Remote Access" panel in the DSH web UI (join / disconnect / revoke
+  + live status), reusing the join tunnel without the rdsh CLI. The server half
+  runs the tunnel in-process and exposes a `/remote-access` RPC channel; the
+  client half renders the settings section.
+- `rdsh-gateway@0.4.0`: `startJoin()` — the join tunnel as a reusable in-process
+  core (no spawn, external target, `stop()` handle, `onState`/`onLog` hooks);
+  `join()` stays as the CLI wrapper. Added the join pid lock
+  (`~/.rdsh/join.lock`) enforcing one tunnel per host across CLI and plugin.
+
 ## [0.2.0] - 2026-08-23
 
 ### Added

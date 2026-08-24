@@ -5,6 +5,9 @@
  * → 帧循环（OPEN http/ws → 本地 dsh 转发 → 响应帧回传）→ 断线指数退避重连。
  *
  * 安全：只出站（不监听任何入站端口）；hub 认证在层 1，gateway 侧只认隧道内来源。
+ *
+ * 06-dsh-plugin 重构（D13 钩子落地）：`join()`（CLI 形态，spawn dsh + 信号退出）
+ * 拆出 `startJoin()`（no-spawn、外部 target、可停止、onState/onLog）——插件复用。
  */
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
@@ -16,6 +19,8 @@ import { findDsh, spawnDsh } from "./spawn-dsh.ts";
 import { rewriteHeadersForDsh } from "./proxy.ts";
 import type { ProxyTarget } from "./proxy.ts";
 import { clearPersistedToken, persistToken, readPersistedToken } from "./token-store.ts";
+import { acquireJoinLock, releaseJoinLock } from "./lock.ts";
+import type { JoinLockRole } from "./lock.ts";
 
 export interface JoinOptions {
   hubUrl: string;
@@ -34,6 +39,35 @@ export interface JoinOptions {
 export interface RegisterOutcome {
   token: string;
   insecure: boolean;
+}
+
+/** 隧道状态机（onState 事件值）。 */
+export type JoinState = "connecting" | "connected" | "reconnecting" | "rejected" | "stopped";
+
+/** join 核心事件钩子（插件面板实时状态 + 日志预留）。 */
+export interface JoinHooks {
+  onState?(state: JoinState, detail?: { message?: string; delayMs?: number }): void;
+  onLog?(level: "info" | "warn" | "error", message: string): void;
+}
+
+/** no-spawn、外部 target 的 join 隧道启动参数（CLI 与插件共用）。 */
+export interface StartJoinOptions {
+  hubUrl: string;
+  /** 已解析的 host token（registerJoin 结果） */
+  token: string;
+  insecure: boolean;
+  /** 转发目标（no-spawn：外部 dsh 的 loopback 地址） */
+  target: ProxyTarget;
+  /** pid 锁 role：cli / plugin */
+  role: JoinLockRole;
+  /** 锁文件路径（缺省 ~/.rdsh/join.lock；测试可注入临时路径） */
+  lockPath?: string;
+  hooks?: JoinHooks;
+}
+
+/** 可停止的 join 隧道句柄。 */
+export interface JoinHandle {
+  stop(): Promise<void>;
 }
 
 /** 判断错误是否为 TLS 证书类错误（自签/过期/域名不匹配）。 */
@@ -150,19 +184,24 @@ async function register(
   return { hostId: b.hostId, hostToken: b.hostToken };
 }
 
-export async function join(opts: JoinOptions): Promise<void> {
+/**
+ * 启动 join 隧道（no-spawn）：转发到外部 `opts.target`，不 spawn dsh、不 process.exit。
+ * 获取 pid 锁（opts.role）；返回 `JoinHandle`，`stop()` 干净停止（关 WS/清 heartbeat/释放锁）。
+ */
+export function startJoin(opts: StartJoinOptions): JoinHandle {
   const hubWsBase = opts.hubUrl.replace(/^https/, "wss").replace(/^http/, "ws");
-  const foundDsh = findDsh(opts.dshPath);
-  if (foundDsh === null) {
-    throw new Error("cannot find 'dsh' in PATH. Install DeepSeek Harness first, or pass --dsh <path>.");
+  const hooks = opts.hooks ?? {};
+  const log = (level: "info" | "warn" | "error", message: string): void => {
+    hooks.onLog?.(level, message);
+  };
+  const setState = (state: JoinState, detail?: { message?: string; delayMs?: number }): void => {
+    hooks.onState?.(state, detail);
+  };
+
+  const lock = acquireJoinLock(opts.role, opts.lockPath);
+  if (!lock.ok) {
+    throw new Error(`join lock held by ${lock.heldBy.role} (pid ${lock.heldBy.pid}); stop it first`);
   }
-  const dsh = await spawnDsh(foundDsh);
-  const target: ProxyTarget = { host: "127.0.0.1", port: dsh.port };
-  // 解析 host token（含证书自动检测 + 持久化）；进程重启后复用，避免重复配对。
-  const { token: initialToken, insecure } = await registerJoin(opts);
-  let token = initialToken;
-  console.log(`rdsh join: dsh web on 127.0.0.1:${dsh.port}`);
-  console.log(`rdsh join: connecting to ${opts.hubUrl}...`);
 
   const parser = new FrameParser();
   /** http 流：streamId → 本地请求（写请求体 / 结束）。 */
@@ -173,22 +212,7 @@ export async function join(opts: JoinOptions): Promise<void> {
   let shuttingDown = false;
   let reconnectDelay = RECONNECT_BASE_MS;
   let heartbeat: NodeJS.Timeout | undefined;
-
-  const shutdown = async (signal: string, code = 0): Promise<void> => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    if (signal !== "") console.log(`\nrdsh: received ${signal}, shutting down...`);
-    if (heartbeat !== undefined) clearInterval(heartbeat);
-    await dsh.stop();
-    process.exit(code);
-  };
-  process.on("SIGINT", () => void shutdown("SIGINT"));
-  process.on("SIGTERM", () => void shutdown("SIGTERM"));
-  process.on("SIGHUP", () => void shutdown("SIGHUP"));
-
-  // 常驻：进程靠信号退出（shutdown 里 process.exit）；防止函数返回后
-  // CLI 的 main().then(exit) 误退出服务进程
-  const keepAlive = new Promise<void>(() => {});
+  let currentClient: WebSocket | undefined;
 
   function handleFrame(frame: Frame, client: WebSocket): void {
     switch (frame.type) {
@@ -276,11 +300,11 @@ export async function join(opts: JoinOptions): Promise<void> {
     // http 转发：本地 dsh（loopback http）
     const up = httpRequest(
       {
-        host: target.host,
-        port: target.port,
+        host: opts.target.host,
+        port: opts.target.port,
         path,
         method,
-        headers: rewriteHeadersForDsh(headers, target),
+        headers: rewriteHeadersForDsh(headers, opts.target),
       },
       (upRes) => {
         client.send(
@@ -327,8 +351,8 @@ export async function join(opts: JoinOptions): Promise<void> {
 
   function openWsStream(frame: Frame, client: WebSocket, path: string, headers: Record<string, string | string[]>): void {
     const streamId = frame.streamId;
-    const upstream = new WebSocket(`ws://${target.host}:${target.port}${path}`, {
-      headers: rewriteHeadersForDsh(headers, target),
+    const upstream = new WebSocket(`ws://${opts.target.host}:${opts.target.port}${path}`, {
+      headers: rewriteHeadersForDsh(headers, opts.target),
     });
     const queue: Buffer[] = [];
     wsStreams.set(streamId, { upstream, queue });
@@ -357,10 +381,36 @@ export async function join(opts: JoinOptions): Promise<void> {
     upstream.on("error", cleanup);
   }
 
+  /** 清空本地 http/ws 流 + heartbeat（断线/停止时）。 */
+  function cleanupStreams(): void {
+    if (heartbeat !== undefined) {
+      clearInterval(heartbeat);
+      heartbeat = undefined;
+    }
+    for (const s of httpStreams.values()) {
+      try {
+        s.up.destroy();
+      } catch {
+        /* 已断 */
+      }
+    }
+    httpStreams.clear();
+    for (const s of wsStreams.values()) {
+      try {
+        s.upstream.terminate();
+      } catch {
+        /* 已断 */
+      }
+    }
+    wsStreams.clear();
+  }
+
   function connect(): void {
     if (shuttingDown) return;
-    const url = `${hubWsBase}/tunnel?token=${encodeURIComponent(token)}`;
-    const client = new WebSocket(url, { rejectUnauthorized: !insecure });
+    const url = `${hubWsBase}/tunnel?token=${encodeURIComponent(opts.token)}`;
+    const client = new WebSocket(url, { rejectUnauthorized: !opts.insecure });
+    currentClient = client;
+    setState("connecting", { message: `connecting to ${opts.hubUrl}` });
 
     // 401/403 = token 被拒（吊销/不存在）。监听此事件后 ws 不再自动 abort，
     // 需手动 terminate → 触发 close → 决定「重配对」还是「普通重连」。
@@ -376,7 +426,8 @@ export async function join(opts: JoinOptions): Promise<void> {
 
     client.on("open", () => {
       reconnectDelay = RECONNECT_BASE_MS;
-      console.log("rdsh join: tunnel established (heartbeat 30s)");
+      setState("connected");
+      log("info", "tunnel established (heartbeat 30s)");
       if (heartbeat !== undefined) clearInterval(heartbeat);
       heartbeat = setInterval(() => {
         if (client.readyState === client.OPEN) {
@@ -403,36 +454,21 @@ export async function join(opts: JoinOptions): Promise<void> {
     });
 
     client.on("close", () => {
-      if (heartbeat !== undefined) {
-        clearInterval(heartbeat);
-        heartbeat = undefined;
-      }
-      for (const s of httpStreams.values()) {
-        try {
-          s.up.destroy();
-        } catch {
-          /* 已断 */
-        }
-      }
-      httpStreams.clear();
-      for (const s of wsStreams.values()) {
-        try {
-          s.upstream.terminate();
-        } catch {
-          /* 已断 */
-        }
-      }
-      wsStreams.clear();
+      cleanupStreams();
       if (shuttingDown) return;
       if (tokenRejected) {
-        // token 被拒（吊销/删除）= 永久失败，无法自动恢复（已移除配对码重配）
-        // → 删旧 session + fail-fast，让 systemd/脚本拿到非零退出码与明确报错。
+        // token 被拒（吊销/删除）= 永久失败，无法自动恢复
+        // → 删旧 session + 释放锁 + 停（fail-fast），不重连。
         clearPersistedToken(opts.hubUrl);
-        console.error("rdsh join: host token rejected by hub (revoked or removed); re-run `rdsh host join <hub>` with a new join token.");
-        void shutdown("", 1);
+        const msg = "host token rejected by hub (revoked or removed); re-join with a new join token";
+        log("error", msg);
+        setState("rejected", { message: msg });
+        shuttingDown = true;
+        releaseJoinLock(opts.lockPath);
         return;
       }
-      console.log(`rdsh join: tunnel lost — reconnecting in ${Math.round(reconnectDelay / 1000)}s...`);
+      setState("reconnecting", { delayMs: reconnectDelay });
+      log("info", `tunnel lost — reconnecting in ${Math.round(reconnectDelay / 1000)}s...`);
       setTimeout(connect, reconnectDelay + Math.random() * 500);
       reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS);
     });
@@ -447,7 +483,72 @@ export async function join(opts: JoinOptions): Promise<void> {
 
   connect();
 
-  await keepAlive;
+  return {
+    async stop(): Promise<void> {
+      if (shuttingDown) return;
+      shuttingDown = true;
+      cleanupStreams();
+      if (currentClient !== undefined) {
+        try {
+          currentClient.terminate();
+        } catch {
+          /* 已关闭 */
+        }
+      }
+      releaseJoinLock(opts.lockPath);
+      setState("stopped");
+    },
+  };
+}
+
+/** `rdsh host serve`（join 模式）的 CLI 封装：spawn dsh + 信号退出 + startJoin(role:cli)。 */
+export async function join(opts: JoinOptions): Promise<void> {
+  const foundDsh = findDsh(opts.dshPath);
+  if (foundDsh === null) {
+    throw new Error("cannot find 'dsh' in PATH. Install DeepSeek Harness first, or pass --dsh <path>.");
+  }
+  const dsh = await spawnDsh(foundDsh);
+  const target: ProxyTarget = { host: "127.0.0.1", port: dsh.port };
+  // 解析 host token（含证书自动检测 + 持久化）；进程重启后复用，避免重复配对。
+  const { token, insecure } = await registerJoin(opts);
+
+  console.log(`rdsh join: dsh web on 127.0.0.1:${dsh.port}`);
+  console.log(`rdsh join: connecting to ${opts.hubUrl}...`);
+
+  const handle = startJoin({
+    hubUrl: opts.hubUrl,
+    token,
+    insecure,
+    target,
+    role: "cli",
+    hooks: {
+      onLog: (level, message) => {
+        (level === "error" ? console.error : console.log)(`rdsh join: ${message}`);
+      },
+      onState: (state, detail) => {
+        if (state === "rejected") {
+          console.error(`rdsh join: ${detail?.message ?? "rejected"}`);
+        }
+      },
+    },
+  });
+
+  let shuttingDown = false;
+  const shutdown = async (signal: string, code = 0): Promise<void> => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    if (signal !== "") console.log(`\nrdsh: received ${signal}, shutting down...`);
+    await handle.stop();
+    await dsh.stop();
+    process.exit(code);
+  };
+  process.on("SIGINT", () => void shutdown("SIGINT"));
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+  process.on("SIGHUP", () => void shutdown("SIGHUP"));
+
+  // 常驻：进程靠信号退出（shutdown 里 process.exit）；防止函数返回后
+  // CLI 的 main().then(exit) 误退出服务进程
+  await new Promise<void>(() => {});
 }
 
 function normalizeRespHeaders(headers: IncomingHttpHeaders): Record<string, string | string[]> {

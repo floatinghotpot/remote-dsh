@@ -3,7 +3,7 @@
 > **日期**: 2026-08-24
 > **范围**: M4 —— DSH 插件形态的 rdsh-gateway：`dsh plugin add dsh-web-remote` 即获网关/join，免装 CLI
 > **来源**: `doc/overview/roadmap.md`（M4）；04-cli-refactor / 05-join-easy 讨论中留的钩子（05 §2.6、D13）
-> **状态**: 讨论记录（主名已定稿 `dsh-web-remote`；前置调研 P1/P3/P5 进行中）
+> **状态**: 讨论记录（主名已定稿 `dsh-web-remote`；D1–D6 已决议，P1–P5 已查证；P6 推迟到将来）
 
 ---
 
@@ -30,7 +30,7 @@ dsh plugin --profile default add <plugin>
 - `dsh plugin --profile <name> <pnpm args...>`（`lib/bin.js`）：**必须带 `--profile`**；首次使用初始化 profile 目录，然后在 profile 目录里跑 `pnpm <args>`（`add <pkg>` / `remove` / `why`…），最后按「安装态」对账 `dsh.profile.bundles` 层列表（`lib/plugin-9h8shc4d.js`）。
 - **成为插件的关键 = 包的 package.json 声明 `dsh.bundle`**：
   - `dsh.bundle.patch` 存在 → 加入 profile 层栈（服务端补丁，profile-boot 加载）；
-  - `dsh.bundle.client` → 客户端 UI 补丁（`inject` 依赖 + `platform: "web"`）——DSH 界面里的面板/设置页就是这种（如 `dsh-client-ui-settings`）。
+  - `dsh.client` → 客户端 UI 补丁（`inject` 依赖 + `platform: "web"`）——DSH 界面里的面板/设置页就是这种（如 `dsh-client-ui-settings`）。
 - 插件装在 **profile 目录**（按 profile 隔离；`INSTALL_ANCHOR` + `resolveProfileDir` 定位）；manifest（`dsh.profile.bundles`）记录层列表。
 
 ### 2.2 运行环境与能力
@@ -59,8 +59,8 @@ dsh plugin --profile default add <plugin>
         config: { ... }
   ```
   例证：`dsh-headless` / `dsh-base` / `dsh-web-app` 的 `cordis.patch.yml` 都用 `insert: name: '@deepseek-ai/...'` 按包名插插件。
-- **客户端**：`dsh.bundle.client = { inject: [...客户端依赖], platform: "web" }` + `exports["./client"]` → `lib/client.js`（Cordis client 插件）。`client.js` 用 `ctx.settingsScope` / `ctx.settingsSchema` + React，把页面挂到 `uiRenderer` 呈现为设置页（`dsh-client-ui-settings` 系列即此模式）。
-- **结论（P5 → D6）**：`dsh-web-remote` 是**薄包装**——`cordis.patch.yml` 插入自己的 server 插件（该插件 `import rdsh-gateway` 的 join 核心作为常规 npm 依赖），`dsh.bundle.client` 提供设置页 UI。
+- **客户端**：`dsh.client = { inject: [...客户端依赖], platform: "web" }` + `exports["./client"]` → `lib/client.js`（Cordis client 插件）。`client.js` 用 `ctx.settingsScope` / `ctx.settingsSchema` + React，把页面挂到 `uiRenderer` 呈现为设置页（`dsh-client-ui-settings` 系列即此模式）。
+- **结论（P5 → D6）**：`dsh-web-remote` 是**薄包装**——`cordis.patch.yml` 插入自己的 server 插件（该插件 `import rdsh-gateway` 的 join 核心作为常规 npm 依赖），`dsh.client` 提供设置页 UI。
 
 ## 3. 前置调研清单（进行中，进 solution 前需结论）
 
@@ -68,10 +68,10 @@ dsh plugin --profile default add <plugin>
 |---|---|---|
 | P1 | `dsh plugin add` 完整流程与 profile 初始化细节 | ✅ 已查证（§2.1/§2.4） |
 | P2 | 插件能否挂到 DSH 进程内的 HTTP server | ✅ 已定（D1：内嵌 + self-proxy 转发到 `127.0.0.1:<dsh 端口>`，无需挂载） |
-| P3 | 客户端 UI 面板形态（`dsh.bundle.client` 路由/入口） | ✅ 已查证（§2.4：client.js 设置页） |
-| P4 | 与 CLI 版共存策略（同 host 是否同时跑 CLI service + 插件） | 未定 |
+| P3 | 客户端 UI 面板形态（`dsh.client` 路由/入口） | ✅ 已查证（§2.4：client.js 设置页） |
+| P4 | 与 CLI 版共存策略（同 host 是否同时跑 CLI service + 插件） | ✅ 已定（D5 档1+2：单身份铁律 + mode 冲突确认 + pid 锁防双隧道） |
 | P5 | 包依赖形态（内嵌 vs 依赖 npm 包） | ✅ 已查证（§2.4：依赖 `rdsh-gateway` npm 包，薄包装） |
-| P6 | 创建 npm org 锁定 scope（`remote-dsh` / `rdsh`） | 待办 |
+| P6 | 创建 npm org 锁定 scope（`remote-dsh` / `rdsh`） | ⏭️ **推迟（2026-08-24）**：主名走裸名 `dsh-web-remote`（已预留 0.0.0），暂不建 org；将来需 scoped 路线时再建 |
 
 ## 4. 命名勘察（2026-08-24，命名未定稿，待继续讨论）
 
@@ -126,11 +126,11 @@ scoped（保留空间，免疫抢注，未做）：`@remote-dsh/…` / `@rdsh/�
 | # | 问题 | 决议/倾向 |
 |---|---|---|
 | D1 | **插件与 dsh 进程的关系** | ✅ **内嵌，不 spawn**：插件被 dsh 加载、跑在 dsh web 进程内部，dsh 本来就在跑（127.0.0.1:3080）→ 无需 spawn 第二个 dsh。插件复用 join 隧道核心，转发目标指到**本进程 dsh**（`127.0.0.1:<dsh 端口>`）。要求 gateway `join()` 支持「不 spawn、外部 target」模式（D13 钩子落地） |
-| D2 | **面板 UI 范围**：hub URL + join token 粘贴、状态、断开/重连、日志（05 §2.6） | 全做，复用 `dsh.bundle.client` |
-| D3 | **配置记忆**：hubUrl/name/insecure 存哪 | 复用 `~/.rdsh/host.json`（04 统一配置），token 只进 session 文件 |
-| D4 | **进程托管**：spawn/守护/崩溃重启 | 插件内最小托管（重连/一键重启）；崩溃重启交给 systemd（已有 service） |
-| D5 | **与 CLI 共存**：插件与 `rdsh host service install` 是否可并存 | 冲突检测（同 host.json 二选一）或文档说明；P4 调研后定 |
-| D6 | **包依赖形态**：插件内嵌 rdsh-gateway vs 依赖 npm 包 | P5 调研后定（倾向依赖 npm 包） |
+| D2 | **面板 UI 范围**：hub URL + join token 粘贴、状态、断开/重连、日志（05 §2.6） | ✅ **MVP 四态**（2026-08-24 定案）：①接入表单（hub URL + join token + name + [接入]）②实时状态点（未接入/连接中/已连接/断线重连/**已接入·外部托管**）③[断开][注销]。**无手动重连**（重连交给自动）；**MVP 不做面板内日志区**。join 核心加 `onState`（实时状态所需）+ `onLog`（日志预留）事件钩子，`onLog` 先落钩子不渲染。**外部托管态**：pid 锁 `role=cli`（CLI/`rdsh-join.service` 在跑）→ 面板只读显示「已接入（由 rdsh CLI/服务托管，请用 rdsh 命令管理）」，禁用 接入/断开/注销（插件不跨进程窥探/控制其隧道状态） |
+| D3 | **配置记忆**：hubUrl/name/insecure 存哪 | ✅ **复用 `~/.rdsh/host.json`（A，2026-08-24 定案）**：接入 = 写 `{mode:"join", hub, name, insecure}`（字段已存在，config.ts 无需新增）+ `registerJoin` 落 token 到 `~/.rdsh/join-<host>.token`（0600）。单文件单 mode 的 clobber/多 profile 冲突规则 → 挪 D5 |
+| D4 | **进程托管**：spawn/守护/崩溃重启 | ✅ **无守护 + 可停止句柄（2026-08-24 定案）**：join 核心是 dsh 进程内异步任务（D1 内嵌），无独立进程可守护；崩溃重启交给 dsh 自己的 supervisor（`dsh web` 的 systemd/前台），dsh 重启后插件重载、join 复用 token 自动重连（重连已内置）。插件唯一要补：join 核心暴露 `stop()` 句柄（关 WS、清 heartbeat、不 `process.exit`），Cordis dispose 钩子挂上。不做面板「一键重启」 |
+| D5 | **与 CLI 共存**：插件与 `rdsh host service install` 是否可并存 | ✅ **档1+2（2026-08-24 定案）**：①接入前读 host.json，`mode` 存在且 ≠ join → 显式确认才覆盖（防静默 clobber lan/cloud 配置）；②join 核心加 pid 锁文件 `~/.rdsh/join.lock`（记 `pid + role`，启动写/退出清/stale 清理），插件接入前检测已有 CLI join 在跑则拒绝（防同 hostId 双隧道）。插件不越权杀服务。hub 顶替（档3）列 deferred（需 hub 改动，非 M4）。锁的 `role` 区分「plugin 自持 vs cli 托管」→ 面板据此显示「外部托管」只读态（见 D2） |
+| D6 | **包依赖形态**：插件内嵌 rdsh-gateway vs 依赖 npm 包 | ✅ **依赖 npm 包 `rdsh-gateway`**（薄包装，P5/§2.4）：`cordis.patch.yml` 插入自写 server 插件，该插件 `import rdsh-gateway` 的 join 核心作常规依赖 |
 
 ## 6. 参考
 

@@ -41,12 +41,13 @@
 | 开发机侧 | rdsh-gateway | 局域网认证网关 / 公网出站隧道端点；spawn `dsh web` |
 | 隧道协议 | rdsh-tunnel | 线协议：帧复用、心跳、背压 |
 | 门户 | rdsh-portal | 网页登录 + host 列表（Vite + React） |
+| DSH 插件 | dsh-web-remote | DSH 界面内的远程访问面板（免装 CLI） |
 | 手机 App | rdsh-app | Flutter（Android/iOS） |
 | 微信小程序 | rdsh-weapp | 轻量客户端 |
 
 ## 状态
 
-**M1–M3 完成**（2026-08-23）：局域网网关（`rdsh host serve`）、云服务器直连（TLS + 密码）、公网 hub（`rdsh host join` + `rdsh hub` + portal）均已实现并验收（单测 92/92，M3 e2e 23/23，M1/M2 回归 57）。下一里程碑：**M4 dsh-plugin-rdsh**（DSH 插件形态的网关/join，免装 CLI）。
+**M1–M4 完成**：局域网网关（`rdsh host serve`）、云服务器直连（TLS + 密码）、公网 hub（`rdsh host join` + `rdsh hub` + portal）、`dsh-web-remote` DSH 插件（免装 CLI 的远程访问）均已实现并验收。下一里程碑：**M5 多租户、M6 上线、M7 Go hub、M8 手机 App、M9 微信小程序**（见路线图）。
 
 ## 功能清单
 
@@ -80,8 +81,10 @@
 - [x] 层 2 线协议（`packages/tunnel/PROTOCOL.md`）与层 1 对外 API 冻结
 - [x] hub 支持内置 TLS，或部署在 apache2 / nginx 后面（443 + 证书自动续期）
 
-**M4+ — 规划中**
-- [ ] 以 DSH 插件使用：`dsh plugin add` 一个插件即获远程访问能力，免装 CLI
+**M4 — 以 DSH 插件使用（已实现）**
+- [x] `dsh plugin add dsh-web-remote` 即获远程访问能力，免装 CLI —— DSH 界面「远程访问」面板：接入 / 断开 / 注销 + 实时状态
+
+**M5+ — 规划中**
 - [ ] 手机 App（Android / iOS）
 - [ ] 微信小程序
 - [ ] 与团队成员共享一台机器
@@ -105,6 +108,7 @@ rdsh host join <hub-url>    # 或接入 hub（出站隧道）
 - [在家/办公室用任意设备遥控开发机的 DSH（局域网配对码）](doc/blog/zh/01-01-lan-access.md)
 - [把 DSH 搬上云服务器：HTTPS + 密码直连（证书自备）](doc/blog/zh/02-01-cloud-single-tls.md)
 - [无法 IP 直连？通过 hub 服务转发、一个账号管理多个主机（推荐）](doc/blog/zh/03-04-join-token.md)
+- [不想装 CLI？给 DSH 装插件，界面里点一下就远程访问](doc/blog/zh/03-05-plugin.md)
 - [搭建你自己的 hub 转发服务：hub + apache2（443 + 证书自动续期）](doc/blog/zh/03-02-hub-behind-apache-https.md)
 
 ## 开发

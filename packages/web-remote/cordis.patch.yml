@@ -1,0 +1,6 @@
+# dsh-web-remote server bundle: mounts this package as a loader row.
+# That row is BOTH the server plugin (node half) AND the marker that lets
+# dsh-client-modules discover the dsh.client browser half.
+- insert:
+    - id: remote-access
+      name: 'dsh-web-remote'

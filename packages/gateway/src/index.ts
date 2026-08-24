@@ -25,6 +25,8 @@ export { installService, uninstallService, serviceStatus, systemdUnit, launchdPl
 export type { ServiceSpec } from "./service.ts";
 
 export const NAME = "rdsh-gateway";
-export { join, registerJoin, detectInsecure, selfRevoke } from "./join.ts";
-export type { JoinOptions, RegisterOutcome } from "./join.ts";
+export { join, startJoin, registerJoin, detectInsecure, selfRevoke } from "./join.ts";
+export type { JoinOptions, RegisterOutcome, JoinState, JoinHooks, StartJoinOptions, JoinHandle } from "./join.ts";
 export { readPersistedToken, clearPersistedToken } from "./token-store.ts";
+export { acquireJoinLock, releaseJoinLock, readJoinLock, JOIN_LOCK_PATH } from "./lock.ts";
+export type { JoinLock, JoinLockRole } from "./lock.ts";

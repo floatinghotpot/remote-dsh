@@ -7,6 +7,13 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [未发布] - 2026-08-24
+
+### 新增
+
+- M4 插件 `dsh-web-remote@0.1.0`（新包）：`dsh plugin add dsh-web-remote` 在 DSH 界面安装「远程访问」面板（接入 / 断开 / 注销 + 实时状态），复用 join 隧道、免装 rdsh CLI。server 半在进程内跑隧道并暴露 `/remote-access` RPC 通道；client 半渲染设置页。
+- `rdsh-gateway@0.4.0`：`startJoin()` —— join 隧道作为可复用的进程内核心（不 spawn、外部 target、`stop()` 句柄、`onState`/`onLog` 钩子）；`join()` 保留为 CLI 封装。新增 join pid 锁（`~/.rdsh/join.lock`），强制 CLI 与插件同机单隧道。
+
 ## [0.2.0] - 2026-08-23
 
 ### 新增

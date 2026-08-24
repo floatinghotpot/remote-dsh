@@ -45,16 +45,17 @@ hub and gateway only — clients never implement it.
 | Host agent | rdsh-gateway | LAN auth gateway / outbound tunnel endpoint; spawns `dsh web` |
 | Tunnel protocol | rdsh-tunnel | wire protocol: framing, multiplexing, heartbeat |
 | Portal | rdsh-portal | web login + host list (Vite + React) |
+| DSH plugin | dsh-web-remote | remote-access panel inside the DSH UI (no CLI) |
 | Mobile app | rdsh-app | Flutter (Android/iOS) |
 | WeChat mini program | rdsh-weapp | lightweight client |
 
 ## Status
 
-**M1–M3 complete** (2026-08-23): the LAN gateway (`rdsh host serve`), cloud-server
-direct access (TLS + password), and the public hub (`rdsh host join` + `rdsh hub` +
-portal) are implemented and verified (unit 92/92, e2e M3 23/23, M1/M2 regression
-57). Next milestone: **M4 dsh-plugin-rdsh** (gateway/join as a DSH plugin — no
-CLI install).
+**M1–M4 complete**: the LAN gateway (`rdsh host serve`), cloud-server direct
+access (TLS + password), the public hub (`rdsh host join` + `rdsh hub` + portal),
+and the `dsh-web-remote` DSH plugin (remote access with no CLI install) are
+implemented and verified. Next milestones: **M5 multi-tenant, M6 launch, M7 Go
+hub, M8 mobile app, M9 WeChat mini program** (see roadmap).
 
 ## Features
 
@@ -88,8 +89,10 @@ Implemented `[x]` · planned `[ ]` — from the user's point of view
 - [x] Frozen wire protocol (layer 2, `packages/tunnel/PROTOCOL.md`) and public API (layer 1)
 - [x] Run the hub with built-in TLS, or behind Apache2 / nginx (443, auto-renewed certs)
 
-**M4+ — Planned**
-- [ ] Use it as a DSH plugin: add it with `dsh plugin add` — remote access with no CLI install
+**M4 — Use it as a DSH plugin (implemented)**
+- [x] `dsh plugin add dsh-web-remote` — remote access with no CLI install (a "Remote Access" panel in the DSH UI: connect / disconnect / revoke + live status)
+
+**M5+ — Planned**
 - [ ] Mobile apps (Android / iOS)
 - [ ] WeChat mini program
 - [ ] Share a machine with your team
@@ -114,6 +117,7 @@ Scenario guides, from simple to complex — full index: [English](doc/blog/READM
 - [Control your DSH from any device on the same LAN (pair code)](doc/blog/en/01-01-lan-access.md)
 - [Put your DSH on a cloud server: HTTPS + password (own cert)](doc/blog/en/02-01-cloud-single-tls.md)
 - [No public IP? Relay through a hub — add a host with a join token (recommended)](doc/blog/en/03-04-join-token.md)
+- [No CLI? Install a DSH plugin and get remote access right in the UI](doc/blog/en/03-05-plugin.md)
 - [Run your own hub relay: hub + Apache2 (443 + auto-renewed certs)](doc/blog/en/03-02-hub-behind-apache-https.md)
 
 ## Development
