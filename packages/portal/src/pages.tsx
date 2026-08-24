@@ -187,7 +187,7 @@ function HostsPage(): React.JSX.Element {
     <Shell title="rdsh · 我的机器" onLogout={logout}>
       {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
       <div style={{ marginBottom: 16, display: "flex", gap: 8 }}>
-        <button onClick={() => navigate("/add-host")} style={btnStyle()}>添加主机（免配对码）</button>
+        <button onClick={() => navigate("/add-host")} style={btnStyle()}>添加主机 / 接入 token</button>
         <button onClick={() => setBindOpen(true)} style={btnStyle("ghost")}>配对码绑定</button>
       </div>
 
