@@ -109,14 +109,14 @@ scoped（保留空间，免疫抢注，未做）：`@remote-dsh/…` / `@rdsh/�
 
 ## 5. 关键设计问题（待决，进 req/solution）
 
-| # | 问题 | 倾向 |
+| # | 问题 | 决议/倾向 |
 |---|---|---|
-| D1 | **插件与 dsh 进程的关系**：a) 内嵌（挂到 dsh 的 HTTP/WS 层，转发目标=本进程 dsh，零额外 dsh 实例）vs b) spawn 独立 `rdsh host serve` 子进程（进程隔离、crash 兜底，但 spawn 的 gateway 默认会再 spawn 一个 dsh → 需「不 spawn、转发到本机现有 dsh」模式） | b) spawn 子进程 + 转发到 `127.0.0.1:<本进程 dsh 端口>`（需 04 增加「no-spawn / target 直连」能力）——隔离性好，复用现成 CLI |
-| D2 | **面板 UI 范围**：hub URL + join token 粘贴、状态（连接中/已连接/断线重连）、断开/重连、日志查看（05 §2.6 已定范围） | 全做，复用 `dsh.bundle.client` |
-| D3 | **配置记忆**：hubUrl/name/insecure 存哪（`~/.rdsh/join-config.json` vs dsh 设置） | 复用 `~/.rdsh/host.json`（04 统一配置），token 只进 session 文件 |
-| D4 | **进程托管**：spawn/守护/崩溃重启 join 子进程 | 插件内做最小托管（spawn + 退出码监听 + 一键重启），复杂托管交给 systemd（已有 service 能力） |
-| D5 | **与 CLI 共存**：插件与 `rdsh host service install` 是否可并存 | 冲突检测（同 host.json 时提示二选一）或文档说明；P4 调研后定 |
-| D6 | **包依赖形态**：插件内嵌 rdsh-gateway 代码 vs 依赖 npm `remote-dsh`/`rdsh-gateway` 包 | P5 调研后定（倾向依赖 npm 包，避免重复维护） |
+| D1 | **插件与 dsh 进程的关系** | ✅ **内嵌，不 spawn**：插件被 dsh 加载、跑在 dsh web 进程内部，dsh 本来就在跑（127.0.0.1:3080）→ 无需 spawn 第二个 dsh。插件复用 join 隧道核心，转发目标指到**本进程 dsh**（`127.0.0.1:<dsh 端口>`）。要求 gateway `join()` 支持「不 spawn、外部 target」模式（D13 钩子落地） |
+| D2 | **面板 UI 范围**：hub URL + join token 粘贴、状态、断开/重连、日志（05 §2.6） | 全做，复用 `dsh.bundle.client` |
+| D3 | **配置记忆**：hubUrl/name/insecure 存哪 | 复用 `~/.rdsh/host.json`（04 统一配置），token 只进 session 文件 |
+| D4 | **进程托管**：spawn/守护/崩溃重启 | 插件内最小托管（重连/一键重启）；崩溃重启交给 systemd（已有 service） |
+| D5 | **与 CLI 共存**：插件与 `rdsh host service install` 是否可并存 | 冲突检测（同 host.json 二选一）或文档说明；P4 调研后定 |
+| D6 | **包依赖形态**：插件内嵌 rdsh-gateway vs 依赖 npm 包 | P5 调研后定（倾向依赖 npm 包） |
 
 ## 6. 参考
 
