@@ -4,20 +4,26 @@
  *
  *   rdsh serve [--config <path>] [--reset] [--port <n>] ...
  *   rdsh join <hub-url> [--token <t>] [--reset] [--dsh <path>]
+ *   rdsh join service install|status|uninstall <hub-url>
  *   rdsh hub serve|user|host|service ... [--config <path>]
  *   rdsh user add|passwd <name> | ls | rm <name>   [--config <path>]
  *   rdsh service install|uninstall|status          [--config <path>]
  *   rdsh --version | --help
  */
 import { createInterface } from "node:readline";
+import { homedir } from "node:os";
+import { resolve as resolvePath, join as joinPath } from "node:path";
 import {
   serve,
   join,
+  findDsh,
   UserManager,
   resolveConfigPath,
   installService,
   uninstallService,
   serviceStatus,
+  SERVICE_NAME,
+  JOIN_SERVICE_NAME,
 } from "rdsh-gateway";
 import type { ServeOptions, JoinOptions } from "rdsh-gateway";
 import {
@@ -35,6 +41,7 @@ const HELP = `rdsh — secure remote access for DeepSeek Harness
 Usage:
   rdsh serve [options]      Start the gateway (LAN auth or cloud HTTPS service)
   rdsh join <hub-url>       Connect to a hub via outbound tunnel (no ports open)
+  rdsh join service ...     Run the join tunnel as a systemd/launchd service
   rdsh hub serve            Start the hub server (cloud, multi-host)
   rdsh hub user add <name>  Create a hub user (interactive password; --no-password for first-login setup)
   rdsh hub user passwd <n>  Reset a user's password (admin)
@@ -90,6 +97,7 @@ Options:
   --no-code             Disable auth (trusted network ONLY!)
 `,
   join: `Usage: rdsh join <hub-url> [options]
+       rdsh join service install|status|uninstall <hub-url>
 
 Connect to a hub via an outbound tunnel (no ports open on this machine).
 
@@ -98,6 +106,12 @@ Options:
   --reset               Forget the persisted host token and re-pair
   --dsh <path>          dsh executable path
   --insecure            Skip TLS certificate verification (self-signed hub)
+
+Service:
+  install <hub-url>     Install join as a systemd/launchd service (auto-detects
+                        dsh and embeds --dsh <abs path>; --insecure for self-signed hub)
+  status                Show the join service status
+  uninstall             Stop and remove the join service
 `,
   hub: `Usage: rdsh hub <subcommand> [options]
 
@@ -183,6 +197,10 @@ async function main(): Promise<void> {
         return;
       }
       case "join": {
+        if (rest[0] === "service") {
+          await handleJoinService(rest.slice(1));
+          return;
+        }
         const opts = parseJoinArgs(rest);
         await join(opts);
         return;
@@ -355,7 +373,7 @@ async function handleService(args: string[], configPath?: string): Promise<void>
   const action = args[0];
   switch (action) {
     case "install":
-      console.log(await installService(resolveConfigPath(configPath)));
+      console.log(await installService({ name: SERVICE_NAME, args: ["serve"], configPath: resolveConfigPath(configPath) }));
       console.log("rdsh: service installed — it starts on boot and restarts on crash.");
       return;
     case "status":
@@ -366,6 +384,59 @@ async function handleService(args: string[], configPath?: string): Promise<void>
       return;
     default:
       throw new Error("usage: rdsh service install|status|uninstall");
+  }
+}
+
+/** join 服务化的环境文件（可选，0600；放 DEEPSEEK_API_KEY 等，缺省不报错）。 */
+function joinEnvPath(): string {
+  return joinPath(homedir(), ".rdsh", "join.env");
+}
+
+/** 解析 dsh 路径为绝对路径：--dsh 优先，否则 PATH 探测；找不到抛错。 */
+function resolveDshPath(dshPath?: string): string {
+  const found = dshPath ?? findDsh();
+  if (found === undefined || found === null || found === "") {
+    throw new Error("cannot find 'dsh' in PATH; pass --dsh <path> to 'rdsh join service install'");
+  }
+  return resolvePath(found);
+}
+
+async function handleJoinService(args: string[]): Promise<void> {
+  const action = args[0];
+  switch (action) {
+    case "install": {
+      const hubUrl = args[1];
+      if (hubUrl === undefined || !/^https?:\/\//.test(hubUrl)) {
+        throw new Error("usage: rdsh join service install <hub-url> [--dsh <path>] [--insecure]");
+      }
+      let dshPath: string | undefined;
+      let insecure = false;
+      for (let i = 2; i < args.length; i++) {
+        const flag = args[i];
+        if (flag === "--dsh") {
+          i += 1;
+          dshPath = args[i];
+          if (dshPath === undefined) throw new Error("missing value for --dsh");
+        } else if (flag === "--insecure") {
+          insecure = true;
+        } else {
+          throw new Error(`'${flag}' not supported by 'rdsh join service install' (only --dsh / --insecure)`);
+        }
+      }
+      // 服务化时内嵌 --dsh 绝对路径：systemd 环境 PATH 可能不含 dsh，规避 PATH 坑
+      const joinArgs = ["join", hubUrl, "--dsh", resolveDshPath(dshPath), ...(insecure ? ["--insecure"] : [])];
+      console.log(await installService({ name: JOIN_SERVICE_NAME, args: joinArgs, envFile: joinEnvPath() }));
+      console.log("rdsh: join service installed — starts on boot, reuses the persisted host token, restarts on crash.");
+      return;
+    }
+    case "status":
+      console.log(`rdsh join service: ${await serviceStatus(JOIN_SERVICE_NAME)}`);
+      return;
+    case "uninstall":
+      console.log(await uninstallService(JOIN_SERVICE_NAME));
+      return;
+    default:
+      throw new Error("usage: rdsh join service install|status|uninstall");
   }
 }
 
@@ -402,7 +473,7 @@ async function handleHub(args: string[], configPath?: string): Promise<void> {
       const hubConfigPath = resolveHubConfigPath(configPath);
       switch (action) {
         case "install":
-          console.log(await installService(hubConfigPath, ["hub", "serve"]));
+          console.log(await installService({ name: SERVICE_NAME, args: ["hub", "serve"], configPath: hubConfigPath }));
           console.log("rdsh: hub service installed — starts on boot and restarts on crash.");
           return;
         case "status":

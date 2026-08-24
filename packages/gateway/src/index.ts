@@ -21,7 +21,8 @@ export { ipInCidrs, parseCidr, ipToInt } from "./cidr.ts";
 export { loadTls } from "./tls.ts";
 export type { TlsMaterial } from "./tls.ts";
 export { loginPageHtml } from "./login-page.ts";
-export { installService, uninstallService, serviceStatus, systemdUnit, launchdPlist } from "./service.ts";
+export { installService, uninstallService, serviceStatus, systemdUnit, launchdPlist, SERVICE_NAME, JOIN_SERVICE_NAME } from "./service.ts";
+export type { ServiceSpec } from "./service.ts";
 
 export const NAME = "rdsh-gateway";
 export { join } from "./join.ts";
