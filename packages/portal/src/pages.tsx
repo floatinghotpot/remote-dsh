@@ -294,6 +294,9 @@ function AddHostPage(): React.JSX.Element {
 
   return (
     <Shell title="rdsh · 添加主机" onLogout={logout}>
+      <div style={{ marginBottom: 16 }}>
+        <button onClick={() => navigate("/hosts")} style={btnStyle("ghost")}>← 返回主机列表</button>
+      </div>
       {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
       <div style={{ border: "1px solid #ccc", borderRadius: 8, padding: 16, marginBottom: 16 }}>
         {field("机器名（可选，默认取主机 hostname）", name, setName)}

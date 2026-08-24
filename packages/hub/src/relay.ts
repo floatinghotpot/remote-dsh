@@ -49,6 +49,18 @@ export async function handleRelay(req: IncomingMessage, res: ServerResponse, run
   const hostId = auth.hostId;
   const conn = runtime.tunnels.get(hostId);
   if (conn === null) {
+    // 浏览器导航（Accept text/html）→ 友好页面 + 清 host cookie 引导回 portal；API 调用仍返回 JSON
+    if ((req.headers.accept ?? "").includes("text/html")) {
+      const clearCookie = `${HOST_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`;
+      res.writeHead(503, { "content-type": "text/html; charset=utf-8", "set-cookie": clearCookie });
+      res.end(
+        `<!doctype html><meta charset="utf-8"><body style="font-family:system-ui,sans-serif;max-width:560px;margin:80px auto;padding:0 16px;color:#1f2937">` +
+          `<h1 style="font-size:20px">主机离线</h1>` +
+          `<p style="color:#6b7280">这台主机当前未接入（join 隧道未运行），或已重新绑定。请回到门户重新选择主机。</p>` +
+          `<a href="/portal" style="color:#2563eb">← 返回 rdsh 门户</a></body>`,
+      );
+      return true;
+    }
     writeError(res, 503, "HOST_OFFLINE", "host is offline");
     return true;
   }
