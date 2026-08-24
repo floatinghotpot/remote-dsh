@@ -43,21 +43,35 @@ dsh plugin --profile default add <plugin>
 
 | 资产 | 位置 | 插件复用点 |
 |---|---|---|
-| host 核心（join/serve 转发内核） | `packages/gateway/src/{join,serve,proxy,server}.ts`（D13：数据进、进程出） | 插件 spawn `rdsh host serve` 子进程，或直接库调用 |
+| host 核心（join/serve 转发内核） | `packages/gateway/src/{join,serve,proxy,server}.ts`（D13：数据进、进程出） | 插件**库调用** join 核心（no-spawn，D1），转发到本进程 dsh |
 | session 文件（host token 持久化） | `~/.rdsh/join-<host>.token`（0600） | 插件与 CLI/service 共享，重启免配 |
 | host.json（04） | `~/.rdsh/host.json` | 插件读同一配置（mode: join/lan/cloud） |
 | 证书自动检测 / self-revoke / 服务名对齐（04） | — | 插件直接继承 |
+
+### 2.4 插件 bundle 的具体结构（P1/P3/P5 查证，2026-08-24）
+
+- **服务端**：`dsh.bundle.patch = "./cordis.patch.yml"`（Cordis patch YAML），声明/插入 Cordis 插件：
+  ```yaml
+  - insert:
+      - id: remote-access
+        name: 'dsh-web-remote/server'   # 按 npm 包名/子路径引用
+        inject: [ ... ]                 # Cordis 服务注入
+        config: { ... }
+  ```
+  例证：`dsh-headless` / `dsh-base` / `dsh-web-app` 的 `cordis.patch.yml` 都用 `insert: name: '@deepseek-ai/...'` 按包名插插件。
+- **客户端**：`dsh.bundle.client = { inject: [...客户端依赖], platform: "web" }` + `exports["./client"]` → `lib/client.js`（Cordis client 插件）。`client.js` 用 `ctx.settingsScope` / `ctx.settingsSchema` + React，把页面挂到 `uiRenderer` 呈现为设置页（`dsh-client-ui-settings` 系列即此模式）。
+- **结论（P5 → D6）**：`dsh-web-remote` 是**薄包装**——`cordis.patch.yml` 插入自己的 server 插件（该插件 `import rdsh-gateway` 的 join 核心作为常规 npm 依赖），`dsh.bundle.client` 提供设置页 UI。
 
 ## 3. 前置调研清单（进行中，进 solution 前需结论）
 
 | # | 调研项 | 现状 |
 |---|---|---|
-| P1 | `dsh plugin add` 完整流程与 profile 初始化细节（`dsh-app-boot` 的 initProfile/readProfileManifest） | 部分查证（§2.1） |
-| P2 | **插件能否挂到 DSH 进程内的 HTTP server**（转发目标 = 本进程 dsh，而非再 spawn 一个 dsh）——决定「同进程内嵌转发」还是「spawn 独立子进程」 | ⚠️ 未查证（见 D1） |
-| P3 | 插件能否贡献客户端 UI 面板（`dsh.bundle.client` 的路由/入口形态） | 已确认存在（§2.1），细节待查 |
-| P4 | 与 CLI 版共存策略（同一 host 是否同时跑 CLI service + 插件；冲突检测） | 未定 |
-| P5 | 插件版本与 rdsh 包版本的依赖（插件内嵌 rdsh-gateway？还是依赖 npm 上的 remote-dsh 包？） | 未定 |
-| P6 | **创建 npm org 锁定 scope**：`remote-dsh` 或 `rdsh`（先到先得，§4.1） | 待办 |
+| P1 | `dsh plugin add` 完整流程与 profile 初始化细节 | ✅ 已查证（§2.1/§2.4） |
+| P2 | 插件能否挂到 DSH 进程内的 HTTP server | ✅ 已定（D1：内嵌 + self-proxy 转发到 `127.0.0.1:<dsh 端口>`，无需挂载） |
+| P3 | 客户端 UI 面板形态（`dsh.bundle.client` 路由/入口） | ✅ 已查证（§2.4：client.js 设置页） |
+| P4 | 与 CLI 版共存策略（同 host 是否同时跑 CLI service + 插件） | 未定 |
+| P5 | 包依赖形态（内嵌 vs 依赖 npm 包） | ✅ 已查证（§2.4：依赖 `rdsh-gateway` npm 包，薄包装） |
+| P6 | 创建 npm org 锁定 scope（`remote-dsh` / `rdsh`） | 待办 |
 
 ## 4. 命名勘察（2026-08-24，命名未定稿，待继续讨论）
 
