@@ -48,3 +48,11 @@ test("behindProxy 字段（默认 false / 可配置 / 非法报错）", async ()
   assert.equal(normalizeHubConfig({ behindProxy: false }).behindProxy, false);
   assert.throws(() => normalizeHubConfig({ behindProxy: "yes" }), /"behindProxy" must be boolean/);
 });
+
+test("email：log 可省略 from（占位）；smtp/aliyun 必填 from", () => {
+  const log = normalizeHubConfig({ email: { provider: "log" } }).email!;
+  assert.equal(log.provider, "log");
+  assert.equal(log.from, "noreply@localhost"); // 占位
+  assert.throws(() => normalizeHubConfig({ email: { provider: "smtp" } }), /"email.from"/);
+  assert.throws(() => normalizeHubConfig({ email: { provider: "aliyun" } }), /"email.from"/);
+});

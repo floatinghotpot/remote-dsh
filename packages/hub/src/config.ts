@@ -123,8 +123,15 @@ function normalizeEmail(raw: unknown, source: string): EmailConfig {
   if (e.provider !== "smtp" && e.provider !== "aliyun" && e.provider !== "log") {
     throw new Error(`${source}: "email.provider" must be smtp|aliyun|log`);
   }
-  if (typeof e.from !== "string" || e.from.length === 0) throw new Error(`${source}: "email.from" must be a non-empty string`);
-  const out: EmailConfig = { provider: e.provider, from: e.from };
+  let from: string;
+  if (typeof e.from === "string" && e.from.length > 0) {
+    from = e.from;
+  } else if (e.provider !== "log") {
+    throw new Error(`${source}: "email.from" must be a non-empty string`);
+  } else {
+    from = "noreply@localhost"; // log 不真发，占位即可
+  }
+  const out: EmailConfig = { provider: e.provider, from };
   if (e.fromAlias !== undefined) {
     if (typeof e.fromAlias !== "string") throw new Error(`${source}: "email.fromAlias" must be a string`);
     out.fromAlias = e.fromAlias;
