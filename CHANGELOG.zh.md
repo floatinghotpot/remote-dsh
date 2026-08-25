@@ -7,6 +7,12 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.6.0] - 2026-08-24
+
+### 新增
+
+- `rdsh hub` 新增子命令：`audit ls`（审计日志查询）、`user unlock`（解锁被锁账户）、`user reset-2fa`（重置用户 2FA）。（`remote-dsh@0.6.0`，依赖 `rdsh-hub@0.4.0`）
+
 ## [rdsh-hub 0.4.0] - 2026-08-24
 
 ### 新增
