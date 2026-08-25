@@ -131,7 +131,7 @@ rdsh hub service status             # hub status
 
 ## Next steps
 
-- **Share with your team**: grant a colleague access to a machine (M4 multi-tenant enhancements, planned)
+- **Share with your team**: grant a colleague access to a machine (M5 multi-tenant hardening, implemented: email verification, TOTP 2FA, host sharing, audit log, account lockout — see [usage.md §8.3](../overview/usage.md))
 - **Mobile**: phone app / WeChat mini program connecting straight to the hub (later milestones)
 - Curious about the protocol? Layer 1 (hub API) and layer 2 (tunnel protocol) are frozen contracts — see `packages/tunnel/PROTOCOL.md`
 

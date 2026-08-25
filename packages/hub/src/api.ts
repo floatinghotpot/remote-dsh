@@ -4,15 +4,19 @@
  * 认证：`Authorization: Bearer <access>` 或 Cookie `rdsh_session`（HttpOnly）。
  * 无开放注册端点（账号由 `rdsh hub user add` 创建，防 bot/垃圾注入）。
  */
-import { randomUUID } from "node:crypto";
+import { randomInt, randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { HubConfig } from "./config.ts";
 import type { HubDb } from "./db.ts";
 import type { HubAuth } from "./auth.ts";
-import { createLoginLimiter } from "./auth.ts";
+import { createLoginLimiter, hashPassword } from "./auth.ts";
 import type { TunnelRegistry } from "./tunnel.ts";
 import type { EventHub } from "./events.ts";
 import { randomToken, sha256 } from "./jwt.ts";
+import { createEmailSender } from "./email/index.ts";
+import type { EmailSender } from "./email/index.ts";
+import { createChallenge, verifyChallenge } from "./captcha.ts";
+import { DailyWindowLimiter } from "./ratelimit.ts";
 
 export const SESSION_COOKIE = "rdsh_session";
 const JOIN_TOKEN_DEFAULT_TTL = 30 * 24 * 3600; // join token 默认 30 天（秒）
@@ -60,7 +64,7 @@ function parseCookies(header?: string): Record<string, string> {
 }
 
 /** 客户端真实 IP（behindProxy 时取 XFF，仅连接来自回环时信任 —— 防伪造）。 */
-function clientIp(req: IncomingMessage, runtime: HubRuntime): string {
+export function clientIp(req: IncomingMessage, runtime: HubRuntime): string {
   const remote = req.socket.remoteAddress ?? "unknown";
   if (runtime.config.behindProxy && (remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1")) {
     const xff = req.headers["x-forwarded-for"];
@@ -105,6 +109,47 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, runti
     writeError(res, 404, "NOT_FOUND", "registration is disabled");
     return true;
   }
+  // ---- M5：2FA / 验证码 / 找回密码 / 邮箱 ----
+  if (path === "/api/auth/totp" && method === "POST") {
+    await handleTotpLogin(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/captcha/arithmetic" && method === "POST") {
+    await handleCaptchaChallenge(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/auth/password/reset" && method === "POST") {
+    await handleResetRequest(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/auth/password/reset/confirm" && method === "POST") {
+    await handleResetConfirm(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/account/email" && method === "POST") {
+    await handleBindEmail(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/account/email/verify" && method === "POST") {
+    await handleVerifyEmail(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/account/email/unbind" && method === "POST") {
+    await handleUnbindEmail(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/account/2fa/enable" && method === "POST") {
+    await handleEnable2fa(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/account/2fa/verify" && method === "POST") {
+    await handleActivate2fa(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/account/2fa/disable" && method === "POST") {
+    await handleDisable2fa(req, res, runtime);
+    return true;
+  }
 
   // ---- host 端点 ----
   if (path === "/api/hosts" && method === "GET") {
@@ -131,6 +176,22 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, runti
   if (joinTokenMatch !== null && method === "DELETE") {
     await handleRevokeJoinToken(req, res, runtime, decodeURIComponent(joinTokenMatch[1]!));
     return true;
+  }
+  const shareMatch = /^\/api\/hosts\/([^/]+)\/share(?:\/([^/]+))?$/.exec(path);
+  if (shareMatch !== null) {
+    const hostId = decodeURIComponent(shareMatch[1]!);
+    if (method === "POST") {
+      await handleShareHost(req, res, runtime, hostId);
+      return true;
+    }
+    if (method === "GET") {
+      await handleListShares(req, res, runtime, hostId);
+      return true;
+    }
+    if (method === "DELETE" && shareMatch[2] !== undefined) {
+      await handleRevokeShare(req, res, runtime, hostId, decodeURIComponent(shareMatch[2]));
+      return true;
+    }
   }
   const hostMatch = /^\/api\/hosts\/([^/]+)$/.exec(path);
   if (hostMatch !== null) {
@@ -167,27 +228,46 @@ async function handleLogin(req: IncomingMessage, res: ServerResponse, runtime: H
     return;
   }
   const result = await runtime.auth.login(body.name, body.password);
-  if (result === null) {
-    const locked = limiter.fail(ip);
-    if (locked > 0) {
-      writeError(res, 429, "RATE_LIMITED", "too many attempts", locked);
+  switch (result.kind) {
+    case "locked":
+      limiter.clear(ip);
+      runtime.db.recordAudit(null, "login.locked", { name: body.name }, ip);
+      writeError(res, 423, "ACCOUNT_LOCKED", "account locked due to too many failures", result.lockedUntil - Date.now());
+      return;
+    case "bad-credentials": {
+      const locked = limiter.fail(ip);
+      runtime.db.recordAudit(null, "login.failed", { name: body.name }, ip);
+      if (locked > 0) {
+        writeError(res, 429, "RATE_LIMITED", "too many attempts", locked);
+        return;
+      }
+      writeError(res, 401, "BAD_CREDENTIALS", "invalid username or password");
       return;
     }
-    writeError(res, 401, "BAD_CREDENTIALS", "invalid username or password");
-    return;
+    case "requires-totp":
+      limiter.clear(ip);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ requiresTotp: true, pendingToken: result.pendingToken, name: result.name }));
+      return;
+    case "ok": {
+      limiter.clear(ip);
+      const user = runtime.db.getUserByName(body.name);
+      runtime.db.recordAudit(user?.id ?? null, "login.ok", {}, ip);
+      res.writeHead(200, {
+        "content-type": "application/json",
+        "set-cookie": sessionCookie(result.tokens.accessToken),
+      });
+      res.end(
+        JSON.stringify({
+          accessToken: result.tokens.accessToken,
+          refreshToken: result.tokens.refreshToken,
+          mustChangePassword: result.mustChangePassword,
+          user: { id: user?.id, name: user?.name },
+        }),
+      );
+      return;
+    }
   }
-  limiter.clear(ip);
-  const user = runtime.db.getUserByName(body.name);
-  res.writeHead(200, {
-    "content-type": "application/json",
-    "set-cookie": sessionCookie(result.tokens.accessToken),
-  });
-  res.end(JSON.stringify({
-    accessToken: result.tokens.accessToken,
-    refreshToken: result.tokens.refreshToken,
-    mustChangePassword: result.mustChangePassword,
-    user: { id: user?.id, name: user?.name },
-  }));
 }
 
 async function handleFirstPassword(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
@@ -280,12 +360,13 @@ async function handleListHosts(req: IncomingMessage, res: ServerResponse, runtim
     writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
     return;
   }
-  const hosts = runtime.db.listHostsByOwner(auth.userId);
+  const hosts = runtime.db.listHostsForUser(auth.userId);
   const out = hosts.map((h) => ({
     id: h.id,
     name: h.name,
     online: runtime.tunnels.isOnline(h.id),
     createdAt: h.createdAt,
+    role: h.ownerId === auth.userId ? "owner" : "member",
   }));
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({ hosts: out }));
@@ -475,6 +556,319 @@ async function handleRegister(req: IncomingMessage, res: ServerResponse, runtime
 
 function sessionCookie(accessToken: string): string {
   return `${SESSION_COOKIE}=${accessToken}; HttpOnly; SameSite=Lax; Path=/; Max-Age=3600`;
+}
+
+// ---- M5：邮件/验证码/2FA/共享 ----
+
+const PIN_TTL_MS = 10 * 60 * 1000;
+const RESEND_WINDOW_MS = 60 * 1000;
+const MAX_CODE_ATTEMPTS = 5;
+const UNBIND_LOCK_MS = 24 * 3600 * 1000;
+
+const emailSenders = new WeakMap<HubRuntime, EmailSender | null>();
+function getEmailSender(runtime: HubRuntime): EmailSender | null {
+  if (!emailSenders.has(runtime)) emailSenders.set(runtime, createEmailSender(runtime.config.email));
+  return emailSenders.get(runtime)!;
+}
+
+const emailLimiters = new WeakMap<HubRuntime, { recipient: DailyWindowLimiter; ip: DailyWindowLimiter; user: DailyWindowLimiter; global: DailyWindowLimiter }>();
+function getEmailLimiters(runtime: HubRuntime) {
+  let l = emailLimiters.get(runtime);
+  if (l === undefined) {
+    const sec = runtime.config.security ?? { emailDailyLimit: 5, globalEmailDailyLimit: 200, loginLockThreshold: 10, loginLockMinutes: 15, auditRetentionDays: 90 };
+    l = {
+      recipient: new DailyWindowLimiter(sec.emailDailyLimit),
+      ip: new DailyWindowLimiter(3),
+      user: new DailyWindowLimiter(5),
+      global: new DailyWindowLimiter(sec.globalEmailDailyLimit),
+    };
+    emailLimiters.set(runtime, l);
+  }
+  return l;
+}
+
+/** 生成并发送验证码/重置码（含限流 + 审计）。返回状态。 */
+async function sendEmailCode(
+  runtime: HubRuntime,
+  opts: { purpose: "verify" | "reset"; email: string; userId: number; ip: string; subject: string },
+): Promise<"sent" | "disabled" | "limited" | "resend" | "error"> {
+  const sender = getEmailSender(runtime);
+  if (sender === null) return "disabled";
+  const limiters = getEmailLimiters(runtime);
+  const last = runtime.db.getEmailCodeByEmail(opts.email, opts.purpose);
+  if (last !== null && last.createdAt > Date.now() - RESEND_WINDOW_MS) return "resend";
+
+  if (opts.purpose === "reset") {
+    if (limiters.recipient.used(opts.email) >= 3 || limiters.ip.isLimited(opts.ip) || limiters.global.isLimited("g")) return "limited";
+  } else {
+    if (limiters.recipient.isLimited(opts.email) || limiters.user.isLimited(String(opts.userId)) || limiters.global.isLimited("g")) return "limited";
+  }
+  limiters.recipient.count(opts.email);
+  if (opts.purpose === "reset") limiters.ip.count(opts.ip);
+  else limiters.user.count(String(opts.userId));
+  limiters.global.count("g");
+
+  const code = String(randomInt(0, 1000000)).padStart(6, "0");
+  try {
+    await sender.send({ to: opts.email, subject: opts.subject, text: `Your remote-dsh code is ${code} (valid 10 minutes).` });
+  } catch (err) {
+    console.error(`[email] send failed to ${opts.email}:`, err instanceof Error ? err.message : err);
+    return "error";
+  }
+  runtime.db.createEmailCode(opts.userId, opts.email, opts.purpose, sha256(code), Date.now() + PIN_TTL_MS);
+  runtime.db.recordAudit(opts.userId, `email.${opts.purpose}.sent`, { email: opts.email }, opts.ip);
+  return "sent";
+}
+
+/** 校验验证码（一次性 + 错误计数）。 */
+export function verifyEmailCode(db: HubDb, email: string, purpose: string, code: string): boolean {
+  const row = db.getEmailCodeByEmail(email, purpose);
+  if (row === null || row.expiresAt <= Date.now()) return false;
+  if (row.attempts >= MAX_CODE_ATTEMPTS) return false;
+  db.incrementCodeAttempts(row.id);
+  if (row.codeHash !== sha256(code)) return false;
+  db.deleteEmailCodes(email);
+  return true;
+}
+
+function normalEmail(body: Record<string, unknown> | null): string | null {
+  if (body === null || typeof body.email !== "string") return null;
+  const email = body.email.trim().toLowerCase();
+  if (email.length === 0 || email.length > 254 || !email.includes("@")) return null;
+  return email;
+}
+
+async function handleTotpLogin(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const body = await readJsonBody(req);
+  if (body === null || typeof body.pendingToken !== "string" || typeof body.code !== "string") {
+    writeError(res, 400, "BAD_REQUEST", "invalid body");
+    return;
+  }
+  const result = runtime.auth.verifyTotpLogin(body.pendingToken, body.code);
+  if (result === null) {
+    writeError(res, 401, "BAD_TOTP", "invalid or expired 2FA code");
+    return;
+  }
+  res.writeHead(200, { "content-type": "application/json", "set-cookie": sessionCookie(result.tokens.accessToken) });
+  res.end(JSON.stringify({ accessToken: result.tokens.accessToken, refreshToken: result.tokens.refreshToken, mustChangePassword: result.mustChangePassword }));
+}
+
+async function handleCaptchaChallenge(_req: IncomingMessage, res: ServerResponse, _runtime: HubRuntime): Promise<void> {
+  const { token, question } = createChallenge();
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ token, question }));
+}
+
+async function handleResetRequest(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const ip = clientIp(req, runtime);
+  const body = await readJsonBody(req);
+  const email = normalEmail(body);
+  if (email === null) {
+    writeError(res, 400, "BAD_REQUEST", "invalid email");
+    return;
+  }
+  if (runtime.config.captcha?.provider !== "none") {
+    if (typeof body?.captchaToken !== "string" || typeof body.captchaAnswer !== "string" || !verifyChallenge(body.captchaToken, body.captchaAnswer)) {
+      writeError(res, 400, "BAD_CAPTCHA", "captcha failed");
+      return;
+    }
+  }
+  const user = runtime.db.getUserByEmail(email);
+  if (user !== null && user.emailVerified === 1) {
+    await sendEmailCode(runtime, { purpose: "reset", email, userId: user.id, ip, subject: "remote-dsh password reset" });
+  }
+  // 统一响应（防枚举）：邮箱是否存在都返回 ok
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ ok: true }));
+}
+
+async function handleResetConfirm(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const ip = clientIp(req, runtime);
+  const body = await readJsonBody(req);
+  const email = normalEmail(body);
+  if (email === null || body === null || typeof body.code !== "string" || typeof body.newPassword !== "string" || body.newPassword.length < 8) {
+    writeError(res, 400, "BAD_REQUEST", "invalid body (newPassword must be >= 8 chars)");
+    return;
+  }
+  const user = runtime.db.getUserByEmail(email);
+  if (user === null || !verifyEmailCode(runtime.db, email, "reset", body.code)) {
+    writeError(res, 400, "BAD_RESET", "invalid or expired reset code");
+    return;
+  }
+  runtime.db.setPassword(user.id, await hashPassword(body.newPassword));
+  runtime.db.revokeAllRefreshForUser(user.id);
+  runtime.db.recordAudit(user.id, "password.reset", {}, ip);
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ ok: true, message: "password reset; all sessions revoked" }));
+}
+
+async function handleBindEmail(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const auth = authenticate(req, runtime);
+  if (auth === null) {
+    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
+    return;
+  }
+  const body = await readJsonBody(req);
+  const email = normalEmail(body);
+  if (email === null) {
+    writeError(res, 400, "BAD_REQUEST", "invalid email");
+    return;
+  }
+  const recentUnbind = runtime.db.listAudit({ userId: auth.userId, event: "email.unbind", since: Date.now() - UNBIND_LOCK_MS });
+  if (recentUnbind.length > 0) {
+    writeError(res, 429, "UNBIND_COOLDOWN", "recently unbound; retry later", UNBIND_LOCK_MS - (Date.now() - recentUnbind[0]!.createdAt));
+    return;
+  }
+  const r = await sendEmailCode(runtime, { purpose: "verify", email, userId: auth.userId, ip: clientIp(req, runtime), subject: "remote-dsh email verification" });
+  if (r === "disabled") writeError(res, 400, "EMAIL_DISABLED", "email service not configured");
+  else if (r === "limited" || r === "resend") writeError(res, 429, "RATE_LIMITED", r === "resend" ? "resend too soon" : "too many requests");
+  else {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ ok: true }));
+  }
+}
+
+async function handleVerifyEmail(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const auth = authenticate(req, runtime);
+  if (auth === null) {
+    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
+    return;
+  }
+  const body = await readJsonBody(req);
+  const email = normalEmail(body);
+  if (email === null || body === null || typeof body.code !== "string") {
+    writeError(res, 400, "BAD_REQUEST", "invalid body");
+    return;
+  }
+  if (!verifyEmailCode(runtime.db, email, "verify", body.code)) {
+    writeError(res, 400, "BAD_CODE", "invalid or expired code");
+    return;
+  }
+  runtime.db.setEmail(auth.userId, email);
+  runtime.db.setEmailVerified(auth.userId);
+  runtime.db.recordAudit(auth.userId, "email.verified", { email }, clientIp(req, runtime));
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ ok: true }));
+}
+
+async function handleUnbindEmail(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const auth = authenticate(req, runtime);
+  if (auth === null) {
+    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
+    return;
+  }
+  runtime.db.clearEmail(auth.userId);
+  runtime.db.recordAudit(auth.userId, "email.unbind", {}, clientIp(req, runtime));
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ ok: true }));
+}
+
+async function handleEnable2fa(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const auth = authenticate(req, runtime);
+  if (auth === null) {
+    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
+    return;
+  }
+  const { secret, otpauthUrl } = runtime.auth.enableTotp();
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ secret, otpauthUrl }));
+}
+
+async function handleActivate2fa(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const auth = authenticate(req, runtime);
+  if (auth === null) {
+    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
+    return;
+  }
+  const body = await readJsonBody(req);
+  if (body === null || typeof body.secret !== "string" || typeof body.code !== "string") {
+    writeError(res, 400, "BAD_REQUEST", "invalid body");
+    return;
+  }
+  if (!runtime.auth.activateTotp(auth.userId, body.secret, body.code)) {
+    writeError(res, 400, "BAD_TOTP", "invalid 2FA code");
+    return;
+  }
+  runtime.db.recordAudit(auth.userId, "2fa.enabled", {}, clientIp(req, runtime));
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ ok: true }));
+}
+
+async function handleDisable2fa(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const auth = authenticate(req, runtime);
+  if (auth === null) {
+    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
+    return;
+  }
+  const body = await readJsonBody(req);
+  if (body === null || typeof body.code !== "string") {
+    writeError(res, 400, "BAD_REQUEST", "invalid body");
+    return;
+  }
+  if (!runtime.auth.disableTotp(auth.userId, body.code)) {
+    writeError(res, 400, "BAD_TOTP", "invalid 2FA code");
+    return;
+  }
+  runtime.db.recordAudit(auth.userId, "2fa.disabled", {}, clientIp(req, runtime));
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ ok: true }));
+}
+
+async function handleShareHost(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime, hostId: string): Promise<void> {
+  const auth = authenticate(req, runtime);
+  if (auth === null) {
+    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
+    return;
+  }
+  if (!runtime.db.isHostOwner(hostId, auth.userId)) {
+    writeError(res, 403, "FORBIDDEN", "host not owned by you");
+    return;
+  }
+  const body = await readJsonBody(req);
+  if (body === null || typeof body.name !== "string" || body.name.length === 0) {
+    writeError(res, 400, "BAD_REQUEST", "invalid body (name required)");
+    return;
+  }
+  const target = runtime.db.getUserByName(body.name);
+  if (target === null) {
+    writeError(res, 400, "BAD_REQUEST", "user not found");
+    return;
+  }
+  runtime.db.shareHost(hostId, target.id, "member");
+  runtime.db.recordAudit(auth.userId, "host.share", { hostId, sharedUserId: target.id }, clientIp(req, runtime));
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ ok: true }));
+}
+
+async function handleListShares(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime, hostId: string): Promise<void> {
+  const auth = authenticate(req, runtime);
+  if (auth === null) {
+    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
+    return;
+  }
+  if (!runtime.db.isHostOwner(hostId, auth.userId)) {
+    writeError(res, 403, "FORBIDDEN", "host not owned by you");
+    return;
+  }
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ shares: runtime.db.listShares(hostId) }));
+}
+
+async function handleRevokeShare(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime, hostId: string, targetUserId: string): Promise<void> {
+  const auth = authenticate(req, runtime);
+  if (auth === null) {
+    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
+    return;
+  }
+  if (!runtime.db.isHostOwner(hostId, auth.userId)) {
+    writeError(res, 403, "FORBIDDEN", "host not owned by you");
+    return;
+  }
+  const uid = Number(targetUserId);
+  runtime.db.revokeShare(hostId, uid);
+  runtime.db.recordAudit(auth.userId, "host.share.revoke", { hostId, revokedUserId: uid }, clientIp(req, runtime));
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ ok: true }));
 }
 
 async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown> | null> {

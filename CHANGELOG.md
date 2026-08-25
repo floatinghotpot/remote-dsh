@@ -7,6 +7,13 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [rdsh-hub 0.4.0] - 2026-08-24
+
+### Added
+
+- M5 multi-tenant: email verification + password reset (configurable `EmailSender` — `smtp`/`aliyun`/`log`), TOTP 2FA, host sharing (owner/member), audit log (`rdsh hub audit ls`), account lockout (10 fails / 15 min, `rdsh hub user unlock`), and send-email rate limiting (per-recipient / per-trigger / global).
+- Config: `hub.json` gains `email`, `captcha`, `security` sections. Email is the first external service dependency (`nodemailer` for smtp; the `aliyun` provider hand-writes DirectMail's RPC signature — zero dependency).
+
 ## [rdsh-gateway 0.4.0 · dsh-web-remote 0.1.0] - 2026-08-24
 
 ### Added

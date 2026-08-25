@@ -21,8 +21,10 @@ import type { WebSocket } from "ws";
 import { sha256 } from "./jwt.ts";
 import { HubDb } from "./db.ts";
 import { HubAuth } from "./auth.ts";
-import { authenticate, handleApi, writeError } from "./api.ts";
+import { authenticate, clientIp, handleApi, writeError } from "./api.ts";
 import type { HubRuntime } from "./api.ts";
+import type { EmailConfig } from "./email/types.ts";
+import type { CaptchaConfig, SecurityConfig } from "./config.ts";
 import { TunnelConn, TunnelRegistry } from "./tunnel.ts";
 import { EventHub, createEventsServer } from "./events.ts";
 import { handleRelay, handleRelayUpgrade } from "./relay.ts";
@@ -39,6 +41,10 @@ export interface HubServerOptions {
   tunnels: TunnelRegistry;
   events: EventHub;
   portalDir: string;
+  /** 邮件/验证码/安全配置（serve.ts 从 hub.json 传入）。 */
+  email?: EmailConfig;
+  captcha?: CaptchaConfig;
+  security?: SecurityConfig;
 }
 
 export interface RunningHub {
@@ -84,6 +90,9 @@ export async function startHubServer(opts: HubServerOptions): Promise<RunningHub
       dbPath: "",
       jwtKeyPath: "",
       behindProxy: opts.behindProxy === true,
+      email: opts.email,
+      captcha: opts.captcha,
+      security: opts.security,
     },
     db: opts.db,
     auth: opts.auth,
@@ -210,10 +219,17 @@ async function handleEnterHost(
     return;
   }
   const host = runtime.db.getHostById(hostId);
-  if (host === null || host.ownerId !== auth.userId) {
-    writeError(res, 403, "FORBIDDEN", "host not owned by you");
+  if (host === null) {
+    writeError(res, 404, "NOT_FOUND", "host not found");
     return;
   }
+  const isOwner = host.ownerId === auth.userId;
+  const isMember = isOwner || runtime.db.getShare(hostId, auth.userId) !== null;
+  if (!isMember) {
+    writeError(res, 403, "FORBIDDEN", "host not owned by you or shared with you");
+    return;
+  }
+  runtime.db.recordAudit(auth.userId, "host.enter", { hostId, role: isOwner ? "owner" : "member" }, clientIp(req, runtime));
   // Set-Cookie（HMAC 签名 host cookie）+ 302：DSH 在根路径运行；
   // 后续 relay 只验签名 cookie（不受 access 1h 过期影响，改密即时失效）
   res.writeHead(302, { location: `${rest}${search}`, "set-cookie": hostCookie(hostId, auth.userId, runtime.auth) });

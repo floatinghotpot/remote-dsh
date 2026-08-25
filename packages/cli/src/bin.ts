@@ -453,6 +453,46 @@ async function openHubDb(configPath?: string): Promise<HubDb> {
   return new HubDb(config.dbPath);
 }
 
+/** `rdsh hub audit ls [--user <name>] [--event <e>] [--since 24h|7d]`。 */
+async function handleHubAudit(args: string[], configPath?: string): Promise<void> {
+  const db = await openHubDb(configPath);
+  try {
+    const filter: { userId?: number; event?: string; since?: number } = {};
+    for (let i = 0; i < args.length; i++) {
+      const flag = args[i];
+      if (flag === "--user") {
+        const name = args[++i];
+        if (name === undefined) throw new Error("missing value for --user");
+        const u = db.getUserByName(name);
+        if (u === null) throw new Error(`user '${name}' not found`);
+        filter.userId = u.id;
+      } else if (flag === "--event") {
+        filter.event = args[++i];
+        if (filter.event === undefined) throw new Error("missing value for --event");
+      } else if (flag === "--since") {
+        const v = args[++i];
+        if (v === undefined) throw new Error("missing value for --since");
+        const m = /^(\d+)([hd])$/.exec(v);
+        if (m === null) throw new Error(`invalid --since '${v}' (use like 24h or 7d)`);
+        filter.since = Date.now() - Number(m[1]) * (m[2] === "h" ? 3_600_000 : 86_400_000);
+      } else {
+        throw new Error(`unknown option '${flag}'`);
+      }
+    }
+    const events = db.listAudit(filter);
+    if (events.length === 0) {
+      console.log("(no events)");
+      return;
+    }
+    for (const e of events) {
+      const user = e.userId !== null ? db.getUserById(e.userId) : null;
+      console.log(`${new Date(e.createdAt).toISOString()}  ${user?.name ?? "-"}  ${e.event}  ip=${e.ip}  ${e.detailJson}`);
+    }
+  } finally {
+    db.close();
+  }
+}
+
 async function handleHub(args: string[], configPath?: string): Promise<void> {
   const sub = args[0];
   const rest = args.slice(1);
@@ -472,6 +512,10 @@ async function handleHub(args: string[], configPath?: string): Promise<void> {
     }
     case "host": {
       await handleHubHost(rest, configPath);
+      return;
+    }
+    case "audit": {
+      await handleHubAudit(rest, configPath);
       return;
     }
     case "service": {
@@ -582,8 +626,27 @@ async function handleHubUser(args: string[], configPath?: string): Promise<void>
         console.log(`rdsh: user '${name}' removed (their hosts removed)`);
         return;
       }
+      case "unlock": {
+        const name = args[1];
+        if (name === undefined) throw new Error("usage: rdsh hub user unlock <name>");
+        const user = db.getUserByName(name);
+        if (user === null) throw new Error(`user '${name}' not found`);
+        db.unlockAccount(user.id);
+        console.log(`rdsh: user '${name}' unlocked`);
+        return;
+      }
+      case "reset-2fa": {
+        const name = args[1];
+        if (name === undefined) throw new Error("usage: rdsh hub user reset-2fa <name>");
+        const user = db.getUserByName(name);
+        if (user === null) throw new Error(`user '${name}' not found`);
+        db.clearTotpSecret(user.id);
+        db.bumpVersion(user.id);
+        console.log(`rdsh: 2FA reset for '${name}' (their sessions revoked)`);
+        return;
+      }
       default:
-        throw new Error("usage: rdsh hub user add|passwd|ls|rm");
+        throw new Error("usage: rdsh hub user add|passwd|ls|rm|unlock|reset-2fa");
     }
   } finally {
     db.close();

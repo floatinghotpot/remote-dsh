@@ -51,11 +51,12 @@ hub and gateway only — clients never implement it.
 
 ## Status
 
-**M1–M4 complete**: the LAN gateway (`rdsh host serve`), cloud-server direct
+**M1–M5 complete**: the LAN gateway (`rdsh host serve`), cloud-server direct
 access (TLS + password), the public hub (`rdsh host join` + `rdsh hub` + portal),
-and the `dsh-web-remote` DSH plugin (remote access with no CLI install) are
-implemented and verified. Next milestones: **M5 multi-tenant, M6 launch, M7 Go
-hub, M8 mobile app, M9 WeChat mini program** (see roadmap).
+the `dsh-web-remote` DSH plugin (remote access with no CLI install), and
+multi-tenant hardening (email verification + 2FA + host sharing + audit log +
+login rate-limiting) are implemented and verified. Next milestones: **M6 launch,
+M7 Go hub, M8 mobile app, M9 WeChat mini program** (see roadmap).
 
 ## Features
 
@@ -77,7 +78,7 @@ Implemented `[x]` · planned `[ ]` — from the user's point of view
 - [x] Deploy behind Apache2 / nginx reverse proxy (TLS terminated by the proxy; standard port 443, auto-renewed certs)
 - [x] User/password sign-in (`rdsh user add/passwd`; scrypt-hashed; changing password revokes all sessions)
 - [x] IP allow-list (`allowFrom` in config file) for extra hardening
-- [x] Config file (default `~/.rdsh/config.json`, or `--config <path>` / `$RDSH_CONFIG`)
+- [x] Config file (default `~/.rdsh/host.json`, or `--config <path>` / `$RDSH_CONFIG`)
 - [x] Run as a system service (systemd / launchd — auto-start on boot)
 
 **M3 — Use DSH from anywhere via the hub (implemented)**
@@ -92,10 +93,17 @@ Implemented `[x]` · planned `[ ]` — from the user's point of view
 **M4 — Use it as a DSH plugin (implemented)**
 - [x] `dsh plugin add dsh-web-remote` — remote access with no CLI install (a "Remote Access" panel in the DSH UI: connect / disconnect / revoke + live status)
 
-**M5+ — Planned**
+**M5 — Multi-tenant hardening (implemented)**
+- [x] Email verification + password reset (configurable SMTP / Aliyun DirectMail / local log)
+- [x] Two-factor authentication (TOTP)
+- [x] Share a machine with your team (owner / member — member can use the DSH but not manage)
+- [x] Audit log (`rdsh hub audit ls`)
+- [x] Login rate-limiting (account lockout 10 fails / 15 min + send-email limits + arithmetic captcha)
+
+**M6+ — Planned**
+- [ ] Managed hub (SaaS: open sign-up, subscription billing, WeChat/Alipay payments)
 - [ ] Mobile apps (Android / iOS)
 - [ ] WeChat mini program
-- [ ] Share a machine with your team
 - [ ] End-to-end encrypted sessions
 
 ## Quick start

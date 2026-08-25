@@ -9,6 +9,8 @@ import { randomBytes, scrypt as scryptCb, timingSafeEqual } from "node:crypto";
 import { HubDb } from "./db.ts";
 import type { UserRow } from "./db.ts";
 import { Jwt, randomToken, sha256 } from "./jwt.ts";
+import { generateSecret, verifyTotp } from "./totp.ts";
+import type { SecurityConfig } from "./config.ts";
 
 const SCRYPT_N = 16384;
 const SCRYPT_R = 8;
@@ -63,21 +65,91 @@ export interface LoginResult {
   mustChangePassword: boolean;
 }
 
+export type LoginOutcome =
+  | { kind: "locked"; lockedUntil: number }
+  | { kind: "bad-credentials" }
+  | { kind: "requires-totp"; pendingToken: string; name: string }
+  | { kind: "ok"; tokens: TokenPair; mustChangePassword: boolean };
+
 export class HubAuth {
   private readonly db: HubDb;
   private readonly jwt: Jwt;
+  private readonly security: SecurityConfig;
 
-  constructor(db: HubDb, jwt: Jwt) {
+  constructor(db: HubDb, jwt: Jwt, security: SecurityConfig = { emailDailyLimit: 5, globalEmailDailyLimit: 200, loginLockThreshold: 10, loginLockMinutes: 15, auditRetentionDays: 90 }) {
     this.db = db;
     this.jwt = jwt;
+    this.security = security;
   }
 
-  /** 登录；失败返回 null（限流由调用方 api.ts 层处理）。 */
-  async login(name: string, password: string): Promise<LoginResult | null> {
+  /**
+   * 登录：账户锁定检查 → 密码 → 2FA 分支。
+   * 失败计数；达阈值锁账户（admin 解锁）。
+   */
+  async login(name: string, password: string): Promise<LoginOutcome> {
     const user = this.db.getUserByName(name);
-    if (user === null) return null;
-    if (!(await verifyPassword(password, user.passwordHash))) return null;
+    if (user === null) return { kind: "bad-credentials" };
+    const now = Date.now();
+    if (user.lockedUntil !== null && user.lockedUntil > now) {
+      return { kind: "locked", lockedUntil: user.lockedUntil };
+    }
+    if (!(await verifyPassword(password, user.passwordHash))) {
+      const fails = this.db.incrementFailedAttempts(user.id);
+      if (fails >= this.security.loginLockThreshold) {
+        const until = now + this.security.loginLockMinutes * 60_000;
+        this.db.lockAccount(user.id, until);
+        return { kind: "locked", lockedUntil: until };
+      }
+      return { kind: "bad-credentials" };
+    }
+    this.db.clearFailedAttempts(user.id);
+    if (user.totpSecret !== null) {
+      return { kind: "requires-totp", pendingToken: this.issuePendingToken(user), name: user.name };
+    }
+    return { kind: "ok", tokens: this.issueTokens(user), mustChangePassword: user.mustChange === 1 };
+  }
+
+  /** 2FA 二次校验：pending token + TOTP → 完整会话。 */
+  verifyTotpLogin(pendingToken: string, code: string): { tokens: TokenPair; mustChangePassword: boolean } | null {
+    const claims = this.jwt.verify(pendingToken);
+    if (claims === null || claims.totpPending !== true) return null;
+    const user = this.db.getUserById(claims.sub);
+    if (user === null || user.ver !== claims.ver || user.totpSecret === null) return null;
+    if (!verifyTotp(user.totpSecret, code)) return null;
     return { tokens: this.issueTokens(user), mustChangePassword: user.mustChange === 1 };
+  }
+
+  /** 生成 2FA secret（不落库；activate 时由用户带回 secret+code 校验后才启用）。 */
+  enableTotp(): { secret: string; otpauthUrl: string } {
+    const secret = generateSecret();
+    return { secret, otpauthUrl: `otpauth://totp/remote-dsh:?secret=${secret}&issuer=remote-dsh` };
+  }
+
+  /** 激活 2FA：用 secret 校验当前 TOTP → 落库。 */
+  activateTotp(userId: number, secret: string, code: string): boolean {
+    if (!verifyTotp(secret, code)) return false;
+    this.db.setTotpSecret(userId, secret);
+    return true;
+  }
+
+  /** 关闭 2FA（需当前 TOTP）→ 清 secret + ver+1（全端失效）。 */
+  disableTotp(userId: number, code: string): boolean {
+    const user = this.db.getUserById(userId);
+    if (user === null || user.totpSecret === null) return false;
+    if (!verifyTotp(user.totpSecret, code)) return false;
+    this.db.clearTotpSecret(userId);
+    this.db.bumpVersion(userId);
+    return true;
+  }
+
+  /** admin 重置 2FA（无需 TOTP）→ 清 secret + ver+1。 */
+  adminResetTotp(userId: number): void {
+    this.db.clearTotpSecret(userId);
+    this.db.bumpVersion(userId);
+  }
+
+  private issuePendingToken(user: UserRow): string {
+    return this.jwt.sign({ sub: user.id, name: user.name, ver: user.ver, exp: Date.now() + 5 * 60 * 1000, totpPending: true });
   }
 
   /**
@@ -173,6 +245,7 @@ private hmac(payload: string): string {
   verifyAccess(accessToken: string): { user: UserRow; claims: { sub: number; name: string; ver: number } } | null {
     const claims = this.jwt.verify(accessToken);
     if (claims === null) return null;
+    if (claims.totpPending === true) return null; // pending token 不可作完整会话
     const user = this.db.getUserById(claims.sub);
     if (user === null) return null;
     if (user.ver !== claims.ver) return null;

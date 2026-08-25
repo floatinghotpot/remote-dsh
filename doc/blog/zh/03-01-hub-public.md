@@ -131,7 +131,7 @@ rdsh hub service status             # hub 运行状态
 
 ## 下一步
 
-- **共享给团队**：把某台机器共享给同事操作（M4 多租户增强，规划中）
+- **共享给团队**：把某台机器共享给同事操作（M5 多租户增强，已实现：邮箱验证、TOTP 两步验证、host 共享、审计日志、账户锁定 —— 见 [usage.md §8.3](../overview/usage.md)）
 - **移动端**：手机 App / 微信小程序直接连 hub（后续里程碑）
 - 想了解底层协议？层 1（hub API）与层 2（隧道协议）都是冻结契约，见 `packages/tunnel/PROTOCOL.md`
 

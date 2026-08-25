@@ -47,7 +47,7 @@
 
 ## 状态
 
-**M1–M4 完成**：局域网网关（`rdsh host serve`）、云服务器直连（TLS + 密码）、公网 hub（`rdsh host join` + `rdsh hub` + portal）、`dsh-web-remote` DSH 插件（免装 CLI 的远程访问）均已实现并验收。下一里程碑：**M5 多租户、M6 上线、M7 Go hub、M8 手机 App、M9 微信小程序**（见路线图）。
+**M1–M5 完成**：局域网网关（`rdsh host serve`）、云服务器直连（TLS + 密码）、公网 hub（`rdsh host join` + `rdsh hub` + portal）、`dsh-web-remote` DSH 插件（免装 CLI 的远程访问）、多租户增强（邮箱验证 + 2FA + 共享 + 审计 + 登录风控）均已实现并验收。下一里程碑：**M6 上线、M7 Go hub、M8 手机 App、M9 微信小程序**（见路线图）。
 
 ## 功能清单
 
@@ -69,7 +69,7 @@
 - [x] 部署在 apache2 / nginx 反代后面（反代终止 TLS；标准 443 端口 + 证书自动续期）
 - [x] 用户名 + 密码登录（`rdsh user add/passwd`；scrypt 哈希；改密后全部会话失效）
 - [x] IP 白名单（配置文件 `allowFrom` 字段）加固
-- [x] 配置文件（默认 `~/.rdsh/config.json`，可用 `--config <path>` 或 `$RDSH_CONFIG` 指定）
+- [x] 配置文件（默认 `~/.rdsh/host.json`，可用 `--config <path>` 或 `$RDSH_CONFIG` 指定）
 - [x] 作为系统服务运行（systemd / launchd —— 开机自启）
 
 **M3 — 经 hub 随时随地使用 DSH（已实现）**
@@ -84,10 +84,17 @@
 **M4 — 以 DSH 插件使用（已实现）**
 - [x] `dsh plugin add dsh-web-remote` 即获远程访问能力，免装 CLI —— DSH 界面「远程访问」面板：接入 / 断开 / 注销 + 实时状态
 
-**M5+ — 规划中**
+**M5 — 多租户增强（已实现）**
+- [x] 邮箱验证 + 找回密码（可配置 SMTP / 阿里云 DirectMail / 本地 log）
+- [x] 两步验证（TOTP）
+- [x] 与团队成员共享一台机器（owner / member，member 可进 DSH 但不可管理）
+- [x] 审计日志（`rdsh hub audit ls`）
+- [x] 登录风控（账户锁定 10 次/15 分钟 + 发信限流 + 算术验证码防 bot）
+
+**M6+ — 规划中**
+- [ ] 商业化托管 hub（SaaS：开放注册、订阅计费、微信/支付宝支付）
 - [ ] 手机 App（Android / iOS）
 - [ ] 微信小程序
-- [ ] 与团队成员共享一台机器
 - [ ] 端到端加密会话
 
 ## 快速开始

@@ -33,6 +33,8 @@ export function App(): React.JSX.Element {
   const path = full.startsWith(BASE) ? full.slice(BASE.length) || "/" : "/";
   if (path === "/login") return <Login />;
   if (path === "/settings/password") return <PasswordPage />;
+  if (path === "/settings/account") return <AccountPage />;
+  if (path === "/reset-password") return <ResetPasswordPage />;
   if (path === "/add-host") return <AddHostPage />;
   if (path === "/hosts" || path === "/") return <HostsPage />;
   return <HostsPage />; // 未知路径兜底 host 列表
@@ -44,7 +46,10 @@ function Shell({ title, children, onLogout }: { title: string; children: React.R
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
         <h1 style={{ fontSize: 18 }}>{title}</h1>
         {onLogout !== undefined && (
-          <button onClick={onLogout} style={btnStyle()}>退出登录</button>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={() => navigate("/settings/account")} style={btnStyle("ghost")}>账户</button>
+            <button onClick={onLogout} style={btnStyle()}>退出登录</button>
+          </div>
         )}
       </div>
       {children}
@@ -99,6 +104,8 @@ function Login(): React.JSX.Element {
   const isFirst = new URLSearchParams(window.location.search).get("first") === "1";
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
+  const [totpPending, setTotpPending] = useState<string | null>(null);
+  const [totpCode, setTotpCode] = useState("");
   const { err, run } = useError();
 
   const submit = (): void => {
@@ -107,10 +114,18 @@ function Login(): React.JSX.Element {
         const r = await api.firstPassword(name, password);
         sessionStorage.setItem(REFRESH_KEY, r.refreshToken);
         navigate("/hosts");
-      } else {
-        const r = await api.login(name, password);
+      } else if (totpPending !== null) {
+        const r = await api.totpLogin(totpPending, totpCode);
         sessionStorage.setItem(REFRESH_KEY, r.refreshToken);
         navigate(r.mustChangePassword ? "/login?first=1" : "/hosts");
+      } else {
+        const r = await api.login(name, password);
+        if (r.requiresTotp === true && r.pendingToken !== undefined) {
+          setTotpPending(r.pendingToken);
+        } else {
+          sessionStorage.setItem(REFRESH_KEY, r.refreshToken ?? "");
+          navigate(r.mustChangePassword ? "/login?first=1" : "/hosts");
+        }
       }
     });
   };
@@ -119,14 +134,115 @@ function Login(): React.JSX.Element {
     <div style={{ maxWidth: 360, margin: "80px auto", padding: "0 16px", fontFamily: "system-ui, sans-serif" }}>
       <h1 style={{ fontSize: 20, marginBottom: 4 }}>rdsh · 你的机器，随处可达</h1>
       <p style={{ color: "#666", fontSize: 13, marginBottom: 24 }}>
-        {isFirst ? "首次登录：设置你的密码" : "登录后访问你的 DSH 智能体"}
+        {totpPending !== null ? "输入你的两步验证码（TOTP）" : isFirst ? "首次登录：设置你的密码" : "登录后访问你的 DSH 智能体"}
       </p>
-      {field(isFirst ? "用户名（管理员创建）" : "用户名", name, setName)}
-      {field(isFirst ? "新密码（至少 8 位）" : "密码", password, setPassword, "password")}
+      {totpPending !== null ? (
+        field("验证码", totpCode, setTotpCode)
+      ) : (
+        <>
+          {field(isFirst ? "用户名（管理员创建）" : "用户名", name, setName)}
+          {field(isFirst ? "新密码（至少 8 位）" : "密码", password, setPassword, "password")}
+        </>
+      )}
       {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
       <button onClick={submit} style={{ ...btnStyle(), width: "100%", marginTop: 8 }}>
-        {isFirst ? "设置密码并登录" : "登录"}
+        {totpPending !== null ? "验证并登录" : isFirst ? "设置密码并登录" : "登录"}
       </button>
+      {totpPending === null && !isFirst && (
+        <p style={{ marginTop: 12, textAlign: "center" }}>
+          <a href="#" onClick={(e) => { e.preventDefault(); navigate("/reset-password"); }} style={{ color: "#2563eb", fontSize: 13 }}>忘记密码？</a>
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ---- 账户与安全（邮箱 + 2FA） ----
+
+function AccountPage(): React.JSX.Element {
+  const [email, setEmail] = useState("");
+  const [code, setCode] = useState("");
+  const [twofaSecret, setTwofaSecret] = useState("");
+  const [twofaCode, setTwofaCode] = useState("");
+  const [msg, setMsg] = useState("");
+  const { err, run } = useError();
+
+  return (
+    <Shell title="账户与安全" onLogout={logout}>
+      <p style={{ fontSize: 13, color: "#666" }}>
+        绑定邮箱后可找回密码；开启两步验证（TOTP）可防密码泄露。
+      </p>
+      <h2 style={{ fontSize: 15, marginTop: 16 }}>邮箱</h2>
+      {field("邮箱地址", email, setEmail)}
+      <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+        <button onClick={() => void run(async () => { await api.bindEmail(email.trim()); setMsg("验证码已发送，请查收邮件"); })} style={btnStyle()}>发送验证码</button>
+        <button onClick={() => void run(async () => { await api.unbindEmail(); setMsg("已解绑"); })} style={btnStyle("ghost")}>解绑</button>
+      </div>
+      {field("验证码", code, setCode)}
+      <button onClick={() => void run(async () => { await api.verifyEmail(email.trim(), code.trim()); setMsg("邮箱已验证"); })} style={btnStyle()}>验证邮箱</button>
+
+      <h2 style={{ fontSize: 15, marginTop: 16 }}>两步验证（TOTP）</h2>
+      {twofaSecret === "" ? (
+        <button onClick={() => void run(async () => { setTwofaSecret((await api.enable2fa()).secret); })} style={btnStyle()}>开启 2FA</button>
+      ) : (
+        <div>
+          <p style={{ fontSize: 13 }}>密钥（复制到 Google Authenticator / 1Password 等）：</p>
+          <code style={{ wordBreak: "break-all" }}>{twofaSecret}</code>
+          {field("当前 TOTP 验证码", twofaCode, setTwofaCode)}
+          <button onClick={() => void run(async () => { await api.activate2fa(twofaSecret, twofaCode.trim()); setMsg("2FA 已开启"); setTwofaSecret(""); })} style={btnStyle()}>确认开启</button>
+        </div>
+      )}
+      <div style={{ marginTop: 12 }}>
+        {field("关闭 2FA 需当前验证码", twofaCode, setTwofaCode)}
+        <button onClick={() => void run(async () => { await api.disable2fa(twofaCode.trim()); setMsg("2FA 已关闭"); })} style={btnStyle("danger")}>关闭 2FA</button>
+      </div>
+
+      {msg !== "" && <p style={{ color: "#16a34a", fontSize: 13, marginTop: 12 }}>{msg}</p>}
+      {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
+    </Shell>
+  );
+}
+
+// ---- 找回密码 ----
+
+function ResetPasswordPage(): React.JSX.Element {
+  const [email, setEmail] = useState("");
+  const [captcha, setCaptcha] = useState<{ token: string; question: string } | null>(null);
+  const [captchaAnswer, setCaptchaAnswer] = useState("");
+  const [code, setCode] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [sent, setSent] = useState(false);
+  const { err, run } = useError();
+
+  const loadCaptcha = (): void => {
+    void run(async () => setCaptcha(await api.captchaChallenge()));
+  };
+  useEffect(loadCaptcha, []);
+
+  return (
+    <div style={{ maxWidth: 360, margin: "80px auto", padding: "0 16px", fontFamily: "system-ui, sans-serif" }}>
+      <h1 style={{ fontSize: 20 }}>找回密码</h1>
+      {!sent ? (
+        <>
+          {field("注册邮箱", email, setEmail)}
+          {captcha !== null && (
+            <>
+              <p style={{ fontSize: 13, color: "#666" }}>验证：{captcha.question}</p>
+              {field("答案", captchaAnswer, setCaptchaAnswer)}
+            </>
+          )}
+          {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
+          <button onClick={() => void run(async () => { await api.resetRequest(email.trim(), captcha?.token ?? "", captchaAnswer.trim()); setSent(true); })} style={{ ...btnStyle(), width: "100%" }}>发送重置码</button>
+        </>
+      ) : (
+        <>
+          <p style={{ fontSize: 13, color: "#666" }}>若该邮箱已注册，重置码已发送（10 分钟内有效）。</p>
+          {field("重置码", code, setCode)}
+          {field("新密码（至少 8 位）", newPassword, setNewPassword, "password")}
+          {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
+          <button onClick={() => void run(async () => { await api.resetConfirm(email.trim(), code.trim(), newPassword); navigate("/login"); })} style={{ ...btnStyle(), width: "100%" }}>重置密码</button>
+        </>
+      )}
     </div>
   );
 }
@@ -138,7 +254,30 @@ function HostsPage(): React.JSX.Element {
   const [loading, setLoading] = useState(true);
   const [renameId, setRenameId] = useState<string | null>(null);
   const [renameName, setRenameName] = useState("");
+  const [shareHostId, setShareHostId] = useState<string | null>(null);
+  const [shareName, setShareName] = useState("");
+  const [shares, setShares] = useState<Array<{ userId: number; name: string; role: string }>>([]);
   const { err, run } = useError();
+
+  const openShare = (hostId: string): void => {
+    setShareHostId(hostId);
+    void run(async () => setShares((await api.listShares(hostId)).shares));
+  };
+  const doShare = (): void => {
+    if (shareHostId === null) return;
+    void run(async () => {
+      await api.shareHost(shareHostId, shareName.trim());
+      setShareName("");
+      openShare(shareHostId);
+    });
+  };
+  const doRevokeShare = (userId: number): void => {
+    if (shareHostId === null) return;
+    void run(async () => {
+      await api.revokeShare(shareHostId, userId);
+      openShare(shareHostId);
+    });
+  };
 
   const load = (): void => {
     void run(async () => {
@@ -185,24 +324,48 @@ function HostsPage(): React.JSX.Element {
         <p style={{ color: "#666" }}>还没有绑定机器 —— 用上面的“绑定新机器”接入你的第一台 DSH。</p>
       ) : (
         <div>
-          {hosts.map((h) => (
-            <div key={h.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", border: "1px solid #eee", borderRadius: 8, marginBottom: 8 }}>
-              <span style={{ color: h.online ? "#16a34a" : "#999", fontSize: 14 }}>{h.online ? "●" : "○"}</span>
-              <span style={{ fontWeight: 500 }}>{h.name}</span>
-              <span style={{ color: "#666", fontSize: 12 }}>{h.online ? "在线" : "离线"}</span>
-              <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
-                <button onClick={() => enterHost(h.id)} style={btnStyle()}>进入</button>
-                <button onClick={() => { setRenameId(h.id); setRenameName(h.name); }} style={btnStyle("ghost")}>改名</button>
-                <button onClick={() => revoke(h.id)} style={btnStyle("danger")}>吊销</button>
-              </div>
-              {renameId === h.id && (
-                <div style={{ display: "flex", gap: 6 }}>
-                  <input value={renameName} onChange={(e) => setRenameName(e.target.value)} style={{ ...inputStyle(), width: 140 }} />
-                  <button onClick={() => rename(h.id)} style={btnStyle()}>保存</button>
+          {hosts.map((h) => {
+            const isOwner = h.role !== "member";
+            return (
+              <div key={h.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", border: "1px solid #eee", borderRadius: 8, marginBottom: 8 }}>
+                <span style={{ color: h.online ? "#16a34a" : "#999", fontSize: 14 }}>{h.online ? "●" : "○"}</span>
+                <span style={{ fontWeight: 500 }}>{h.name}</span>
+                <span style={{ color: "#666", fontSize: 12 }}>{h.online ? "在线" : "离线"}</span>
+                {!isOwner && <span style={{ color: "#999", fontSize: 12, border: "1px solid #eee", borderRadius: 4, padding: "1px 6px" }}>共享</span>}
+                <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+                  <button onClick={() => enterHost(h.id)} style={btnStyle()}>进入</button>
+                  {isOwner && <button onClick={() => { setRenameId(h.id); setRenameName(h.name); }} style={btnStyle("ghost")}>改名</button>}
+                  {isOwner && <button onClick={() => openShare(h.id)} style={btnStyle("ghost")}>共享</button>}
+                  {isOwner && <button onClick={() => revoke(h.id)} style={btnStyle("danger")}>吊销</button>}
                 </div>
+                {renameId === h.id && (
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <input value={renameName} onChange={(e) => setRenameName(e.target.value)} style={{ ...inputStyle(), width: 140 }} />
+                    <button onClick={() => rename(h.id)} style={btnStyle()}>保存</button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {shareHostId !== null && (
+            <div style={{ marginTop: 12, padding: 12, border: "1px solid #eee", borderRadius: 8 }}>
+              <p style={{ fontWeight: 500, marginBottom: 8 }}>共享管理</p>
+              <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                <input value={shareName} onChange={(e) => setShareName(e.target.value)} placeholder="成员用户名" style={{ ...inputStyle(), width: 180 }} />
+                <button onClick={doShare} style={btnStyle()}>共享</button>
+              </div>
+              {shares.length === 0 ? (
+                <p style={{ color: "#666", fontSize: 13 }}>尚未共享给任何人</p>
+              ) : (
+                shares.map((s) => (
+                  <div key={s.userId} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                    <span style={{ fontSize: 14 }}>{s.name}</span>
+                    <button onClick={() => doRevokeShare(s.userId)} style={btnStyle("danger")}>移除</button>
+                  </div>
+                ))
               )}
             </div>
-          ))}
+          )}
         </div>
       )}
     </Shell>

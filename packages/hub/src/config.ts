@@ -7,6 +7,23 @@
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { EmailConfig } from "./email/types.ts";
+
+export interface CaptchaConfig {
+  provider: "arithmetic" | "none";
+}
+
+export interface SecurityConfig {
+  /** 同收件人每日发信上限（防轰炸，默认 5） */
+  emailDailyLimit: number;
+  /** 全局每日发信上限（防配额烧钱，默认 200） */
+  globalEmailDailyLimit: number;
+  /** 账户锁定阈值/时长（默认 10 次/15 分钟） */
+  loginLockThreshold: number;
+  loginLockMinutes: number;
+  /** 审计事件保留天数（默认 90，到期自动清理） */
+  auditRetentionDays: number;
+}
 
 export interface HubConfig {
   host: string;
@@ -19,6 +36,12 @@ export interface HubConfig {
   jwtKeyPath: string;
   /** 反代终止 TLS（apache2/nginx）：hub 监听 http，限流按 X-Forwarded-For（仅回环信任） */
   behindProxy: boolean;
+  /** 邮件提供方；缺省 → 邮件功能禁用（邮箱验证/找回密码不可用） */
+  email?: EmailConfig;
+  /** 验证码；缺省 → arithmetic */
+  captcha?: CaptchaConfig;
+  /** 安全参数；缺省 → 默认值 */
+  security?: SecurityConfig;
 }
 
 export const DEFAULT_HUB_CONFIG_PATH = join(homedir(), ".rdsh", "hub.json");
@@ -88,5 +111,62 @@ export function normalizeHubConfig(raw: unknown, source = "config"): HubConfig {
     if (typeof cfg.behindProxy !== "boolean") throw new Error(`${source}: "behindProxy" must be boolean`);
     out.behindProxy = cfg.behindProxy;
   }
+  if (cfg.email !== undefined) out.email = normalizeEmail(cfg.email, source);
+  if (cfg.captcha !== undefined) out.captcha = normalizeCaptcha(cfg.captcha, source);
+  out.security = normalizeSecurity(cfg.security, source);
   return out;
+}
+
+function normalizeEmail(raw: unknown, source: string): EmailConfig {
+  if (typeof raw !== "object" || raw === null) throw new Error(`${source}: "email" must be an object`);
+  const e = raw as Record<string, unknown>;
+  if (e.provider !== "smtp" && e.provider !== "aliyun" && e.provider !== "log") {
+    throw new Error(`${source}: "email.provider" must be smtp|aliyun|log`);
+  }
+  if (typeof e.from !== "string" || e.from.length === 0) throw new Error(`${source}: "email.from" must be a non-empty string`);
+  const out: EmailConfig = { provider: e.provider, from: e.from };
+  if (e.fromAlias !== undefined) {
+    if (typeof e.fromAlias !== "string") throw new Error(`${source}: "email.fromAlias" must be a string`);
+    out.fromAlias = e.fromAlias;
+  }
+  if (e.smtp !== undefined) {
+    const s = e.smtp as Record<string, unknown>;
+    if (typeof s.host !== "string" || typeof s.user !== "string" || typeof s.password !== "string" || typeof s.port !== "number" || typeof s.secure !== "boolean") {
+      throw new Error(`${source}: "email.smtp" needs host/port/secure/user/password`);
+    }
+    out.smtp = { host: s.host, port: s.port, secure: s.secure, user: s.user, password: s.password };
+  }
+  if (e.aliyun !== undefined) {
+    const a = e.aliyun as Record<string, unknown>;
+    if (typeof a.accessKeyId !== "string" || typeof a.accessKeySecret !== "string") {
+      throw new Error(`${source}: "email.aliyun" needs accessKeyId/accessKeySecret`);
+    }
+    out.aliyun = { accessKeyId: a.accessKeyId, accessKeySecret: a.accessKeySecret };
+    if (a.endpoint !== undefined) {
+      if (typeof a.endpoint !== "string") throw new Error(`${source}: "email.aliyun.endpoint" must be a string`);
+      out.aliyun.endpoint = a.endpoint;
+    }
+  }
+  return out;
+}
+
+function normalizeCaptcha(raw: unknown, source: string): CaptchaConfig {
+  if (typeof raw !== "object" || raw === null) throw new Error(`${source}: "captcha" must be an object`);
+  const c = raw as Record<string, unknown>;
+  if (c.provider !== "arithmetic" && c.provider !== "none") throw new Error(`${source}: "captcha.provider" must be arithmetic|none`);
+  return { provider: c.provider };
+}
+
+function normalizeSecurity(raw: unknown, source: string): SecurityConfig {
+  const defaults: SecurityConfig = { emailDailyLimit: 5, globalEmailDailyLimit: 200, loginLockThreshold: 10, loginLockMinutes: 15, auditRetentionDays: 90 };
+  if (raw === undefined) return defaults;
+  if (typeof raw !== "object" || raw === null) throw new Error(`${source}: "security" must be an object`);
+  const s = raw as Record<string, unknown>;
+  for (const key of ["emailDailyLimit", "globalEmailDailyLimit", "loginLockThreshold", "loginLockMinutes", "auditRetentionDays"] as const) {
+    if (s[key] !== undefined) {
+      if (!Number.isInteger(s[key]) || (s[key] as number) < 1) throw new Error(`${source}: "security.${key}" must be a positive integer`);
+      defaults[key] = s[key] as number;
+    }
+  }
+  return defaults;
 }

@@ -25,6 +25,7 @@ DSH 跑在阿里云 ECS 这类有公网 IP 的机器上，你想在任何地方�
 
 - **用 join token 接入（推荐）**：portal 生成 → 机器粘贴一条命令 → 上线 —— [join token 接入](zh/03-04-join-token.md)。注册后 token 持久化，重启免配对；想常驻后台，同一篇文章里有服务化变体（开机自启 + 崩溃重启）。
 - **不想装 CLI？给 DSH 装插件**：`dsh plugin add dsh-web-remote`，DSH 界面直接出「远程访问」面板，粘贴 hub + 授权令牌点接入即上线 —— [DSH 插件免 CLI 接入](zh/03-05-plugin.md)。
+- **多用户与团队**：邮箱验证、两步验证（2FA）、机器共享、审计日志、登录风控 —— [账号安全与团队共享](zh/03-06-account-security.md)。
 - 账号从哪来？由 hub 管理员建号（自助注册在 roadmap 上）；登录就用用户名 + 密码进 portal。
 
 ## 4. 搭建你自己的 hub 转发服务

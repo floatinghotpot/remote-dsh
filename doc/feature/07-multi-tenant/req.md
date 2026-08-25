@@ -2,8 +2,8 @@
 
 > **日期**: 2026-08-24
 > **状态**: 草稿，**待用户批准**
-> **范围**: M5 多租户增强 —— 邮箱验证与找回密码、2FA（TOTP）、共享授权（owner/member）、审计日志、登录风控
-> **来源**: [discussion.md](discussion.md)（D1–D7 定案）：SMTP 可配置（外部邮件服务）、邮箱自助绑定、TOTP、member 可进 DSH 但不可管理 host、审计 CLI 先行、账户锁定 10 次/15 分钟+admin 解锁、找回密码临时码+ver+1
+> **范围**: M5 多租户增强 —— 邮箱验证与找回密码、2FA（TOTP）、共享授权（owner/member）、审计日志、登录风控、发信防刷（验证码 + 限流）
+> **来源**: [discussion.md](discussion.md)（D1–D7 定案）：邮件提供方抽象（smtp+aliyun+log，sendgrid 后置）、邮箱自助绑定、TOTP、member 可进 DSH 但不可管理 host、审计 CLI 先行、账户锁定 10 次/15 分钟+admin 解锁、找回密码临时码+ver+1
 > **组件**: 仅 rdsh-hub（控制面）；rdsh-gateway 零改动（"gateway 永不需要改动"承诺）
 
 ---
@@ -18,20 +18,22 @@
 
 | 编号 | 需求 | 验收标准 |
 |---|---|---|
-| R1 | **SMTP 可配置**：hub.json 增 `smtp: {host, port, user, password, from}`；无 smtp 配置 = 邮件功能禁用（不影响其他功能） | 配置后能发邮件；无配置时相关功能返回"未启用"；依赖说明（轻量 SMTP 客户端，理由在 solution） |
-| R2 | **邮箱自助绑定 + 验证**：用户登录后绑定邮箱 → 发 6 位 PIN（10 分钟 TTL，重发限流 60s）→ 验证通过（`users.email/email_verified`）；admin 建号不要求邮箱 | 绑定→收 PIN→验证成功；错误 PIN 限流；未验证邮箱不可用于找回密码 |
-| R3 | **找回密码**：验证邮箱 → 发临时重置码（一次性、10 分钟）→ 设新密码 → **ver+1 全部会话失效** | 全流程走通；码一次性；改密后旧会话 401 |
+| R1 | **邮件提供方可配置**：抽象 `EmailSender` 接口（`send({to, subject, text?, html?})`）；hub.json 增 `email: {provider, from, smtp?, aliyun?}`；`provider` ∈ `smtp`（nodemailer）\| `aliyun`（DirectMail HTTP API，`node:crypto` 签名）\| `log`（测试/本地，不真发）；无 email 配置 = 邮件功能禁用（不影响其他功能） | 各 provider 配置后能发（log 只落日志/存表）；无配置时相关功能返回"未启用"；换 provider 不改调用方；依赖说明（nodemailer，理由在 solution） |
+| R2 | **邮箱自助绑定 + 验证**：用户登录后绑定邮箱 → 发 6 位 PIN（10 分钟 TTL，重发限流 60s）→ 验证通过（`users.email/email_verified`）；admin 建号不要求邮箱；**支持换绑（走同一验证流程）；解绑后 24h 内不能重绑（防刷）**；**每收件人每日验证码 ≤5 次（防轰炸）** | 绑定→收 PIN→验证成功；错误 PIN 限流；未验证邮箱不可用于找回密码；换绑成功；解绑后 24h 内重绑被拒；同邮箱超 5 次/天拒绝重发 |
+| R3 | **找回密码**：验证邮箱 → 发临时重置码（一次性、10 分钟）→ 设新密码 → **ver+1 全部会话失效**；**与 first-password 首次激活共用同一条「设新密码 → ver+1」路径**（不另做流程）；**触发页带算术验证码（零依赖）防 bot**；**每邮箱 3 次/天 + 每 IP 3 次/天；响应不区分邮箱是否存在（防枚举）** | 全流程走通；码一次性；改密后旧会话 401；首次激活与找回密码行为一致；超限拒绝发信；对不存在邮箱同样返回"已发送"；未过算术验证码不发信 |
 | R4 | **2FA（TOTP）**：用户自助开启（生成 secret → portal 扫码/输入验证码激活）；登录时密码通过后要求 TOTP；关闭/重置需当前 TOTP 或 admin（复用 ver+1） | TOTP 校验正确；错误码拒绝并计数；admin 可重置；关闭后旧会话失效 |
 | R5 | **共享授权（owner/member）**：新表 `host_share (host_id, user_id, role)`；owner 可将 host 共享给其他用户（member）；member 可进入 host 使用 DSH（整实例授权，Q4），但**不可管理**（改名/吊销/共享/删除） | 共享后 member 列表可见可进入；member 管理操作被拒（403）；owner 解除共享即时生效 |
-| R6 | **审计日志**：`audit_events (id, user_id, event, detail, ip, created_at)`；记录 login 成败/refresh/改密/first-password/join-token 创建吊销/register 成败/host 进入/host 共享变更；**结构化事件**（对齐 05 R10 预留） | 关键操作均有事件；查询 `rdsh hub audit ls [--user] [--event]`；日志脱敏（无密码/TOTP/token 明文） |
+| R6 | **审计日志**：`audit_events (id, user_id, event, detail, ip, created_at)`；记录 login 成败/refresh/改密/first-password/join-token 创建吊销/register 成败/host 进入/host 共享变更；**结构化事件**（对齐 05 R10 预留）；**默认保留 90 天、到期自动清理（可配置）** | 关键操作均有事件；查询 `rdsh hub audit ls [--user] [--event]`；日志脱敏（无密码/TOTP/token 明文）；超保留期旧事件被清理 |
 | R7 | **登录风控（账户维度锁定）**：连续失败 10 次锁 15 分钟（账户维度，叠加现有 IP 限流）；`rdsh hub user unlock <name>` | 锁定期正确密码也拒绝；解锁后恢复；参数可配置 |
 | R8 | **portal 页面**：设置页（绑定邮箱/开启 2FA/改密）；host 列表共享管理（邀请/移除 member）；共享后 host 对 member 可见 | 全流程浏览器可操作；i18n zh/en |
 | R9 | **安全基线**：PIN/重置码/TOTP secret 只存哈希（或加密）不落明文；审计不含敏感值；层 1 API 契约扩展文档先行 | 代码审查 + 单测断言；无明文落盘 |
+| R10 | **发信风控**：全局每日发信上限（可配置，防配额烧钱）；所有发信（验证码/重置码）计入审计（触发者/收件人/结果）；限流复用现有限流框架（IP 维度已有，补账户/收件人/全局维度） | 超全局上限拒绝发信并告警；审计可查每次发信；参数可配置 |
 
 ### 2.2 不含（Out of Scope）
 
 - ❌ 开放注册（邮箱自助注册）→ **08-saas**
 - ❌ passkey/WebAuthn（2FA 先行 TOTP）→ 后续
+- ❌ sendgrid 等国际邮件提供方 → **08-saas**（`EmailSender` 接口已就位，后置实现）
 - ❌ 账号配额/套餐/计费 → **08-saas**
 - ❌ member 细粒度权限（只读/限制命令）→ 后置（Q4 整实例授权前提下）
 - ❌ 审计后台 portal 化（CLI 先行，portal 只读列表可后置）
@@ -39,7 +41,7 @@
 ### 2.3 前置依赖
 
 - 05-join-easy（join token/register）已发布 ✅；结构化审计事件预留（R10）由本里程碑消费
-- 无阻塞性前置（SMTP 依赖是 M5 首个外部服务依赖，需 solution 说明选型）
+- 无阻塞性前置（邮件是 M5 首个外部服务依赖：nodemailer(smtp) + aliyun HTTP 签名，需 solution 说明选型）
 
 ## 3. 端到端验收场景
 
@@ -58,7 +60,7 @@
 
 ## 5. 待定项（留给 solution.md，不阻塞 req 批准）
 
-- SMTP 客户端选型（轻量依赖 vs 手写 node:net 协议）与失败重试策略
+- EmailSender 各 provider 实现细节：smtp（nodemailer，端口 465/587、TLS、失败重试）；aliyun（**定案：手写 RPC 签名**，`node:crypto` HMAC-SHA1 + 内置 fetch，参考 Logto `@logto/connector-aliyun-dm` 生产实现 + 官方文档测试向量单测；不采用 SDK——pop-core 过时 / dm20151123 解包 2.1MB 过重）；log（落日志/存表的形态）
 - TOTP 实现细节（RFC 6238，node:crypto HMAC）与时钟漂移容忍窗口
 - 审计事件 schema 字段定稿（05 R10 预留事件 + 本里程碑新增）
 - 找回密码码与邮箱验证 PIN 的存储（哈希 vs 加密，TTL 清理）

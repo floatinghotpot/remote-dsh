@@ -16,6 +16,8 @@ export interface JwtClaims {
   ver: number;
   /** 过期时间（毫秒） */
   exp: number;
+  /** 2FA pending 标记：密码已通过、待 TOTP 的短效 token（不可作完整会话） */
+  totpPending?: boolean;
 }
 
 export class Jwt {

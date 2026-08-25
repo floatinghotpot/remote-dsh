@@ -248,7 +248,8 @@ rdsh host user add|passwd|ls|rm                # 本机网关用户（写 host.j
 # ---- 服务器：rdsh hub ----
 rdsh hub serve                                 # 启动 hub（需 tls.cert/key，公网必须 TLS）
 rdsh hub user add alice [--no-password]        # 管理员建号（注册关闭，防 bot）
-rdsh hub user passwd|rm|ls
+rdsh hub user passwd|rm|ls|unlock|reset-2fa    # unlock=解锁被锁账户；reset-2fa=重置用户 2FA
+rdsh hub audit ls [--user <n>] [--event <e>] [--since 24h|7d]   # 审计日志查询
 rdsh hub host ls|revoke <hostId>               # revoke = 隧道立即断开、重连被拒
 rdsh hub service install|status|uninstall      # hub 服务化（rdsh-hub.service）
 
@@ -270,7 +271,24 @@ rdsh hub service install|status|uninstall      # hub 服务化（rdsh-hub.servic
             "key": "/etc/letsencrypt/live/example.com/privkey.pem" },
   // dbPath / jwtKeyPath 省略时默认 ~/.rdsh/hub.db、~/.rdsh/hub-jwt.key（node:sqlite；自动生成，0600）
   // 注意：config 字段值不展开 "~"，自定义路径必须写绝对路径
-  "behindProxy": false             // true = 反代终止 TLS（apache2/nginx），hub 监听 http、免证书
+  "behindProxy": false,             // true = 反代终止 TLS（apache2/nginx），hub 监听 http、免证书
+
+  // ---- M5 多租户（可选；不配 email = 邮箱验证/找回密码禁用）----
+  "email": {
+    "provider": "aliyun",            // smtp | aliyun | log
+    "from": "noreply@example.com",   // 发信地址（aliyun 的发信地址 / smtp 的 from）
+    "fromAlias": "remote-dsh",       // 可选，发件人昵称
+    "smtp": { "host": "smtpdm.aliyun.com", "port": 465, "secure": true, "user": "...", "password": "..." },
+    "aliyun": { "accessKeyId": "LTAI...", "accessKeySecret": "..." }   // 手写 RPC 签名，无需 region_id；endpoint 默认 dm.aliyuncs.com
+  },
+  "captcha": { "provider": "arithmetic" },   // arithmetic | none（找回密码页防 bot）
+  "security": {                              // 可选，全部有默认值
+    "emailDailyLimit": 5,                    // 同收件人每日发信上限（防轰炸）
+    "globalEmailDailyLimit": 200,            // 全局每日发信上限（防配额烧钱）
+    "loginLockThreshold": 10,                // 连续失败锁账户阈值
+    "loginLockMinutes": 15,                  // 锁定时长（分钟）
+    "auditRetentionDays": 90                 // 审计保留天数（到期自动清理）
+  }
 }
 ```
 
@@ -278,10 +296,12 @@ rdsh hub service install|status|uninstall      # hub 服务化（rdsh-hub.servic
 
 ### 8.3 账号与安全模型
 
-- **注册关闭**：账号只能 `rdsh hub user add` 创建（防 bot/垃圾注入）；登录失败限流 5 次/10 分钟
+- **注册关闭**：账号只能 `rdsh hub user add` 创建（防 bot/垃圾注入）；登录失败限流（IP 5 次/10 分钟）+ 账户锁定（10 次/15 分钟，`rdsh hub user unlock` 解锁）
 - **JWT 会话**：access（1h，改密/吊销即时失效）+ refresh（7d 轮换）；host token 只存 SHA-256 摘要
+- **邮箱 + 2FA**：用户登录后自助绑定邮箱（发 PIN 验证，可找回密码）+ 开 TOTP 两步验证；admin 可 `hub user reset-2fa` 重置
 - **改密**：portal 自助（验证当前密码，全部会话失效）或 admin `hub user passwd` 重置
-- **host 归属**：host 归注册者所有，仅 owner 可见可管（共享授权在 M4）
+- **host 归属 + 共享**：host 归 owner；owner 可共享给 member（member 可进 DSH 使用、不可管理 host）
+- **审计**：login/改密/2FA/共享/发信等关键操作留痕，`rdsh hub audit ls` 查询，默认保留 90 天
 - **纯透传**：hub 只认证+路由，不解析/改写业务报文（dsh 版本兼容）
 
 ### 8.4 层 1 API（冻结契约）
@@ -292,6 +312,8 @@ rdsh hub service install|status|uninstall      # hub 服务化（rdsh-hub.servic
 `/h/<hostId>/...` 进入 host（校验归属 → Set-Cookie → 302 根路径；之后根路径流量按 `rdsh_host` cookie 路由）。错误统一 `{error:{code,message}}`。
 
 其中 `join-token`（需登录，生成用户级 join token，明文只显示一次）、`register`（gateway 持 join token 注册换 host token，未认证+限流）、`self-revoke`（host 持自己的 token 注销）为 05-join-easy 新增；**join 的配对码（pending/bind）流程已移除**——join 只走 join token，配对码仅保留给 LAN/cloud 网关的 pair 认证。
+
+**M5 多租户新增端点**：`POST /api/auth/totp`（2FA 二次校验）、`POST /api/captcha/arithmetic`（算术验证码）、`POST /api/auth/password/reset{/confirm}`（找回密码，反枚举）、`POST /api/account/email{/verify,/unbind}`（邮箱绑定）、`POST /api/account/2fa/{enable,verify,disable}`（TOTP 管理）、`POST /api/hosts/:id/share` + `GET/DELETE /api/hosts/:id/share[/:userId]`（host 共享）。完整契约见 `doc/feature/07-multi-tenant/solution.md` §6。
 
 ### 8.5 服务化要点（linger / PATH / 运维速查）
 

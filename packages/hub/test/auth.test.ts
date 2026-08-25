@@ -22,27 +22,32 @@ test("scrypt 哈希格式与校验", async () => {
   assert.equal(await verifyPassword("pw123", "not-scrypt"), false);
 });
 
-test("登录成功发 token 对；错误密码 null", async () => {
+test("登录成功发 token 对；错误密码 bad-credentials", async () => {
   const { db, auth } = setup();
   db.createUser("alice", await hashPassword("pw"));
   const ok = await auth.login("alice", "pw");
-  assert.ok(ok !== null);
-  assert.ok(ok.tokens.accessToken.length > 0);
-  assert.ok(ok.tokens.refreshToken.length > 0);
-  assert.equal(ok.mustChangePassword, false);
-  assert.equal(await auth.login("alice", "bad"), null);
-  assert.equal(await auth.login("nobody", "pw"), null);
+  assert.equal(ok.kind, "ok");
+  if (ok.kind === "ok") {
+    assert.ok(ok.tokens.accessToken.length > 0);
+    assert.ok(ok.tokens.refreshToken.length > 0);
+    assert.equal(ok.mustChangePassword, false);
+  }
+  assert.equal((await auth.login("alice", "bad")).kind, "bad-credentials");
+  assert.equal((await auth.login("nobody", "pw")).kind, "bad-credentials");
 });
 
 test("access JWT 校验（签名 + ver）", async () => {
   const { db, auth } = setup();
   db.createUser("alice", await hashPassword("pw"));
-  const pair = (await auth.login("alice", "pw"))!;
-  const v = auth.verifyAccess(pair!.tokens.accessToken);
+  const login = await auth.login("alice", "pw");
+  assert.equal(login.kind, "ok");
+  const tokens = login.kind === "ok" ? login.tokens : null;
+  assert.ok(tokens !== null);
+  const v = auth.verifyAccess(tokens!.accessToken);
   assert.ok(v !== null);
   assert.equal(v!.user.name, "alice");
   // 篡改 → 无效
-  assert.equal(auth.verifyAccess(pair!.tokens.accessToken + "x"), null);
+  assert.equal(auth.verifyAccess(tokens!.accessToken + "x"), null);
 });
 
 test("refresh 轮换：旧 refresh 立即失效", () => {
@@ -67,16 +72,18 @@ test("refresh 轮换：旧 refresh 立即失效", () => {
 test("改密：旧 access 立即失效 + 全部 refresh 吊销", async () => {
   const { db, auth } = setup();
   db.createUser("carol", await hashPassword("old"));
-  const pair = (await auth.login("carol", "old"))!;
-  assert.ok(auth.verifyAccess(pair!.tokens.accessToken) !== null);
+  const login = await auth.login("carol", "old");
+  assert.equal(login.kind, "ok");
+  const tokens = login.kind === "ok" ? login.tokens : null!;
+  assert.ok(auth.verifyAccess(tokens.accessToken) !== null);
   const ok = await auth.changePassword(1, "old", "new");
   assert.equal(ok, true);
   // 旧 access 失效（ver+1）
-  assert.equal(auth.verifyAccess(pair!.tokens.accessToken), null);
+  assert.equal(auth.verifyAccess(tokens.accessToken), null);
   // 旧 refresh 失效
-  assert.equal(auth.refresh(pair!.tokens.refreshToken), null);
+  assert.equal(auth.refresh(tokens.refreshToken), null);
   // 新密码可登录
-  assert.ok((await auth.login("carol", "new")) !== null);
+  assert.equal((await auth.login("carol", "new")).kind, "ok");
   // 当前密码错误 → 改密失败
   assert.equal(await auth.changePassword(1, "wrong", "x"), false);
 });

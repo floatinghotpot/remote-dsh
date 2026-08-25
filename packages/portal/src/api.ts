@@ -6,6 +6,7 @@ export interface HostInfo {
   name: string;
   online: boolean;
   createdAt: string;
+  role?: "owner" | "member";
 }
 
 export interface JoinTokenInfo {
@@ -17,10 +18,13 @@ export interface JoinTokenInfo {
 }
 
 export interface LoginResponse {
-  accessToken: string;
-  refreshToken: string;
-  mustChangePassword: boolean;
-  user: { id: number; name: string };
+  accessToken?: string;
+  refreshToken?: string;
+  mustChangePassword?: boolean;
+  user?: { id: number; name: string };
+  requiresTotp?: boolean;
+  pendingToken?: string;
+  name?: string;
 }
 
 async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -91,6 +95,45 @@ export const api = {
   },
   revokeJoinToken(id: string): Promise<{ ok: boolean }> {
     return jsonFetch(`/api/hosts/join-tokens/${id}`, { method: "DELETE" });
+  },
+  totpLogin(pendingToken: string, code: string): Promise<{ accessToken: string; refreshToken: string; mustChangePassword: boolean }> {
+    return jsonFetch("/api/auth/totp", { method: "POST", body: JSON.stringify({ pendingToken, code }) });
+  },
+  captchaChallenge(): Promise<{ token: string; question: string }> {
+    return jsonFetch("/api/captcha/arithmetic", { method: "POST", body: "{}" });
+  },
+  resetRequest(email: string, captchaToken: string, captchaAnswer: string): Promise<{ ok: boolean }> {
+    return jsonFetch("/api/auth/password/reset", { method: "POST", body: JSON.stringify({ email, captchaToken, captchaAnswer }) });
+  },
+  resetConfirm(email: string, code: string, newPassword: string): Promise<{ ok: boolean }> {
+    return jsonFetch("/api/auth/password/reset/confirm", { method: "POST", body: JSON.stringify({ email, code, newPassword }) });
+  },
+  bindEmail(email: string): Promise<{ ok: boolean }> {
+    return jsonFetch("/api/account/email", { method: "POST", body: JSON.stringify({ email }) });
+  },
+  verifyEmail(email: string, code: string): Promise<{ ok: boolean }> {
+    return jsonFetch("/api/account/email/verify", { method: "POST", body: JSON.stringify({ email, code }) });
+  },
+  unbindEmail(): Promise<{ ok: boolean }> {
+    return jsonFetch("/api/account/email/unbind", { method: "POST", body: "{}" });
+  },
+  enable2fa(): Promise<{ secret: string; otpauthUrl: string }> {
+    return jsonFetch("/api/account/2fa/enable", { method: "POST", body: "{}" });
+  },
+  activate2fa(secret: string, code: string): Promise<{ ok: boolean }> {
+    return jsonFetch("/api/account/2fa/verify", { method: "POST", body: JSON.stringify({ secret, code }) });
+  },
+  disable2fa(code: string): Promise<{ ok: boolean }> {
+    return jsonFetch("/api/account/2fa/disable", { method: "POST", body: JSON.stringify({ code }) });
+  },
+  shareHost(hostId: string, name: string): Promise<{ ok: boolean }> {
+    return jsonFetch(`/api/hosts/${hostId}/share`, { method: "POST", body: JSON.stringify({ name }) });
+  },
+  listShares(hostId: string): Promise<{ shares: Array<{ userId: number; name: string; role: string }> }> {
+    return jsonFetch(`/api/hosts/${hostId}/share`);
+  },
+  revokeShare(hostId: string, userId: number): Promise<{ ok: boolean }> {
+    return jsonFetch(`/api/hosts/${hostId}/share/${userId}`, { method: "DELETE" });
   },
 };
 

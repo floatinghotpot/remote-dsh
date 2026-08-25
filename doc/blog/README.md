@@ -25,6 +25,7 @@ The machine is behind NAT or inside a private network — nothing can reach it f
 
 - **Join with a join token (recommended)**: generate in the portal, paste one command on the machine, done — [join token access](en/03-04-join-token.md). After registration the token is persisted — restarts need no re-pairing; the same post covers the always-on service variant (boot-start + crash-restart).
 - **No CLI? Install a DSH plugin**: `dsh plugin add dsh-web-remote` adds a "Remote Access" panel right in the DSH UI — paste hub + auth token, click Connect — [DSH plugin, no CLI](en/03-05-plugin.md).
+- **Multi-user & team**: email verification, two-factor auth (2FA), machine sharing, audit log, login rate-limiting — [account security & team sharing](en/03-06-account-security.md).
 - Where do accounts come from? The hub admin creates them for now (self sign-up is on the roadmap); sign in with username + password.
 
 ## 4. Set up your own hub relay service

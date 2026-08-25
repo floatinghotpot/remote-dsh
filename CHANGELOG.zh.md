@@ -7,6 +7,13 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [rdsh-hub 0.4.0] - 2026-08-24
+
+### 新增
+
+- M5 多租户：邮箱验证 + 找回密码（可配置 `EmailSender` —— `smtp`/`aliyun`/`log`）、TOTP 两步验证、host 共享（owner/member）、审计日志（`rdsh hub audit ls`）、账户锁定（10 次/15 分钟，`rdsh hub user unlock`）、发信限流（收件人/触发者/全局三层）。
+- 配置：`hub.json` 增 `email`、`captcha`、`security` 段。邮件是首个外部服务依赖（smtp 用 `nodemailer`；`aliyun` provider 手写 DirectMail RPC 签名，零依赖）。
+
 ## [rdsh-gateway 0.4.0 · dsh-web-remote 0.1.0] - 2026-08-24
 
 ### 新增

@@ -38,14 +38,21 @@
 
 ### 3.1 邮箱验证与找回密码
 
-- **已定（2026-08-24 讨论）**：**不发本地邮件**。理由：阿里云 ECS 出站 25 端口默认封禁（需工单解封）；本地 MTA 无 SPF/DKIM/DMARC、IP 信誉差 → 送达率灾难。**用外部邮件服务，hub 做成可配置 SMTP**：
+- **已定（2026-08-24 讨论）**：**不发本地邮件**。理由：阿里云 ECS 出站 25 端口默认封禁（需工单解封）；本地 MTA 无 SPF/DKIM/DMARC、IP 信誉差 → 送达率灾难。**抽象 `EmailSender` 接口，hub.json `email.provider` 多提供方**：
+  ```json
+  "email": { "provider": "smtp"|"aliyun"|"log", "from": "noreply@<域>",
+             "aliyun": { "accessKeyId": "...", "accessKeySecret": "...", "endpoint": "https://dm.aliyuncs.com/" } }
   ```
-  hub.json 增加: smtp: { host, port, user, password, from }
-  ```
-  - 国内收件人（163/QQ）：阿里云邮件推送 / 腾讯云 SES（免费额度对验证码场景足够）
-  - 国际：SendGrid / AWS SES / Mailgun
-  - **hub 不内置 MTA、不 spawn postfix**（依赖最小化）；无 smtp 配置 = 邮件功能禁用（自托管无邮件服务也可用，只是没有邮箱验证/找回密码）
-- **待决**：邮箱绑定时机（见 D2）；找回密码形态（链接 vs 临时码）；验证码 TTL/重发限流。
+  - **M5 实现**：
+    - `smtp`（nodemailer，端口 465/587/TLS）——通用，任何服务商（阿里云/腾讯/国际）都提供 SMTP；
+    - `aliyun`（DirectMail **HTTP API**，走 443 天然绕开 25 端口问题）——阿里云备选通道；**TS 侧定案：手写 RPC 签名**（`node:crypto` HMAC-SHA1 + 内置 fetch；参考 Logto `@logto/connector-aliyun-dm` 生产实现 + 官方文档测试向量单测锁正确性；不采用 SDK：`pop-core` 已过时、`dm20151123` 解包 2.1MB 过重）；
+      - **无需 `region_id`**（查档 2026-08-24）：PHP 用官方 SDK 才必须传 `regionId`（SDK 按区域解析 endpoint + 定位区域资源；DirectMail 国内为单区域 cn-hangzhou）；手写签名**直接写死 endpoint**：默认国内 `https://dm.aliyuncs.com/`（华东1·杭州），海外实例用 `dm.ap-southeast-1.aliyuncs.com`（新加坡，官方 API 服务地址文档）；hub.json 只留**可选 `endpoint`**，不放 region 字段；
+    - `log`（只落日志/不真发）——测试、本地开发、无邮件服务的自托管；
+  - **sendgrid 后置**（08-saas 国际化时补；接口已就位，只加一个实现）；
+  - 阿里云前置（一次性，控制台 + DNS）：验证**发信域名**（SPF/DKIM）、设置 **SMTP 独立密码**（SMTP 模式用）或 **AccessKey**（HTTP API 模式用）；
+  - **hub 不内置 MTA、不 spawn postfix**（依赖最小化）；无 email 配置 = 邮件功能禁用（自托管无邮件服务也可用，只是没有邮箱验证/找回密码）。
+  - **发信防刷（分层，2026-08-24 定案）**：① 触发侧——绑定/换绑必须登录，找回密码匿名但受以下限流；② 限流三层——每触发者（用户/IP）、每收件人（同邮箱验证码/重置码 ≤5 次/天）、**全局每日发信上限**（可配置，防配额烧钱）；③ 反枚举——找回密码响应统一（**不区分邮箱是否存在**，防枚举注册邮箱）；④ 验证环节——6 位码 + TTL + 一次性 + 错误限流（已有）；⑤ 验证码防 bot——找回密码触发页带**算术验证码**（D8，零依赖；08-saas 换阿里云验证码）；⑥ 审计——每次发信入 audit（触发者/收件人/结果）。
+- **待决 → 已定（2026-08-24）**：邮箱**自助绑定**（D2）；找回密码 = **临时重置码**（一次性、10 分钟），与 first-password 首次激活**共用「设新密码 → ver+1」路径**；**换绑走同一验证流程，解绑后 24h 内不能重绑**（防刷）。
 
 ### 3.2 2FA
 
@@ -66,7 +73,7 @@
 
 - 事件源（对齐 05 R10 预留 + M5 新增）：login 成败、refresh、改密、first-password、join-token 创建/吊销、register 成败、host 进入、host 共享变更（share/revoke）。
 - 存储：`audit_events (id, user_id?, event, detail_json, ip, created_at)` —— 控制面量级小，表内足够；**不落盘业务流量**（转发仍用即用即弃）。
-- 查询入口（待定 D5）：先 CLI（`rdsh hub audit ls` 过滤）够用，portal 只读列表可后置。
+- 查询入口（D5 已定）：先 CLI（`rdsh hub audit ls` 过滤）够用，portal 只读列表可后置；**默认保留 90 天、到期自动清理（可配置）**。
 
 ### 3.5 登录风控
 
@@ -77,13 +84,14 @@
 
 | # | 问题 | 现状/倾向 | 需确认 |
 |---|---|---|---|
-| D1 | 邮件服务 | **可配置 SMTP（外部服务），无 SMTP 则功能禁用**；国内推荐阿里云/腾讯 SES | 是否同时支持"找回密码邮件"与"验证码邮件"两态；SMTP 依赖选型（nodemailer vs 手写） |
-| D2 | 邮箱绑定时机 | 注册关闭、管理员建号 —— 邮箱由 **admin 建号时指定**，还是用户**自助绑定**（登录后填邮箱→验证）？ | 建议自助绑定（不扩大 admin 职责） |
-| D3 | 2FA 选型 | **TOTP**（零依赖优先）vs passkey | TOTP 是否足够（M5 范围）？passkey 后置？ |
-| D4 | member 权限边界 | member 可进 DSH（=全权，Q4 整实例授权），但不可管理 host；共享即交权需告知 | 是否接受"进入即全权"；是否需要"只读"更细粒度（后置） |
-| D5 | 审计查询入口 | CLI 先、portal 后 | 审计保留期限/轮转 |
-| D6 | 账户锁定 | N 次失败锁 X 分钟 + admin 解锁 | 参数默认值（如 10 次/15 分钟）；是否锁 IP+账户双维度 |
-| D7 | 找回密码流程 | 临时码/链接 → 新密码（ver+1 全端失效） | 与 first-password 激活流程的合并/区分 |
+| D1 | 邮件服务 | ✅ **抽象 `EmailSender` 接口 + 多提供方**（2026-08-24 定案）：`email.provider` 配置；**M5 实现 `smtp`（nodemailer）+ `aliyun`（DirectMail HTTP API，手写 RPC 签名 node:crypto）+ `log`（测试/本地，不真发）**；sendgrid 后置（08-saas 国际化）；无 email 配置 = 邮件禁用 | SMTP 端口（465/587/TLS）与重试归 solution；aliyun 签名参照 Logto 生产实现 + 官方测试向量单测 |
+| D2 | 邮箱绑定时机 | ✅ **自助绑定**（2026-08-24 定案）：登录后填邮箱→验证；admin 建号不要求邮箱；**支持换绑（同验证流程），解绑后 24h 内不能重绑（防刷）** | — |
+| D3 | 2FA 选型 | ✅ **TOTP**（2026-08-24 定案，`node:crypto` HMAC 零依赖）；passkey 后置 | 时钟漂移窗口归 solution |
+| D4 | member 权限边界 | ✅ **member 可进 DSH（整实例授权 Q4），不可管理 host**（2026-08-24 定案）；共享即交权需告知；只读细粒度后置 | — |
+| D5 | 审计查询入口 | ✅ **CLI 先行；默认保留 90 天、到期自动清理（可配置）**（2026-08-24 定案）；portal 后置 | 清理实现形态归 solution |
+| D6 | 账户锁定 | ✅ **10 次/15 分钟，账户维度叠加 IP 限流 + admin 解锁**（2026-08-24 定案） | admin 是否豁免归 solution |
+| D7 | 找回密码流程 | ✅ **临时重置码（一次性、10 分钟）→ 设新密码 → ver+1**；**与 first-password 首次激活共用同一条设密路径**（2026-08-24 定案） | — |
+| D8 | 验证码策略（防 bot） | ✅ **M5 = 找回密码页算术验证码（零依赖）**（2026-08-24 定案）：`captcha.provider` 抽象（M5 实现 `arithmetic` + `none`）；**阿里云验证码 → 08-saas**（复用 AccessKey RPC 签名，与 DirectMail 同机制；免费额度 + 按量；前端 SDK + 后端 VerifyCaptcha） | 算术码形态（如 3+5=?）与签名 token 归 solution |
 
 ## 5. 技术约束备忘（写 solution 时用）
 

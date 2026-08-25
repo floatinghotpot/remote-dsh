@@ -42,8 +42,13 @@ export async function serveHub(opts: HubServeOptions): Promise<void> {
   // behindProxy：反代终止 TLS，hub 监听 http（无需证书）
   const tls = config.behindProxy ? undefined : await loadHubTls(config.tls);
   const db = new HubDb(config.dbPath);
+  // 审计保留清理：启动清一次 + 每天清（R6 默认 90 天，可配置）
+  const auditRetentionMs = (config.security?.auditRetentionDays ?? 90) * 24 * 3600 * 1000;
+  const pruneAudit = (): void => db.pruneAudit(Date.now() - auditRetentionMs);
+  pruneAudit();
+  setInterval(pruneAudit, 24 * 3600 * 1000).unref();
   const jwt = new Jwt(await loadJwtKey(config.jwtKeyPath));
-  const auth = new HubAuth(db, jwt);
+  const auth = new HubAuth(db, jwt, config.security);
   const tunnels = new TunnelRegistry();
   const events = new EventHub();
 
@@ -58,6 +63,9 @@ export async function serveHub(opts: HubServeOptions): Promise<void> {
     tunnels,
     events,
     portalDir,
+    email: config.email,
+    captcha: config.captcha,
+    security: config.security,
   });
 
   const scheme = tls ? "https" : "http";
