@@ -49,10 +49,13 @@ test("behindProxy 字段（默认 false / 可配置 / 非法报错）", async ()
   assert.throws(() => normalizeHubConfig({ behindProxy: "yes" }), /"behindProxy" must be boolean/);
 });
 
-test("email：log 可省略 from（占位）；smtp/aliyun 必填 from", () => {
+test("email：log 可省略 from（占位）；smtp/aliyun 必填 from + 嵌套凭据", () => {
   const log = normalizeHubConfig({ email: { provider: "log" } }).email!;
   assert.equal(log.provider, "log");
   assert.equal(log.from, "noreply@localhost"); // 占位
   assert.throws(() => normalizeHubConfig({ email: { provider: "smtp" } }), /"email.from"/);
   assert.throws(() => normalizeHubConfig({ email: { provider: "aliyun" } }), /"email.from"/);
+  // provider=smtp/aliyun 但缺嵌套凭据 → 启动即报错（不是运行时 500）
+  assert.throws(() => normalizeHubConfig({ email: { provider: "smtp", from: "x@y.com" } }), /"email.smtp"/);
+  assert.throws(() => normalizeHubConfig({ email: { provider: "aliyun", from: "x@y.com" } }), /"email.aliyun"/);
 });

@@ -101,7 +101,9 @@ export async function startHubServer(opts: HubServerOptions): Promise<RunningHub
   };
 
   const requestHandler = (req: IncomingMessage, res: ServerResponse): void => {
-    void handleHttp(req, res, runtime, opts.portalDir).catch(() => {
+    void handleHttp(req, res, runtime, opts.portalDir).catch((err) => {
+      // 打真实错误到日志（journalctl 可见），而不是只回通用 500
+      console.error(`[hub] request error ${req.method} ${req.url}:`, err instanceof Error ? err.message : err);
       if (!res.headersSent) writeError(res, 500, "INTERNAL", "internal error");
       else res.end();
     });

@@ -132,6 +132,12 @@ function normalizeEmail(raw: unknown, source: string): EmailConfig {
     from = "noreply@localhost"; // log 不真发，占位即可
   }
   const out: EmailConfig = { provider: e.provider, from };
+  if (e.provider === "smtp" && e.smtp === undefined) {
+    throw new Error(`${source}: "email.smtp" is required when provider=smtp`);
+  }
+  if (e.provider === "aliyun" && e.aliyun === undefined) {
+    throw new Error(`${source}: "email.aliyun" is required when provider=aliyun`);
+  }
   if (e.fromAlias !== undefined) {
     if (typeof e.fromAlias !== "string") throw new Error(`${source}: "email.fromAlias" must be a string`);
     out.fromAlias = e.fromAlias;
