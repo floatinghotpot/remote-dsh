@@ -13,7 +13,7 @@
 | **M2 云服务器直连** | TLS/https + 密码认证 + 配置文件 + 服务化 | ✅ 完成（2026-08-23，单测 57/57 + M2 e2e 43/43 + M1 回归 14/14） |
 | **M3 公网 hub** | rdsh-hub（认证/路由）+ `rdsh join` + rdsh-portal | ✅ 完成（2026-08-23，单测 92/92 + M3 e2e 23/23 + M1/M2 回归 57） |
 | **M4 dsh 插件（远程访问）** | DSH 插件形态的 rdsh-gateway：`dsh plugin add dsh-web-remote` 即获网关/join，免装 CLI | ✅ 已发布（2026-08-24：gateway 0.4.0 + 插件 0.1.0） |
-| **M5 多租户增强** | 邮箱验证、2FA、共享授权、审计、限流 | ✅ 完成（2026-08-24，真机验证通过） |
+| **M5 多租户增强** | 邮箱验证、2FA、共享授权、审计、限流 | ✅ 完成（2026-08-24，真机验证通过 + 发布） |
 | **M6 上线准备** | 域名备案、隐私政策、部署文档、压测 | ⏳ 未开始 |
 | **M7 hub Go 化 + E2E** | rdsh-hub Go 单二进制 + conformance；公共 SaaS 化时实现 E2E | ⏳ 未开始 |
 | **M8 移动端 App** | rdsh-app（Flutter，Android/iOS） | ⏳ 未开始 |
@@ -142,5 +142,6 @@
 | 2026-08-24 | **04/05 完成并发布**：`rdsh-hub@0.3.0` / `rdsh-gateway@0.3.0` / `remote-dsh@0.5.0` / `rdsh-tunnel@0.1.0`；join token 取代 hub 侧配对码 bind（`pending`/`bind` 移除）；**M4（06-dsh-plugin）规划定稿**：discussion ✅ / req ✅（已批准）/ solution 待批准，命名已定稿（实现前不公开全名），P6（npm org）推迟 |
 | 2026-08-24 | **M4（06-dsh-plugin）实现 + 冒烟通过**：gateway `startJoin`（no-spawn/可停止/onState/onLog）+ pid 锁 `lock.ts`（gateway 0.4.0）；插件包 `dsh-web-remote`（server 半 `connection.rpc` + client 半 React 面板，i18n/DSH 设计令牌）；真实 DSH 冒烟通过（面板 + 接入 hub.unicgames.com + 断开/注销）；待 npm 发布 gateway 0.4.0 + 插件 0.1.0 |
 | 2026-08-24 | **M4 发布**：`rdsh-gateway@0.4.0` + `dsh-web-remote@0.1.0` 上线 npm；`dsh plugin --profile web add dsh-web-remote` 即用；修复 profile 残留 file: 依赖导致的 workspace 解析问题 |
+| 2026-08-24 | **M5 发布**：`rdsh-hub@0.4.0` 上线 npm（多租户：邮箱验证/2FA/共享/审计/锁定；依赖 nodemailer + 手写 aliyun RPC 签名）；真机验证通过 |
 
 *关联文档：proposal.md | doc/overview/architecture.md | doc/feature/01-remote-access/*
