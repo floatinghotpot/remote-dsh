@@ -459,20 +459,22 @@ async function openHubDb(configPath?: string): Promise<HubDb> {
 async function handleHubAudit(args: string[], configPath?: string): Promise<void> {
   const db = await openHubDb(configPath);
   try {
+    // 兼容 `audit ls` 与 `audit`（ls 为可选位置参数）
+    const opts = args[0] === "ls" ? args.slice(1) : args;
     const filter: { userId?: number; event?: string; since?: number } = {};
-    for (let i = 0; i < args.length; i++) {
-      const flag = args[i];
+    for (let i = 0; i < opts.length; i++) {
+      const flag = opts[i];
       if (flag === "--user") {
-        const name = args[++i];
+        const name = opts[++i];
         if (name === undefined) throw new Error("missing value for --user");
         const u = db.getUserByName(name);
         if (u === null) throw new Error(`user '${name}' not found`);
         filter.userId = u.id;
       } else if (flag === "--event") {
-        filter.event = args[++i];
+        filter.event = opts[++i];
         if (filter.event === undefined) throw new Error("missing value for --event");
       } else if (flag === "--since") {
-        const v = args[++i];
+        const v = opts[++i];
         if (v === undefined) throw new Error("missing value for --since");
         const m = /^(\d+)([hd])$/.exec(v);
         if (m === null) throw new Error(`invalid --since '${v}' (use like 24h or 7d)`);
