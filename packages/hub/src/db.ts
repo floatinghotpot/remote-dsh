@@ -94,6 +94,7 @@ export class HubDb {
       mkdirSync(dirname(path), { recursive: true });
     }
     this.db = new DatabaseSync(path);
+    this.db.exec("PRAGMA foreign_keys = ON;");
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY,
@@ -290,9 +291,22 @@ export class HubDb {
   }
 
   removeUser(id: number): void {
-    this.db.prepare("DELETE FROM users WHERE id = ?").run(id);
-    this.db.prepare("DELETE FROM hosts WHERE owner_id = ?").run(id);
-    this.db.prepare("DELETE FROM refresh_tokens WHERE user_id = ?").run(id);
+    this.db.exec("BEGIN");
+    try {
+      // 按 FK 依赖顺序删子表 → 父表（users 最后）
+      this.db.prepare("DELETE FROM email_codes WHERE user_id = ?").run(id);
+      this.db.prepare("DELETE FROM audit_events WHERE user_id = ?").run(id);
+      this.db.prepare("DELETE FROM host_share WHERE user_id = ?").run(id); // member 侧
+      this.db.prepare("DELETE FROM host_share WHERE host_id IN (SELECT id FROM hosts WHERE owner_id = ?)").run(id); // 其 host 的共享
+      this.db.prepare("DELETE FROM join_tokens WHERE owner_id = ?").run(id);
+      this.db.prepare("DELETE FROM refresh_tokens WHERE user_id = ?").run(id);
+      this.db.prepare("DELETE FROM hosts WHERE owner_id = ?").run(id);
+      this.db.prepare("DELETE FROM users WHERE id = ?").run(id);
+      this.db.exec("COMMIT");
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
   }
 
   setPassword(id: number, passwordHash: string): void {
@@ -343,6 +357,7 @@ export class HubDb {
   }
 
   removeHost(id: string): boolean {
+    this.db.prepare("DELETE FROM host_share WHERE host_id = ?").run(id); // 清共享残留（FK）
     const info = this.db.prepare("DELETE FROM hosts WHERE id = ?").run(id);
     return info.changes > 0;
   }

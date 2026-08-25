@@ -170,3 +170,35 @@ test("审计：关键操作有事件", () => {
   assert.ok(db.listAudit({ event: "host.share" }).length > 0);
   assert.ok(db.listAudit({ event: "login.ok" }).length > 0);
 });
+
+test("user rm：清干净全部关联数据（email/audit/2FA/share/join/refresh）", () => {
+  const zoe = db.createUser("zoe", "hash");
+  db.setEmail(zoe.id, "zoe@test.local");
+  db.setEmailVerified(zoe.id);
+  db.setTotpSecret(zoe.id, "SECRET");
+
+  const other = db.createUser("other", "hash");
+  db.createHost("host-zoe", zoe.id, "zoe-host", sha256(randomToken()));
+  db.createHost("host-other", other.id, "other-host", sha256(randomToken()));
+  db.shareHost("host-zoe", other.id, "member"); // zoe 的 host 共享给 other（host 侧残留）
+  db.shareHost("host-other", zoe.id, "member"); // other 的 host 共享给 zoe（member 侧残留）
+
+  db.createEmailCode(zoe.id, "zoe@test.local", "verify", sha256("123456"), Date.now() + 60_000);
+  db.recordAudit(zoe.id, "login.ok", {}, "127.0.0.1");
+  db.createJoinToken("jt-zoe", "label", zoe.id, sha256(randomToken()), Date.now() + 3600_000);
+  db.createRefreshToken(zoe.id, sha256(randomToken()), Date.now() + 3600_000);
+
+  db.removeUser(zoe.id);
+
+  // zoe 全清
+  assert.equal(db.getUserById(zoe.id), null);
+  assert.equal(db.getUserByName("zoe"), null);
+  assert.equal(db.listAllHosts().some((h) => h.id === "host-zoe"), false);
+  assert.equal(db.listAudit({ userId: zoe.id }).length, 0);
+  assert.equal(db.getEmailCodeByEmail("zoe@test.local", "verify"), null);
+  assert.equal(db.listJoinTokens(zoe.id).length, 0);
+  // other 及其 host 仍在；zoe 作为 member 的共享已清
+  assert.ok(db.getUserById(other.id) !== null);
+  assert.ok(db.getHostById("host-other") !== null);
+  assert.equal(db.listShares("host-other").length, 0);
+});
