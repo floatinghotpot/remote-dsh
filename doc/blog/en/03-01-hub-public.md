@@ -25,7 +25,7 @@ You want: **from anywhere, open one URL in the browser, sign in once, and switch
 |---|---|---|
 | [① LAN control](../en/01-01-lan-access.md) | Single machine, same Wi-Fi | `rdsh serve` pairing code |
 | [②③④ Cloud-server direct](../en/02-01-cloud-single-tls.md) | Single machine with a public IP | `rdsh serve` + HTTPS / reverse proxy |
-| **⑤ Public hub (this post)** | **Multiple machines, no public IP** | `rdsh join` outbound tunnel + hub portal |
+| **⑤ Public hub (this post)** | **Multiple machines, no public IP** | `rdsh host join` outbound tunnel + hub portal |
 
 ## Architecture
 
@@ -37,7 +37,7 @@ You want: **from anywhere, open one URL in the browser, sign in once, and switch
          │         │         │
    wss tunnel  wss tunnel  wss tunnel   (layer 2 rdsh-tunnel, all outbound)
          ▼         ▼         ▼
-   home dev     cloud       old laptop   (each runs rdsh join + dsh web)
+   home dev     cloud       old laptop   (each runs rdsh host join + dsh web)
 ```
 
 - Clients always talk to a single hub domain (one cert, simple setup)
@@ -72,22 +72,20 @@ rdsh hub service install                     # or run as a service: systemd/laun
 
 ### ② Connect each machine (once per machine)
 
+Machine join uses the **join-token** flow (the old pairing-code bind was removed in 04/05):
+
 ```bash
 npm install -g remote-dsh
-rdsh join https://hub.example.com
+rdsh host join https://hub.example.com --token <join-token> --name my-mac
 ```
 
-The terminal prints a 6-digit pairing code:
+Where does the join token come from? Sign in to the hub portal → "**Add host**" → generate (shown once):
 
-```
-rdsh join: pair code: 385201
-rdsh join: sign in to https://hub.example.com and enter this code (10 min) to bind this host.
-rdsh join: waiting for binding...
-```
+1. Sign in to `https://hub.example.com` → "Add host" → enter a **machine name** (defaults to hostname) → pick a **TTL** (default 30 days) → "Generate" → **copy the join command**;
+2. Paste and run it on the machine (the command contains the one-time join token) → it registers and establishes its tunnel, appearing in your list;
+3. To run it as a background service (auto-start + crash-restart): `rdsh host service install https://hub.example.com --token <t> --name my-mac`.
 
-Sign in to the hub in the browser → click "Bind a new machine" → enter the code → the machine establishes its tunnel and appears in your list. **For scripting**, skip the web: `rdsh join https://hub.example.com --token <hostToken>`.
-
-Repeat on all three machines — your list now shows all of them with live online status.
+Full details (restart reuse, one token for several machines, revocation semantics) in [join token access](03-04-join-token.md). Repeat on all three machines — your list now shows them all with live online status.
 
 ### ③ Use it from anywhere
 
@@ -102,7 +100,7 @@ Open `https://hub.example.com` → sign in → see your machines (●online / �
 
 | Item | Experience |
 |---|---|
-| Binding | Enter the code once; the host token persists on the machine |
+| Binding | Paste the join token once; the host token persists on the machine |
 | Switching machines | In and out of the list, anytime |
 | Remote access | Public https, same as being at home |
 | Live stream | WebSocket relayed through the tunnel, execution visible in real time |
@@ -113,7 +111,7 @@ Open `https://hub.example.com` → sign in → see your machines (●online / �
 
 - **Registration is closed**: hub accounts are created only by the admin (`rdsh hub user add`) — bots/spam accounts can't sign up
 - **Login rate limiting**: 5 failed attempts per IP → 10-minute lockout; counted by real IP
-- **Password change**: self-service in the portal (verify current password) → **all logged-in devices drop instantly**; if forgotten, the admin resets it
+- **Password change**: self-service in the portal (verify current password) → **all logged-in devices drop instantly**; if forgotten, reset it yourself after binding an email (see [account security](03-06-account-security.md)), or the admin resets it
 - **Host ownership**: a machine belongs to the account that bound it; others can't see it or access it (403)
 - **Tokens**: JWT sessions (instant invalidation on password change / revoke); machine tokens stored only as SHA-256 hashes
 - **Pure passthrough**: the hub never inspects business traffic; any dsh version per machine
@@ -123,7 +121,8 @@ Open `https://hub.example.com` → sign in → see your machines (●online / �
 ```bash
 rdsh hub user add bob               # add a person
 rdsh hub user passwd bob            # reset bob's password (all sessions revoked)
-rdsh hub user ls|rm
+rdsh hub user ls|rm|unlock|reset-2fa   # unlock=unlock a locked account; reset-2fa=reset a user's 2FA
+rdsh hub audit ls                   # audit log (login/password/share/email…)
 rdsh hub host ls                    # all machines (with owner)
 rdsh hub host revoke <hostId>       # revoke a machine
 rdsh hub service status             # hub status

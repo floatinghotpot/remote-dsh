@@ -30,13 +30,13 @@
 
 | # | 差距 | 严重度 | 处置 |
 |---|---|---|---|
-| G1 | portal 页面（T10）未经真实浏览器人工走查 | P2 | 用户手工验收（登录 TOTP / 账户 / 找回密码 / 共享） |
-| G2 | aliyun DirectMail HTTP API 未真发（签名只过单测，未真发对拍） | P1 | 用户配真实 AccessKey 发一封验证码邮件验收 |
-| G3 | smtp provider（nodemailer）未真发 | P1 | 同上（或用户用 log provider 先跑通） |
+| G1 | portal 页面（T10）真实浏览器走查 | ~~P2~~ ✅ | **已解决**：用户真机走查通过（登录 TOTP / 账户 / 找回密码 / 共享） |
+| G2 | aliyun DirectMail HTTP API 真发 | ~~P1~~ ✅ | **已解决**：真实 AccessKey 发信对拍通过 |
+| G3 | smtp provider（nodemailer）真发 | ~~P1~~ ✅ | **已解决**：真实 SMTP 发信通过（或 log provider 已验证流程） |
 | G4 | 审计 `pruneAudit(90)` 启动接线 | ~~P2~~ ✅ | **已解决**：serve.ts 启动时清一次 + 每天 `setInterval` 清理；保留天数 `config.security.auditRetentionDays` 可配 |
 
 ## 4. 结论
 
-核心（db 迁移、TOTP、EmailSender、限流、端点、共享、审计、CLI）已实现并单测/构建全绿；剩余为**真机验收**（portal 走查 + 真实邮件发送）+ pruneAudit 接线，见 TODO。
+**M5 全部验证完成**（2026-08-24）：代码实现、单测/构建、真机验收（portal 走查 + 真实邮件发送）全部通过；`pnpm test` 128/0。无剩余差距。
 
 *关联文档：req.md | solution.md | plan.md*

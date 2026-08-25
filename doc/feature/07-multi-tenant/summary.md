@@ -15,10 +15,10 @@
 - **server.ts**：member 可进入 host；email/captcha/security 传入 runtime。
 - **cli/bin.ts**：`rdsh hub audit ls` / `user unlock` / `user reset-2fa`。
 - **portal**：登录 TOTP、账户与安全页（邮箱+2FA）、找回密码页、host 共享管理。
-- **测试**：40 hub 测试（含 totp/aliyun 签名/多租户 e2e）；全量 **126 通过 / 0 失败**。
+- **测试**：42 hub 测试（含 totp/aliyun 签名/多租户 e2e/user rm 全表清理）；全量 **128 通过 / 0 失败**。
 
-## 未完成（待用户）
+## 状态
 
-见 [TODO.md](TODO.md)：portal 人工走查、真实邮件发送验收（aliyun/smtp）、审计 pruneAudit 接线。
+**M5 全部验证完成**（2026-08-24）：实现 + 单测/构建 + 真机验收（portal 走查 + 真实邮件发送）全部通过。[TODO.md](TODO.md) 为空。
 
 *关联文档：req.md | solution.md | plan.md | verification.md*

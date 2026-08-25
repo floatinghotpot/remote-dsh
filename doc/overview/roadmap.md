@@ -13,7 +13,7 @@
 | **M2 云服务器直连** | TLS/https + 密码认证 + 配置文件 + 服务化 | ✅ 完成（2026-08-23，单测 57/57 + M2 e2e 43/43 + M1 回归 14/14） |
 | **M3 公网 hub** | rdsh-hub（认证/路由）+ `rdsh join` + rdsh-portal | ✅ 完成（2026-08-23，单测 92/92 + M3 e2e 23/23 + M1/M2 回归 57） |
 | **M4 dsh 插件（远程访问）** | DSH 插件形态的 rdsh-gateway：`dsh plugin add dsh-web-remote` 即获网关/join，免装 CLI | ✅ 已发布（2026-08-24：gateway 0.4.0 + 插件 0.1.0） |
-| **M5 多租户增强** | 邮箱验证、2FA、共享授权、审计、限流 | 🔄 已实现（rdsh-hub 0.4.0，待真机验收） |
+| **M5 多租户增强** | 邮箱验证、2FA、共享授权、审计、限流 | ✅ 完成（2026-08-24，真机验证通过） |
 | **M6 上线准备** | 域名备案、隐私政策、部署文档、压测 | ⏳ 未开始 |
 | **M7 hub Go 化 + E2E** | rdsh-hub Go 单二进制 + conformance；公共 SaaS 化时实现 E2E | ⏳ 未开始 |
 | **M8 移动端 App** | rdsh-app（Flutter，Android/iOS） | ⏳ 未开始 |
@@ -92,10 +92,10 @@
 - **进度**：`doc/feature/06-dsh-plugin/` 全流程（discussion/req/solution/plan/verification/summary/TODO）；D1–D6 决议、P1–P5 查证、P6（npm org）推迟；**2026-08-24 真实 DSH 冒烟通过 + 发布**（`rdsh-gateway@0.4.0` + `dsh-web-remote@0.1.0`）
 - **相关决策**：插件与 CLI 双通道分发（CLI 保留）；单身份铁律（host.json 唯一 + pid 锁防双隧道）；MVP 面板四态 + 外部托管只读；RPC 走 `connection.rpc`（非 `/api` 内置契约）
 
-### M5 多租户增强 🔄（2026-08-24 实现，待真机验收）
+### M5 多租户增强 ✅（2026-08-24 完成）
 
 - **内容**：邮箱验证 + 找回密码（EmailSender：smtp/aliyun/log）、2FA（TOTP）、共享授权（owner/member）、审计日志、发信限流 + 账户锁定（10 次/15 分钟）
-- **验收**：`pnpm test` 126/0（含 totp/aliyun 签名/多租户 e2e）；待用户真机验收（portal 走查 + 真实邮件发送）
+- **验收**：`pnpm test` 128/0；真机验证通过（portal 走查 + 真实邮件发送）
 
 ### M6 上线准备 ⏳
 

@@ -25,7 +25,7 @@
 |---|---|---|
 | [① 局域网遥控](../zh/01-01-lan-access.md) | 单台机器、同一 WiFi | `rdsh serve` 配对码 |
 | [②③④ 云服务器直连](../zh/02-01-cloud-single-tls.md) | 单台、有公网 IP 的机器 | `rdsh serve` + HTTPS/反代 |
-| **⑤ 公网 hub（本文）** | **多台、无公网 IP** | `rdsh join` 出站隧道 + hub 门户 |
+| **⑤ 公网 hub（本文）** | **多台、无公网 IP** | `rdsh host join` 出站隧道 + hub 门户 |
 
 ## 架构
 
@@ -37,7 +37,7 @@
          │         │         │
    wss 隧道   wss 隧道   wss 隧道   （层 2 rdsh-tunnel，全部出站）
          ▼         ▼         ▼
-   家里开发机   云服务器    旧笔记本    （各跑 rdsh join + dsh web）
+   家里开发机   云服务器    旧笔记本    （各跑 rdsh host join + dsh web）
 ```
 
 - 客户端永远只连 hub 一个域名（证书单一、配置简单）
@@ -72,22 +72,20 @@ rdsh hub service install                     # 或常驻：systemd/launchd 开�
 
 ### ② 每台机器接进来（各一次）
 
+机器接入是 **join token** 流程（04/05 起已移除旧的配对码 bind）：
+
 ```bash
 npm install -g remote-dsh
-rdsh join https://hub.example.com
+rdsh host join https://hub.example.com --token <join-token> --name my-mac
 ```
 
-终端显示 6 位配对码：
+join token 从哪来？登录 hub portal →「**添加主机**」→ 生成（明文只显示一次）：
 
-```
-rdsh join: pair code: 385201
-rdsh join: sign in to https://hub.example.com and enter this code (10 min) to bind this host.
-rdsh join: waiting for binding...
-```
+1. 浏览器登录 `https://hub.example.com` →「添加主机」→ 填**机器名**（默认取主机名，可改）→ 选**有效期**（默认 30 天）→ 点「生成」→ **复制接入命令**；
+2. 到机器上粘贴执行（命令含一次性 join token）→ 注册 → 机器自动建立隧道，出现在你的机器列表；
+3. 想常驻后台（开机自启 + 崩溃重启）用服务化版：`rdsh host service install https://hub.example.com --token <t> --name my-mac`。
 
-浏览器登录 hub → 点"绑定新机器" → 输码 → 该机器自动建立隧道，出现在你的机器列表。**脚本化部署**可跳过网页：`rdsh join https://hub.example.com --token <hostToken>`。
-
-三台机器各来一遍，列表里就有三台（含实时在线状态）。
+完整细节（含重启免配、多机同 token、吊销语义）见 [join token 接入](03-04-join-token.md)。三台机器各来一遍，列表里就有三台（含实时在线状态）。
 
 ### ③ 随时随地使用
 
@@ -102,7 +100,7 @@ rdsh join: waiting for binding...
 
 | 项 | 体验 |
 |---|---|
-| 绑定 | 输一次配对码，长期有效（host token 存在机器上） |
+| 绑定 | 粘一次 join token，长期有效（host token 存在机器上） |
 | 多机切换 | 列表进进出出，随时换 |
 | 异地访问 | 公网 https，和在家一样 |
 | 实时流 | WebSocket 经隧道转发，执行过程实时可见 |
@@ -113,7 +111,7 @@ rdsh join: waiting for binding...
 
 - **注册关闭**：hub 账号只能管理员 `rdsh hub user add` 创建 —— 公网 bot/垃圾账号进不来
 - **登录限流**：同一 IP 连续错 5 次锁定 10 分钟；登录失败按真实 IP 计数
-- **改密**：portal 自助改密（验证当前密码）→ **全部已登录设备立即掉线**；忘记密码找 admin 重置
+- **改密**：portal 自助改密（验证当前密码）→ **全部已登录设备立即掉线**；忘记密码可**绑定邮箱后自助找回**（见 [账号安全](03-06-account-security.md)），或找 admin 重置
 - **host 归属**：机器只归绑定它的账号所有，别人看不到也进不去（403）
 - **令牌**：会话 JWT（改密/吊销即时失效）；机器 token 服务端只存 SHA-256 摘要
 - **纯透传**：hub 不解析业务报文，各机器 dsh 版本随意
@@ -123,7 +121,8 @@ rdsh join: waiting for binding...
 ```bash
 rdsh hub user add bob               # 加人
 rdsh hub user passwd bob            # 重置 bob 密码（全部会话失效）
-rdsh hub user ls|rm
+rdsh hub user ls|rm|unlock|reset-2fa   # unlock=解锁被锁账户；reset-2fa=重置 2FA
+rdsh hub audit ls                   # 审计日志（登录/改密/共享/发信…）
 rdsh hub host ls                    # 所有机器（含 owner）
 rdsh hub host revoke <hostId>       # 吊销某台机器
 rdsh hub service status             # hub 运行状态
