@@ -52,7 +52,8 @@ Usage:
   rdsh host leave             Unregister this machine from the hub
   rdsh host user ...          Manage gateway users (LAN/cloud password auth)
   rdsh hub serve              Start the hub server (cloud, multi-host)
-  rdsh hub user add|passwd|rm|ls
+  rdsh hub user add|passwd|rm|ls|unlock|reset-2fa
+  rdsh hub audit ls           Audit log (login/2FA/sharing/email events)
   rdsh hub host ls|revoke     List / revoke hosts (revoke drops the tunnel instantly)
   rdsh hub service ...        Run hub as a systemd/launchd service
 
@@ -88,7 +89,8 @@ Run the hub server or manage it.
 
 Subcommands:
   serve                 Start the hub server (TLS required)
-  user add|passwd|rm|ls Manage users (registration closed; admin creates accounts)
+  user add|passwd|rm|ls|unlock|reset-2fa   Manage users (admin creates accounts; unlock / reset-2fa)
+  audit ls [--user <n>] [--event <e>] [--since 24h|7d]   Query the audit log
   host ls|revoke        List / revoke hosts (revoke drops the tunnel instantly)
   service install|status|uninstall   Run hub as a systemd/launchd service
 
@@ -537,7 +539,7 @@ async function handleHub(args: string[], configPath?: string): Promise<void> {
       }
     }
     default:
-      throw new Error("usage: rdsh hub serve|user|host|service");
+      throw new Error("usage: rdsh hub serve|user|host|audit|service");
   }
 }
 
