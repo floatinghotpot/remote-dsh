@@ -275,11 +275,16 @@ rdsh hub service install|status|uninstall      # hub 服务化（rdsh-hub.servic
 
   // ---- M5 多租户（可选；不配 email = 邮箱验证/找回密码禁用）----
   "email": {
-    "provider": "aliyun",            // smtp | aliyun | log
-    "from": "noreply@example.com",   // 发信地址（aliyun 的发信地址 / smtp 的 from）
+    "provider": "smtp",              // smtp | aliyun | log
+    "from": "noreply@example.com",   // 发信地址
     "fromAlias": "remote-dsh",       // 可选，发件人昵称
-    "smtp": { "host": "smtpdm.aliyun.com", "port": 465, "secure": true, "user": "...", "password": "..." },
-    "aliyun": { "accessKeyId": "LTAI...", "accessKeySecret": "..." }   // 手写 RPC 签名，无需 region_id；endpoint 默认 dm.aliyuncs.com
+    "smtp": {                        // provider=smtp 时必填（嵌套在 email.smtp 下，平铺/缺失会启动报错）
+      "host": "smtpdm.aliyun.com",
+      "port": 465,                   // 465=SSL(secure:true)；587=STARTTLS(secure:false)
+      "secure": true,
+      "user": "noreply@example.com",
+      "password": "SMTP独立密码"
+    }
   },
   "captcha": { "provider": "arithmetic" },   // arithmetic | none（找回密码页防 bot）
   "security": {                              // 可选，全部有默认值
@@ -291,6 +296,8 @@ rdsh hub service install|status|uninstall      # hub 服务化（rdsh-hub.servic
   }
 }
 ```
+
+> **`email` 二选一**：`provider` 与凭据必须匹配——`smtp` 要 `email.smtp` 嵌套对象；`aliyun` 要 `email.aliyun` 嵌套对象（`{ "accessKeyId", "accessKeySecret", "endpoint?" }`，手写 RPC 签名、无需 region_id，endpoint 默认 `dm.aliyuncs.com`）；`log` 只需 `provider`（不真发，正文打到日志，本地验证用）。凭据平铺或缺失会在**启动时**报清晰错误。
 
 路径：`--config <path>` > `$RDSH_HUB_CONFIG` > 默认 `~/.rdsh/hub.json`。
 
