@@ -1,8 +1,8 @@
 # remote-dsh 路线图（roadmap）
 
-> **日期**: 2026-08-24
+> **日期**: 2026-08-26
 > **来源**: `proposal.md` §8 里程碑 + §10 决策记录（Q1–Q10）
-> **状态**: 04-cli-refactor、05-join-easy 已完成并发布（2026-08-24）；**M4 dsh 插件（远程访问 `dsh-web-remote`）已实现 + 冒烟通过 + 发布**（`rdsh-gateway@0.4.0` + `dsh-web-remote@0.1.0`）
+> **状态**: M1–M5 已完成并发布；**SaaS 商业化讨论定案**（08-saas：招行聚合收款 + S1–S4 拆分，req 待批准）；**09 云端 DSH / 10 Token 转售** 新特性讨论中（discussion 已建）；M8/M9 降级为品牌/营销渠道
 
 ## 里程碑总览
 
@@ -12,12 +12,16 @@
 | **M1 MVP（LAN）** | `rdsh serve` 局域网认证网关 | ✅ 完成（2026-08-23，单测 33/33 + 端到端 14/14 + 双设备实测通过） |
 | **M2 云服务器直连** | TLS/https + 密码认证 + 配置文件 + 服务化 | ✅ 完成（2026-08-23，单测 57/57 + M2 e2e 43/43 + M1 回归 14/14） |
 | **M3 公网 hub** | rdsh-hub（认证/路由）+ `rdsh join` + rdsh-portal | ✅ 完成（2026-08-23，单测 92/92 + M3 e2e 23/23 + M1/M2 回归 57） |
+| **04/05 前置特性** | CLI 组件化（`rdsh host *` + host.json 3 模式）+ join token 自助接入 | ✅ 完成（2026-08-24，随 05 发布） |
 | **M4 dsh 插件（远程访问）** | DSH 插件形态的 rdsh-gateway：`dsh plugin add dsh-web-remote` 即获网关/join，免装 CLI | ✅ 已发布（2026-08-24：gateway 0.4.0 + 插件 0.1.0） |
 | **M5 多租户增强** | 邮箱验证、2FA、共享授权、审计、限流 | ✅ 完成（2026-08-24，真机验证通过 + 发布） |
-| **M6 上线准备** | 域名备案、隐私政策、部署文档、压测 | ⏳ 未开始 |
-| **M7 hub Go 化 + E2E** | rdsh-hub Go 单二进制 + conformance；公共 SaaS 化时实现 E2E | ⏳ 未开始 |
-| **M8 移动端 App** | rdsh-app（Flutter，Android/iOS） | ⏳ 未开始 |
-| **M9 微信小程序** | rdsh-weapp（原生小程序，wss 直连 hub API） | ⏳ 未开始 |
+| **M6 上线准备** | 隐私政策/部署文档/压测 + 资质（招行聚合签约、B2 证确认、SaaS 域名备案） | ⏳ 未开始（资质为 S3 前置，并行推进） |
+| **SaaS 托管轨 S1–S4** | 商业化托管 hub：注册/试用/配额/订阅/支付（招行聚合）（`08-saas`，与 M6 并行） | ⏳ 讨论定案，req 待批准；S1 可立即开工 |
+| **M7 hub Go 化** | rdsh-hub Go 单二进制 + conformance —— **hub 重构/重写（非用户功能）**；E2E 加密已独立为 SaaS 并行 P0 | 🔔 延后至未来（触发式：单实例瓶颈 / node 部署问题频发 / infra 成本占比明显） |
+| **M8 移动端 App** | rdsh-app（Flutter，Android/iOS）—— **品牌/营销渠道** | ⏳ 后置（浏览器已验证可用，按需启动） |
+| **M9 微信小程序** | rdsh-weapp（原生小程序，wss 直连 hub API）—— **品牌/营销渠道** | ⏳ 后置（微信内浏览器已验证可用，按需启动） |
+| **09 云端 DSH（未来）** | 云主机转售 + dsh 预装，用户自带 key（`09-saas-cloud-dsh`，08 后） | 💡 讨论中（discussion 已建） |
+| **10 Token 转售（未来）** | 模型额度转售，横切全部用户（`10-saas-dsh-token`，08 后） | 💡 讨论中（discussion 已建） |
 
 ## 各里程碑详情
 
@@ -99,19 +103,33 @@
 
 ### M6 上线准备 ⏳
 
-- **内容**：域名 ICP 备案、隐私政策、部署文档、压测（含 300 MB 大流量压测，M1 遗留项）
+- **内容**：隐私政策/用户协议/数据删除、部署文档、压测（含 300 MB 大流量压测，M1 遗留项）；**资质（S3 前置，并行推进）**：招行聚合收款签约（主体 + 招行对公户已有，确认动态码 API/费率结算）、确认已有增值电信业务经营许可证覆盖 B25 信息服务业务（经营性 ICP，自营订阅必需；EDI 不适用——自营订阅无平台化）、SaaS 域名备案（若用新域名需重新备案）
 - **验收**：达到公开服务标准
 
-### M7 hub Go 化 + E2E ⏳
+### SaaS 托管轨（S1–S4，与 M6 并行 ⏳，见 `doc/feature/08-saas/`）
 
-- **内容**：rdsh-hub 用 Go 重写（单二进制，go:embed portal）+ TS↔Go conformance 测试；公共 SaaS 化时实现 E2E（帧格式加密位已预留）
-- **验收**：单二进制部署；互操作测试通过；E2E 需求评审
+- **S1 注册·试用·配额**：开放注册 + 邮箱 PIN、试用 3 天 1 host、配额钩子消费（08-saas R1/R2/R3）—— 仅依赖 M5，可立即开工
+- **S2 订阅状态机·计费**：套餐/订单/订阅表、到期→grace 3 天→降级→保留 30 天、账号删除；PaymentProvider mock（R4/R6/R7）
+- **S3 支付接入**：招行聚合收款（动态码 + 手机端直唤起 + 回调验签 + 幂等入账 + 对账）（R5）—— 依赖招行聚合签约流程（对公户已有）
+- **S4 反滥用·安全·运营**：风控/banned/付费审计/i18n/运营看板（R8/R9/R10 其余）
+- **并行 P0**：E2E 加密（层 2 帧加密位，公共 SaaS 必须）
+- **底座**：TS hub 首发上线；M7 Go 化延后（触发式，见 M7）
+- **未来轨（08 之后，讨论中）**：**09 云端 DSH**（云主机转售 + dsh 预装，用户自带 key）→ **10 Token 转售**（模型额度，横切全部用户）—— 详见 `doc/feature/09-saas-cloud-dsh/`、`doc/feature/10-saas-dsh-token/`
+
+### M7 hub Go 化 🔔（2026-08-26 定案：延后至未来，触发式）
+
+- **定位**：**hub 重构/重写**（Go 单二进制 + go:embed portal + TS↔Go conformance）—— **非用户功能**；价值 = 生产降本 + 部署硬化；
+- **E2E 加密已拆出**：独立为 SaaS 并行 P0（TS 侧实现，不依赖 Go）；
+- **触发条件（满足其一再启动）**：① 单实例内存/CPU/连接数到瓶颈（有监控数据）；② node 部署/运维问题频发（nvm/PATH/依赖漂移）；③ SaaS 租户规模使 infra 成本占比明显；
+- **替代方案**：SaaS 初期先横向扩展多 TS 实例 + LB（比 Go 重写更简单）；
+- **验收（若启动）**：单二进制部署；TS↔Go 互操作通过
 
 ### M8 移动端 App ⏳
 
 - **内容**：rdsh-app（Flutter + WebView 壳）
 - **验收**：App 登录后可访问 host 的 DSH
 - **相关决策**：Q7（首版纯 WebView 壳，验收须含剪贴板/输入法验证）
+- **定位（2026-08-26）**：**非用户必需**（笔记本/手机/微信内浏览器访问 hub 已实测可用）—— 定位**品牌/营销渠道**（应用商店曝光、品牌认知），后置、按需启动
 
 ### M9 微信小程序 ⏳
 
@@ -120,12 +138,14 @@
 - **前置条件**：hub 对外 API（层 1）契约已冻结（依赖 M3）；hub 域名 **ICP 备案** + 小程序后台配置 wss 合法域名（备案周期长，可提前并行启动）
 - **约束**：Flutter 不可用于小程序（平台硬约束）；原生实现最稳、审核风险最低
 - **相关决策**：Q3（小程序后置）
+- **定位（2026-08-26）**：**非用户必需**（微信内浏览器打开 hub 链接已验证可用）—— 定位**品牌/营销渠道**（微信生态入口、免安装、分享传播）；后置、按需启动。注：**小程序内支付需微信支付 JSAPI（商户号单独开通），与 Web 端招行聚合扫码不同**，属额外集成
 
-## 当前焦点（M4 已完成并发布）
+## 当前焦点
 
-1. **M4 dsh 插件（远程访问 `dsh-web-remote`）**：✅ 已发布（2026-08-24）：`rdsh-gateway@0.4.0` + `dsh-web-remote@0.1.0`（`dsh plugin --profile web add dsh-web-remote` 即用）
-2. **已发布**（2026-08-24）：`rdsh-hub@0.3.0` / `rdsh-gateway@0.4.0` / `remote-dsh@0.5.0` / `rdsh-tunnel@0.1.0` / `dsh-web-remote@0.1.0`
-3. **待办**：远程验证（阿里云 host 升级 `remote-dsh@0.5.0` + 重装服务）；join 孤儿 dsh 兜底；300 MB 压测（可并入 M7）；npm org 锁 scope（P6，推迟）
+1. **M1–M5 已完成并发布**（2026-08-24：`rdsh-hub@0.4.0` / `rdsh-gateway@0.4.0` / `remote-dsh@0.6.0` / `dsh-web-remote@0.1.0` / `rdsh-tunnel@0.1.0`）
+2. **SaaS 商业化（08-saas）**：讨论定案（支付=招行聚合收款、S1–S4 拆分、TS hub 首发）；req 待批准 → S1（注册/试用/配额）可开工
+3. **09/10 新特性**：discussion 已建（云端 DSH / Token 转售，08 后）
+4. **待办**：远程验证（阿里云 host 升级 `remote-dsh@0.6.0` + 重装服务）；join 孤儿 dsh 兜底；300 MB 压测（并入 M6）；npm org 锁 scope（P6，推迟）
 
 ## 变更记录
 
@@ -140,8 +160,9 @@
 | 2026-08-23 | **里程碑重排**：移动端 App 移至 hub Go 化之后（M8）—— 纯 npm 包配合浏览器访问 hub URL 已够用，App 后置；序列：M6 上线准备 → M7 hub Go 化 → M8 移动端 App → M9 小程序 |
 | 2026-08-24 | **新增前置特性 04/05（M4 之前）**：04-cli-refactor（CLI 组件化 `rdsh host *` + host.json 3 模式 + self-revoke + 自动迁移 + 证书自动检测）与 05-join-easy（用户级 join token + `host join` 交互注册免配对 + portal「添加主机」页）；discussion/req 已定（待批准）；发布收尾（hub 0.2.4 / gateway 0.2.3 / cli 0.4.9 待发） |
 | 2026-08-24 | **04/05 完成并发布**：`rdsh-hub@0.3.0` / `rdsh-gateway@0.3.0` / `remote-dsh@0.5.0` / `rdsh-tunnel@0.1.0`；join token 取代 hub 侧配对码 bind（`pending`/`bind` 移除）；**M4（06-dsh-plugin）规划定稿**：discussion ✅ / req ✅（已批准）/ solution 待批准，命名已定稿（实现前不公开全名），P6（npm org）推迟 |
-| 2026-08-24 | **M4（06-dsh-plugin）实现 + 冒烟通过**：gateway `startJoin`（no-spawn/可停止/onState/onLog）+ pid 锁 `lock.ts`（gateway 0.4.0）；插件包 `dsh-web-remote`（server 半 `connection.rpc` + client 半 React 面板，i18n/DSH 设计令牌）；真实 DSH 冒烟通过（面板 + 接入 hub.unicgames.com + 断开/注销）；待 npm 发布 gateway 0.4.0 + 插件 0.1.0 |
+| 2026-08-24 | **M4（06-dsh-plugin）实现 + 冒烟通过**：gateway `startJoin`（no-spawn/可停止/onState/onLog）+ pid 锁 `lock.ts`（gateway 0.4.0）；插件包 `dsh-web-remote`（server 半 `connection.rpc` + client 半 React 面板，i18n/DSH 设计令牌）；真实 DSH 冒烟通过（面板 + 接入 hub.example.com + 断开/注销）；待 npm 发布 gateway 0.4.0 + 插件 0.1.0 |
 | 2026-08-24 | **M4 发布**：`rdsh-gateway@0.4.0` + `dsh-web-remote@0.1.0` 上线 npm；`dsh plugin --profile web add dsh-web-remote` 即用；修复 profile 残留 file: 依赖导致的 workspace 解析问题 |
 | 2026-08-24 | **M5 发布**：`rdsh-hub@0.4.0` 上线 npm（多租户：邮箱验证/2FA/共享/审计/锁定；依赖 nodemailer + 手写 aliyun RPC 签名）；真机验证通过 |
+| 2026-08-26 | **SaaS 商业化讨论定案**：支付选型=招行聚合收款（一套 API 覆盖微信/支付宝，国密 SM2 验签；**手机端直唤起微信/支付宝**）；08-saas 拆 **S1–S4 独立轨与 M6 并行**（req 更新待批准，S1 可开工）；**M8/M9 降级为品牌/营销渠道**（笔记本/手机/微信内浏览器实测可用）；**新特性 09 云端 DSH / 10 Token 转售** discussion 立项（未来轨，08 后）；资质核验（增值电信业务经营许可证 + ICP 备案 + 公安备案；**EDI 不适用**——自营订阅无平台化）；**M7 hub Go 化延后至未来**（触发式，仅为 hub 重构/重写非用户功能；E2E 加密独立为 SaaS 并行 P0） |
 
 *关联文档：proposal.md | doc/overview/architecture.md | doc/feature/01-remote-access/*

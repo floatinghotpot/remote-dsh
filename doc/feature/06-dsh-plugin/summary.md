@@ -23,7 +23,7 @@
 ### 测试 / 文档
 
 - 新增单测：`test/lock.test.ts`（5 例）+ `test/join-core.test.ts`（2 例）。全量 `pnpm build` 绿、`pnpm test` **114/0**。
-- **真实 DSH 冒烟通过**（2026-08-24，用户本机）：`dsh plugin add` → 面板出现 → 接入 `hub.unicgames.com`「已连接」→ 断开/注销；i18n/主题对齐。
+- **真实 DSH 冒烟通过**（2026-08-24，用户本机）：`dsh plugin add` → 面板出现 → 接入 `hub.example.com`「已连接」→ 断开/注销；i18n/主题对齐。
 - CHANGELOG（en/zh）加 `[Unreleased]` 条目；roadmap/README 遵守命名纪律（实现前不泄全名）。
 - Feature Pipeline：discussion → req（已批准）→ solution（已批准）→ plan → verification → summary → TODO 齐全。
 

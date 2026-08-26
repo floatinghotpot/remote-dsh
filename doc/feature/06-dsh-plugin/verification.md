@@ -30,7 +30,7 @@
 
 | # | 差距 | 严重度 | 处置 |
 |---|---|---|---|
-| G1 | client.js + server 半的 DSH 集成冒烟（`dsh plugin add` → 面板 → 接入/断开/注销） | ~~P1~~ ✅ | **已解决**：2026-08-24 用户本机 DSH 实测通过（面板出现 + 接入 hub.unicgames.com「已连接」+ 断开/注销 + i18n/DSH 主题对齐） |
+| G1 | client.js + server 半的 DSH 集成冒烟（`dsh plugin add` → 面板 → 接入/断开/注销） | ~~P1~~ ✅ | **已解决**：2026-08-24 用户本机 DSH 实测通过（面板出现 + 接入 hub.example.com「已连接」+ 断开/注销 + i18n/DSH 主题对齐） |
 | G2 | `rdsh-gateway@0.4.0` + `dsh-web-remote@0.1.0` 发布 | ~~P1~~ ✅ | **已解决**：2026-08-24 发布到 npm；`dsh plugin --profile web add dsh-web-remote` 验证通过 |
 | G3 | pid 存活探测（`process.kill(pid,0)`）未在 Windows 实测 | P3 | Linux/macOS 已测；Windows 语义待补 |
 | G4 | `@deepseek-ai/cordis` 未作运行时依赖（server 半用函数插件形态规避）——若将来要 `Service` 子类需补 peerDep | P3 | 已在 solution §2.4 记录 |
