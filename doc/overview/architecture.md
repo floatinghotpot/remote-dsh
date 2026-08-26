@@ -73,19 +73,19 @@
 
 | 场景 | 部署位置 | 特点 | 模式与要点 |
 |---|---|---|---|
-| **开发机**（M1 主场景） | 开发者工作站 | 有人值守、有显示器 | LAN 模式：终端显示配对码 |
-| **云服务器（阿里云等租用实例）** | VPS / ECS | **headless**、有公网 IP | 可公网直连（见安全升级）或经 hub 汇聚多机（M3，推荐） |
+| **开发机**（M1 主场景） | 开发者工作站 | 有人值守、有显示器 | `mode: "lan"`：终端显示配对码 |
+| **云服务器（阿里云等租用实例）** | VPS / ECS | **headless**、有公网 IP | `mode: "cloud"`：HTTPS + 密码认证（M2）；或 `rdsh host join <hub>`（join 模式，经 hub 汇聚，推荐） |
 
-**云服务器（headless）的配对码策略**（无人看终端）：
+**云服务器（headless）的认证策略**（无人看终端）：
 
-1. **ssh 登录查看**：`ssh <host> 'rdsh serve'` 后从远程终端读配对码（最简单）；
-2. **预置配对码**：`rdsh serve --pair-code <code>`（提前通过安全通道下发）；
-3. **完全可信网络**：`--no-code`（启动警告）。
+1. **密码认证（推荐）**：`rdsh host setup cloud --tls-cert <p> --tls-key <p>` + `rdsh host user add <name>` —— headless HTTPS 主认证（M2；部署见 `usage.md` §7）；
+2. **预置配对码**：`rdsh host setup lan --pair-code <code>`（LAN/可信网络，提前通过安全通道下发）；
+3. **免认证**：`auth.mode: "none"`（仅完全可信网络，启动警告）。
 
-**云服务器公网直连的安全升级**（LAN 模式监听 `0.0.0.0` 时公网可达）：
+**云服务器公网直连的安全要求**（cloud 模式监听 `0.0.0.0` 时公网可达）：
 
-- 当前 M1 为明文 http + 配对码认证 —— **仅适合可信网络**；
-- 云服务器公网直连建议：① 反向代理终止 TLS（网关后可接 Caddy/nginx 加证书）；② 或等待 M3 经 hub（hub 侧 https + 隧道，gateway 不出站暴露）—— **推荐**，与"出站隧道免暴露"架构一致；
+- 公网直连 = **必须 HTTPS + 密码认证**：内置 TLS（`tls.cert/key`）或 `behindProxy: true` 挂反代终止 TLS —— 明文 http 禁止；
+- 或经 hub 汇聚（join 模式，推荐）：gateway 只出站连 hub，不暴露任何入站端口；hub 侧 https + 隧道；
 - 多台云服务器经 hub 时统一由 hub 汇聚（gateway 只出站，无入站端口）。
 
 ## 2. 协议分层（核心架构资产）
