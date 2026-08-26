@@ -156,11 +156,71 @@ proposal Q1 定案"自用/自托管起步、架构预留多租户扩展、价值
 **③ 首发底座：TS hub 先行**
 - M5 TS hub 已生产可用 → SaaS 先上线 TS；M7 Go 化后置为成本/性能优化（不阻塞 SaaS 上线）。
 
-## 8. 参考
+**④ 状态机两维分离 + 到期/免费档定案（2026-08-26 用户拍板）**
+- 账号状态与计费状态**拆两维**：`account_status`（pending/active/banned/deleted）× `plan_status`（NULL/trial/subscribed/grace/free），配额钩子只读 plan、封禁只读 account；
+- **试用到期走 3 天 grace**（与订阅到期同一路径）；
+- **免费档 = 0 台**（仅登录 portal，不跑 host；付费意愿验证期最激进）；
+- 降级/换低配额档保留**最早注册的 N 台**在线、其余离线（数据保留 30 天）；
+- 存量自托管用户 plan=NULL 不受限，仅新注册进 trial —— 已落实 req R2/R3/R6/R7 + §2.5。
 
+## 8. 阿里云短信 HTTP API 预研（2026-08-26）
+
+> 目的：为 req R1/R11 的 `SmsSender` aliyun provider 提供事实依据（协议形态 / 资质链路 / 成本 / 限流），对齐 M5 邮件 aliyun（DirectMail）的既有决策。
+> 来源：阿里云官方文档 + 官方公告（链接见 §9）；**标注"待查证"的数字须以最新官网/签约为准**。
+
+### 8.1 服务形态与开通前提
+
+- 产品：阿里云短信服务（SMS，`dysmsapi`）；**免费开通**，按量付费或套餐包；需**实名认证**（企业认证发送配额与审核通过率更优——公司主体已有）。
+- 资质链路（与招行签约同理，并行办理）：**申请短信签名（企业资质）→ 申请短信模板（验证码类型）→ 审核通过**后获得 `SignName` + `TemplateCode`；模板变量用 `${code}` 占位。
+- 审核时长：通常 **1–3 个工作日**（企业签名 + 验证码模板通常较快，数小时～1 天；以实际审核为准）。
+
+### 8.2 API 事实（与 DirectMail 同机制，可复用）
+
+- **RPC 风格 HTTP API**，endpoint `dysmsapi.aliyuncs.com`，**API 版本 `2017-05-25`**（官方文档 URL 证实）。
+- 核心动作：
+  - `SendSms`：参数 `PhoneNumbers`（+86 11 位）、`SignName`、`TemplateCode`、`TemplateParam`（JSON 字符串，如 `{"code":"123456"}`）、`OutId`（业务扩展字段，可带流程 id 用于**幂等/对账**）；响应 `Code=OK` + `BizId`。
+  - `QuerySendDetails`：按手机号/BizId 查发送详情（**对账/排查**用途）。
+- **签名机制 = 通用 RPC 签名（AccessKeyId/Secret，HMAC-SHA1 或 SHA256）**——与 M5 邮件 aliyun（DirectMail RPC）**同一机制** → **直接复用 07 手写 RPC 签名代码**；不引 `@alicloud/dysmsapi20170525` SDK（pop-core 解包过重，参照 07 邮件"手写签名"决策）。Node 侧内置 `fetch` + `node:crypto` 即可，零新增依赖。
+- 失败处理：`Code` 非 OK 时记录原因（如签名/模板审核中、流控拦截）并接入审计。
+
+### 8.3 成本与限流（防轰炸设计依据）
+
+- 价格：国内短信历史约 **¥0.045/条**（验证码按量）量级；**2026-04-20 官方公告 + 05-20 起国内短信价格上调**（综合成本上涨）——**最新单价待查证**（以官网价目/签约为准）。
+- **发送流控（平台侧）**：阿里云对同一手机号有发送频率限制（常见默认：验证码类 **1 条/分钟、5 条/小时、10 条/天** 量级，可申请调整；**具体默认值待查证**官方"短信发送流控限制"文档）。平台流控是兜底，**我方仍需自建更严限流**（每手机号每日 ≤3 条、全局上限、重发 60s、attempts ≤5，见 req R8/§6）：① 我方阈值更严（成本 + 骚扰控制）；② 不依赖平台默认值变动。
+
+### 8.4 结论与备选
+
+- **首选阿里云短信**（主云厂商：复用 AccessKey/账号体系、与 DirectMail 同一签名机制、一套 RPC 签名代码两用）；**腾讯云短信**同形态（签名 + 模板 + HTTP API），仅备选（不引入第二账号体系）。
+- 国际短信（国际/港澳台消息）为独立产品，**不启用**（+86-only，req 2.2 已定）。
+- `SmsSender` 抽象（req R1）：provider = `aliyun`（手写 RPC 签名，复用 07 签名代码）+ `log`（mock/测试）；aliyun 真发依赖签名/模板审核落地（req 2.3 已记，不阻塞 S1 mock）。
+- **开关语义（2026-08-26 用户定）**：hub.json `sms` 配置节**缺省关闭**（与 `email` 同语义：未配置 = 手机号通道整体不可用），默认关闭直到阿里云签名/模板审核通过再开启——上线前手机号通道默认不可用，不影响 S1 邮件通道。
+
+### 8.5 待确认清单（对接时）
+
+- 调价后最新单价与套餐包方案；
+- 平台默认流控具体值（以官方文档为准）；
+- 签名/模板审核实际时长与常见驳回点；
+- 企业认证下默认 QPS/日发送量配额。
+
+### 8.6 阿里云验证码 2.0（防 bot，07 D8 定案落档）
+
+> 07-multi-tenant D8：M5 = 算术验证码（零依赖，已实现，`captcha.ts`）；**阿里云验证码 2.0 → 08-saas**（注册/绑定发码前置防 bot）。
+
+- 产品：**阿里云验证码 2.0**（CAPTCHA 2.0）—— 滑块/拼图等安全验证组件，防机器人（注册/登录/发码场景）。
+- 接入形态：**前端 JS SDK 渲染验证组件**（用户完成后取得验证参数）→ 后端调 **`VerifyCaptcha`** 验签（RPC 风格，endpoint `captcha.aliyuncs.com`）—— **复用 AccessKey RPC 签名**（与 DirectMail/短信同一机制，一套签名代码三用）。
+- 计费：有版本区分（免费版/付费版），**免费额度 + 按量**；具体额度/单价**待查证**（以官网[计费说明](https://www.alibabacloud.com/help/zh/captcha/captcha2-0/billing)为准）。
+- 落位：注册发码（R1/R8）、手机号绑定发码（R11）前置阿里云验证码；**找回密码保留 M5 算术码**（已实现、零依赖，防 bot 强度已够该场景）。
+- 官方文档：[什么是验证码 2.0](https://www.alibabacloud.com/help/zh/captcha/captcha2-0/product-overview/what-is-alibaba-cloud-captcha-2)、[各版本功能差异与计费方式](https://help.aliyun.com/zh/captcha/captcha2-0/product-overview/version-description)
+
+## 9. 参考
+
+- 阿里云短信服务官方文档（[新手指引](https://www.alibabacloud.com/help/zh/sms/getting-started/get-started-with-sms)、[QuerySendDetails（api-dysmsapi-2017-05-25）](https://help.aliyun.com/zh/sms/developer-reference/api-dysmsapi-2017-05-25-querysenddetails)、[短信发送流控限制](https://help.aliyun.com/zh/document_detail/2881383.html)、[短信服务下发流控限制（问答）](https://developer.aliyun.com/ask/644744)）
+- 价格公告：[2026-04-20 国内短信服务价格调整公告](https://help.aliyun.com/zh/sms/product-overview/notice-on-price-adjustment-for-domestic-sms-services-2604) / [05-20 起价格调整（界面新闻）](https://www.jiemian.com/article/14270540.html)
+- 对接/资质流程教程：[主流开发语言对接指南](https://developer.aliyun.com/article/1748528)、[如何申请资质、模板和签名](https://developer.aliyun.com/article/1746495)
+- 本仓库既有决策：`doc/feature/07-multi-tenant/`（M5：DirectMail 手写 RPC 签名、EmailSender 抽象）
 - `doc/overview/proposal.md`（§2.1 形态、§6.6 合规、§10 Q1/Q5/Q6）
 - `doc/feature/05-join-easy/req.md`（R3 配额钩子、R10 审计预留）
 - `doc/feature/07-multi-tenant/discussion.md`（M5：email/2FA/审计/登录风控 —— 08 依赖）
 - `doc/overview/roadmap.md`（M5/M6 排期）
 
-*下一步：req.md（待 D1–D10 定案后）*
+*下一步：req.md 批准后写 solution.md*
