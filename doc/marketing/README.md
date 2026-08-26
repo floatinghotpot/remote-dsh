@@ -14,6 +14,7 @@
 | 文件 | 内容 |
 |---|---|
 | `market-analysis.md` | 整线市场分析：用户与价值、市场与需求、竞争、定位、定价、渠道、风险 |
+| `product-strategy.md` | **产品战略总纲**：定位声明、北极星、产品组合优先级、商业模式假设、里程碑与闸门、风险、关键假设清单 |
 | `pricing-benchmark-cloud-agent-platforms.md` | 云端智能体/Agent 平台定价对标：Manus、扣子、元器、百炼、Dify、Monica、Genspark、Devin |
 | `pricing-benchmark-coding-agents.md` | 定价对标：AI 编程 / coding agent（Cursor、Copilot 等） |
 | `09-cloud-dsh-pricing-benchmark.md` | 09 线定价对标：远程访问工具 × 云电脑/云主机租用 |
