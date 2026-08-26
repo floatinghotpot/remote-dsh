@@ -4,10 +4,11 @@ Secure remote access for [DeepSeek Harness](https://github.com/deepseek-ai/deeps
 
 ```bash
 npm install -g remote-dsh
-rdsh serve   # LAN auth gateway in front of dsh web (M1 MVP)
+rdsh host setup lan   # write ~/.rdsh/host.json (LAN gateway: pair auth)
+rdsh host serve       # run the gateway in the foreground
 ```
 
-> **v0.1.0** is a name-reservation skeleton. Commands land with the M1 MVP.
+> See `doc/overview/usage.md` for the full manual (`rdsh host setup lan|cloud`, `rdsh host join <hub>`, `rdsh hub serve`, ...).
 
 ## License
 

@@ -1,6 +1,6 @@
 # Put your DSH agent on a cloud server: sign in from any browser (bring your own TLS cert)
 
-> 2026-08-23 · remote-dsh 0.3.0
+> 2026-08-23 · remote-dsh ≥ 0.5.0 (commands and config per the 0.5.0 command tree)
 > Cloud-server deployment series: ② rdsh standalone + built-in TLS (this post) → ③ Apache2 reverse proxy → ④ nginx reverse proxy
 
 **中文版**：[中文](../zh/02-01-cloud-single-tls.md)
@@ -20,7 +20,7 @@ This series covers exactly that (three cloud-server deployment options). This po
 ```
 Your browser ──https──► cloud server:8443 (rdsh) ──auth──► 127.0.0.1:<port> (dsh web)
                               ▲
-                    config.json + systemd service
+                    host.json + systemd service
 ```
 
 - The rdsh gateway is the **only auth layer** (DSH itself has no auth): HTTPS + username/password → HttpOnly session cookie → then full-duplex forwarding (HTTP / SSE / WebSocket)
@@ -41,13 +41,13 @@ Your browser ──https──► cloud server:8443 (rdsh) ──auth──► 1
 
 ```bash
 npm install -g remote-dsh
-rdsh --version   # 0.3.0
+rdsh --version   # 0.5.0+
 ```
 
 ### ② Add a login user (interactive password, stored as scrypt hash)
 
 ```bash
-rdsh user add admin
+rdsh host user add admin
 # enter and confirm the password (no echo)
 ```
 
@@ -63,7 +63,7 @@ acme.sh --issue -d rdsh.example.com --webroot /var/www/html
 acme.sh --install-cert -d rdsh.example.com \
   --key-file /root/.rdsh/key.pem \
   --fullchain-file /root/.rdsh/cert.pem \
-  --reloadcmd "rdsh service restart"   # auto-reload cert after renewal
+  --reloadcmd "rdsh host service restart"   # auto-reload cert after renewal
 ```
 
 **B. Cloud vendor certificate**: apply for a free cert in the cloud console (e.g. Alibaba Cloud SSL), download the Nginx-format PEM, put it on the server (e.g. `/etc/rdsh/`), `chmod 600`.
@@ -77,10 +77,11 @@ openssl req -x509 -newkey rsa:2048 -nodes \
   -subj "/CN=<server-public-IP>"
 ```
 
-### ④ Write the config file `~/.rdsh/config.json`
+### ④ Write the config file `~/.rdsh/host.json`
 
 ```jsonc
 {
+  "mode": "cloud",                                 // cloud HTTPS gateway
   "port": 8443,                                  // public port (open in security group)
   "tls": {                                       // cert paths (from one of the three options above)
     "cert": "/root/.rdsh/cert.pem",
@@ -88,7 +89,7 @@ openssl req -x509 -newkey rsa:2048 -nodes \
   },
   "auth": {
     "mode": "password",                          // username/password auth (M2 primary)
-    "users": []                                  // managed by `rdsh user`, don't hand-edit
+    "users": []                                  // managed by `rdsh host user`, don't hand-edit
   }
   // Optional:
   // "allowFrom": ["1.2.3.0/24"],                // IP whitelist (CIDR); outside → 403
@@ -101,8 +102,8 @@ openssl req -x509 -newkey rsa:2048 -nodes \
 ### ⑤ Run as a service (auto-start + auto-restart)
 
 ```bash
-rdsh service install    # systemd unit (Ubuntu) / launchd plist (macOS), no sudo needed
-rdsh service status     # "active" = running
+rdsh host service install    # systemd unit (Ubuntu) / launchd plist (macOS), no sudo needed
+rdsh host service status     # "active" = running
 ```
 
 - rdsh doesn't fork into the background itself; systemd manages it (together with the dsh process it spawns)
@@ -119,12 +120,11 @@ rdsh service status     # "active" = running
 ## Day-to-day ops
 
 ```bash
-rdsh user passwd admin    # change password — all logged-in devices drop instantly (re-login)
-rdsh user ls              # list users
-rdsh user rm bob          # remove user
-rdsh service status       # running status
-rdsh service uninstall    # remove service (stop + disable auto-start)
-rdsh serve --reset        # rotate session keys (emergency: kick all sessions)
+rdsh host user passwd admin    # change password — all logged-in devices drop instantly (re-login; also the emergency kick)
+rdsh host user ls              # list users
+rdsh host user rm bob          # remove user
+rdsh host service status       # running status
+rdsh host service uninstall    # remove service (stop + disable auto-start)
 ```
 
 ## Security notes (important)

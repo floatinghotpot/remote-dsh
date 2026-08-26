@@ -36,7 +36,7 @@
 
 | 组件 | 名称 | 职责 |
 |---|---|---|
-| CLI | `rdsh` | `rdsh serve`（局域网）/ `rdsh join <hub>`（公网）/ `rdsh hub ...` |
+| CLI | `rdsh` | `rdsh host serve`（局域网）/ `rdsh host join <hub>`（公网）/ `rdsh hub ...` |
 | 服务器 | rdsh-hub | 控制面（认证、host 注册、路由）+ 数据面（隧道汇聚转发） |
 | 开发机侧 | rdsh-gateway | 局域网认证网关 / 公网出站隧道端点；spawn `dsh web` |
 | 隧道协议 | rdsh-tunnel | 线协议：帧复用、心跳、背压 |
@@ -60,23 +60,23 @@
 - [x] 完整 DSH 体验：对话、跑工具、浏览文件、实时事件流
 - [x] 登录态保持 12 小时 —— 同一设备不用重复配对
 - [x] 未配对设备一律进不来（锁定在配对页）
-- [x] 一条命令启动：`npm i -g remote-dsh && rdsh serve`
-- [x] 可选 `--no-code`（完全可信的网络可跳过配对）
+- [x] 三步启动：`npm i -g remote-dsh` → `rdsh host setup lan` → `rdsh host serve`
+- [x] 可选免认证（`auth.mode: "none"`，仅完全可信网络）
 - [x] 干净退出（Ctrl+C / 关终端）—— 不留任何残留进程
 
 **M2 — 部署到租用的云服务器（如阿里云）（已实现）**
 - [x] HTTPS（TLS）—— 公网安全直连（用户自备证书）
 - [x] 部署在 apache2 / nginx 反代后面（反代终止 TLS；标准 443 端口 + 证书自动续期）
-- [x] 用户名 + 密码登录（`rdsh user add/passwd`；scrypt 哈希；改密后全部会话失效）
+- [x] 用户名 + 密码登录（`rdsh host user add/passwd`；scrypt 哈希；改密后全部会话失效）
 - [x] IP 白名单（配置文件 `allowFrom` 字段）加固
 - [x] 配置文件（默认 `~/.rdsh/host.json`，可用 `--config <path>` 或 `$RDSH_CONFIG` 指定）
 - [x] 作为系统服务运行（systemd / launchd —— 开机自启）
 
 **M3 — 经 hub 随时随地使用 DSH（已实现）**
-- [x] 从公网访问你的任意机器 —— 无需公网 IP、无需路由器设置（`rdsh join` 出站隧道）
+- [x] 从公网访问你的任意机器 —— 无需公网 IP、无需路由器设置（`rdsh host join` 出站隧道）
 - [x] 一个账号管理多台机器（host 归属账号；注册关闭，管理员建号防 bot）
 - [x] 网页门户：登录 / host 列表 / 进入 DSH / 改密 / 吊销（React）
-- [x] 配对码绑定（`rdsh join` 打印码 → 门户输码）或 `--token` 脚本化直填
+- [x] 加入流程（`rdsh host join <hub>` 交互粘贴 token，或 `--token` 脚本化直填）
 - [x] 吊销即时生效 —— host token 吊销后隧道立即断开、重连被拒
 - [x] 层 2 线协议（`packages/tunnel/PROTOCOL.md`）与层 1 对外 API 冻结
 - [x] hub 支持内置 TLS，或部署在 apache2 / nginx 后面（443 + 证书自动续期）

@@ -1,7 +1,7 @@
 # rdsh 使用手册（usage）
 
 > **日期**: 2026-08-23
-> **适用版本**: remote-dsh ≥ 0.2.0（M1 现状）；M2（云服务器直连）章节标注「规划中」
+> **适用版本**: remote-dsh ≥ 0.5.0（命令树 `rdsh host ...`，配置 `~/.rdsh/host.json`；旧 `config.json` 自动迁移）
 > **性质**: 用户/部署操作手册。设计背景见 `architecture.md`、`roadmap.md`
 
 ---
@@ -18,7 +18,8 @@ rdsh --version                # 验证
 ## 2. 快速开始（LAN，M1 现状）
 
 ```bash
-rdsh serve                    # 默认 0.0.0.0:8443，自动拉起 dsh web
+rdsh host setup lan           # 写 ~/.rdsh/host.json（mode: lan，默认 0.0.0.0:8443）
+rdsh host serve               # 前台常驻，自动拉起 dsh web
 ```
 
 终端显示：
@@ -33,36 +34,37 @@ rdsh serve: enter the pair code in the browser on your other device.
 
 同一 WiFi 的另一台设备浏览器打开 `http://<开发机IP>:8443` → 输入配对码 → 进入 DSH。
 
-### serve 参数（M1）
+### host setup 参数（0.5.0 起）
 
-| 参数 | 说明 |
-|---|---|
-| `--port <n>` | 监听端口（默认 8443；0 = OS 分配） |
-| `--host <ip>` | 绑定地址（默认 0.0.0.0） |
-| `--pair-code <code>` | 预置配对码（默认随机生成） |
-| `--session-ttl <sec>` | 会话 Cookie 有效期（默认 43200 = 12h） |
-| `--dsh <path>` | dsh 可执行文件路径（默认 PATH 查找） |
-| `--reset` | 轮换会话密钥，全部设备重新配对 |
-| `--no-code` | ⚠ 跳过配对（仅限完全可信网络） |
+| 命令 | 参数 | 说明 |
+|---|---|---|
+| `rdsh host setup lan` | `--port <n>` | 监听端口（默认 8443；0 = OS 分配） |
+| | `--pair-code <code>` | 预置配对码（默认随机生成） |
+| `rdsh host setup cloud` | `--tls-cert <path>` / `--tls-key <path>` | TLS 证书与私钥（必填） |
+| | `--port <n>` | 监听端口（默认 8443；0 = OS 分配） |
+| | `--allow-from <cidr,...>` | IP 白名单（默认空） |
+
+> 其余参数直接写 `~/.rdsh/host.json`（如 `host` 绑定地址、`sessionTtlSeconds` 会话时长、`dshPath`、`auth.mode: none`）。
 
 ## 3. 认证模式（M2 现状）
 
-`~/.rdsh/config.json` 的 `auth.mode` 决定：
+`~/.rdsh/host.json` 的 `auth.mode` 决定：
 
 | mode | 说明 | 适用 |
 |---|---|---|
 | `pair` | 配对码（M1 现状，终端显示） | LAN / 可信网络 |
 | `password` | 用户名 + 密码（M2 默认） | HTTPS 服务 / 公网 |
-| `none` | 免认证（--no-code 语义） | 完全可信网络 |
+| `none` | 免认证 | 完全可信网络 |
 
 > ⚠ **安全提示**：密码认证必须配合 HTTPS（TLS）使用 —— 明文 http 下输密码可被同网段嗅探。
 
 ## 4. 配置文件（M2 现状）
 
-默认 `~/.rdsh/config.json`；可用 `--config <path>` 或 `$RDSH_CONFIG` 指定（全局参数，serve/user/service 共享）。
+默认 `~/.rdsh/host.json`（`mode: lan|cloud|join`；旧 `config.json` 自动迁移）；可用 `--config <path>` 或 `$RDSH_CONFIG` 指定（全局参数，host serve/user/service 共享）。
 
 ```json
 {
+  "mode": "cloud",
   "host": "0.0.0.0",
   "port": 8443,
   "sessionTtlSeconds": 43200,
@@ -90,26 +92,26 @@ rdsh serve: enter the pair code in the browser on your other device.
 ```bash
 acme.sh --issue -d example.com --webroot /var/www/html
 acme.sh --install-cert -d example.com \
-  --reloadcmd "rdsh service restart"     # 续期后自动重载证书
+  --reloadcmd "rdsh host service restart"     # 续期后自动重载证书
 ```
 
-**原则**：持久配置一律进 config.json，CLI 只做操作（`--reset`、`user`、`service`）。
+**原则**：持久配置一律进 host.json，CLI 只做操作（`host setup`、`host user`、`host service`）。
 
 ## 5. 用户管理（M2 现状）
 
 ```bash
-rdsh user add admin        # 添加用户（交互设密码，scrypt 哈希存储）
-rdsh user passwd admin     # 改密码（改密 = 全部旧会话立即失效）
-rdsh user ls               # 列出用户
-rdsh user rm admin         # 删除用户
+rdsh host user add admin        # 添加用户（交互设密码，scrypt 哈希存储）
+rdsh host user passwd admin     # 改密码（改密 = 全部旧会话立即失效）
+rdsh host user ls               # 列出用户
+rdsh host user rm admin         # 删除用户
 ```
 
 ## 6. 服务化（M2 现状）
 
 ```bash
-rdsh service install       # 生成并安装 systemd unit（Linux）/ launchd plist（macOS）
-rdsh service status
-rdsh service uninstall
+rdsh host service install       # 生成并安装 systemd unit（Linux）/ launchd plist（macOS）
+rdsh host service status
+rdsh host service uninstall
 ```
 
 - 开机自启 + 崩溃自动重启（`Restart=on-failure`）
@@ -118,14 +120,15 @@ rdsh service uninstall
 
 ## 7. 云服务器部署（M2 现状）—— 三种用例
 
-> 公共前置：`npm i -g remote-dsh`；`rdsh user add admin`（设密码）；config `auth.mode: password`。
+> 公共前置：`npm i -g remote-dsh`；`rdsh host user add admin`（设密码）；`~/.rdsh/host.json` 中 `auth.mode: password`（也可先用 `rdsh host setup cloud --tls-cert <p> --tls-key <p>` 生成再手改）。
 > 三种部署方式任选其一（博客 02/03/04 分别详解）。
 
 ### 用例 1：rdsh 单独运行 + 内置 TLS（用户证书）
 
 ```jsonc
-// ~/.rdsh/config.json
+// ~/.rdsh/host.json
 {
+  "mode": "cloud",
   "port": 8443,
   "tls": { "cert": "/etc/rdsh/cert.pem", "key": "/etc/rdsh/key.pem" },   // 证书：acme.sh/云厂商/手动 openssl 自签
   "auth": { "mode": "password", "users": [{ "name": "admin", "passwordHash": "..." }] }
@@ -133,8 +136,8 @@ rdsh service uninstall
 ```
 
 ```bash
-rdsh service install                # 常驻（systemd/launchd）
-rdsh service status
+rdsh host service install                # 常驻（systemd/launchd）
+rdsh host service status
 ```
 
 - 证书来源任选：acme.sh 自动签发、云厂商证书、手动 `openssl req -x509 -newkey rsa:2048 -nodes -days 365 -keyout key.pem -out cert.pem -subj "/CN=example.com"`（自签浏览器需手动信任一次）
@@ -143,8 +146,9 @@ rdsh service status
 ### 用例 2：rdsh 在 apache2 后面（apache2 管 HTTPS，cron + acme.sh 自动续期）
 
 ```jsonc
-// ~/.rdsh/config.json
+// ~/.rdsh/host.json
 {
+  "mode": "cloud",
   "host": "127.0.0.1",               // 只监听本机，由 apache2 转发
   "port": 8443,
   "behindProxy": true,               // 信任外部 TLS + X-Forwarded-For
@@ -183,7 +187,7 @@ acme.sh --issue -d example.com --webroot /var/www/html
 ### 用例 3：rdsh 在 nginx 后面
 
 ```jsonc
-// ~/.rdsh/config.json —— 同用例 2（behindProxy: true，监听 127.0.0.1）
+// ~/.rdsh/host.json —— 同用例 2（mode: cloud，behindProxy: true，监听 127.0.0.1）
 ```
 
 ```nginx
@@ -359,7 +363,7 @@ rdsh hub service install|status|uninstall      # hub 服务化（rdsh-hub.servic
 |---|---|
 | DSH 无认证 | 本网关是唯一认证层 —— 别在无认证/`none` 模式下暴露到不可信网络 |
 | 明文 http | 仅限可信 LAN；公网必须 TLS |
-| `--no-code` | 等同把 DSH 暴露给同网段所有人（任意命令执行）—— 仅限完全可信网络 |
+| `auth.mode: "none"` | 等同把 DSH 暴露给同网段所有人（任意命令执行）—— 仅限完全可信网络 |
 | 密钥文件 | `~/.rdsh/secret.key`（0600）—— 泄露=会话可伪造 |
 | 改密 | 改密会自动轮换密钥使旧会话失效 —— 这是特性不是 bug |
 

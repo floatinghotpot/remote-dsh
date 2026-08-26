@@ -2,7 +2,7 @@
 
 [English](../en/02-03-cloud-nginx.md) | **中文**
 
-> 2026-08-23 · remote-dsh 0.3.0
+> 2026-08-23 · remote-dsh ≥ 0.5.0（命令与配置按 0.5.0 命令树）
 > 云服务器部署系列：② rdsh 单独 + 内置 TLS → ③ apache2 反代 → ④ nginx 反代（本文）
 
 ---
@@ -34,13 +34,14 @@ systemctl enable --now nginx
 
 ```bash
 npm install -g remote-dsh
-rdsh user add admin
+rdsh host user add admin
 ```
 
-`~/.rdsh/config.json`：
+`~/.rdsh/host.json`：
 
 ```jsonc
 {
+  "mode": "cloud",                  // 云服务器 HTTPS 网关
   "host": "127.0.0.1",          // 只监听本机
   "port": 8443,
   "behindProxy": true,          // 信任 nginx 终止的 TLS（允许 password + http）
@@ -52,8 +53,8 @@ rdsh user add admin
 ```
 
 ```bash
-rdsh service install
-rdsh service status            # active
+rdsh host service install
+rdsh host service status            # active
 ```
 
 ### ③ 证书（certbot 或 acme.sh 二选一）
@@ -126,9 +127,9 @@ nginx -t && systemctl reload nginx
 
 ## 运维与安全
 
-- 改密：`rdsh user passwd admin` → 全部已登录设备立即掉线
+- 改密：`rdsh host user passwd admin` → 全部已登录设备立即掉线
 - 登录限流按 **X-Forwarded-For 真实 IP** 计数（rdsh 只信任回环连接的 XFF）
-- 证书续期不动 rdsh（nginx reload 即可）；改证书路径才需要 `rdsh service restart`
+- 证书续期不动 rdsh（nginx reload 即可）；改证书路径才需要 `rdsh host service restart`
 - `host: 127.0.0.1` + 防火墙只开 443，保证 rdsh 无法被绕过反代直接访问
 
 ## 关于项目

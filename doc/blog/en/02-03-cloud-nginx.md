@@ -1,6 +1,6 @@
 # Put DSH behind nginx: shared port 443, auto-renewed HTTPS
 
-> 2026-08-23 · remote-dsh 0.3.0
+> 2026-08-23 · remote-dsh ≥ 0.5.0 (commands and config per the 0.5.0 command tree)
 > Cloud-server deployment series: ② rdsh standalone + built-in TLS → ③ Apache2 reverse proxy → ④ nginx reverse proxy (this post)
 
 **中文版**：[中文](../zh/02-03-cloud-nginx.md)
@@ -34,13 +34,14 @@ The rdsh side is **identical** to the [Apache2 post](../en/02-02-cloud-apache-ac
 
 ```bash
 npm install -g remote-dsh
-rdsh user add admin
+rdsh host user add admin
 ```
 
-`~/.rdsh/config.json`:
+`~/.rdsh/host.json`:
 
 ```jsonc
 {
+  "mode": "cloud",                  // cloud HTTPS gateway
   "host": "127.0.0.1",          // localhost only
   "port": 8443,
   "behindProxy": true,          // trust TLS terminated by nginx (allows password + http)
@@ -52,8 +53,8 @@ rdsh user add admin
 ```
 
 ```bash
-rdsh service install
-rdsh service status            # active
+rdsh host service install
+rdsh host service status            # active
 ```
 
 ### ③ Certificate (certbot or acme.sh)
@@ -126,9 +127,9 @@ nginx -t && systemctl reload nginx
 
 ## Ops & security
 
-- Change password: `rdsh user passwd admin` → all logged-in devices drop instantly
+- Change password: `rdsh host user passwd admin` → all logged-in devices drop instantly
 - Login rate limiting counts the **real IP from X-Forwarded-For** (rdsh only trusts XFF from loopback connections)
-- Cert renewal never touches rdsh (nginx reload suffices); only a cert-path change needs `rdsh service restart`
+- Cert renewal never touches rdsh (nginx reload suffices); only a cert-path change needs `rdsh host service restart`
 - `host: 127.0.0.1` + firewall (443 only) guarantees rdsh can't be reached around the proxy
 
 ## About the project

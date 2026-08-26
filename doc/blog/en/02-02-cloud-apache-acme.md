@@ -1,6 +1,6 @@
 # Let Apache2 handle DSH HTTPS: real domain + fully automatic cert renewal (acme.sh)
 
-> 2026-08-23 · remote-dsh 0.3.0
+> 2026-08-23 · remote-dsh ≥ 0.5.0 (commands and config per the 0.5.0 command tree)
 > Cloud-server deployment series: ② rdsh standalone + built-in TLS → ③ Apache2 reverse proxy (this post) → ④ nginx reverse proxy
 
 **中文版**：[中文](../zh/02-02-cloud-apache-acme.md)
@@ -41,13 +41,14 @@ systemctl restart apache2
 
 ```bash
 npm install -g remote-dsh
-rdsh user add admin
+rdsh host user add admin
 ```
 
-Write `~/.rdsh/config.json`:
+Write `~/.rdsh/host.json`:
 
 ```jsonc
 {
+  "mode": "cloud",                  // cloud HTTPS gateway
   "host": "127.0.0.1",          // localhost only — never exposed directly
   "port": 8443,
   "behindProxy": true,          // trust TLS terminated by the proxy (allows password + http)
@@ -60,8 +61,8 @@ Write `~/.rdsh/config.json`:
 ```
 
 ```bash
-rdsh service install           # systemd service (auto-start + auto-restart)
-rdsh service status            # active
+rdsh host service install           # systemd service (auto-start + auto-restart)
+rdsh host service status            # active
 ```
 
 ### ③ Issue a cert with acme.sh + auto-renew via cron
@@ -125,8 +126,8 @@ curl -i -s -N -H "Connection: Upgrade" -H "Upgrade: websocket" \
 ## Ops & security
 
 ```bash
-rdsh user passwd admin        # change password = all sessions die instantly
-rdsh service status           # rdsh status
+rdsh host user passwd admin        # change password = all sessions die instantly
+rdsh host service status           # rdsh status
 systemctl status apache2      # proxy status
 acme.sh --list                # cert expiry dates
 ```
@@ -134,7 +135,7 @@ acme.sh --list                # cert expiry dates
 - **X-Forwarded-For trusted from loopback only**: rdsh only honors XFF when the connection comes from 127.0.0.1; forging XFF directly on 8443 is useless (and 8443 isn't publicly open anyway)
 - Firewall: 443 only; `host: 127.0.0.1` guarantees rdsh can't be reached around the proxy
 - Login rate limiting (5 attempts / 10 min lock) counts the **real XFF IP** — anti brute-force
-- Cert renewal never touches rdsh — the proxy reloads config; only when you actually change cert paths do you edit config and `rdsh service restart`
+- Cert renewal never touches rdsh — the proxy reloads config; only when you actually change cert paths do you edit host.json and `rdsh host service restart`
 
 ## Next post
 

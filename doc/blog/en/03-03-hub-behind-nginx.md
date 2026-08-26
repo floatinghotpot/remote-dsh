@@ -16,7 +16,7 @@ The hub runs with `behindProxy: true` on 127.0.0.1; nginx terminates TLS.
 ## Architecture
 
 ```
-gateway(rdsh join) ──wss──► nginx:443 ──http/ws──► hub(127.0.0.1:8443, behindProxy)
+gateway(host join) ──wss──► nginx:443 ──http/ws──► hub(127.0.0.1:8443, behindProxy)
 browser ──https://hub.example.com──► nginx:443 ─────────────────┘
 ```
 
@@ -113,7 +113,7 @@ nginx -t && systemctl reload nginx
 
 - Cloud security group: allow **TCP 443** only
 - Browse `https://hub.example.com` → sign in → bind machines → enter DSH; a **live event stream means the WS proxy works**
-- Gateway side: `rdsh join https://hub.example.com`
+- Gateway side: `rdsh host join https://hub.example.com`
 
 ## Which of the three?
 

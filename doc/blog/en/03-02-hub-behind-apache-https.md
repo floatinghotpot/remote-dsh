@@ -20,7 +20,7 @@ The fix: **Apache2 terminates TLS in front; the hub steps back to 127.0.0.1 over
 ## Architecture
 
 ```
-gateway(rdsh join) ──wss──► apache2:443 ──http/ws──► hub(127.0.0.1:8443, behindProxy)
+gateway(host join) ──wss──► apache2:443 ──http/ws──► hub(127.0.0.1:8443, behindProxy)
 browser ──https://hub.example.com──► apache2:443 ─────────────────┘
 ```
 
@@ -104,7 +104,7 @@ systemctl reload apache2
 
 - Cloud security group: allow **TCP 443** only (no need to open 8443 — hub listens on localhost)
 - Browse `https://hub.example.com` → sign in → bind machines → enter DSH; a **live event stream means the WS proxy works**
-- Gateway side: `rdsh join https://hub.example.com` (the tunnel comes in on 443)
+- Gateway side: `rdsh host join https://hub.example.com` (the tunnel comes in on 443)
 
 ## Built-in TLS vs Apache2 front
 

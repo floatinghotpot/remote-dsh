@@ -2,7 +2,7 @@
 
 [English](../en/02-02-cloud-apache-acme.md) | **中文**
 
-> 2026-08-23 · remote-dsh 0.3.0
+> 2026-08-23 · remote-dsh ≥ 0.5.0（命令与配置按 0.5.0 命令树）
 > 云服务器部署系列：② rdsh 单独 + 内置 TLS → ③ apache2 反代（本文）→ ④ nginx 反代
 
 ---
@@ -41,13 +41,14 @@ systemctl restart apache2
 
 ```bash
 npm install -g remote-dsh
-rdsh user add admin
+rdsh host user add admin
 ```
 
-写 `~/.rdsh/config.json`：
+写 `~/.rdsh/host.json`：
 
 ```jsonc
 {
+  "mode": "cloud",                  // 云服务器 HTTPS 网关
   "host": "127.0.0.1",          // 只监听本机，绝不直接暴露公网
   "port": 8443,
   "behindProxy": true,          // 信任反代终止的 TLS（允许 password + http）
@@ -60,8 +61,8 @@ rdsh user add admin
 ```
 
 ```bash
-rdsh service install           # systemd 常驻（开机自启 + 崩溃重启）
-rdsh service status            # active
+rdsh host service install           # systemd 常驻（开机自启 + 崩溃重启）
+rdsh host service status            # active
 ```
 
 ### ③ acme.sh 签发证书 + cron 自动续期
@@ -125,8 +126,8 @@ curl -i -s -N -H "Connection: Upgrade" -H "Upgrade: websocket" \
 ## 运维与安全
 
 ```bash
-rdsh user passwd admin        # 改密 = 全部会话立即失效
-rdsh service status           # rdsh 运行状态
+rdsh host user passwd admin        # 改密 = 全部会话立即失效
+rdsh host service status           # rdsh 运行状态
 systemctl status apache2      # 反代状态
 acme.sh --list                # 证书到期时间
 ```
@@ -134,7 +135,7 @@ acme.sh --list                # 证书到期时间
 - **X-Forwarded-For 只信回环**：rdsh 只有确认连接来自 127.0.0.1 才采信 XFF，公网直连 8443 时伪造 XFF 无效（何况 8443 本来就没对外开）
 - 防火墙只开 443；`host: 127.0.0.1` 保证 rdsh 不能被绕过反代直接访问
 - 登录失败限流（5 次/10 分钟锁定）按 **XFF 真实 IP** 计数，防爆破
-- 证书续期不需要碰 rdsh —— 反代重载配置即可；真要换证书路径才改 config 并 `rdsh service restart`
+- 证书续期不需要碰 rdsh —— 反代重载配置即可；真要换证书路径才改 host.json 并 `rdsh host service restart`
 
 ## 下一篇
 

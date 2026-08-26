@@ -1,6 +1,6 @@
 # On the road, still reach your home DSH: VPN back into the LAN, pairing code works as usual
 
-> 2026-08-23 · remote-dsh 0.4.1
+> 2026-08-23 · remote-dsh ≥ 0.5.0 (commands per the 0.5.0 command tree)
 > Scenario series: LAN access — ① direct · **⑧ VPN back to the LAN (this post)**
 
 **中文版**：[中文](../zh/01-02-vpn-lan.md)
@@ -11,7 +11,7 @@
 
 You're traveling, but home (or the office) already has a **VPN** — WireGuard, OpenVPN, or a corporate VPN.
 
-Once the VPN is up, your device is **effectively on the LAN** (it gets an internal IP and can reach internal resources). Accessing that home DSH agent is then **plain LAN play**: `rdsh serve` + pairing code, nothing to change.
+Once the VPN is up, your device is **effectively on the LAN** (it gets an internal IP and can reach internal resources). Accessing that home DSH agent is then **plain LAN play**: `rdsh host setup lan` + `rdsh host serve`, pairing code works as usual.
 
 No public hub to set up, no ports exposed — **the VPN handles the link, rdsh handles the auth.**
 
@@ -29,7 +29,8 @@ No public hub to set up, no ports exposed — **the VPN handles the link, rdsh h
 
 ```bash
 # On the host running DSH at home
-rdsh serve
+rdsh host setup lan           # writes host.json (mode: lan, default 0.0.0.0:8443)
+rdsh host serve
 # Binds 0.0.0.0:8443 by default — reachable over the VPN subnet too
 ```
 
@@ -59,15 +60,15 @@ The pairing code is **only shown in the home host's terminal** — a physical tr
 
 | Option | Use case | Notes |
 |---|---|---|
-| **VPN backhaul (this post)** | Already have a VPN at work/home | Reuse existing infra, zero extra deployment; `rdsh serve` pairing works as-is |
-| [Public hub (`rdsh join`)](../en/03-01-hub-public.md) | No VPN | Outbound tunnel, no network config at all, one URL for all machines |
+| **VPN backhaul (this post)** | Already have a VPN at work/home | Reuse existing infra, zero extra deployment; `rdsh host serve` pairing works as-is |
+| [Public hub (`rdsh host join`)](../en/03-01-hub-public.md) | No VPN | Outbound tunnel, no network config at all, one URL for all machines |
 
 ## Notes
 
 - **Firewall**: allow 8443 (or another port) on the home host; make sure the VPN server/router doesn't block subnet-to-subnet traffic
 - **Latency**: VPN link quality matters; the live event stream (WebSocket) stays smooth within a few hundred ms
 - **Security**: rdsh's pairing code + HttpOnly session cookie are the auth layer; the VPN tunnel is the transport layer — keep both on
-- **Tested**: `rdsh serve` LAN access is verified by M1 acceptance; VPN client connectivity is a generic networking step — follow your VPN's config
+- **Tested**: `rdsh host serve` LAN access is verified by M1 acceptance; VPN client connectivity is a generic networking step — follow your VPN's config
 
 ## About the project
 

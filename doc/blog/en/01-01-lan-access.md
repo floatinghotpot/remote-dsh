@@ -1,6 +1,6 @@
 # Control your DSH agent on the dev machine from your phone / laptop / desktop, at home or in the office (LAN)
 
-> 2026-08-23 · remote-dsh 0.2.0
+> 2026-08-23 · remote-dsh ≥ 0.5.0 (commands per the 0.5.0 command tree)
 > Scenario series: ① LAN remote control (this post) → ② Cloud server → ③ Multi-machine / team → ④ Mobile
 
 **中文版**：[中文](../zh/01-01-lan-access.md)
@@ -32,7 +32,8 @@ Requirements: Node.js ≥ 22; `dsh` installed (in PATH) on the machine running t
 **① Start the remote-control service on the agent machine:**
 
 ```bash
-rdsh serve
+rdsh host setup lan           # writes ~/.rdsh/host.json (mode: lan, default 0.0.0.0:8443)
+rdsh host serve               # runs in the foreground, spawns dsh web
 ```
 
 The terminal shows:
@@ -78,10 +79,8 @@ The pairing code is **only shown in the agent machine's terminal** — it's a "p
 ## Tips
 
 ```bash
-rdsh serve --port 9000          # change port (default 8443)
-rdsh serve --pair-code 123456   # preset pairing code (e.g. put it in team docs)
-rdsh serve --reset              # rotate session keys: all devices must re-pair
-rdsh serve --no-code            # ⚠ skip pairing (trusted network ONLY!)
+rdsh host setup lan --port 9000          # change port (default 8443)
+rdsh host setup lan --pair-code 123456   # preset pairing code (e.g. put it in team docs)
 ```
 
 ## Troubleshooting
@@ -90,14 +89,14 @@ rdsh serve --no-code            # ⚠ skip pairing (trusted network ONLY!)
 |---|---|
 | Where's the pairing code? | Terminal line `pair code:`; a restart generates a new one |
 | Phone can't connect | Same Wi-Fi; allow incoming connections in macOS firewall; no AP isolation on router |
-| Port in use | Pick another with `--port` |
+| Port in use | Pick another with `rdsh host setup lan --port` |
 | Do I re-pair on a new device? | No — the code works for multiple devices; each has its own 12h session |
 
 ## Security notes (important)
 
 - The DSH agent **has no auth of its own** (it can run arbitrary commands) — **the rdsh gateway is the only auth layer**; never expose it unprotected
 - Plain-http on LAN is **by design**: the pairing code never crosses the network, cookies are HttpOnly signed sessions — low threat model
-- **Don't** expose `rdsh serve` directly to the internet (plain http, no TLS) — for cloud servers wait for M2 (HTTPS + username/password), or put a TLS reverse proxy in front yourself
+- **Don't** expose `rdsh host serve` (LAN mode, plain http) directly to the internet — for cloud servers use M2 (HTTPS + username/password), or put a TLS reverse proxy in front yourself
 
 ## Next: leaving home / the office?
 
@@ -108,7 +107,7 @@ Two scenarios, two paths:
 | Agent **deployed on a cloud server** (Alibaba Cloud ECS, etc.) | **M2 cloud-server direct access** | HTTPS + username/password + systemd service; direct public access ([cloud-server series ②/③/④](../en/02-01-cloud-single-tls.md)) |
 | Agent **on a home machine** (no public IP), accessing it remotely while traveling | **M3 hub tunnel** | The agent connects **outbound** to the hub only — no ports exposed ([⑤ public hub post](../en/03-01-hub-public.md)) |
 
-M2 (cloud-server direct access) is on the roadmap; the M3 hub tunnel follows.
+M2 (cloud-server direct access) and the M3 hub tunnel are both implemented — see the links above.
 
 ## About the project
 

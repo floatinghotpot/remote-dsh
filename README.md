@@ -40,7 +40,7 @@ hub and gateway only — clients never implement it.
 
 | Component | Name | Role |
 |---|---|---|
-| CLI | `rdsh` | `rdsh serve` (LAN) / `rdsh join <hub>` (public) / `rdsh hub ...` |
+| CLI | `rdsh` | `rdsh host serve` (LAN) / `rdsh host join <hub>` (public) / `rdsh hub ...` |
 | Server | rdsh-hub | control plane (auth, host registry, routing) + data plane (tunnel relay) |
 | Host agent | rdsh-gateway | LAN auth gateway / outbound tunnel endpoint; spawns `dsh web` |
 | Tunnel protocol | rdsh-tunnel | wire protocol: framing, multiplexing, heartbeat |
@@ -69,23 +69,23 @@ Implemented `[x]` · planned `[ ]` — from the user's point of view
 - [x] Full DSH experience: chat, run tools, browse files, live event stream
 - [x] Stay signed in for 12 hours — no re-pairing on the same device
 - [x] Unauthorized devices are locked out until they pair
-- [x] One command to start: `npm i -g remote-dsh && rdsh serve`
-- [x] Optional `--no-code` for fully trusted networks
+- [x] Three commands to start: `npm i -g remote-dsh` → `rdsh host setup lan` → `rdsh host serve`
+- [x] Optional no-auth mode (`auth.mode: "none"`, fully trusted networks only)
 - [x] Quit cleanly (Ctrl+C / close terminal) — no leftover processes
 
 **M2 — Run it on a rented cloud server (e.g. Alibaba Cloud) (implemented)**
 - [x] HTTPS (TLS) — secure direct access over the public internet (user-provided cert)
 - [x] Deploy behind Apache2 / nginx reverse proxy (TLS terminated by the proxy; standard port 443, auto-renewed certs)
-- [x] User/password sign-in (`rdsh user add/passwd`; scrypt-hashed; changing password revokes all sessions)
+- [x] User/password sign-in (`rdsh host user add/passwd`; scrypt-hashed; changing password revokes all sessions)
 - [x] IP allow-list (`allowFrom` in config file) for extra hardening
 - [x] Config file (default `~/.rdsh/host.json`, or `--config <path>` / `$RDSH_CONFIG`)
 - [x] Run as a system service (systemd / launchd — auto-start on boot)
 
 **M3 — Use DSH from anywhere via the hub (implemented)**
-- [x] Reach any of your machines from the internet — no public IP or router setup (`rdsh join` outbound tunnel)
+- [x] Reach any of your machines from the internet — no public IP or router setup (`rdsh host join` outbound tunnel)
 - [x] One account, manage multiple machines (hosts belong to the account; registration closed, admin-created users)
 - [x] Web portal to see and pick your machines (login / host list / enter DSH / change password / revoke)
-- [x] Pair-code binding (`rdsh join` prints a code; enter it in the portal) or `--token` for scripting
+- [x] Join flow (`rdsh host join <hub>` pastes the token from the portal, or `--token` for scripting)
 - [x] Instant revocation — a revoked host token drops the tunnel and blocks reconnects
 - [x] Frozen wire protocol (layer 2, `packages/tunnel/PROTOCOL.md`) and public API (layer 1)
 - [x] Run the hub with built-in TLS, or behind Apache2 / nginx (443, auto-renewed certs)

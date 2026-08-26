@@ -2,7 +2,7 @@
 
 [English](../en/01-01-lan-access.md) | **中文**
 
-> 2026-08-23 · remote-dsh 0.2.0
+> 2026-08-23 · remote-dsh ≥ 0.5.0（命令按 0.5.0 命令树）
 > 场景系列：① 局域网遥控（本文）→ ② 云服务器 → ③ 多机/团队 → ④ 移动端
 
 ---
@@ -32,7 +32,8 @@ npm install -g remote-dsh
 **① 开发机上启动遥控服务：**
 
 ```bash
-rdsh serve
+rdsh host setup lan           # 写 ~/.rdsh/host.json（mode: lan，默认 0.0.0.0:8443）
+rdsh host serve               # 前台常驻，自动拉起 dsh web
 ```
 
 终端显示：
@@ -78,10 +79,8 @@ rdsh serve: enter the pair code in the browser on your other device.
 ## 小技巧
 
 ```bash
-rdsh serve --port 9000          # 换端口（默认 8443）
-rdsh serve --pair-code 123456   # 预置配对码（可写进团队文档）
-rdsh serve --reset              # 轮换会话密钥：所有遥控设备重新配对
-rdsh serve --no-code            # ⚠ 跳过配对（仅限完全可信网络！）
+rdsh host setup lan --port 9000          # 换端口（默认 8443）
+rdsh host setup lan --pair-code 123456   # 预置配对码（可写进团队文档）
 ```
 
 ## 常见问题
@@ -90,14 +89,14 @@ rdsh serve --no-code            # ⚠ 跳过配对（仅限完全可信网络！
 |---|---|
 | 配对码在哪 | 开发机终端 `pair code:` 行；重启生成新码 |
 | 手机打不开 | 同一 WiFi；macOS 防火墙允许传入连接；路由器无 AP 隔离 |
-| 端口被占 | `--port` 换一个 |
+| 端口被占 | `rdsh host setup lan --port` 换一个 |
 | 换设备要重配吗 | 不用 —— 配对码有效期内多设备共用；12h 会话各自独立 |
 
 ## 安全说明（重要）
 
 - DSH 智能体**本身无认证**（能执行任意命令）—— **rdsh 网关是唯一的认证层**，别在无保护时暴露
 - 局域网明文 http 是**设计内**的：配对码不过网络、Cookie 是 HttpOnly 签名会话，威胁模型低
-- **不要**把 `rdsh serve` 直接暴露公网（明文 http）—— 云服务器场景等 M2（HTTPS + 用户名密码），或自己前置 TLS 反向代理
+- **不要**把 `rdsh host serve`（LAN 模式明文 http）直接暴露公网 —— 云服务器场景用 M2（HTTPS + 用户名密码），或自己前置 TLS 反向代理
 
 ## 下一步：出了家门 / 出了办公室怎么办？
 
@@ -108,7 +107,7 @@ rdsh serve --no-code            # ⚠ 跳过配对（仅限完全可信网络！
 | 智能体**部署在云服务器**（阿里云 ECS 等） | **M2 云服务器直连** | HTTPS + 用户名/密码 + systemd 常驻，公网直接访问（[云服务器部署系列 ②/③/④](../zh/02-01-cloud-single-tls.md)） |
 | 智能体**在家里的开发机**（无公网 IP），出差在外想访问 | **M3 hub 隧道** | 智能体只**出站**连接 hub，不暴露任何端口（[⑤ 公网 hub 篇](../zh/03-01-hub-public.md)） |
 
-M2 已在路线图中（云服务器直连），M3 hub 隧道紧随其后。
+M2（云服务器直连）与 M3（hub 隧道）均已实现 —— 见上方链接。
 
 ## 关于项目
 

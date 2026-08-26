@@ -20,7 +20,7 @@
 ## 架构
 
 ```
-gateway(rdsh join) ──wss──► apache2:443 ──http/ws──► hub(127.0.0.1:8443, behindProxy)
+gateway(host join) ──wss──► apache2:443 ──http/ws──► hub(127.0.0.1:8443, behindProxy)
 浏览器 ──https://hub.example.com──► apache2:443 ────────────────┘
 ```
 
@@ -104,7 +104,7 @@ systemctl reload apache2
 
 - 云安全组放行 **TCP 443**（8443 不用放——hub 只听本机）
 - 浏览器打开 `https://hub.example.com` → 登录 → 绑机器 → 进入 DSH，**实时事件流正常 = WebSocket 反代通了**
-- gateway 侧 `rdsh join https://hub.example.com`（隧道经 443 进来）
+- gateway 侧 `rdsh host join https://hub.example.com`（隧道经 443 进来）
 
 ## 和内置 TLS 方案怎么选
 

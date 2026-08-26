@@ -16,7 +16,7 @@ hub 同样开 `behindProxy: true` 监听 127.0.0.1，nginx 终止 TLS。
 ## 架构
 
 ```
-gateway(rdsh join) ──wss──► nginx:443 ──http/ws──► hub(127.0.0.1:8443, behindProxy)
+gateway(host join) ──wss──► nginx:443 ──http/ws──► hub(127.0.0.1:8443, behindProxy)
 浏览器 ──https://hub.example.com──► nginx:443 ─────────────────┘
 ```
 
@@ -113,7 +113,7 @@ nginx -t && systemctl reload nginx
 
 - 云安全组放行 **TCP 443**（8443 不用放）
 - 浏览器打开 `https://hub.example.com` → 登录 → 绑机器 → 进入 DSH，**实时事件流正常 = WS 反代通了**
-- gateway 侧 `rdsh join https://hub.example.com`
+- gateway 侧 `rdsh host join https://hub.example.com`
 
 ## 三篇选哪个？
 
