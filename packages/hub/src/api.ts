@@ -89,6 +89,10 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, runti
   const method = req.method ?? "GET";
 
   // ---- 认证端点 ----
+  if (path === "/api/capabilities" && method === "GET") {
+    await handleCapabilities(req, res, runtime);
+    return true;
+  }
   if (path === "/api/auth/login" && method === "POST") {
     await handleLogin(req, res, runtime);
     return true;
@@ -268,6 +272,19 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, runti
 
   writeError(res, 404, "NOT_FOUND", `no such endpoint: ${method} ${path}`);
   return true;
+}
+
+/** 公开客户端能力：注册开关/通道可用性（注册页、找回密码页显隐入口用，未认证）。 */
+async function handleCapabilities(_req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(
+    JSON.stringify({
+      registration: runtime.config.registration ?? "closed",
+      emailEnabled: runtime.config.email !== undefined,
+      smsEnabled: runtime.config.sms !== undefined,
+      captchaProvider: runtime.config.captcha?.provider ?? "arithmetic",
+    }),
+  );
 }
 
 async function handleLogin(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {

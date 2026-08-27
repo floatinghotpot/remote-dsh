@@ -6,7 +6,7 @@
  */
 import { useEffect, useState } from "react";
 import { api, ApiError, subscribeEvents } from "./api.ts";
-import type { HostInfo, JoinTokenInfo, CaptchaPayload, AccountInfo } from "./api.ts";
+import type { HostInfo, JoinTokenInfo, CaptchaPayload, AccountInfo, Capabilities } from "./api.ts";
 
 const REFRESH_KEY = "rdsh_refresh";
 
@@ -682,14 +682,25 @@ function ResetPasswordPage(): React.JSX.Element {
   const [code, setCode] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [sent, setSent] = useState(false);
+  const [cap, setCap] = useState<Capabilities | null>(null);
   const { err, run } = useError();
+
+  // sms 未配置 → 隐藏手机号通道（未登录，走公开 /api/capabilities）
+  useEffect(() => {
+    void api.capabilities().then((c) => {
+      setCap(c);
+      if (c.smsEnabled === false) setChannel("email");
+    }).catch(() => undefined);
+  }, []);
 
   return (
     <div style={{ maxWidth: 360, margin: "80px auto", padding: "0 16px", fontFamily: "system-ui, sans-serif" }}>
       <h1 style={{ fontSize: 20 }}>找回密码</h1>
       <div style={{ display: "flex", gap: 8, margin: "12px 0" }}>
         <button onClick={() => setChannel("email")} style={channel === "email" ? btnStyle() : btnStyle("ghost")}>邮箱</button>
-        <button onClick={() => setChannel("phone")} style={channel === "phone" ? btnStyle() : btnStyle("ghost")}>手机号</button>
+        {cap?.smsEnabled !== false && (
+          <button onClick={() => setChannel("phone")} style={channel === "phone" ? btnStyle() : btnStyle("ghost")}>手机号</button>
+        )}
       </div>
       {!sent ? (
         <>
@@ -999,7 +1010,16 @@ function RegisterPage(): React.JSX.Element {
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [captchaPayload, setCaptchaPayload] = useState<CaptchaPayload>({});
+  const [cap, setCap] = useState<Capabilities | null>(null);
   const { err, run } = useError();
+
+  // sms 未配置 → 隐藏手机号 tab（注册页未登录，走公开 /api/capabilities）
+  useEffect(() => {
+    void api.capabilities().then((c) => {
+      setCap(c);
+      if (c.smsEnabled === false) setChannel("email");
+    }).catch(() => undefined);
+  }, []);
 
   const submit = (): void => {
     void run(async () => {
@@ -1014,7 +1034,9 @@ function RegisterPage(): React.JSX.Element {
       <p style={{ color: "#666", fontSize: 13, marginBottom: 24 }}>注册即享 3 天试用（1 台机器），随时随地浏览器访问你的 DSH。</p>
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
         <button onClick={() => setChannel("email")} style={channel === "email" ? btnStyle() : btnStyle("ghost")}>邮箱</button>
-        <button onClick={() => setChannel("phone")} style={channel === "phone" ? btnStyle() : btnStyle("ghost")}>手机号</button>
+        {cap?.smsEnabled !== false && (
+          <button onClick={() => setChannel("phone")} style={channel === "phone" ? btnStyle() : btnStyle("ghost")}>手机号</button>
+        )}
       </div>
       {field(channel === "email" ? "邮箱地址" : "手机号（+86，11 位）", identifier, setIdentifier)}
       {field("密码（至少 8 位）", password, setPassword, "password")}

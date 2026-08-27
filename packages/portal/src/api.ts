@@ -30,6 +30,13 @@ export interface AccountInfo {
   planId: string | null;
 }
 
+export interface Capabilities {
+  registration: "open" | "closed";
+  emailEnabled: boolean;
+  smsEnabled: boolean;
+  captchaProvider: "arithmetic" | "none" | "aliyun";
+}
+
 /** 验证码载荷：arithmetic 用 captchaToken+captchaAnswer；aliyun 用 captchaVerifyParam。 */
 export type CaptchaPayload = Record<string, string>;
 
@@ -190,6 +197,9 @@ export const api = {
   },
   accountInfo(): Promise<AccountInfo> {
     return jsonFetch("/api/account");
+  },
+  capabilities(): Promise<Capabilities> {
+    return jsonFetch("/api/capabilities");
   },
 };
 

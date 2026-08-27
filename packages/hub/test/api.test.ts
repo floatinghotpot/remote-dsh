@@ -73,6 +73,15 @@ test("登录：成功 200 + Cookie + token；错误密码 401", async () => {
   assert.equal(bad.status, 401);
 });
 
+test("GET /api/capabilities：公开返回通道可用性（未认证可访问）", async () => {
+  const r = await get("/api/capabilities");
+  assert.equal(r.status, 200);
+  assert.equal(r.json.registration, "closed");
+  assert.equal(r.json.emailEnabled, false);
+  assert.equal(r.json.smsEnabled, false);
+  assert.equal(r.json.captchaProvider, "arithmetic");
+});
+
 test("GET /api/account：绑定状态回显（未认证 401 / 登录 200 含字段）", async () => {
   const unauth = await get("/api/account");
   assert.equal(unauth.status, 401);
