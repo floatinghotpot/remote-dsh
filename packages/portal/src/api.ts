@@ -35,6 +35,7 @@ export interface Capabilities {
   emailEnabled: boolean;
   smsEnabled: boolean;
   captchaProvider: "arithmetic" | "none" | "aliyun";
+  beian?: { icp?: string; icpUrl?: string; gongan?: string; gonganUrl?: string };
 }
 
 /** 验证码载荷：arithmetic 用 captchaToken+captchaAnswer；aliyun 用 captchaVerifyParam。 */

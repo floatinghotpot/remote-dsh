@@ -283,6 +283,7 @@ async function handleCapabilities(_req: IncomingMessage, res: ServerResponse, ru
       emailEnabled: runtime.config.email !== undefined,
       smsEnabled: runtime.config.sms !== undefined,
       captchaProvider: runtime.config.captcha?.provider ?? "arithmetic",
+      beian: runtime.config.beian ?? {},
     }),
   );
 }

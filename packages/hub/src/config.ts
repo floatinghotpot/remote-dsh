@@ -59,6 +59,18 @@ export interface BillingConfig {
 /** 计费默认值（config.billing 未提供时消费方取此）。 */
 export const BILLING_DEFAULTS = { trialDays: 3, trialHosts: 1, graceDays: 3, retentionDays: 30 } as const;
 
+/** 备案信息（portal 页脚展示；国内经营性网站合规必需，全部可选）。 */
+export interface BeianConfig {
+  /** ICP 备案号，如 "蜀ICP备XXXXXXXX号" */
+  icp?: string;
+  /** ICP 备案查询链接，默认 https://beian.miit.gov.cn */
+  icpUrl?: string;
+  /** 公安备案号，如 "川公网安备 XXXXXXXXXXXX号" */
+  gongan?: string;
+  /** 公安备案查询链接，默认 https://beian.mps.gov.cn */
+  gonganUrl?: string;
+}
+
 export interface HubConfig {
   host: string;
   port: number;
@@ -82,6 +94,8 @@ export interface HubConfig {
   registration?: "open" | "closed";
   /** 计费/套餐配置；缺省 → 无套餐（订阅功能禁用） */
   billing?: BillingConfig;
+  /** 备案信息（portal 页脚展示） */
+  beian?: BeianConfig;
 }
 
 export const DEFAULT_HUB_CONFIG_PATH = join(homedir(), ".rdsh", "hub.json");
@@ -156,6 +170,7 @@ export function normalizeHubConfig(raw: unknown, source = "config"): HubConfig {
   if (cfg.sms !== undefined) out.sms = normalizeSms(cfg.sms, source);
   if (cfg.registration !== undefined) out.registration = normalizeRegistration(cfg.registration, source);
   if (cfg.billing !== undefined) out.billing = normalizeBilling(cfg.billing, source);
+  if (cfg.beian !== undefined) out.beian = normalizeBeian(cfg.beian, source);
   out.security = normalizeSecurity(cfg.security, source);
   return out;
 }
@@ -302,6 +317,19 @@ function normalizeBilling(raw: unknown, source: string): BillingConfig {
     const p = b.payment as Record<string, unknown>;
     if (p.provider !== "mock" && p.provider !== "wechatpay" && p.provider !== "cmb") throw new Error(`${source}: "billing.payment.provider" must be mock|wechatpay|cmb`);
     out.payment = b.payment as PaymentConfig;
+  }
+  return out;
+}
+
+function normalizeBeian(raw: unknown, source: string): BeianConfig {
+  if (typeof raw !== "object" || raw === null) throw new Error(`${source}: "beian" must be an object`);
+  const b = raw as Record<string, unknown>;
+  const out: BeianConfig = {};
+  for (const key of ["icp", "icpUrl", "gongan", "gonganUrl"] as const) {
+    if (b[key] !== undefined) {
+      if (typeof b[key] !== "string") throw new Error(`${source}: "beian.${key}" must be a string`);
+      out[key] = b[key] as string;
+    }
   }
   return out;
 }

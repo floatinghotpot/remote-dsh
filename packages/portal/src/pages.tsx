@@ -202,6 +202,25 @@ function CaptchaGate({ onCaptcha }: { onCaptcha: (captcha: CaptchaPayload) => vo
   );
 }
 
+/** 页脚：备案信息（ICP/公安），来自 hub.json `beian` 配置（公开 /api/capabilities 下发）。 */
+function SiteFooter(): React.JSX.Element | null {
+  const [beian, setBeian] = useState<{ icp?: string; icpUrl?: string; gongan?: string; gonganUrl?: string } | null>(null);
+  useEffect(() => {
+    void api.capabilities().then((c) => setBeian(c.beian ?? null)).catch(() => undefined);
+  }, []);
+  if (beian === null || (beian.icp === undefined && beian.gongan === undefined)) return null;
+  return (
+    <footer style={{ textAlign: "center", marginTop: 24, fontSize: 12, color: "#999", lineHeight: 1.8 }}>
+      {beian.icp !== undefined && (
+        <div><a href={beian.icpUrl ?? "https://beian.miit.gov.cn"} target="_blank" rel="noreferrer" style={{ color: "#999", textDecoration: "none" }}>{beian.icp}</a></div>
+      )}
+      {beian.gongan !== undefined && (
+        <div><a href={beian.gonganUrl ?? "https://beian.mps.gov.cn"} target="_blank" rel="noreferrer" style={{ color: "#999", textDecoration: "none" }}>{beian.gongan}</a></div>
+      )}
+    </footer>
+  );
+}
+
 // ---- 登录 / 首次设密 ----
 
 function Login(): React.JSX.Element {
@@ -259,6 +278,7 @@ function Login(): React.JSX.Element {
           <a href="#" onClick={(e) => { e.preventDefault(); navigate("/register"); }} style={{ color: "#2563eb", fontSize: 13 }}>注册</a>
         </p>
       )}
+      <SiteFooter />
     </div>
   );
 }
@@ -1060,6 +1080,7 @@ function RegisterPage(): React.JSX.Element {
       <p style={{ marginTop: 12, textAlign: "center" }}>
         <a href="#" onClick={(e) => { e.preventDefault(); navigate("/login"); }} style={{ color: "#2563eb", fontSize: 13 }}>已有账号？登录</a>
       </p>
+      <SiteFooter />
     </div>
   );
 }
