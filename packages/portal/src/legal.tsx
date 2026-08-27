@@ -1,63 +1,36 @@
 /**
- * legal.tsx — 《用户协议》与《隐私政策》文档页（08-saas 开放注册合规前置）。
+ * legal.tsx — 《用户协议》《隐私政策》《产品介绍》文档页。
  *
- * 内容为**草稿模板（待法务审阅）**；正式上线前须由法务定稿后替换。
+ * 内容来自 doc/saas/*.md，由 scripts/build-legal.mjs 在构建期转成静态 HTML
+ * （生成 src/legal/generated.ts），此处只注入静态 HTML（dangerouslySetInnerHTML），
+ * 生产环境不做运行时 markdown 渲染。
  */
 import type React from "react";
+import { LEGAL } from "./legal/generated.ts";
 
-function LegalDoc({ title, updated, sections }: { title: string; updated: string; sections: Array<{ h: string; ps: string[] }> }): React.JSX.Element {
+function StaticDoc({ html }: { html: string }): React.JSX.Element {
   return (
     <div style={{ maxWidth: 720, margin: "40px auto", padding: "0 16px", fontFamily: "system-ui, sans-serif" }}>
       <a href="#" onClick={(e) => { e.preventDefault(); window.history.back(); }} style={{ color: "#2563eb", fontSize: 13 }}>← 返回</a>
-      <h1 style={{ fontSize: 20, marginTop: 12 }}>{title}</h1>
-      <p style={{ color: "#999", fontSize: 12 }}>更新日期：{updated}</p>
-      {sections.map((s, i) => (
-        <section key={i} style={{ marginTop: 16 }}>
-          <h2 style={{ fontSize: 15, marginBottom: 6 }}>{s.h}</h2>
-          {s.ps.map((p, j) => (
-            <p key={j} style={{ fontSize: 13, lineHeight: 1.7, color: "#333", marginBottom: 8 }}>{p}</p>
-          ))}
-        </section>
-      ))}
-      <p style={{ marginTop: 24, color: "#999", fontSize: 12 }}>本文档为草稿，仅供内部评审，正式生效版本以法务定稿为准。</p>
+      <div
+        className="rdsh-legal"
+        style={{ fontSize: 14, lineHeight: 1.7, color: "#333" }}
+        // 内容为构建期生成、来源可信，非用户输入
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
+      <style>{`.rdsh-legal h1{font-size:20px;margin:12px 0}.rdsh-legal h2{font-size:15px;margin:16px 0 6px}.rdsh-legal h3{font-size:14px;margin:12px 0 4px}.rdsh-legal p{margin:8px 0}.rdsh-legal ul{margin:8px 0;padding-left:20px}.rdsh-legal li{margin:4px 0}.rdsh-legal code{background:#f3f4f6;padding:1px 5px;border-radius:4px;font-size:13px}.rdsh-legal a{color:#2563eb}.rdsh-legal blockquote{color:#999;border-left:3px solid #e5e7eb;padding-left:12px;margin:12px 0}`}</style>
     </div>
   );
 }
 
 export function TermsPage(): React.JSX.Element {
-  return (
-    <LegalDoc
-      title="用户协议"
-      updated="2026-08-27"
-      sections={[
-        { h: "1. 服务说明", ps: ["remote-dsh（以下简称「本服务」）是托管式远程访问 hub，让您通过浏览器在任意设备访问您自有机器（或您自租云主机）上的 DeepSeek Harness（DSH）实例。本服务为订阅制，含免费试用。" ] },
-        { h: "2. 账号注册", ps: ["您可使用邮箱或 +86 手机号注册。注册即表示您同意本协议与《隐私政策》。您应保证所填信息真实、准确，并对账号下的全部行为负责。" ] },
-        { h: "3. 试用与订阅", ps: ["注册后自动进入 3 天试用（1 台机器配额）。试用或订阅到期后有 3 天宽限期，宽限期后降级为免费档（0 台在线）。订阅按套餐档位收费，价格以订阅时页面为准。" ] },
-        { h: "4. 用户行为规范", ps: ["您不得利用本服务从事任何违法、侵权或滥用行为，包括但不限于：传播违法内容、侵入他人系统、发送垃圾信息、规避配额或风控限制。违反者我们有权暂停或终止服务。" ] },
-        { h: "5. 内容与数据", ps: ["您机器上的数据归您所有。本服务仅提供连接与转发，不对您的内容进行存储或审查（但为合规与安全保留必要的连接日志）。" ] },
-        { h: "6. 服务变更与终止", ps: ["我们可能因维护、合规或经营原因调整或终止服务，并将提前通知。您可随时在「设置」中自助删除账号。" ] },
-        { h: "7. 免责声明", ps: ["本服务按「现状」提供，在法律允许范围内，我们对不可抗力、第三方服务中断或您自身原因造成的损失不承担责任。" ] },
-        { h: "8. 争议解决与法律适用", ps: ["本协议适用中华人民共和国法律。因本协议产生的争议，双方应友好协商；协商不成的，提交有管辖权的人民法院解决。" ] },
-      ]}
-    />
-  );
+  return <StaticDoc html={LEGAL.terms} />;
 }
 
 export function PrivacyPage(): React.JSX.Element {
-  return (
-    <LegalDoc
-      title="隐私政策"
-      updated="2026-08-27"
-      sections={[
-        { h: "1. 我们收集的信息", ps: ["账号信息：邮箱 / 手机号（用于注册、验证、登录与找回）、密码（仅存不可逆哈希）。", "设备信息：您接入的 host 名称与连接元数据。", "日志信息：访问与安全审计日志（IP、时间、事件），用于安全与风控。" ] },
-        { h: "2. 信息使用目的", ps: ["为您提供账号体系、远程访问、订阅计费与安全防护；向您发送验证码（邮箱/短信）与必要的服务通知。" ] },
-        { h: "3. 信息存储与保护", ps: ["数据存储于境内服务器。密码仅存哈希，验证码仅存哈希且一次性有效；日志脱敏并定期清理。" ] },
-        { h: "4. 第三方服务", ps: ["为提供服务，我们可能将必要信息提供给以下第三方：邮件服务（阿里云 DirectMail）、短信服务（阿里云短信）、人机验证（阿里云验证码）、支付通道（微信支付 / 招行聚合）。上述第三方仅按需获得最小必要信息。" ] },
-        { h: "5. 您的权利", ps: ["您可随时查看、更正您的账号信息，并在「设置」中绑定/解绑邮箱与手机号。您可自助删除账号（「设置」→「删除账号」），删除后个人数据将被清除，账务记录按法定要求保留必要字段。" ] },
-        { h: "6. 未成年人保护", ps: ["本服务面向有完全民事行为能力的用户。若您为未成年人，请在监护人指导下使用。" ] },
-        { h: "7. 政策更新", ps: ["本政策更新时，我们将在本页面公示。重大变更将另行通知。" ] },
-        { h: "8. 联系我们", ps: ["如对本政策有疑问，请通过官方渠道与我们联系。" ] },
-      ]}
-    />
-  );
+  return <StaticDoc html={LEGAL.privacy} />;
+}
+
+export function ProductPage(): React.JSX.Element {
+  return <StaticDoc html={LEGAL.product} />;
 }

@@ -9,7 +9,7 @@ import { api, ApiError, subscribeEvents } from "./api.ts";
 import type { HostInfo, JoinTokenInfo, CaptchaPayload, AccountInfo, Capabilities } from "./api.ts";
 import { useT, getLang } from "./i18n.ts";
 import type { T } from "./i18n.ts";
-import { TermsPage, PrivacyPage } from "./legal.tsx";
+import { TermsPage, PrivacyPage, ProductPage } from "./legal.tsx";
 
 const REFRESH_KEY = "rdsh_refresh";
 
@@ -38,6 +38,7 @@ export function App(): React.JSX.Element {
   if (path === "/register") return <RegisterPage />;
   if (path === "/terms") return <TermsPage />;
   if (path === "/privacy") return <PrivacyPage />;
+  if (path === "/product") return <ProductPage />;
   if (path === "/verify") return <VerifyPage />;
   if (path === "/billing") return <BillingPage />;
   if (path === "/settings/password") return <PasswordPage />;
@@ -285,9 +286,7 @@ function SiteFooter(): React.JSX.Element | null {
   if (site?.name !== undefined) {
     nav.push(site.url !== undefined ? <a href={site.url} target="_blank" rel="noreferrer" style={link}>{site.name}</a> : <span>{site.name}</span>);
   }
-  if (site?.productUrl !== undefined) {
-    nav.push(<a href={site.productUrl} target="_blank" rel="noreferrer" style={link}>{t("产品介绍")}</a>);
-  }
+  nav.push(legalLink(site?.productUrl, "/product", t("产品介绍"), link));
   nav.push(legalLink(site?.termsUrl, "/terms", t("用户协议"), link));
   nav.push(legalLink(site?.privacyUrl, "/privacy", t("隐私政策"), link));
 

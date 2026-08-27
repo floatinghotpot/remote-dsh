@@ -9,7 +9,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "vite build",
+    "build": "node scripts/build-legal.mjs && vite build",
     "dev": "vite",
     "test": "vitest run --passWithNoTests"
   },
