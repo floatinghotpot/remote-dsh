@@ -255,9 +255,9 @@ function Login(): React.JSX.Element {
 
   return (
     <div style={{ maxWidth: 360, margin: "80px auto", padding: "0 16px", fontFamily: "system-ui, sans-serif" }}>
-      <h1 style={{ fontSize: 20, marginBottom: 4 }}>rdsh · 你的机器，随处可达</h1>
+      <h1 style={{ fontSize: 20, marginBottom: 4 }}>rdsh · 你的 AI 智能体，随处可达</h1>
       <p style={{ color: "#666", fontSize: 13, marginBottom: 24 }}>
-        {totpPending !== null ? "输入你的两步验证码（TOTP）" : isFirst ? "首次登录：设置你的密码" : "登录后访问你的 DSH 智能体"}
+        {totpPending !== null ? "输入你的两步验证码（TOTP）" : isFirst ? "首次登录：设置你的密码" : "远程指挥你的 DeepSeek Harness 智能体，只需使用浏览器，任意设备、随时、随地"}
       </p>
       {totpPending !== null ? (
         field("验证码", totpCode, setTotpCode)
@@ -531,7 +531,7 @@ function AccountPage(): React.JSX.Element {
         badge={<Badge ok={info?.totpEnabled === true} text={info?.totpEnabled ? "已开启" : "未开启"} />}
         onClick={() => navigate("/settings/2fa")}
       />
-      <SettingRow label="删除账号" desc="立即断开全部机器并清除个人数据，不可恢复" danger onClick={() => navigate("/settings/danger")} />
+      <SettingRow label="删除账号" desc="立即断开全部主机并清除个人数据，不可恢复" danger onClick={() => navigate("/settings/danger")} />
     </Shell>
   );
 }
@@ -684,7 +684,7 @@ function DangerZonePage(): React.JSX.Element {
       {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
       <Card title="删除账号（不可恢复）">
         <p style={{ fontSize: 13, color: "#6b7280", marginTop: 0 }}>
-          删除后将立即断开全部机器并清除个人数据（账务记录保留），且不可恢复。请谨慎操作。
+          删除后将立即断开全部主机并清除个人数据（账务记录保留），且不可恢复。请谨慎操作。
         </p>
         {field("输入密码以确认", deletePw, setDeletePw, "password")}
         <button
@@ -810,7 +810,7 @@ function HostsPage(): React.JSX.Element {
   };
 
   return (
-    <Shell title="rdsh · 我的机器" onLogout={logout}>
+    <Shell title="rdsh · 我的主机" onLogout={logout}>
       {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
       <div style={{ marginBottom: 16 }}>
         <button onClick={() => navigate("/add-host")} style={btnStyle()}>添加主机 / 接入 token</button>
@@ -819,7 +819,7 @@ function HostsPage(): React.JSX.Element {
       {loading ? (
         <p style={{ color: "#666" }}>加载中…</p>
       ) : hosts.length === 0 ? (
-        <p style={{ color: "#666" }}>还没有绑定机器 —— 用上面的“绑定新机器”接入你的第一台 DSH。</p>
+        <p style={{ color: "#666" }}>还没有接入主机 —— 用上面的「添加主机」接入你的第一台 DSH。</p>
       ) : (
         <div>
           {hosts.map((h) => {
@@ -938,7 +938,7 @@ function AddHostPage(): React.JSX.Element {
       </div>
       {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
       <div style={{ border: "1px solid #ccc", borderRadius: 8, padding: 16, marginBottom: 16 }}>
-        {field("机器名（可选，默认取主机 hostname）", name, setName)}
+        {field("主机名（可选，默认取本机 hostname）", name, setName)}
         <label style={{ display: "block", marginBottom: 12, fontSize: 13 }}>
           <input type="checkbox" checked={service} onChange={(e) => setService(e.target.checked)} /> 常驻服务（服务器 7×24）
         </label>
@@ -963,7 +963,7 @@ function AddHostPage(): React.JSX.Element {
             <button onClick={() => copy(generated.command)} style={btnStyle()}>复制命令</button>
             <button onClick={() => copy(generated.token)} style={btnStyle("ghost")}>复制 token</button>
           </div>
-          <p style={{ fontSize: 12, color: "#666", marginBottom: 0 }}>在机器终端粘贴执行（未装 rdsh 时先 <code>npm i -g remote-dsh</code>）。</p>
+          <p style={{ fontSize: 12, color: "#666", marginBottom: 0 }}>在主机终端粘贴执行（未装 rdsh 时先 <code>npm i -g remote-dsh</code>）。</p>
         </div>
       )}
 
@@ -1056,7 +1056,7 @@ function RegisterPage(): React.JSX.Element {
   return (
     <div style={{ maxWidth: 360, margin: "80px auto", padding: "0 16px", fontFamily: "system-ui, sans-serif" }}>
       <h1 style={{ fontSize: 20, marginBottom: 4 }}>注册 rdsh</h1>
-      <p style={{ color: "#666", fontSize: 13, marginBottom: 24 }}>注册即享 3 天试用（1 台机器），随时随地浏览器访问你的 DSH。</p>
+      <p style={{ color: "#666", fontSize: 13, marginBottom: 24 }}>注册即享 3 天试用（1 台主机），随时随地浏览器访问你的 DSH。</p>
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
         <button onClick={() => setChannel("email")} style={channel === "email" ? btnStyle() : btnStyle("ghost")}>邮箱</button>
         {cap?.smsEnabled !== false && (
