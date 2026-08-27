@@ -219,6 +219,11 @@ const EN: Record<string, string> = {
   "确认新密码": "Confirm new password",
   "两次输入不一致": "Passwords do not match",
   "密码已修改，全部会话已失效 —— 即将跳转登录…": "Password changed — all sessions revoked. Redirecting to sign in…",
+
+  // ---- 页脚 ----
+  "产品介绍": "Product",
+  "用户协议": "Terms of Service",
+  "隐私政策": "Privacy Policy",
 };
 
 function detectLang(): Lang {

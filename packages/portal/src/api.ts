@@ -36,6 +36,7 @@ export interface Capabilities {
   smsEnabled: boolean;
   captchaProvider: "arithmetic" | "none" | "aliyun";
   beian?: { icp?: string; icpUrl?: string; gongan?: string; gonganUrl?: string };
+  site?: { name?: string; url?: string; productUrl?: string };
 }
 
 /** 验证码载荷：arithmetic 用 captchaToken+captchaAnswer；aliyun 用 captchaVerifyParam。 */

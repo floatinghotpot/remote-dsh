@@ -263,19 +263,35 @@ function CaptchaGate({ onCaptcha }: { onCaptcha: (captcha: CaptchaPayload) => vo
 
 /** 页脚：备案信息（ICP/公安），来自 hub.json `beian` 配置（公开 /api/capabilities 下发）。 */
 function SiteFooter(): React.JSX.Element | null {
-  const [beian, setBeian] = useState<{ icp?: string; icpUrl?: string; gongan?: string; gonganUrl?: string } | null>(null);
+  const { t } = useT();
+  const [cap, setCap] = useState<Capabilities | null>(null);
   useEffect(() => {
-    void api.capabilities().then((c) => setBeian(c.beian ?? null)).catch(() => undefined);
+    void api.capabilities().then(setCap).catch(() => undefined);
   }, []);
-  if (beian === null || (beian.icp === undefined && beian.gongan === undefined)) return null;
+  if (cap === null) return null;
+
+  const site = cap.site;
+  const beian = cap.beian;
+  const link: React.CSSProperties = { color: "#999", textDecoration: "none" };
+  const nav: React.ReactNode[] = [];
+  if (site?.name !== undefined) {
+    nav.push(site.url !== undefined ? <a href={site.url} target="_blank" rel="noreferrer" style={link}>{site.name}</a> : <span>{site.name}</span>);
+  }
+  if (site?.productUrl !== undefined) {
+    nav.push(<a href={site.productUrl} target="_blank" rel="noreferrer" style={link}>{t("产品介绍")}</a>);
+  }
+  nav.push(<a href="#" onClick={(e) => { e.preventDefault(); navigate("/terms"); }} style={link}>{t("用户协议")}</a>);
+  nav.push(<a href="#" onClick={(e) => { e.preventDefault(); navigate("/privacy"); }} style={link}>{t("隐私政策")}</a>);
+
   return (
     <footer style={{ textAlign: "center", marginTop: 24, fontSize: 12, color: "#999", lineHeight: 1.8 }}>
-      {beian.icp !== undefined && (
-        <div><a href={beian.icpUrl ?? "https://beian.miit.gov.cn"} target="_blank" rel="noreferrer" style={{ color: "#999", textDecoration: "none" }}>{beian.icp}</a></div>
-      )}
-      {beian.gongan !== undefined && (
-        <div><a href={beian.gonganUrl ?? "https://beian.mps.gov.cn"} target="_blank" rel="noreferrer" style={{ color: "#999", textDecoration: "none" }}>{beian.gongan}</a></div>
-      )}
+      <div style={{ display: "flex", justifyContent: "center", flexWrap: "wrap" }}>
+        {nav.map((node, i) => (
+          <span key={i} style={{ whiteSpace: "nowrap" }}>{i > 0 ? " | " : ""}{node}</span>
+        ))}
+      </div>
+      {beian?.icp !== undefined && <div><a href={beian.icpUrl ?? "https://beian.miit.gov.cn"} target="_blank" rel="noreferrer" style={link}>{beian.icp}</a></div>}
+      {beian?.gongan !== undefined && <div><a href={beian.gonganUrl ?? "https://beian.mps.gov.cn"} target="_blank" rel="noreferrer" style={link}>{beian.gongan}</a></div>}
     </footer>
   );
 }

@@ -71,6 +71,16 @@ export interface BeianConfig {
   gonganUrl?: string;
 }
 
+/** 站点信息（portal 页脚导航：公司名/官网 + 产品介绍页）。 */
+export interface SiteConfig {
+  /** 公司名（页脚展示；无 url 时纯文本） */
+  name?: string;
+  /** 公司官网 URL */
+  url?: string;
+  /** 产品介绍页 URL */
+  productUrl?: string;
+}
+
 export interface HubConfig {
   host: string;
   port: number;
@@ -96,6 +106,8 @@ export interface HubConfig {
   billing?: BillingConfig;
   /** 备案信息（portal 页脚展示） */
   beian?: BeianConfig;
+  /** 站点信息（portal 页脚导航） */
+  site?: SiteConfig;
 }
 
 export const DEFAULT_HUB_CONFIG_PATH = join(homedir(), ".rdsh", "hub.json");
@@ -171,6 +183,7 @@ export function normalizeHubConfig(raw: unknown, source = "config"): HubConfig {
   if (cfg.registration !== undefined) out.registration = normalizeRegistration(cfg.registration, source);
   if (cfg.billing !== undefined) out.billing = normalizeBilling(cfg.billing, source);
   if (cfg.beian !== undefined) out.beian = normalizeBeian(cfg.beian, source);
+  if (cfg.site !== undefined) out.site = normalizeSite(cfg.site, source);
   out.security = normalizeSecurity(cfg.security, source);
   return out;
 }
@@ -329,6 +342,19 @@ function normalizeBeian(raw: unknown, source: string): BeianConfig {
     if (b[key] !== undefined) {
       if (typeof b[key] !== "string") throw new Error(`${source}: "beian.${key}" must be a string`);
       out[key] = b[key] as string;
+    }
+  }
+  return out;
+}
+
+function normalizeSite(raw: unknown, source: string): SiteConfig {
+  if (typeof raw !== "object" || raw === null) throw new Error(`${source}: "site" must be an object`);
+  const s = raw as Record<string, unknown>;
+  const out: SiteConfig = {};
+  for (const key of ["name", "url", "productUrl"] as const) {
+    if (s[key] !== undefined) {
+      if (typeof s[key] !== "string") throw new Error(`${source}: "site.${key}" must be a string`);
+      out[key] = s[key] as string;
     }
   }
   return out;

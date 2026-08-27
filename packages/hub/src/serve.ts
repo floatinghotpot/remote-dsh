@@ -70,6 +70,7 @@ export async function serveHub(opts: HubServeOptions): Promise<void> {
     registration: config.registration,
     billing: config.billing,
     beian: config.beian,
+    site: config.site,
   });
 
   const scheme = tls ? "https" : "http";
