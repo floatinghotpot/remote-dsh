@@ -83,6 +83,8 @@ export interface SiteConfig {
   termsUrl?: string;
   /** 隐私政策 URL；配置后覆盖内置 /portal/privacy */
   privacyUrl?: string;
+  /** 页脚信息行（地址/版权/许可等，按序渲染；href 可选外链）。 */
+  footer?: Array<{ text: string; href?: string }>;
 }
 
 export interface HubConfig {
@@ -360,6 +362,20 @@ function normalizeSite(raw: unknown, source: string): SiteConfig {
       if (typeof s[key] !== "string") throw new Error(`${source}: "site.${key}" must be a string`);
       out[key] = s[key] as string;
     }
+  }
+  if (s.footer !== undefined) {
+    if (!Array.isArray(s.footer)) throw new Error(`${source}: "site.footer" must be an array`);
+    out.footer = (s.footer as unknown[]).map((item, i) => {
+      if (typeof item !== "object" || item === null) throw new Error(`${source}: site.footer[${i}] must be an object`);
+      const f = item as Record<string, unknown>;
+      if (typeof f.text !== "string" || f.text.length === 0) throw new Error(`${source}: site.footer[${i}].text must be a non-empty string`);
+      const row: { text: string; href?: string } = { text: f.text };
+      if (f.href !== undefined) {
+        if (typeof f.href !== "string") throw new Error(`${source}: site.footer[${i}].href must be a string`);
+        row.href = f.href;
+      }
+      return row;
+    });
   }
   return out;
 }

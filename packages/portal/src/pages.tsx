@@ -281,7 +281,6 @@ function SiteFooter(): React.JSX.Element | null {
   if (cap === null) return null;
 
   const site = cap.site;
-  const beian = cap.beian;
   const link: React.CSSProperties = { color: "#999", textDecoration: "none" };
   const nav: React.ReactNode[] = [];
   if (site?.name !== undefined) {
@@ -295,11 +294,19 @@ function SiteFooter(): React.JSX.Element | null {
     <footer style={{ textAlign: "center", marginTop: 24, fontSize: 12, color: "#999", lineHeight: 1.8 }}>
       <div style={{ display: "flex", justifyContent: "center", flexWrap: "wrap" }}>
         {nav.map((node, i) => (
-          <span key={i} style={{ whiteSpace: "nowrap" }}>{i > 0 ? " | " : ""}{node}</span>
+          <span key={i} style={{ whiteSpace: "nowrap", display: "inline-flex", alignItems: "center" }}>
+            {i > 0 && <span style={{ margin: "0 8px", color: "#999" }}>|</span>}
+            {node}
+          </span>
         ))}
       </div>
-      {beian?.icp !== undefined && <div><a href={beian.icpUrl ?? "https://beian.miit.gov.cn"} target="_blank" rel="noreferrer" style={link}>{beian.icp}</a></div>}
-      {beian?.gongan !== undefined && <div><a href={beian.gonganUrl ?? "https://beian.mps.gov.cn"} target="_blank" rel="noreferrer" style={link}>{beian.gongan}</a></div>}
+      {(site?.footer ?? []).map((f, i) => (
+        <div key={i}>
+          {f.href !== undefined
+            ? <a href={f.href} target="_blank" rel="noreferrer" style={link}>{f.text}</a>
+            : f.text}
+        </div>
+      ))}
     </footer>
   );
 }
@@ -331,7 +338,7 @@ function LandingPage(): React.JSX.Element {
 
       <div style={{ textAlign: "center", padding: "48px 0 40px" }}>
         <h1 style={{ fontSize: 28, margin: "0 0 10px" }}>{t("你的 AI 智能体，随处可达")}</h1>
-        <p style={{ color: "#666", fontSize: 15, margin: "0 0 28px" }}>{t("免部署 · 免公网 IP · 免装客户端")}</p>
+        <p style={{ color: "#666", fontSize: 15, margin: "0 0 28px" }}>{t("免公网 IP · 免装客户端")}</p>
         <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
           {authed ? (
             <button onClick={() => navigate("/hosts")} style={{ ...btnStyle(), fontSize: 16, padding: "10px 26px" }}>{t("进入控制台")}</button>

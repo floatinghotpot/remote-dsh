@@ -2,7 +2,7 @@
  * build-legal.mjs — 构建期把 doc/saas/*.md 转成静态 HTML，生成 src/legal/generated.ts。
  *
  * 目的：生产环境不做运行时 markdown 渲染（性能），构建时一次性转 HTML，portal 只注入静态 HTML。
- * 支持：#/##/### 标题、- 列表、段落、> 引用、`code`、[text](url) 链接。
+ * 支持：#/##/### 标题、- 列表、段落、> 引用、**加粗**、*斜体*、`code`、[text](url) 链接。
  */
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -19,6 +19,9 @@ function escapeHtml(s) {
 
 function inline(s) {
   let out = escapeHtml(s);
+  // 加粗/斜体必须先于 code/链接匹配（** 优先于 *，避免半截匹配）
+  out = out.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  out = out.replace(/\*([^*]+)\*/g, "<em>$1</em>");
   out = out.replace(/`([^`]+)`/g, "<code>$1</code>");
   out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
   return out;
