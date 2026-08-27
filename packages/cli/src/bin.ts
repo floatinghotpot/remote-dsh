@@ -52,7 +52,7 @@ Usage:
   rdsh host leave             Unregister this machine from the hub
   rdsh host user ...          Manage gateway users (LAN/cloud password auth)
   rdsh hub serve              Start the hub server (cloud, multi-host)
-  rdsh hub user add|passwd|rm|ls|unlock|reset-2fa
+  rdsh hub user add|passwd|rm|ls|unlock|reset-2fa|ban|unban
   rdsh hub audit ls           Audit log (login/2FA/sharing/email events)
   rdsh hub host ls|revoke     List / revoke hosts (revoke drops the tunnel instantly)
   rdsh hub service ...        Run hub as a systemd/launchd service
@@ -89,7 +89,7 @@ Run the hub server or manage it.
 
 Subcommands:
   serve                 Start the hub server (TLS required)
-  user add|passwd|rm|ls|unlock|reset-2fa   Manage users (admin creates accounts; unlock / reset-2fa)
+  user add|passwd|rm|ls|unlock|reset-2fa|ban|unban   Manage users (admin creates accounts; unlock / reset-2fa / ban / unban)
   audit ls [--user <n>] [--event <e>] [--since 24h|7d]   Query the audit log
   host ls|revoke        List / revoke hosts (revoke drops the tunnel instantly)
   service install|status|uninstall   Run hub as a systemd/launchd service
@@ -649,8 +649,26 @@ async function handleHubUser(args: string[], configPath?: string): Promise<void>
         console.log(`rdsh: 2FA reset for '${name}' (their sessions revoked)`);
         return;
       }
+      case "ban": {
+        const name = args[1];
+        if (name === undefined) throw new Error("usage: rdsh hub user ban <name>");
+        const user = db.getUserByName(name);
+        if (user === null) throw new Error(`user '${name}' not found`);
+        db.setAccountStatus(user.id, "banned");
+        console.log(`rdsh: user '${name}' banned (login + host access blocked)`);
+        return;
+      }
+      case "unban": {
+        const name = args[1];
+        if (name === undefined) throw new Error("usage: rdsh hub user unban <name>");
+        const user = db.getUserByName(name);
+        if (user === null) throw new Error(`user '${name}' not found`);
+        db.setAccountStatus(user.id, "active");
+        console.log(`rdsh: user '${name}' unbanned (plan restored)`);
+        return;
+      }
       default:
-        throw new Error("usage: rdsh hub user add|passwd|ls|rm|unlock|reset-2fa");
+        throw new Error("usage: rdsh hub user add|passwd|ls|rm|unlock|reset-2fa|ban|unban");
     }
   } finally {
     db.close();

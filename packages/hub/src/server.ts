@@ -21,10 +21,11 @@ import type { WebSocket } from "ws";
 import { sha256 } from "./jwt.ts";
 import { HubDb } from "./db.ts";
 import { HubAuth } from "./auth.ts";
-import { authenticate, clientIp, handleApi, writeError } from "./api.ts";
+import { authenticate, clientIp, handleApi, writeError, sweepBilling } from "./api.ts";
 import type { HubRuntime } from "./api.ts";
 import type { EmailConfig } from "./email/types.ts";
-import type { CaptchaConfig, SecurityConfig } from "./config.ts";
+import type { SmsConfig } from "./sms/types.ts";
+import type { CaptchaConfig, SecurityConfig, BillingConfig } from "./config.ts";
 import { TunnelConn, TunnelRegistry } from "./tunnel.ts";
 import { EventHub, createEventsServer } from "./events.ts";
 import { handleRelay, handleRelayUpgrade } from "./relay.ts";
@@ -45,6 +46,10 @@ export interface HubServerOptions {
   email?: EmailConfig;
   captcha?: CaptchaConfig;
   security?: SecurityConfig;
+  /** 短信/注册/计费（08-saas，serve.ts 从 hub.json 传入）。 */
+  sms?: SmsConfig;
+  registration?: "open" | "closed";
+  billing?: BillingConfig;
 }
 
 export interface RunningHub {
@@ -93,12 +98,19 @@ export async function startHubServer(opts: HubServerOptions): Promise<RunningHub
       email: opts.email,
       captcha: opts.captcha,
       security: opts.security,
+      sms: opts.sms,
+      registration: opts.registration,
+      billing: opts.billing,
     },
     db: opts.db,
     auth: opts.auth,
     tunnels: opts.tunnels,
     events: opts.events,
   };
+
+  // 计费状态机定时扫描（每分钟）：trial/subscribed 到期 → grace → free
+  sweepBilling(runtime);
+  setInterval(() => sweepBilling(runtime), 60 * 1000).unref();
 
   const requestHandler = (req: IncomingMessage, res: ServerResponse): void => {
     void handleHttp(req, res, runtime, opts.portalDir).catch((err) => {

@@ -6,16 +6,21 @@
  */
 import { randomInt, randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { HubConfig } from "./config.ts";
-import type { HubDb } from "./db.ts";
+import type { HubConfig, PlanSpec } from "./config.ts";
+import { BILLING_DEFAULTS } from "./config.ts";
+import type { HubDb, UserRow } from "./db.ts";
 import type { HubAuth } from "./auth.ts";
-import { createLoginLimiter, hashPassword } from "./auth.ts";
+import { createLoginLimiter, hashPassword, verifyPassword } from "./auth.ts";
 import type { TunnelRegistry } from "./tunnel.ts";
 import type { EventHub } from "./events.ts";
 import { randomToken, sha256 } from "./jwt.ts";
 import { createEmailSender } from "./email/index.ts";
 import type { EmailSender } from "./email/index.ts";
+import { createSmsSender } from "./sms/index.ts";
+import type { SmsSender } from "./sms/index.ts";
+import { createPaymentProvider, verifyWechatCallback, decryptWechatResource } from "./billing/index.ts";
 import { createChallenge, verifyChallenge } from "./captcha.ts";
+import { verifyCaptchaParam } from "./captcha/aliyun.ts";
 import { DailyWindowLimiter } from "./ratelimit.ts";
 
 export const SESSION_COOKIE = "rdsh_session";
@@ -104,9 +109,16 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, runti
     await handlePassword(req, res, runtime);
     return true;
   }
-  if (path === "/api/auth/register") {
-    // 注册关闭（管理员建号）—— 显式 404，防 bot 探测
-    writeError(res, 404, "NOT_FOUND", "registration is disabled");
+  if (path === "/api/auth/register" && method === "POST") {
+    await handleAccountRegister(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/auth/register/resend" && method === "POST") {
+    await handleAccountResend(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/auth/verify" && method === "POST") {
+    await handleAccountVerify(req, res, runtime);
     return true;
   }
   // ---- M5：2FA / 验证码 / 找回密码 / 邮箱 ----
@@ -116,6 +128,13 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, runti
   }
   if (path === "/api/captcha/arithmetic" && method === "POST") {
     await handleCaptchaChallenge(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/captcha/config" && method === "GET") {
+    const provider = runtime.config.captcha?.provider ?? "arithmetic";
+    const sceneId = provider === "aliyun" ? runtime.config.captcha?.aliyun?.sceneId : undefined;
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ provider, sceneId }));
     return true;
   }
   if (path === "/api/auth/password/reset" && method === "POST") {
@@ -136,6 +155,42 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, runti
   }
   if (path === "/api/account/email/unbind" && method === "POST") {
     await handleUnbindEmail(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/account/phone" && method === "POST") {
+    await handleBindPhone(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/account/phone/verify" && method === "POST") {
+    await handleVerifyPhone(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/account/phone/unbind" && method === "POST") {
+    await handleUnbindPhone(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/billing/plans" && method === "GET") {
+    await handleBillingPlans(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/billing/subscribe" && method === "POST") {
+    await handleSubscribe(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/billing/subscription" && method === "GET") {
+    await handleSubscription(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/billing/cancel" && method === "POST") {
+    await handleCancelSubscription(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/billing/callback" && method === "POST") {
+    await handleBillingCallback(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/account" && method === "DELETE") {
+    await handleDeleteAccount(req, res, runtime);
     return true;
   }
   if (path === "/api/account/2fa/enable" && method === "POST") {
@@ -223,20 +278,22 @@ async function handleLogin(req: IncomingMessage, res: ServerResponse, runtime: H
     return;
   }
   const body = await readJsonBody(req);
-  if (body === null || typeof body.name !== "string" || typeof body.password !== "string") {
+  const identifier = typeof body?.identifier === "string" ? body.identifier.trim() : typeof body?.name === "string" ? body.name.trim() : "";
+  if (body === null || identifier.length === 0 || typeof body.password !== "string") {
     writeError(res, 400, "BAD_REQUEST", "invalid body");
     return;
   }
-  const result = await runtime.auth.login(body.name, body.password);
+  const loginName = resolveLoginName(runtime.db, identifier) ?? identifier;
+  const result = await runtime.auth.login(loginName, body.password);
   switch (result.kind) {
     case "locked":
       limiter.clear(ip);
-      runtime.db.recordAudit(null, "login.locked", { name: body.name }, ip);
+      runtime.db.recordAudit(null, "login.locked", { name: identifier }, ip);
       writeError(res, 423, "ACCOUNT_LOCKED", "account locked due to too many failures", result.lockedUntil - Date.now());
       return;
     case "bad-credentials": {
       const locked = limiter.fail(ip);
-      runtime.db.recordAudit(null, "login.failed", { name: body.name }, ip);
+      runtime.db.recordAudit(null, "login.failed", { name: identifier }, ip);
       if (locked > 0) {
         writeError(res, 429, "RATE_LIMITED", "too many attempts", locked);
         return;
@@ -251,7 +308,7 @@ async function handleLogin(req: IncomingMessage, res: ServerResponse, runtime: H
       return;
     case "ok": {
       limiter.clear(ip);
-      const user = runtime.db.getUserByName(body.name);
+      const user = runtime.db.getUserByName(loginName);
       runtime.db.recordAudit(user?.id ?? null, "login.ok", {}, ip);
       res.writeHead(200, {
         "content-type": "application/json",
@@ -300,6 +357,162 @@ async function handleFirstPassword(req: IncomingMessage, res: ServerResponse, ru
     "set-cookie": sessionCookie(result.tokens.accessToken),
   });
   res.end(JSON.stringify(result.tokens));
+}
+
+/** register：双通道注册（email/+86 phone）→ 建 pending 用户 → 发验证码。 */
+async function handleAccountRegister(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  if (runtime.config.registration !== "open") {
+    writeError(res, 404, "REGISTRATION_DISABLED", "registration is disabled");
+    return;
+  }
+  const ip = clientIp(req, runtime);
+  const now = Date.now();
+  const hit = accountRegisterRate.get(ip);
+  if (hit !== undefined && now - hit.windowStart < REGISTER_RATE_LIMIT.windowMs) {
+    if (hit.count >= REGISTER_RATE_LIMIT.max) {
+      writeError(res, 429, "RATE_LIMITED", "too many register requests");
+      return;
+    }
+    hit.count += 1;
+  } else {
+    accountRegisterRate.set(ip, { count: 1, windowStart: now });
+  }
+  const body = await readJsonBody(req);
+  if (!(await verifyCaptchaBody(runtime, body))) {
+    writeError(res, 400, "BAD_CAPTCHA", "captcha failed");
+    return;
+  }
+  const channel = body?.channel;
+  const password = typeof body?.password === "string" ? body.password : "";
+  const rawId = typeof body?.identifier === "string" ? body.identifier : "";
+  if (password.length < 8) {
+    writeError(res, 400, "BAD_REQUEST", "password must be >= 8 chars");
+    return;
+  }
+  let identifier: string | null;
+  if (channel === "email") identifier = normalizeEmailStr(rawId);
+  else if (channel === "phone") identifier = normalizeCnPhone(rawId);
+  else {
+    writeError(res, 400, "BAD_REQUEST", "channel must be email|phone");
+    return;
+  }
+  if (identifier === null) {
+    writeError(res, 400, "BAD_REQUEST", channel === "email" ? "invalid email" : "invalid phone (+86, 11 digits)");
+    return;
+  }
+
+  const existing = runtime.db.getUserByName(identifier) ?? (channel === "email" ? runtime.db.getUserByEmail(identifier) : runtime.db.getUserByPhone(identifier));
+  if (existing !== null && existing.accountStatus === "active") {
+    writeError(res, 409, "ALREADY_EXISTS", "identifier already registered");
+    return;
+  }
+  let user = existing;
+  if (user === null) {
+    user = runtime.db.createUser(identifier, await hashPassword(password));
+    runtime.db.setAccountStatus(user.id, "pending");
+    if (channel === "email") runtime.db.setEmail(user.id, identifier);
+    else runtime.db.setPhone(user.id, identifier);
+  }
+
+  const r =
+    channel === "email"
+      ? await sendEmailCode(runtime, { purpose: "verify", email: identifier, userId: user.id, ip, subject: "remote-dsh email verification" })
+      : await sendSmsCode(runtime, { purpose: "verify", phone: identifier, userId: user.id, ip });
+  if (r === "disabled") writeError(res, 400, channel === "email" ? "EMAIL_DISABLED" : "SMS_DISABLED", "verification service not configured");
+  else if (r === "limited" || r === "resend") writeError(res, 429, "RATE_LIMITED", r === "resend" ? "resend too soon" : "too many requests");
+  else if (r === "error") writeError(res, 500, "SEND_FAILED", "failed to send code");
+  else {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ ok: true }));
+  }
+}
+
+/** register/resend：重发验证码（未认证 + 限流）。 */
+async function handleAccountResend(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  if (runtime.config.registration !== "open") {
+    writeError(res, 404, "REGISTRATION_DISABLED", "registration is disabled");
+    return;
+  }
+  const ip = clientIp(req, runtime);
+  const body = await readJsonBody(req);
+  if (!(await verifyCaptchaBody(runtime, body))) {
+    writeError(res, 400, "BAD_CAPTCHA", "captcha failed");
+    return;
+  }
+  const channel = body?.channel;
+  const rawId = typeof body?.identifier === "string" ? body.identifier : "";
+  let identifier: string | null;
+  if (channel === "email") identifier = normalizeEmailStr(rawId);
+  else if (channel === "phone") identifier = normalizeCnPhone(rawId);
+  else {
+    writeError(res, 400, "BAD_REQUEST", "channel must be email|phone");
+    return;
+  }
+  if (identifier === null) {
+    writeError(res, 400, "BAD_REQUEST", "invalid identifier");
+    return;
+  }
+  const user = runtime.db.getUserByName(identifier) ?? (channel === "email" ? runtime.db.getUserByEmail(identifier) : runtime.db.getUserByPhone(identifier));
+  if (user === null || user.accountStatus === "active") {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ ok: true })); // 统一响应（防枚举）
+    return;
+  }
+  const r =
+    channel === "email"
+      ? await sendEmailCode(runtime, { purpose: "verify", email: identifier, userId: user.id, ip, subject: "remote-dsh email verification" })
+      : await sendSmsCode(runtime, { purpose: "verify", phone: identifier, userId: user.id, ip });
+  if (r === "disabled") writeError(res, 400, channel === "email" ? "EMAIL_DISABLED" : "SMS_DISABLED", "verification service not configured");
+  else if (r === "limited" || r === "resend") writeError(res, 429, "RATE_LIMITED", r === "resend" ? "resend too soon" : "too many requests");
+  else {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ ok: true }));
+  }
+}
+
+/** verify：验证码激活 → active + trial + 自动登录。 */
+async function handleAccountVerify(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const body = await readJsonBody(req);
+  const channel = body?.channel;
+  const rawId = typeof body?.identifier === "string" ? body.identifier : "";
+  const code = typeof body?.code === "string" ? body.code : "";
+  let identifier: string | null;
+  if (channel === "email") identifier = normalizeEmailStr(rawId);
+  else if (channel === "phone") identifier = normalizeCnPhone(rawId);
+  else {
+    writeError(res, 400, "BAD_REQUEST", "channel must be email|phone");
+    return;
+  }
+  if (identifier === null) {
+    writeError(res, 400, "BAD_REQUEST", "invalid identifier");
+    return;
+  }
+  const user = runtime.db.getUserByName(identifier) ?? (channel === "email" ? runtime.db.getUserByEmail(identifier) : runtime.db.getUserByPhone(identifier));
+  if (user === null) {
+    writeError(res, 400, "BAD_CODE", "invalid or expired code"); // 防枚举
+    return;
+  }
+  const ok = channel === "email" ? verifyEmailCode(runtime.db, identifier, "verify", code) : verifySmsCode(runtime.db, identifier, "verify", code);
+  if (!ok) {
+    writeError(res, 400, "BAD_CODE", "invalid or expired code");
+    return;
+  }
+  if (user.accountStatus === "pending") {
+    runtime.db.setAccountStatus(user.id, "active");
+    if (channel === "email") runtime.db.setEmailVerified(user.id);
+    else runtime.db.setPhoneVerified(user.id);
+    const trialDays = runtime.config.billing?.trialDays ?? BILLING_DEFAULTS.trialDays;
+    const now = Date.now();
+    runtime.db.startTrial(user.id, now, now + trialDays * 24 * 3600 * 1000);
+    runtime.db.recordAudit(user.id, "register.verified", { channel }, clientIp(req, runtime));
+  }
+  const tokens = runtime.auth.issueSession(user.id);
+  if (tokens === null) {
+    writeError(res, 403, "FORBIDDEN", "account not active");
+    return;
+  }
+  res.writeHead(200, { "content-type": "application/json", "set-cookie": sessionCookie(tokens.accessToken) });
+  res.end(JSON.stringify({ accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, user: { id: user.id, name: user.name } }));
 }
 
 async function handleRefresh(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
@@ -376,6 +589,7 @@ const loginLimiters = new Map<string, ReturnType<typeof createLoginLimiter>>();
 const SELF_REVOKE_RATE_LIMIT = { max: 10, windowMs: 60 * 1000 }; // 未认证端点：10 次/分钟/IP
 const selfRevokeRate = new Map<string, { count: number; windowStart: number }>();
 const registerRate = new Map<string, { count: number; windowStart: number }>();
+const accountRegisterRate = new Map<string, { count: number; windowStart: number }>();
 
 async function handleRenameHost(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime, hostId: string): Promise<void> {
   const auth = authenticate(req, runtime);
@@ -541,11 +755,19 @@ async function handleRegister(req: IncomingMessage, res: ServerResponse, runtime
     res.end(JSON.stringify({ hostId: existing.id, hostToken: body.token }));
     return;
   }
-  // 2) join token → 校验 + 建 host（预留账号配额检查点，SaaS 时在此加 host 数限制）
+  // 2) join token → 校验 + 建 host（账号配额检查点，SaaS）
   const jt = runtime.db.getJoinTokenByHash(hash);
   if (jt === null || jt.revoked === 1 || jt.expiresAt <= now) {
     writeError(res, 401, "UNAUTHORIZED", "join token invalid, expired, or revoked");
     return;
+  }
+  const owner = runtime.db.getUserById(jt.ownerId);
+  if (owner !== null) {
+    const quota = hostQuota(runtime, owner);
+    if (quota !== null && runtime.db.listHostsByOwner(owner.id).length >= quota) {
+      writeError(res, 403, "QUOTA_EXCEEDED", "host quota exceeded for current plan");
+      return;
+    }
   }
   const hostId = randomUUID();
   const hostToken = randomToken();
@@ -587,6 +809,25 @@ function getEmailLimiters(runtime: HubRuntime) {
   return l;
 }
 
+// ---- 08-saas：SmsSender 抽象 + 短信限流 ----
+
+const SMS_PER_PHONE_DAILY = 3; // 每手机号每日 ≤3 条（比 email 更严，短信有成本）
+const smsSenders = new WeakMap<HubRuntime, SmsSender | null>();
+function getSmsSender(runtime: HubRuntime): SmsSender | null {
+  if (!smsSenders.has(runtime)) smsSenders.set(runtime, createSmsSender(runtime.config.sms));
+  return smsSenders.get(runtime)!;
+}
+
+const smsLimiters = new WeakMap<HubRuntime, { phone: DailyWindowLimiter; ip: DailyWindowLimiter; global: DailyWindowLimiter }>();
+function getSmsLimiters(runtime: HubRuntime) {
+  let l = smsLimiters.get(runtime);
+  if (l === undefined) {
+    l = { phone: new DailyWindowLimiter(SMS_PER_PHONE_DAILY), ip: new DailyWindowLimiter(5), global: new DailyWindowLimiter(200) };
+    smsLimiters.set(runtime, l);
+  }
+  return l;
+}
+
 /** 生成并发送验证码/重置码（含限流 + 审计）。返回状态。 */
 async function sendEmailCode(
   runtime: HubRuntime,
@@ -620,6 +861,43 @@ async function sendEmailCode(
   return "sent";
 }
 
+/** 生成并发送短信验证码（含防轰炸限流 + 审计）。 */
+async function sendSmsCode(
+  runtime: HubRuntime,
+  opts: { purpose: string; phone: string; userId: number; ip: string },
+): Promise<"sent" | "disabled" | "limited" | "resend" | "error"> {
+  const sender = getSmsSender(runtime);
+  if (sender === null) return "disabled";
+  const limiters = getSmsLimiters(runtime);
+  const last = runtime.db.getSmsCodeByPhone(opts.phone, opts.purpose);
+  if (last !== null && last.createdAt > Date.now() - RESEND_WINDOW_MS) return "resend";
+  if (limiters.phone.isLimited(opts.phone) || limiters.ip.isLimited(opts.ip) || limiters.global.isLimited("g")) return "limited";
+  limiters.phone.count(opts.phone);
+  limiters.ip.count(opts.ip);
+  limiters.global.count("g");
+  const code = String(randomInt(0, 1000000)).padStart(6, "0");
+  try {
+    await sender.send({ to: opts.phone, code });
+  } catch (err) {
+    console.error(`[sms] send failed to ${opts.phone}:`, err instanceof Error ? err.message : err);
+    return "error";
+  }
+  runtime.db.createSmsCode(opts.userId, opts.phone, opts.purpose, sha256(code), Date.now() + PIN_TTL_MS);
+  runtime.db.recordAudit(opts.userId, `sms.${opts.purpose}.sent`, { phone: opts.phone }, opts.ip);
+  return "sent";
+}
+
+/** 校验短信验证码（一次性 + 错误计数）。 */
+export function verifySmsCode(db: HubDb, phone: string, purpose: string, code: string): boolean {
+  const row = db.getSmsCodeByPhone(phone, purpose);
+  if (row === null || row.expiresAt <= Date.now()) return false;
+  if (row.attempts >= MAX_CODE_ATTEMPTS) return false;
+  db.incrementSmsCodeAttempts(row.id);
+  if (row.codeHash !== sha256(code)) return false;
+  db.deleteSmsCodes(phone);
+  return true;
+}
+
 /** 校验验证码（一次性 + 错误计数）。 */
 export function verifyEmailCode(db: HubDb, email: string, purpose: string, code: string): boolean {
   const row = db.getEmailCodeByEmail(email, purpose);
@@ -636,6 +914,59 @@ function normalEmail(body: Record<string, unknown> | null): string | null {
   const email = body.email.trim().toLowerCase();
   if (email.length === 0 || email.length > 254 || !email.includes("@")) return null;
   return email;
+}
+
+/** 纯邮箱规范化（注册/登录用）。 */
+function normalizeEmailStr(s: string): string | null {
+  const email = s.trim().toLowerCase();
+  if (email.length === 0 || email.length > 254 || !email.includes("@")) return null;
+  return email;
+}
+
+/** +86 手机号规范化：11 位合法号段 → E.164；否则 null。 */
+function normalizeCnPhone(s: string): string | null {
+  const p = s.trim();
+  if (!/^1[3-9]\d{9}$/.test(p)) return null;
+  return `+86${p}`;
+}
+
+/** 登录标识符解析：邮箱 → 其 name；手机号 → 其 name；否则视为用户名（自托管兼容）。 */
+function resolveLoginName(db: HubDb, identifier: string): string | null {
+  const email = normalizeEmailStr(identifier);
+  if (email !== null) return db.getUserByEmail(email)?.name ?? null;
+  const phone = normalizeCnPhone(identifier);
+  if (phone !== null) return db.getUserByPhone(phone)?.name ?? null;
+  return identifier;
+}
+
+/** 当前账号 host 配额：null = 不限；否则为上限（trial/subscribed/grace/free）。 */
+function hostQuota(runtime: HubRuntime, user: UserRow): number | null {
+  const plan = user.planStatus;
+  if (plan === null) return null;
+  const billing = runtime.config.billing;
+  if (plan === "trial") return billing?.trialHosts ?? BILLING_DEFAULTS.trialHosts;
+  if (plan === "free") return 0;
+  const sub = runtime.db.getActiveSubscription(user.id);
+  const spec = (billing?.plans ?? []).find((p) => p.id === sub?.planId);
+  return spec?.hosts ?? 0;
+}
+
+/** 验证码校验（按 provider 分发）：none 跳过；aliyun VerifyCaptcha 验签；arithmetic token+answer。 */
+async function verifyCaptchaBody(runtime: HubRuntime, body: Record<string, unknown> | null): Promise<boolean> {
+  const provider = runtime.config.captcha?.provider;
+  if (provider === "none") return true;
+  if (provider === "aliyun") {
+    const cfg = runtime.config.captcha?.aliyun;
+    if (cfg === undefined || body === null || typeof body.captchaVerifyParam !== "string") return false;
+    try {
+      return await verifyCaptchaParam(cfg, body.captchaVerifyParam);
+    } catch {
+      return false;
+    }
+  }
+  // arithmetic（缺省）
+  if (body === null || typeof body.captchaToken !== "string" || typeof body.captchaAnswer !== "string") return false;
+  return verifyChallenge(body.captchaToken, body.captchaAnswer);
 }
 
 async function handleTotpLogin(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
@@ -662,22 +993,30 @@ async function handleCaptchaChallenge(_req: IncomingMessage, res: ServerResponse
 async function handleResetRequest(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
   const ip = clientIp(req, runtime);
   const body = await readJsonBody(req);
-  const email = normalEmail(body);
-  if (email === null) {
-    writeError(res, 400, "BAD_REQUEST", "invalid email");
+  const channel = body?.channel ?? "email";
+  let identifier: string | null;
+  if (channel === "phone") identifier = normalizeCnPhone(typeof body?.identifier === "string" ? body.identifier : "");
+  else identifier = normalizeEmailStr(typeof body?.identifier === "string" ? body.identifier : typeof body?.email === "string" ? body.email : "");
+  if (identifier === null) {
+    writeError(res, 400, "BAD_REQUEST", channel === "phone" ? "invalid phone (+86, 11 digits)" : "invalid email");
     return;
   }
-  if (runtime.config.captcha?.provider !== "none") {
-    if (typeof body?.captchaToken !== "string" || typeof body.captchaAnswer !== "string" || !verifyChallenge(body.captchaToken, body.captchaAnswer)) {
-      writeError(res, 400, "BAD_CAPTCHA", "captcha failed");
-      return;
+  if (!(await verifyCaptchaBody(runtime, body))) {
+    writeError(res, 400, "BAD_CAPTCHA", "captcha failed");
+    return;
+  }
+  if (channel === "phone") {
+    const user = runtime.db.getUserByPhone(identifier);
+    if (user !== null && user.phoneVerified === 1) {
+      await sendSmsCode(runtime, { purpose: "reset", phone: identifier, userId: user.id, ip });
+    }
+  } else {
+    const user = runtime.db.getUserByEmail(identifier);
+    if (user !== null && user.emailVerified === 1) {
+      await sendEmailCode(runtime, { purpose: "reset", email: identifier, userId: user.id, ip, subject: "remote-dsh password reset" });
     }
   }
-  const user = runtime.db.getUserByEmail(email);
-  if (user !== null && user.emailVerified === 1) {
-    await sendEmailCode(runtime, { purpose: "reset", email, userId: user.id, ip, subject: "remote-dsh password reset" });
-  }
-  // 统一响应（防枚举）：邮箱是否存在都返回 ok
+  // 统一响应（防枚举）：邮箱/手机号是否存在都返回 ok
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({ ok: true }));
 }
@@ -685,13 +1024,21 @@ async function handleResetRequest(req: IncomingMessage, res: ServerResponse, run
 async function handleResetConfirm(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
   const ip = clientIp(req, runtime);
   const body = await readJsonBody(req);
-  const email = normalEmail(body);
-  if (email === null || body === null || typeof body.code !== "string" || typeof body.newPassword !== "string" || body.newPassword.length < 8) {
+  const channel = body?.channel ?? "email";
+  let identifier: string | null;
+  if (channel === "phone") identifier = normalizeCnPhone(typeof body?.identifier === "string" ? body.identifier : "");
+  else identifier = normalizeEmailStr(typeof body?.identifier === "string" ? body.identifier : typeof body?.email === "string" ? body.email : "");
+  if (identifier === null || body === null || typeof body.code !== "string" || typeof body.newPassword !== "string" || body.newPassword.length < 8) {
     writeError(res, 400, "BAD_REQUEST", "invalid body (newPassword must be >= 8 chars)");
     return;
   }
-  const user = runtime.db.getUserByEmail(email);
-  if (user === null || !verifyEmailCode(runtime.db, email, "reset", body.code)) {
+  const user = channel === "phone" ? runtime.db.getUserByPhone(identifier) : runtime.db.getUserByEmail(identifier);
+  if (user === null) {
+    writeError(res, 400, "BAD_RESET", "invalid or expired reset code");
+    return;
+  }
+  const ok = channel === "phone" ? verifySmsCode(runtime.db, identifier, "reset", body.code) : verifyEmailCode(runtime.db, identifier, "reset", body.code);
+  if (!ok) {
     writeError(res, 400, "BAD_RESET", "invalid or expired reset code");
     return;
   }
@@ -761,6 +1108,275 @@ async function handleUnbindEmail(req: IncomingMessage, res: ServerResponse, runt
   runtime.db.recordAudit(auth.userId, "email.unbind", {}, clientIp(req, runtime));
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({ ok: true }));
+}
+
+/** 绑定/换绑手机号：发短信码（sms 关闭 → 不可用）。 */
+async function handleBindPhone(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const auth = authenticate(req, runtime);
+  if (auth === null) {
+    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
+    return;
+  }
+  const body = await readJsonBody(req);
+  const phone = normalizeCnPhone(typeof body?.phone === "string" ? body.phone : "");
+  if (phone === null) {
+    writeError(res, 400, "BAD_REQUEST", "invalid phone (+86, 11 digits)");
+    return;
+  }
+  const taken = runtime.db.getUserByPhone(phone);
+  if (taken !== null && taken.id !== auth.userId) {
+    writeError(res, 409, "ALREADY_EXISTS", "phone already bound to another account");
+    return;
+  }
+  const recentUnbind = runtime.db.listAudit({ userId: auth.userId, event: "phone.unbind", since: Date.now() - UNBIND_LOCK_MS });
+  if (recentUnbind.length > 0) {
+    writeError(res, 429, "UNBIND_COOLDOWN", "recently unbound; retry later", UNBIND_LOCK_MS - (Date.now() - recentUnbind[0]!.createdAt));
+    return;
+  }
+  const r = await sendSmsCode(runtime, { purpose: "verify", phone, userId: auth.userId, ip: clientIp(req, runtime) });
+  if (r === "disabled") writeError(res, 400, "SMS_DISABLED", "sms service not configured");
+  else if (r === "limited" || r === "resend") writeError(res, 429, "RATE_LIMITED", r === "resend" ? "resend too soon" : "too many requests");
+  else {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ ok: true }));
+  }
+}
+
+/** 验证手机号 → 落库（phone + verified）。 */
+async function handleVerifyPhone(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const auth = authenticate(req, runtime);
+  if (auth === null) {
+    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
+    return;
+  }
+  const body = await readJsonBody(req);
+  const phone = normalizeCnPhone(typeof body?.phone === "string" ? body.phone : "");
+  if (phone === null || body === null || typeof body.code !== "string") {
+    writeError(res, 400, "BAD_REQUEST", "invalid body");
+    return;
+  }
+  if (!verifySmsCode(runtime.db, phone, "verify", body.code)) {
+    writeError(res, 400, "BAD_CODE", "invalid or expired code");
+    return;
+  }
+  runtime.db.setPhone(auth.userId, phone);
+  runtime.db.setPhoneVerified(auth.userId);
+  runtime.db.recordAudit(auth.userId, "phone.verified", { phone }, clientIp(req, runtime));
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ ok: true }));
+}
+
+async function handleUnbindPhone(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const auth = authenticate(req, runtime);
+  if (auth === null) {
+    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
+    return;
+  }
+  runtime.db.clearPhone(auth.userId);
+  runtime.db.recordAudit(auth.userId, "phone.unbind", {}, clientIp(req, runtime));
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ ok: true }));
+}
+
+// ---- 08-saas：计费 / 订阅 / 账号删除（S2）----
+
+/** 激活订阅：建订阅行 + plan_status=subscribed + 到期时间。 */
+function activateSubscription(runtime: HubRuntime, userId: number, plan: PlanSpec): void {
+  const now = Date.now();
+  const expiresAt = now + plan.intervalDays * 24 * 3600 * 1000;
+  runtime.db.createSubscription(userId, plan.id, now, expiresAt);
+  runtime.db.setPlan(userId, "subscribed", expiresAt);
+}
+
+async function handleBillingPlans(_req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ plans: runtime.config.billing?.plans ?? [] }));
+}
+
+async function handleSubscribe(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const auth = authenticate(req, runtime);
+  if (auth === null) {
+    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
+    return;
+  }
+  const body = await readJsonBody(req);
+  const planId = typeof body?.planId === "string" ? body.planId : "";
+  const plan = (runtime.config.billing?.plans ?? []).find((p) => p.id === planId);
+  if (plan === undefined) {
+    writeError(res, 400, "BAD_REQUEST", "unknown planId");
+    return;
+  }
+  const orderId = randomUUID();
+  runtime.db.createOrder(orderId, auth.userId, plan.id, plan.priceCny);
+  const result = await createPaymentProvider(runtime.config.billing?.payment).createPayment({ orderId, amountCny: plan.priceCny, subject: `remote-dsh ${plan.name}` });
+  if (result.paid) {
+    runtime.db.markOrderPaid(orderId, "mock", result.channelOrderId);
+    runtime.db.createPayment(randomUUID(), orderId, auth.userId, "mock", result.channelOrderId, plan.priceCny, Date.now(), "{}");
+    activateSubscription(runtime, auth.userId, plan);
+    runtime.db.recordAudit(auth.userId, "billing.subscribed", { planId, orderId }, clientIp(req, runtime));
+  }
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ orderId, paid: result.paid, payInfo: result.payInfo }));
+}
+
+async function handleSubscription(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const auth = authenticate(req, runtime);
+  if (auth === null) {
+    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
+    return;
+  }
+  const user = runtime.db.getUserById(auth.userId);
+  const sub = runtime.db.getActiveSubscription(auth.userId);
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(
+    JSON.stringify({
+      planStatus: user?.planStatus ?? null,
+      planId: sub?.planId ?? null,
+      planExpiresAt: user?.planExpiresAt ?? null,
+      hostQuota: user === null ? null : hostQuota(runtime, user),
+      hostsInUse: user === null ? 0 : runtime.db.listHostsByOwner(user.id).length,
+    }),
+  );
+}
+
+async function handleCancelSubscription(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const auth = authenticate(req, runtime);
+  if (auth === null) {
+    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
+    return;
+  }
+  const sub = runtime.db.getActiveSubscription(auth.userId);
+  if (sub !== null) runtime.db.setSubscriptionStatus(sub.id, "canceled");
+  runtime.db.recordAudit(auth.userId, "billing.canceled", {}, clientIp(req, runtime));
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ ok: true, message: "subscription canceled; remains active until expiry" }));
+}
+
+/** 支付异步回调（幂等）。mock 直通；wechatpay 验签（HMAC）+ AES-GCM 解密 resource。 */
+async function handleBillingCallback(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const rawBody = await readRawBody(req);
+  let body: Record<string, unknown>;
+  try {
+    body = JSON.parse(rawBody) as Record<string, unknown>;
+  } catch {
+    writeError(res, 400, "BAD_REQUEST", "invalid JSON");
+    return;
+  }
+  const payment = runtime.config.billing?.payment;
+  const isWechat = payment?.provider === "wechatpay";
+  let channel: string;
+  let channelOrderId: string;
+  let orderId: string;
+  let amountCny: number | null = null;
+
+  if (isWechat) {
+    const cfg = payment!.wechatpay!;
+    const ts = req.headers["wechatpay-timestamp"];
+    const nonce = req.headers["wechatpay-nonce"];
+    const sig = req.headers["wechatpay-signature"];
+    if (typeof ts !== "string" || typeof nonce !== "string" || typeof sig !== "string" || !verifyWechatCallback(cfg.apiV3Key, ts, nonce, sig, rawBody)) {
+      writeError(res, 400, "BAD_SIGNATURE", "wechatpay signature verification failed");
+      return;
+    }
+    const resource = body.resource as { ciphertext?: string; nonce?: string; associated_data?: string } | undefined;
+    if (resource === undefined || typeof resource.ciphertext !== "string" || typeof resource.nonce !== "string") {
+      writeError(res, 400, "BAD_REQUEST", "invalid wechatpay resource");
+      return;
+    }
+    const decrypted = decryptWechatResource(cfg.apiV3Key, { ciphertext: resource.ciphertext, nonce: resource.nonce, associated_data: resource.associated_data });
+    const outTradeNo = typeof decrypted.out_trade_no === "string" ? decrypted.out_trade_no : "";
+    const transactionId = typeof decrypted.transaction_id === "string" ? decrypted.transaction_id : "";
+    if (outTradeNo === "") {
+      writeError(res, 400, "BAD_REQUEST", "missing out_trade_no");
+      return;
+    }
+    channel = "wechatpay";
+    channelOrderId = transactionId !== "" ? transactionId : outTradeNo;
+    orderId = outTradeNo;
+    const total = (decrypted.amount as { total?: number } | undefined)?.total;
+    if (typeof total === "number") amountCny = total / 100;
+  } else {
+    channel = typeof body?.channel === "string" ? body.channel : "mock";
+    channelOrderId = typeof body?.channelOrderId === "string" ? body.channelOrderId : "";
+    orderId = typeof body?.orderId === "string" ? body.orderId : "";
+  }
+
+  if (channelOrderId === "" || orderId === "") {
+    writeError(res, 400, "BAD_REQUEST", "invalid callback");
+    return;
+  }
+  const existing = runtime.db.getPaymentByChannelOrderId(channel, channelOrderId);
+  if (existing !== null) {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ ok: true, duplicate: true })); // 幂等：重复通知只入账一次
+    return;
+  }
+  const order = runtime.db.getOrder(orderId);
+  if (order === null || order.status !== "created") {
+    writeError(res, 400, "BAD_REQUEST", "unknown or already-closed order");
+    return;
+  }
+  const amount = amountCny ?? order.amountCny;
+  runtime.db.markOrderPaid(orderId, channel, channelOrderId);
+  runtime.db.createPayment(randomUUID(), orderId, order.userId, channel, channelOrderId, amount, Date.now(), rawBody);
+  const plan = (runtime.config.billing?.plans ?? []).find((p) => p.id === order.planId);
+  if (plan !== undefined) activateSubscription(runtime, order.userId, plan);
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ ok: true }));
+}
+
+/** 自助删除账号（R7）：密码二次确认 → 断隧道 → 墓碑化。 */
+async function handleDeleteAccount(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const auth = authenticate(req, runtime);
+  if (auth === null) {
+    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
+    return;
+  }
+  const body = await readJsonBody(req);
+  const user = runtime.db.getUserById(auth.userId);
+  if (user === null || typeof body?.password !== "string" || !(await verifyPassword(body.password, user.passwordHash))) {
+    writeError(res, 400, "BAD_CREDENTIALS", "password incorrect");
+    return;
+  }
+  for (const host of runtime.db.listHostsByOwner(auth.userId)) {
+    const conn = runtime.tunnels.get(host.id);
+    if (conn !== null) conn.terminate();
+    runtime.tunnels.unregister(host.id);
+  }
+  runtime.db.recordAudit(auth.userId, "account.deleted", {}, clientIp(req, runtime));
+  runtime.db.deleteAccount(auth.userId);
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ ok: true }));
+}
+
+/** 计费状态机定时扫描：trial/subscribed 到期 → grace → free（0 台离线）。 */
+export function sweepBilling(runtime: HubRuntime, now = Date.now()): void {
+  const billing = runtime.config.billing;
+  const graceDays = billing?.graceDays ?? BILLING_DEFAULTS.graceDays;
+  const retentionDays = billing?.retentionDays ?? BILLING_DEFAULTS.retentionDays;
+  const day = 24 * 3600 * 1000;
+  for (const user of runtime.db.listUsers()) {
+    if (user.accountStatus !== "active" || user.planStatus === null || user.planExpiresAt === null) continue;
+    if (user.planStatus === "trial" || user.planStatus === "subscribed") {
+      if (user.planExpiresAt <= now) {
+        runtime.db.setPlan(user.id, "grace", now + graceDays * day);
+        runtime.db.recordAudit(user.id, "billing.grace", { from: user.planStatus }, "");
+      }
+    } else if (user.planStatus === "grace" && user.planExpiresAt <= now) {
+      runtime.db.setPlan(user.id, "free", null);
+      runtime.db.setFreeSince(user.id, now);
+      const sub = runtime.db.getActiveSubscription(user.id);
+      if (sub !== null) runtime.db.setSubscriptionStatus(sub.id, "expired");
+      for (const host of runtime.db.listHostsByOwner(user.id)) {
+        const conn = runtime.tunnels.get(host.id);
+        if (conn !== null) conn.terminate();
+        runtime.tunnels.unregister(host.id);
+      }
+      runtime.db.recordAudit(user.id, "billing.downgraded", { to: "free" }, "");
+    }
+  }
+  // 30 天数据保留：free 且超期的 host 记录删除（R6）
+  runtime.db.purgeExpiredFreeHosts(now, retentionDays * day);
 }
 
 async function handleEnable2fa(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
@@ -884,6 +1500,16 @@ async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknow
   } catch {
     return null;
   }
+}
+
+/** 读原始 body 字符串（支付回调验签需原文）。 */
+async function readRawBody(req: IncomingMessage): Promise<string> {
+  let body = "";
+  for await (const chunk of req) {
+    body += chunk;
+    if (body.length > 256 * 1024) break;
+  }
+  return body;
 }
 
 export function writeError(res: ServerResponse, status: number, code: string, message: string, retryAfterMs?: number): void {

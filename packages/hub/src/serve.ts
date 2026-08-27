@@ -66,6 +66,9 @@ export async function serveHub(opts: HubServeOptions): Promise<void> {
     email: config.email,
     captcha: config.captcha,
     security: config.security,
+    sms: config.sms,
+    registration: config.registration,
+    billing: config.billing,
   });
 
   const scheme = tls ? "https" : "http";

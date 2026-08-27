@@ -17,6 +17,9 @@ export interface JoinTokenInfo {
   revoked: boolean;
 }
 
+/** 验证码载荷：arithmetic 用 captchaToken+captchaAnswer；aliyun 用 captchaVerifyParam。 */
+export type CaptchaPayload = Record<string, string>;
+
 export interface LoginResponse {
   accessToken?: string;
   refreshToken?: string;
@@ -102,11 +105,14 @@ export const api = {
   captchaChallenge(): Promise<{ token: string; question: string }> {
     return jsonFetch("/api/captcha/arithmetic", { method: "POST", body: "{}" });
   },
-  resetRequest(email: string, captchaToken: string, captchaAnswer: string): Promise<{ ok: boolean }> {
-    return jsonFetch("/api/auth/password/reset", { method: "POST", body: JSON.stringify({ email, captchaToken, captchaAnswer }) });
+  captchaConfig(): Promise<{ provider: "arithmetic" | "none" | "aliyun"; sceneId?: string }> {
+    return jsonFetch("/api/captcha/config");
   },
-  resetConfirm(email: string, code: string, newPassword: string): Promise<{ ok: boolean }> {
-    return jsonFetch("/api/auth/password/reset/confirm", { method: "POST", body: JSON.stringify({ email, code, newPassword }) });
+  resetRequest(channel: "email" | "phone", identifier: string, captcha: CaptchaPayload): Promise<{ ok: boolean }> {
+    return jsonFetch("/api/auth/password/reset", { method: "POST", body: JSON.stringify({ channel, identifier, ...captcha }) });
+  },
+  resetConfirm(channel: "email" | "phone", identifier: string, code: string, newPassword: string): Promise<{ ok: boolean }> {
+    return jsonFetch("/api/auth/password/reset/confirm", { method: "POST", body: JSON.stringify({ channel, identifier, code, newPassword }) });
   },
   bindEmail(email: string): Promise<{ ok: boolean }> {
     return jsonFetch("/api/account/email", { method: "POST", body: JSON.stringify({ email }) });
@@ -134,6 +140,40 @@ export const api = {
   },
   revokeShare(hostId: string, userId: number): Promise<{ ok: boolean }> {
     return jsonFetch(`/api/hosts/${hostId}/share/${userId}`, { method: "DELETE" });
+  },
+  // ---- 08-saas：注册 / 验证 / 手机号 / 计费 / 删除 ----
+  register(channel: "email" | "phone", identifier: string, password: string, captcha: CaptchaPayload): Promise<{ ok: boolean }> {
+    return jsonFetch("/api/auth/register", { method: "POST", body: JSON.stringify({ channel, identifier, password, ...captcha }) });
+  },
+  registerResend(channel: "email" | "phone", identifier: string, captcha: CaptchaPayload): Promise<{ ok: boolean }> {
+    return jsonFetch("/api/auth/register/resend", { method: "POST", body: JSON.stringify({ channel, identifier, ...captcha }) });
+  },
+  verifyAccount(channel: "email" | "phone", identifier: string, code: string): Promise<LoginResponse> {
+    return jsonFetch("/api/auth/verify", { method: "POST", body: JSON.stringify({ channel, identifier, code }) });
+  },
+  bindPhone(phone: string): Promise<{ ok: boolean }> {
+    return jsonFetch("/api/account/phone", { method: "POST", body: JSON.stringify({ phone }) });
+  },
+  verifyPhone(phone: string, code: string): Promise<{ ok: boolean }> {
+    return jsonFetch("/api/account/phone/verify", { method: "POST", body: JSON.stringify({ phone, code }) });
+  },
+  unbindPhone(): Promise<{ ok: boolean }> {
+    return jsonFetch("/api/account/phone/unbind", { method: "POST", body: "{}" });
+  },
+  listPlans(): Promise<{ plans: Array<{ id: string; name: string; hosts: number; priceCny: number; intervalDays: number }> }> {
+    return jsonFetch("/api/billing/plans");
+  },
+  subscribe(planId: string): Promise<{ orderId: string; paid: boolean; payInfo?: unknown }> {
+    return jsonFetch("/api/billing/subscribe", { method: "POST", body: JSON.stringify({ planId }) });
+  },
+  subscription(): Promise<{ planStatus: string | null; planId: string | null; planExpiresAt: number | null; hostQuota: number | null; hostsInUse: number }> {
+    return jsonFetch("/api/billing/subscription");
+  },
+  cancelSubscription(): Promise<{ ok: boolean }> {
+    return jsonFetch("/api/billing/cancel", { method: "POST", body: "{}" });
+  },
+  deleteAccount(password: string): Promise<{ ok: boolean }> {
+    return jsonFetch("/api/account", { method: "DELETE", body: JSON.stringify({ password }) });
   },
 };
 

@@ -8,9 +8,14 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { EmailConfig } from "./email/types.ts";
+import type { SmsConfig } from "./sms/types.ts";
+import type { PaymentConfig } from "./billing/types.ts";
+import type { AliyunCaptchaConfig } from "./captcha/aliyun.ts";
 
 export interface CaptchaConfig {
-  provider: "arithmetic" | "none";
+  provider: "arithmetic" | "none" | "aliyun";
+  /** provider=aliyun 时的验签配置（场景 ID 等） */
+  aliyun?: AliyunCaptchaConfig;
 }
 
 export interface SecurityConfig {
@@ -24,6 +29,35 @@ export interface SecurityConfig {
   /** 审计事件保留天数（默认 90，到期自动清理） */
   auditRetentionDays: number;
 }
+
+/** 套餐规格（host 数 × 时长；价格 config 可配）。 */
+export interface PlanSpec {
+  id: string;
+  name: string;
+  /** host 数配额 */
+  hosts: number;
+  /** 人民币元 / intervalDays 天 */
+  priceCny: number;
+  /** 周期天数（如 30 = 月付） */
+  intervalDays: number;
+}
+
+export interface BillingConfig {
+  plans: PlanSpec[];
+  /** 试用天数（默认 3） */
+  trialDays?: number;
+  /** 试用 host 配额（默认 1） */
+  trialHosts?: number;
+  /** 宽限天数（默认 3） */
+  graceDays?: number;
+  /** 降级后离线 host 数据保留天数（默认 30） */
+  retentionDays?: number;
+  /** 支付通道；缺省 → mock（立即成功） */
+  payment?: PaymentConfig;
+}
+
+/** 计费默认值（config.billing 未提供时消费方取此）。 */
+export const BILLING_DEFAULTS = { trialDays: 3, trialHosts: 1, graceDays: 3, retentionDays: 30 } as const;
 
 export interface HubConfig {
   host: string;
@@ -42,6 +76,12 @@ export interface HubConfig {
   captcha?: CaptchaConfig;
   /** 安全参数；缺省 → 默认值 */
   security?: SecurityConfig;
+  /** 短信提供方；缺省 → 短信功能禁用（手机号通道不可用） */
+  sms?: SmsConfig;
+  /** 开放注册开关；缺省 → closed（自托管默认关闭，防 bot） */
+  registration?: "open" | "closed";
+  /** 计费/套餐配置；缺省 → 无套餐（订阅功能禁用） */
+  billing?: BillingConfig;
 }
 
 export const DEFAULT_HUB_CONFIG_PATH = join(homedir(), ".rdsh", "hub.json");
@@ -113,6 +153,9 @@ export function normalizeHubConfig(raw: unknown, source = "config"): HubConfig {
   }
   if (cfg.email !== undefined) out.email = normalizeEmail(cfg.email, source);
   if (cfg.captcha !== undefined) out.captcha = normalizeCaptcha(cfg.captcha, source);
+  if (cfg.sms !== undefined) out.sms = normalizeSms(cfg.sms, source);
+  if (cfg.registration !== undefined) out.registration = normalizeRegistration(cfg.registration, source);
+  if (cfg.billing !== undefined) out.billing = normalizeBilling(cfg.billing, source);
   out.security = normalizeSecurity(cfg.security, source);
   return out;
 }
@@ -166,8 +209,20 @@ function normalizeEmail(raw: unknown, source: string): EmailConfig {
 function normalizeCaptcha(raw: unknown, source: string): CaptchaConfig {
   if (typeof raw !== "object" || raw === null) throw new Error(`${source}: "captcha" must be an object`);
   const c = raw as Record<string, unknown>;
-  if (c.provider !== "arithmetic" && c.provider !== "none") throw new Error(`${source}: "captcha.provider" must be arithmetic|none`);
-  return { provider: c.provider };
+  if (c.provider !== "arithmetic" && c.provider !== "none" && c.provider !== "aliyun") throw new Error(`${source}: "captcha.provider" must be arithmetic|none|aliyun`);
+  const out: CaptchaConfig = { provider: c.provider };
+  if (c.provider === "aliyun") {
+    const a = c.aliyun as Record<string, unknown> | undefined;
+    if (a === undefined || typeof a.accessKeyId !== "string" || typeof a.accessKeySecret !== "string" || typeof a.sceneId !== "string") {
+      throw new Error(`${source}: "captcha.aliyun" needs accessKeyId/accessKeySecret/sceneId`);
+    }
+    out.aliyun = { accessKeyId: a.accessKeyId, accessKeySecret: a.accessKeySecret, sceneId: a.sceneId };
+    if (a.endpoint !== undefined) {
+      if (typeof a.endpoint !== "string") throw new Error(`${source}: "captcha.aliyun.endpoint" must be a string`);
+      out.aliyun.endpoint = a.endpoint;
+    }
+  }
+  return out;
 }
 
 function normalizeSecurity(raw: unknown, source: string): SecurityConfig {
@@ -182,4 +237,65 @@ function normalizeSecurity(raw: unknown, source: string): SecurityConfig {
     }
   }
   return defaults;
+}
+
+function normalizeSms(raw: unknown, source: string): SmsConfig {
+  if (typeof raw !== "object" || raw === null) throw new Error(`${source}: "sms" must be an object`);
+  const s = raw as Record<string, unknown>;
+  if (s.provider !== "aliyun" && s.provider !== "log") throw new Error(`${source}: "sms.provider" must be aliyun|log`);
+  const out: SmsConfig = { provider: s.provider };
+  if (s.provider === "aliyun") {
+    const a = s.aliyun as Record<string, unknown> | undefined;
+    if (
+      a === undefined ||
+      typeof a.accessKeyId !== "string" ||
+      typeof a.accessKeySecret !== "string" ||
+      typeof a.signName !== "string" ||
+      typeof a.templateCode !== "string"
+    ) {
+      throw new Error(`${source}: "sms.aliyun" needs accessKeyId/accessKeySecret/signName/templateCode`);
+    }
+    out.aliyun = { accessKeyId: a.accessKeyId, accessKeySecret: a.accessKeySecret, signName: a.signName, templateCode: a.templateCode };
+    if (a.endpoint !== undefined) {
+      if (typeof a.endpoint !== "string") throw new Error(`${source}: "sms.aliyun.endpoint" must be a string`);
+      out.aliyun.endpoint = a.endpoint;
+    }
+  }
+  return out;
+}
+
+function normalizeRegistration(raw: unknown, source: string): "open" | "closed" {
+  if (raw !== "open" && raw !== "closed") throw new Error(`${source}: "registration" must be open|closed`);
+  return raw;
+}
+
+function normalizeBilling(raw: unknown, source: string): BillingConfig {
+  if (typeof raw !== "object" || raw === null) throw new Error(`${source}: "billing" must be an object`);
+  const b = raw as Record<string, unknown>;
+  const plans: PlanSpec[] = [];
+  if (b.plans !== undefined) {
+    if (!Array.isArray(b.plans)) throw new Error(`${source}: "billing.plans" must be an array`);
+    for (const p of b.plans) {
+      const plan = p as Record<string, unknown>;
+      if (typeof plan.id !== "string" || plan.id.length === 0) throw new Error(`${source}: "billing.plans[].id" must be a non-empty string`);
+      if (typeof plan.name !== "string" || plan.name.length === 0) throw new Error(`${source}: "billing.plans[].name" must be a non-empty string`);
+      if (!Number.isInteger(plan.hosts) || (plan.hosts as number) < 1) throw new Error(`${source}: "billing.plans[].hosts" must be a positive integer`);
+      if (typeof plan.priceCny !== "number" || plan.priceCny < 0) throw new Error(`${source}: "billing.plans[].priceCny" must be a non-negative number`);
+      if (!Number.isInteger(plan.intervalDays) || (plan.intervalDays as number) < 1) throw new Error(`${source}: "billing.plans[].intervalDays" must be a positive integer`);
+      plans.push({ id: plan.id, name: plan.name, hosts: plan.hosts as number, priceCny: plan.priceCny, intervalDays: plan.intervalDays as number });
+    }
+  }
+  const out: BillingConfig = { plans };
+  for (const key of ["trialDays", "trialHosts", "graceDays", "retentionDays"] as const) {
+    if (b[key] !== undefined) {
+      if (!Number.isInteger(b[key]) || (b[key] as number) < 0) throw new Error(`${source}: "billing.${key}" must be a non-negative integer`);
+      (out as unknown as Record<string, unknown>)[key] = b[key] as number;
+    }
+  }
+  if (b.payment !== undefined) {
+    const p = b.payment as Record<string, unknown>;
+    if (p.provider !== "mock" && p.provider !== "wechatpay" && p.provider !== "cmb") throw new Error(`${source}: "billing.payment.provider" must be mock|wechatpay|cmb`);
+    out.payment = b.payment as PaymentConfig;
+  }
+  return out;
 }

@@ -89,6 +89,7 @@ export class HubAuth {
   async login(name: string, password: string): Promise<LoginOutcome> {
     const user = this.db.getUserByName(name);
     if (user === null) return { kind: "bad-credentials" };
+    if (user.accountStatus !== "active") return { kind: "bad-credentials" }; // pending/banned/deleted 不可登录（防枚举）
     const now = Date.now();
     if (user.lockedUntil !== null && user.lockedUntil > now) {
       return { kind: "locked", lockedUntil: user.lockedUntil };
@@ -175,6 +176,13 @@ export class HubAuth {
     return { accessToken, refreshToken };
   }
 
+  /** 为已激活用户直接签发会话（注册验证后自动登录）；非 active 返回 null。 */
+  issueSession(userId: number): TokenPair | null {
+    const user = this.db.getUserById(userId);
+    if (user === null || user.accountStatus !== "active") return null;
+    return this.issueTokens(user);
+  }
+
   /**
    * 刷新：校验旧 refresh（未吊销/未过期）→ 吊销旧 → 发新对（轮换）。
    * 失败返回 null（refresh 无效/过期/已吊销）。
@@ -230,7 +238,7 @@ verifyHostCookie(cookie: string): { hostId: string; userId: number } | null {
     if (!Number.isFinite(exp) || !Number.isFinite(userId) || !Number.isFinite(ver)) return null;
     if (exp <= Date.now()) return null;
     const user = this.db.getUserById(userId);
-    if (user === null || user.ver !== ver) return null;
+    if (user === null || user.ver !== ver || user.accountStatus !== "active") return null;
     return { hostId, userId };
   } catch {
     return null;

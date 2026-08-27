@@ -27,6 +27,20 @@ export interface UserRow {
   failedAttempts: number;
   /** 锁定截止时间戳（ms）；null = 未锁定 */
   lockedUntil: number | null;
+  /** 绑定手机号（未绑定为 null；唯一，+86 E.164） */
+  phone: string | null;
+  /** 1 = 手机号已验证 */
+  phoneVerified: number;
+  /** 账号状态：pending | active | banned | deleted */
+  accountStatus: string;
+  /** 计费状态：NULL（不受限）| trial | subscribed | grace | free */
+  planStatus: string | null;
+  /** 当前计费状态到期时间戳（ms）；NULL 不适用 */
+  planExpiresAt: number | null;
+  /** 试用开始时间戳（ms） */
+  trialStartedAt: number | null;
+  /** 降级到免费档的时间戳（ms）；重新订阅时清空 */
+  freeSinceAt: number | null;
 }
 
 export interface HostRow {
@@ -83,6 +97,52 @@ export interface EmailCodeRow {
   createdAt: number;
 }
 
+export interface SmsCodeRow {
+  id: number;
+  userId: number;
+  phone: string;
+  purpose: string;
+  codeHash: string;
+  expiresAt: number;
+  attempts: number;
+  createdAt: number;
+}
+
+export interface SubscriptionRow {
+  id: number;
+  userId: number;
+  planId: string;
+  /** active | canceled | expired */
+  status: string;
+  startedAt: number;
+  expiresAt: number;
+  createdAt: number;
+}
+
+export interface OrderRow {
+  id: string;
+  userId: number;
+  planId: string;
+  amountCny: number;
+  /** created | paid | closed */
+  status: string;
+  channel: string | null;
+  outId: string | null;
+  createdAt: number;
+  paidAt: number | null;
+}
+
+export interface PaymentRow {
+  id: string;
+  orderId: string;
+  userId: number;
+  channel: string;
+  channelOrderId: string;
+  amountCny: number;
+  paidAt: number;
+  raw: string;
+}
+
 export class HubDb {
   readonly db: DatabaseSync;
   /** 数据库文件路径（:memory: 测试用） */
@@ -107,7 +167,14 @@ export class HubDb {
         email_verified INTEGER NOT NULL DEFAULT 0,
         totp_secret TEXT,
         failed_attempts INTEGER NOT NULL DEFAULT 0,
-        locked_until INTEGER
+        locked_until INTEGER,
+        phone TEXT,
+        phone_verified INTEGER NOT NULL DEFAULT 0,
+        account_status TEXT NOT NULL DEFAULT 'active',
+        plan_status TEXT,
+        plan_expires_at INTEGER,
+        trial_started_at INTEGER,
+        free_since_at INTEGER
       );
       CREATE TABLE IF NOT EXISTS hosts (
         id TEXT PRIMARY KEY,
@@ -158,6 +225,46 @@ export class HubDb {
         attempts INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS sms_codes (
+        id INTEGER PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        phone TEXT NOT NULL,
+        purpose TEXT NOT NULL,
+        code_hash TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS subscriptions (
+        id INTEGER PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        plan_id TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        started_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS orders (
+        id TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        plan_id TEXT NOT NULL,
+        amount_cny REAL NOT NULL,
+        status TEXT NOT NULL DEFAULT 'created',
+        channel TEXT,
+        out_id TEXT,
+        created_at INTEGER NOT NULL,
+        paid_at INTEGER
+      );
+      CREATE TABLE IF NOT EXISTS payments (
+        id TEXT PRIMARY KEY,
+        order_id TEXT NOT NULL REFERENCES orders(id),
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        channel TEXT NOT NULL,
+        channel_order_id TEXT NOT NULL,
+        amount_cny REAL NOT NULL,
+        paid_at INTEGER NOT NULL,
+        raw TEXT NOT NULL DEFAULT '{}'
+      );
     `);
     // 迁移守卫：既有库补列（SQLite ALTER ADD COLUMN 不支持 UNIQUE，邮箱唯一用独立索引）
     const userCols = new Set(
@@ -169,11 +276,19 @@ export class HubDb {
       ["totp_secret", "totp_secret TEXT"],
       ["failed_attempts", "failed_attempts INTEGER NOT NULL DEFAULT 0"],
       ["locked_until", "locked_until INTEGER"],
+      ["phone", "phone TEXT"],
+      ["phone_verified", "phone_verified INTEGER NOT NULL DEFAULT 0"],
+      ["account_status", "account_status TEXT NOT NULL DEFAULT 'active'"],
+      ["plan_status", "plan_status TEXT"],
+      ["plan_expires_at", "plan_expires_at INTEGER"],
+      ["trial_started_at", "trial_started_at INTEGER"],
+      ["free_since_at", "free_since_at INTEGER"],
     ];
     for (const [name, ddl] of addCols) {
       if (!userCols.has(name)) this.db.exec(`ALTER TABLE users ADD COLUMN ${ddl}`);
     }
     this.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email);`);
+    this.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone ON users(phone);`);
   }
 
 
@@ -192,6 +307,13 @@ export class HubDb {
       totpSecret: row.totp_secret === null || row.totp_secret === undefined ? null : String(row.totp_secret),
       failedAttempts: Number(row.failed_attempts ?? 0),
       lockedUntil: row.locked_until === null || row.locked_until === undefined ? null : Number(row.locked_until),
+      phone: row.phone === null || row.phone === undefined ? null : String(row.phone),
+      phoneVerified: Number(row.phone_verified ?? 0),
+      accountStatus: String(row.account_status ?? "active"),
+      planStatus: row.plan_status === null || row.plan_status === undefined ? null : String(row.plan_status),
+      planExpiresAt: row.plan_expires_at === null || row.plan_expires_at === undefined ? null : Number(row.plan_expires_at),
+      trialStartedAt: row.trial_started_at === null || row.trial_started_at === undefined ? null : Number(row.trial_started_at),
+      freeSinceAt: row.free_since_at === null || row.free_since_at === undefined ? null : Number(row.free_since_at),
     };
   }
 
@@ -261,6 +383,58 @@ export class HubDb {
     };
   }
 
+  private mapSmsCode(row: Record<string, unknown>): SmsCodeRow {
+    return {
+      id: Number(row.id),
+      userId: Number(row.user_id),
+      phone: String(row.phone),
+      purpose: String(row.purpose),
+      codeHash: String(row.code_hash),
+      expiresAt: Number(row.expires_at),
+      attempts: Number(row.attempts ?? 0),
+      createdAt: Number(row.created_at),
+    };
+  }
+
+  private mapSubscription(row: Record<string, unknown>): SubscriptionRow {
+    return {
+      id: Number(row.id),
+      userId: Number(row.user_id),
+      planId: String(row.plan_id),
+      status: String(row.status),
+      startedAt: Number(row.started_at),
+      expiresAt: Number(row.expires_at),
+      createdAt: Number(row.created_at),
+    };
+  }
+
+  private mapOrder(row: Record<string, unknown>): OrderRow {
+    return {
+      id: String(row.id),
+      userId: Number(row.user_id),
+      planId: String(row.plan_id),
+      amountCny: Number(row.amount_cny),
+      status: String(row.status),
+      channel: row.channel === null || row.channel === undefined ? null : String(row.channel),
+      outId: row.out_id === null || row.out_id === undefined ? null : String(row.out_id),
+      createdAt: Number(row.created_at),
+      paidAt: row.paid_at === null || row.paid_at === undefined ? null : Number(row.paid_at),
+    };
+  }
+
+  private mapPayment(row: Record<string, unknown>): PaymentRow {
+    return {
+      id: String(row.id),
+      orderId: String(row.order_id),
+      userId: Number(row.user_id),
+      channel: String(row.channel),
+      channelOrderId: String(row.channel_order_id),
+      amountCny: Number(row.amount_cny),
+      paidAt: Number(row.paid_at),
+      raw: String(row.raw ?? "{}"),
+    };
+  }
+
   close(): void {
     this.db.close();
   }
@@ -301,6 +475,10 @@ export class HubDb {
       this.db.prepare("DELETE FROM join_tokens WHERE owner_id = ?").run(id);
       this.db.prepare("DELETE FROM refresh_tokens WHERE user_id = ?").run(id);
       this.db.prepare("DELETE FROM hosts WHERE owner_id = ?").run(id);
+      this.db.prepare("DELETE FROM payments WHERE user_id = ?").run(id);
+      this.db.prepare("DELETE FROM orders WHERE user_id = ?").run(id);
+      this.db.prepare("DELETE FROM subscriptions WHERE user_id = ?").run(id);
+      this.db.prepare("DELETE FROM sms_codes WHERE user_id = ?").run(id);
       this.db.prepare("DELETE FROM users WHERE id = ?").run(id);
       this.db.exec("COMMIT");
     } catch (err) {
@@ -578,5 +756,159 @@ export class HubDb {
 
   deleteEmailCodes(email: string): void {
     this.db.prepare("DELETE FROM email_codes WHERE email = ?").run(email);
+  }
+
+  // ---- 手机号 / 账号状态 / 计费状态（08-saas）----
+
+  getUserByPhone(phone: string): UserRow | null {
+    const row = this.db.prepare("SELECT * FROM users WHERE phone = ?").get(phone);
+    return row === undefined ? null : this.mapUser(row as unknown as Record<string, unknown>);
+  }
+
+  setPhone(id: number, phone: string): void {
+    this.db.prepare("UPDATE users SET phone = ?, phone_verified = 0 WHERE id = ?").run(phone, id);
+  }
+
+  setPhoneVerified(id: number): void {
+    this.db.prepare("UPDATE users SET phone_verified = 1 WHERE id = ?").run(id);
+  }
+
+  clearPhone(id: number): void {
+    this.db.prepare("UPDATE users SET phone = NULL, phone_verified = 0 WHERE id = ?").run(id);
+  }
+
+  setAccountStatus(id: number, status: string): void {
+    this.db.prepare("UPDATE users SET account_status = ? WHERE id = ?").run(status, id);
+  }
+
+  /** 进入试用：plan_status=trial + 起止时间。 */
+  startTrial(id: number, nowMs: number, expiresAtMs: number): void {
+    this.db.prepare("UPDATE users SET plan_status = 'trial', trial_started_at = ?, plan_expires_at = ? WHERE id = ?").run(nowMs, expiresAtMs, id);
+  }
+
+  /** 设置计费状态（subscribed/grace/free/NULL）+ 到期时间；非 free 时清 free_since_at。 */
+  setPlan(id: number, status: string | null, expiresAtMs: number | null): void {
+    this.db.prepare("UPDATE users SET plan_status = ?, plan_expires_at = ?, free_since_at = NULL WHERE id = ?").run(status, expiresAtMs, id);
+  }
+
+  /** 标记降级到免费档的时间（30 天 host 数据保留起点）。 */
+  setFreeSince(id: number, ts: number): void {
+    this.db.prepare("UPDATE users SET free_since_at = ? WHERE id = ?").run(ts, id);
+  }
+
+  /** 删除 free 且超保留期的用户 host（含共享残留）；返回删除 host 数。 */
+  purgeExpiredFreeHosts(now: number, retentionMs: number): number {
+    const rows = this.db
+      .prepare("SELECT id FROM users WHERE plan_status = 'free' AND free_since_at IS NOT NULL AND free_since_at < ?")
+      .all(now - retentionMs) as unknown as Array<{ id: number }>;
+    let count = 0;
+    for (const r of rows) {
+      this.db.prepare("DELETE FROM host_share WHERE host_id IN (SELECT id FROM hosts WHERE owner_id = ?)").run(r.id);
+      const info = this.db.prepare("DELETE FROM hosts WHERE owner_id = ?").run(r.id);
+      count += Number(info.changes);
+    }
+    return count;
+  }
+
+  // ---- 短信验证码（镜像 email_codes）----
+
+  createSmsCode(userId: number, phone: string, purpose: string, codeHash: string, expiresAt: number, now = Date.now()): SmsCodeRow {
+    this.db.prepare("DELETE FROM sms_codes WHERE phone = ? AND purpose = ?").run(phone, purpose);
+    this.db
+      .prepare("INSERT INTO sms_codes (user_id, phone, purpose, code_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(userId, phone, purpose, codeHash, expiresAt, now);
+    const row = this.db.prepare("SELECT * FROM sms_codes WHERE phone = ? AND purpose = ? ORDER BY id DESC LIMIT 1").get(phone, purpose);
+    return this.mapSmsCode(row as unknown as Record<string, unknown>);
+  }
+
+  getSmsCodeByPhone(phone: string, purpose: string): SmsCodeRow | null {
+    const row = this.db.prepare("SELECT * FROM sms_codes WHERE phone = ? AND purpose = ? ORDER BY id DESC LIMIT 1").get(phone, purpose);
+    return row === undefined ? null : this.mapSmsCode(row as unknown as Record<string, unknown>);
+  }
+
+  incrementSmsCodeAttempts(id: number): void {
+    this.db.prepare("UPDATE sms_codes SET attempts = attempts + 1 WHERE id = ?").run(id);
+  }
+
+  deleteSmsCodes(phone: string): void {
+    this.db.prepare("DELETE FROM sms_codes WHERE phone = ?").run(phone);
+  }
+
+  // ---- 订阅 / 订单 / 支付（S2）----
+
+  createSubscription(userId: number, planId: string, startedAt: number, expiresAt: number, now = Date.now()): SubscriptionRow {
+    const info = this.db
+      .prepare("INSERT INTO subscriptions (user_id, plan_id, status, started_at, expires_at, created_at) VALUES (?, ?, 'active', ?, ?, ?)")
+      .run(userId, planId, startedAt, expiresAt, now);
+    const row = this.db.prepare("SELECT * FROM subscriptions WHERE id = ?").get(Number(info.lastInsertRowid));
+    return this.mapSubscription(row as unknown as Record<string, unknown>);
+  }
+
+  getActiveSubscription(userId: number): SubscriptionRow | null {
+    const row = this.db.prepare("SELECT * FROM subscriptions WHERE user_id = ? AND status = 'active' ORDER BY id DESC LIMIT 1").get(userId);
+    return row === undefined ? null : this.mapSubscription(row as unknown as Record<string, unknown>);
+  }
+
+  setSubscriptionStatus(id: number, status: string): void {
+    this.db.prepare("UPDATE subscriptions SET status = ? WHERE id = ?").run(status, id);
+  }
+
+  createOrder(id: string, userId: number, planId: string, amountCny: number, now = Date.now()): OrderRow {
+    this.db.prepare("INSERT INTO orders (id, user_id, plan_id, amount_cny, status, created_at) VALUES (?, ?, ?, ?, 'created', ?)").run(id, userId, planId, amountCny, now);
+    const row = this.db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
+    return this.mapOrder(row as unknown as Record<string, unknown>);
+  }
+
+  getOrder(id: string): OrderRow | null {
+    const row = this.db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
+    return row === undefined ? null : this.mapOrder(row as unknown as Record<string, unknown>);
+  }
+
+  markOrderPaid(id: string, channel: string, outId: string, paidAt = Date.now()): void {
+    this.db.prepare("UPDATE orders SET status = 'paid', channel = ?, out_id = ?, paid_at = ? WHERE id = ?").run(channel, outId, paidAt, id);
+  }
+
+  closeOrder(id: string): void {
+    this.db.prepare("UPDATE orders SET status = 'closed' WHERE id = ?").run(id);
+  }
+
+  createPayment(id: string, orderId: string, userId: number, channel: string, channelOrderId: string, amountCny: number, paidAt: number, raw: string): PaymentRow {
+    this.db
+      .prepare("INSERT INTO payments (id, order_id, user_id, channel, channel_order_id, amount_cny, paid_at, raw) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(id, orderId, userId, channel, channelOrderId, amountCny, paidAt, raw);
+    const row = this.db.prepare("SELECT * FROM payments WHERE id = ?").get(id);
+    return this.mapPayment(row as unknown as Record<string, unknown>);
+  }
+
+  /** 按渠道单号查入账（支付回调幂等）。 */
+  getPaymentByChannelOrderId(channel: string, channelOrderId: string): PaymentRow | null {
+    const row = this.db.prepare("SELECT * FROM payments WHERE channel = ? AND channel_order_id = ?").get(channel, channelOrderId);
+    return row === undefined ? null : this.mapPayment(row as unknown as Record<string, unknown>);
+  }
+
+  // ---- 账号删除（R7：墓碑化，保留 orders/payments 账务 + audit 留痕）----
+
+  deleteAccount(id: number): void {
+    this.db.exec("BEGIN");
+    try {
+      this.db.prepare("DELETE FROM sms_codes WHERE user_id = ?").run(id);
+      this.db.prepare("DELETE FROM email_codes WHERE user_id = ?").run(id);
+      this.db.prepare("DELETE FROM host_share WHERE user_id = ?").run(id);
+      this.db.prepare("DELETE FROM host_share WHERE host_id IN (SELECT id FROM hosts WHERE owner_id = ?)").run(id);
+      this.db.prepare("DELETE FROM join_tokens WHERE owner_id = ?").run(id);
+      this.db.prepare("DELETE FROM refresh_tokens WHERE user_id = ?").run(id);
+      this.db.prepare("DELETE FROM hosts WHERE owner_id = ?").run(id);
+      this.db.prepare("DELETE FROM subscriptions WHERE user_id = ?").run(id);
+      // 墓碑：抹除个人数据 + 释放 name（可重注册）；orders/payments/audit 保留（账务与留痕）
+      this.db
+        .prepare(
+          "UPDATE users SET name = ?, password_hash = '!deleted', email = NULL, phone = NULL, email_verified = 0, phone_verified = 0, totp_secret = NULL, account_status = 'deleted', plan_status = NULL, plan_expires_at = NULL, trial_started_at = NULL WHERE id = ?",
+        )
+        .run(`deleted-${id}`, id);
+      this.db.exec("COMMIT");
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
   }
 }

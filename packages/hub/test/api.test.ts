@@ -57,10 +57,10 @@ async function get(path: string, cookie?: string): Promise<{ status: number; jso
 test.before(start);
 test.after(stop);
 
-test("register 端点不存在（注册关闭，防 bot）", async () => {
-  const r = await post("/api/auth/register", { name: "bot", password: "x" });
+test("register 端点：注册关闭（默认）返回 REGISTRATION_DISABLED 404，防 bot", async () => {
+  const r = await post("/api/auth/register", { channel: "email", identifier: "bot@x.com", password: "x" });
   assert.equal(r.status, 404);
-  assert.equal((r.json.error as Record<string, unknown>).code, "NOT_FOUND");
+  assert.equal((r.json.error as Record<string, unknown>).code, "REGISTRATION_DISABLED");
 });
 
 test("登录：成功 200 + Cookie + token；错误密码 401", async () => {
