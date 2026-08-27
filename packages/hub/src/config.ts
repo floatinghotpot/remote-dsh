@@ -79,6 +79,10 @@ export interface SiteConfig {
   url?: string;
   /** 产品介绍页 URL */
   productUrl?: string;
+  /** 用户协议 URL；配置后覆盖内置 /portal/terms */
+  termsUrl?: string;
+  /** 隐私政策 URL；配置后覆盖内置 /portal/privacy */
+  privacyUrl?: string;
 }
 
 export interface HubConfig {
@@ -351,7 +355,7 @@ function normalizeSite(raw: unknown, source: string): SiteConfig {
   if (typeof raw !== "object" || raw === null) throw new Error(`${source}: "site" must be an object`);
   const s = raw as Record<string, unknown>;
   const out: SiteConfig = {};
-  for (const key of ["name", "url", "productUrl"] as const) {
+  for (const key of ["name", "url", "productUrl", "termsUrl", "privacyUrl"] as const) {
     if (s[key] !== undefined) {
       if (typeof s[key] !== "string") throw new Error(`${source}: "site.${key}" must be a string`);
       out[key] = s[key] as string;

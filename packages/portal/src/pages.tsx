@@ -262,6 +262,14 @@ function CaptchaGate({ onCaptcha }: { onCaptcha: (captcha: CaptchaPayload) => vo
 }
 
 /** 页脚：备案信息（ICP/公安），来自 hub.json `beian` 配置（公开 /api/capabilities 下发）。 */
+/** 法务链接：配置外部 URL 则新标签外链，否则站内 navigate（内置文档页）。 */
+function legalLink(url: string | undefined, internal: string, label: string, style: React.CSSProperties): React.JSX.Element {
+  if (url !== undefined && url !== "") {
+    return <a href={url} target="_blank" rel="noreferrer" style={style}>{label}</a>;
+  }
+  return <a href="#" onClick={(e) => { e.preventDefault(); navigate(internal); }} style={style}>{label}</a>;
+}
+
 function SiteFooter(): React.JSX.Element | null {
   const { t } = useT();
   const [cap, setCap] = useState<Capabilities | null>(null);
@@ -280,8 +288,8 @@ function SiteFooter(): React.JSX.Element | null {
   if (site?.productUrl !== undefined) {
     nav.push(<a href={site.productUrl} target="_blank" rel="noreferrer" style={link}>{t("产品介绍")}</a>);
   }
-  nav.push(<a href="#" onClick={(e) => { e.preventDefault(); navigate("/terms"); }} style={link}>{t("用户协议")}</a>);
-  nav.push(<a href="#" onClick={(e) => { e.preventDefault(); navigate("/privacy"); }} style={link}>{t("隐私政策")}</a>);
+  nav.push(legalLink(site?.termsUrl, "/terms", t("用户协议"), link));
+  nav.push(legalLink(site?.privacyUrl, "/privacy", t("隐私政策"), link));
 
   return (
     <footer style={{ textAlign: "center", marginTop: 24, fontSize: 12, color: "#999", lineHeight: 1.8 }}>
@@ -1184,9 +1192,9 @@ function RegisterPage(): React.JSX.Element {
         <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} style={{ marginTop: 2 }} />
         <span>
           {t("我已阅读并同意")}
-          <a href="#" onClick={(e) => { e.preventDefault(); navigate("/terms"); }} style={{ color: "#2563eb" }}>{t("《用户协议》")}</a>
+          {legalLink(cap?.site?.termsUrl, "/terms", t("《用户协议》"), { color: "#2563eb" })}
           {t("与")}
-          <a href="#" onClick={(e) => { e.preventDefault(); navigate("/privacy"); }} style={{ color: "#2563eb" }}>{t("《隐私政策》")}</a>
+          {legalLink(cap?.site?.privacyUrl, "/privacy", t("《隐私政策》"), { color: "#2563eb" })}
         </span>
       </label>
       {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
