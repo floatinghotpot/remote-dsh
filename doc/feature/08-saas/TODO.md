@@ -37,9 +37,9 @@
 - **代码**：前端 `CaptchaGate`（加载 SDK + `initAliyunCaptcha` + 回传 `captchaVerifyParam`）+ `/api/captcha/config` 端点 + 后端 `verifyCaptchaParam` RPC。
 - **要填的配置**（`hub.json` → `captcha`）：
   ```jsonc
-  { "captcha": { "provider": "aliyun", "aliyun": { "accessKeyId": "…", "accessKeySecret": "…", "sceneId": "…" } } }
+  { "captcha": { "provider": "aliyun", "aliyun": { "accessKeyId": "…", "accessKeySecret": "…", "sceneId": "…", "prefix": "…" } } }
   ```
-- **需要的凭证**：sceneId（阿里云验证码 2.0 控制台创建）+ 签名/模板审核通过。**未填时用算术验证码兜底**（`provider: "arithmetic"`，零依赖、已可用）。
+- **需要的凭证**：sceneId（阿里云验证码 2.0 控制台创建）+ **prefix（身份标，控制台概览页右上角获取）** + 签名/模板审核通过。**未填时用算术验证码兜底**（`provider: "arithmetic"`，零依赖、已可用）。
 
 ---
 
