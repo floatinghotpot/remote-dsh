@@ -17,6 +17,19 @@ export interface JoinTokenInfo {
   revoked: boolean;
 }
 
+export interface AccountInfo {
+  name: string;
+  email: string | null;
+  emailVerified: boolean;
+  phone: string | null;
+  phoneVerified: boolean;
+  totpEnabled: boolean;
+  smsEnabled: boolean;
+  planStatus: string | null;
+  planExpiresAt: number | null;
+  planId: string | null;
+}
+
 /** 验证码载荷：arithmetic 用 captchaToken+captchaAnswer；aliyun 用 captchaVerifyParam。 */
 export type CaptchaPayload = Record<string, string>;
 
@@ -174,6 +187,9 @@ export const api = {
   },
   deleteAccount(password: string): Promise<{ ok: boolean }> {
     return jsonFetch("/api/account", { method: "DELETE", body: JSON.stringify({ password }) });
+  },
+  accountInfo(): Promise<AccountInfo> {
+    return jsonFetch("/api/account");
   },
 };
 

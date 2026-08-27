@@ -55,7 +55,11 @@
 未认证 + 验签（S3 接招行 SM2/SM3；S2 mock 直通）。同一 `channel_order_id` 只入账一次（幂等）；验签失败 400 `BAD_SIGNATURE`。
 响应：`200 { "ok": true }`（渠道要求固定格式时按渠道）
 
-## 4. 账号删除（S2，R7）
+## 4. 账号信息与删除（S2，R7）
+
+### GET /api/account —— 当前账号信息（绑定状态）
+认证：需要。响应：`{ "name", "email": string|null, "emailVerified": bool, "phone": string|null, "phoneVerified": bool, "totpEnabled": bool, "smsEnabled": bool, "planStatus": string|null, "planExpiresAt": number|null, "planId": string|null }`
+（email/phone 为完整值，客户端自行脱敏显示；`smsEnabled` = `config.sms` 是否配置，供前端隐藏手机号入口。）
 
 ### DELETE /api/account —— 自助删除
 认证：需要。请求 `{ "password" }`（二次确认）。行为：立即断全部隧道 + 删个人数据（邮箱/手机号/hosts/隧道/refresh/join/共享/审计），`payments`+`orders` 保留脱敏账务字段（金额/时间/渠道单号）；审计留痕。

@@ -190,6 +190,10 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, runti
     await handleBillingCallback(req, res, runtime);
     return true;
   }
+  if (path === "/api/account" && method === "GET") {
+    await handleAccountInfo(req, res, runtime);
+    return true;
+  }
   if (path === "/api/account" && method === "DELETE") {
     await handleDeleteAccount(req, res, runtime);
     return true;
@@ -1324,6 +1328,36 @@ async function handleBillingCallback(req: IncomingMessage, res: ServerResponse, 
   if (plan !== undefined) activateSubscription(runtime, order.userId, plan);
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({ ok: true }));
+}
+
+/** 当前账号信息（绑定状态）：账户页回显（邮箱/手机号/2FA/plan）。 */
+async function handleAccountInfo(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const auth = authenticate(req, runtime);
+  if (auth === null) {
+    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
+    return;
+  }
+  const user = runtime.db.getUserById(auth.userId);
+  if (user === null) {
+    writeError(res, 404, "NOT_FOUND", "user not found");
+    return;
+  }
+  const sub = runtime.db.getActiveSubscription(auth.userId);
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(
+    JSON.stringify({
+      name: user.name,
+      email: user.email,
+      emailVerified: user.emailVerified === 1,
+      phone: user.phone,
+      phoneVerified: user.phoneVerified === 1,
+      totpEnabled: user.totpSecret !== null,
+      smsEnabled: runtime.config.sms !== undefined,
+      planStatus: user.planStatus,
+      planExpiresAt: user.planExpiresAt,
+      planId: sub?.planId ?? null,
+    }),
+  );
 }
 
 /** 自助删除账号（R7）：密码二次确认 → 断隧道 → 墓碑化。 */

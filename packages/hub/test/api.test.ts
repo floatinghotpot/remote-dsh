@@ -73,6 +73,21 @@ test("登录：成功 200 + Cookie + token；错误密码 401", async () => {
   assert.equal(bad.status, 401);
 });
 
+test("GET /api/account：绑定状态回显（未认证 401 / 登录 200 含字段）", async () => {
+  const unauth = await get("/api/account");
+  assert.equal(unauth.status, 401);
+  const login = await post("/api/auth/login", { name: "alice", password: "pw123456" });
+  const cookie = `rdsh_session=${login.json.accessToken}`;
+  const r = await get("/api/account", cookie);
+  assert.equal(r.status, 200);
+  assert.equal(r.json.name, "alice");
+  assert.equal(r.json.emailVerified, false);
+  assert.equal(r.json.phoneVerified, false);
+  assert.equal(r.json.totpEnabled, false);
+  assert.equal(r.json.smsEnabled, false);
+  assert.equal(r.json.planStatus, null);
+});
+
 
 
 test("未认证访问 host 端点 → 401", async () => {

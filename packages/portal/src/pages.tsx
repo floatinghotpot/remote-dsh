@@ -6,7 +6,7 @@
  */
 import { useEffect, useState } from "react";
 import { api, ApiError, subscribeEvents } from "./api.ts";
-import type { HostInfo, JoinTokenInfo, CaptchaPayload } from "./api.ts";
+import type { HostInfo, JoinTokenInfo, CaptchaPayload, AccountInfo } from "./api.ts";
 
 const REFRESH_KEY = "rdsh_refresh";
 
@@ -37,6 +37,10 @@ export function App(): React.JSX.Element {
   if (path === "/billing") return <BillingPage />;
   if (path === "/settings/password") return <PasswordPage />;
   if (path === "/settings/account") return <AccountPage />;
+  if (path === "/settings/email") return <EmailSettingsPage />;
+  if (path === "/settings/phone") return <PhoneSettingsPage />;
+  if (path === "/settings/2fa") return <TwoFaSettingsPage />;
+  if (path === "/settings/danger") return <DangerZonePage />;
   if (path === "/reset-password") return <ResetPasswordPage />;
   if (path === "/add-host") return <AddHostPage />;
   if (path === "/hosts" || path === "/") return <HostsPage />;
@@ -256,67 +260,415 @@ function Login(): React.JSX.Element {
   );
 }
 
-// ---- 账户与安全（邮箱 + 2FA） ----
+// ---- 账户与安全（邮箱 / 手机号 / 2FA / 套餐与账号）----
+
+/** 邮箱脱敏显示：a***@example.com。 */
+function maskEmail(e: string): string {
+  const at = e.indexOf("@");
+  return at > 1 ? `${e.slice(0, 1)}***${e.slice(at)}` : e;
+}
+
+/** 手机号脱敏显示：+86 138****8000。 */
+function maskPhone(p: string): string {
+  const m = /^(\+86)?(\d{3})\d{4}(\d{4})$/.exec(p);
+  return m !== null ? `${m[1] ?? ""}${m[2]}****${m[3]}` : p;
+}
+
+/** 顶部提示条（成功/错误），4 秒后自动消失。 */
+function Toast({ toast }: { toast: { kind: "ok" | "err"; text: string } | null }): React.JSX.Element | null {
+  if (toast === null) return null;
+  const ok = toast.kind === "ok";
+  return (
+    <div
+      style={{
+        background: ok ? "#ecfdf5" : "#fef2f2",
+        color: ok ? "#047857" : "#dc2626",
+        border: `1px solid ${ok ? "#10b981" : "#f87171"}55`,
+        borderRadius: 8,
+        padding: "10px 14px",
+        marginBottom: 12,
+        fontSize: 13,
+      }}
+    >
+      {toast.text}
+    </div>
+  );
+}
+
+/** 分组卡片：标题 + 右侧状态徽标 + 内容。 */
+function Card({ title, badge, children }: { title: string; badge?: React.ReactNode; children: React.ReactNode }): React.JSX.Element {
+  return (
+    <div style={{ border: "1px solid #e5e7eb", borderRadius: 10, padding: "14px 16px", marginBottom: 12 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <h2 style={{ fontSize: 15, margin: 0 }}>{title}</h2>
+        {badge}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/** 绑定状态徽标。 */
+function Badge({ ok, text }: { ok: boolean; text: string }): React.JSX.Element {
+  return (
+    <span
+      style={{
+        fontSize: 12,
+        padding: "2px 10px",
+        borderRadius: 999,
+        background: ok ? "#ecfdf5" : "#f3f4f6",
+        color: ok ? "#047857" : "#6b7280",
+      }}
+    >
+      {ok ? "✓ " : ""}
+      {text}
+    </span>
+  );
+}
+
+/** 发送验证码按钮（点击后 60s 倒计时禁用，防重发轰炸）。 */
+function SendCodeButton({ label, seconds, onClick, disabled }: { label: string; seconds: number; onClick: () => void; disabled?: boolean }): React.JSX.Element {
+  return (
+    <button onClick={onClick} disabled={disabled === true || seconds > 0} style={btnStyle()}>
+      {seconds > 0 ? `重新发送 ${seconds}s` : label}
+    </button>
+  );
+}
+
+/** 顶部提示（成功/错误）+ 4 秒自动消失。 */
+function useToast(): { toast: { kind: "ok" | "err"; text: string } | null; show: (kind: "ok" | "err", text: string) => void } {
+  const [toast, setToast] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const show = (kind: "ok" | "err", text: string): void => {
+    setToast({ kind, text });
+    window.setTimeout(() => setToast(null), 4000);
+  };
+  return { toast, show };
+}
+
+/** 60s 重发倒计时（返回 [秒数, 启动]）。 */
+function useCountdown(): [number, () => void] {
+  const [seconds, setSeconds] = useState(0);
+  useEffect(() => {
+    if (seconds <= 0) return;
+    const t = window.setTimeout(() => setSeconds((s) => s - 1), 1000);
+    return () => window.clearTimeout(t);
+  }, [seconds]);
+  return [seconds, () => setSeconds(60)];
+}
+
+/** 设置项行（账户总览页入口）。 */
+function SettingRow({ label, desc, badge, onClick, danger }: { label: string; desc?: string; badge?: React.ReactNode; onClick: () => void; danger?: boolean }): React.JSX.Element {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        display: "flex",
+        width: "100%",
+        alignItems: "center",
+        gap: 10,
+        padding: "12px 14px",
+        border: "1px solid #e5e7eb",
+        borderRadius: 10,
+        background: "#fff",
+        cursor: "pointer",
+        marginBottom: 8,
+        textAlign: "left",
+        font: "inherit",
+      }}
+    >
+      <span style={{ flex: 1 }}>
+        <span style={{ display: "block", fontSize: 14, fontWeight: 500, color: danger === true ? "#dc2626" : "#111827" }}>{label}</span>
+        {desc !== undefined && <span style={{ display: "block", fontSize: 12, color: "#6b7280", marginTop: 2 }}>{desc}</span>}
+      </span>
+      {badge}
+      <span style={{ color: "#9ca3af", fontSize: 18 }}>›</span>
+    </button>
+  );
+}
+
+/** 子设置页顶部：返回账户总览。 */
+function BackToAccount(): React.JSX.Element {
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <button onClick={() => navigate("/settings/account")} style={btnStyle("ghost")}>← 返回账户与安全</button>
+    </div>
+  );
+}
+
+/** 账户与安全：总览 + 各设置入口（一次专注一件事 → 独立子页）。 */
+/** 订阅信息（GET /api/billing/subscription 返回）。 */
+interface SubInfo {
+  planStatus: string | null;
+  planId: string | null;
+  planExpiresAt: number | null;
+  hostQuota: number | null;
+  hostsInUse: number;
+}
+
+/** 剩余时长文案（天/小时）。 */
+function remainingText(expiresAt: number): string {
+  const ms = expiresAt - Date.now();
+  if (ms <= 0) return "已到期";
+  const days = Math.floor(ms / 86_400_000);
+  const hours = Math.floor((ms % 86_400_000) / 3_600_000);
+  return days > 0 ? `${days} 天 ${hours} 小时` : `${hours} 小时`;
+}
+
+/** 当前订阅状态卡：账户总览可点击进入套餐页；套餐页内静态展示（不传 onClick）。 */
+function CurrentPlanCard({ sub, onClick }: { sub: SubInfo | null; onClick?: () => void }): React.JSX.Element {
+  const status = sub?.planStatus ?? null;
+  const used = sub?.hostsInUse ?? 0;
+  const quota = sub?.hostQuota ?? null;
+  let title: string;
+  let detail: string;
+  let warn = false;
+  if (status === null) {
+    title = "🏠 自托管模式";
+    detail = "host 数量不限 · 无需订阅 · 开源免费";
+  } else if (status === "trial") {
+    title = "● 试用中";
+    detail = sub!.planExpiresAt !== null ? `剩余 ${remainingText(sub!.planExpiresAt)} · 配额 ${used}/${quota ?? "∞"} 台` : `配额 ${used}/${quota ?? "∞"} 台`;
+  } else if (status === "subscribed") {
+    title = `● 已订阅 ${sub!.planId ?? "套餐"}`;
+    detail = sub!.planExpiresAt !== null ? `到期 ${new Date(sub!.planExpiresAt).toLocaleDateString()} · 配额 ${used}/${quota ?? "∞"} 台` : `配额 ${used}/${quota ?? "∞"} 台`;
+  } else if (status === "grace") {
+    title = "⚠ 宽限期";
+    detail = sub!.planExpiresAt !== null ? `剩余 ${remainingText(sub!.planExpiresAt)} · 隧道保留 · 到期后降级免费档` : "隧道保留 · 到期后降级免费档";
+    warn = true;
+  } else {
+    title = "○ 免费档";
+    detail = "0 台配额 · host 数据保留 30 天";
+  }
+  const action = status === null ? "查看详情" : status === "trial" || status === "free" ? "升级套餐" : "管理";
+  const style: React.CSSProperties = {
+    display: "flex",
+    width: "100%",
+    alignItems: "center",
+    gap: 10,
+    padding: "14px 16px",
+    border: `1px solid ${warn ? "#f59e0b" : "#e5e7eb"}`,
+    borderRadius: 10,
+    background: warn ? "#fffbeb" : "#fff",
+    cursor: onClick !== undefined ? "pointer" : "default",
+    marginBottom: 12,
+    textAlign: "left",
+    font: "inherit",
+  };
+  const content = (
+    <>
+      <span style={{ flex: 1 }}>
+        <span style={{ display: "block", fontSize: 15, fontWeight: 600, color: warn ? "#b45309" : "#111827" }}>{title}</span>
+        <span style={{ display: "block", fontSize: 12, color: "#6b7280", marginTop: 2 }}>{detail}</span>
+      </span>
+      {onClick !== undefined && <span style={{ color: "#2563eb", fontSize: 13 }}>{action} ›</span>}
+    </>
+  );
+  return onClick !== undefined ? (
+    <button onClick={onClick} style={style}>{content}</button>
+  ) : (
+    <div style={style}>{content}</div>
+  );
+}
 
 function AccountPage(): React.JSX.Element {
-  const [email, setEmail] = useState("");
-  const [code, setCode] = useState("");
-  const [phone, setPhone] = useState("");
-  const [phoneCode, setPhoneCode] = useState("");
-  const [deletePw, setDeletePw] = useState("");
-  const [twofaSecret, setTwofaSecret] = useState("");
-  const [twofaCode, setTwofaCode] = useState("");
-  const [msg, setMsg] = useState("");
+  const [info, setInfo] = useState<AccountInfo | null>(null);
+  const [sub, setSub] = useState<SubInfo | null>(null);
   const { err, run } = useError();
-
+  useEffect(() => {
+    void run(async () => {
+      const [acc, subInfo] = await Promise.all([api.accountInfo(), api.subscription()]);
+      setInfo(acc);
+      setSub(subInfo);
+    });
+  }, []);
   return (
     <Shell title="账户与安全" onLogout={logout}>
-      <p style={{ fontSize: 13, color: "#666" }}>
-        绑定邮箱后可找回密码；开启两步验证（TOTP）可防密码泄露。
-      </p>
-      <h2 style={{ fontSize: 15, marginTop: 16 }}>邮箱</h2>
-      {field("邮箱地址", email, setEmail)}
-      <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-        <button onClick={() => void run(async () => { await api.bindEmail(email.trim()); setMsg("验证码已发送，请查收邮件"); })} style={btnStyle()}>发送验证码</button>
-        <button onClick={() => void run(async () => { await api.unbindEmail(); setMsg("已解绑"); })} style={btnStyle("ghost")}>解绑</button>
+      <div style={{ marginBottom: 16 }}>
+        <button onClick={() => navigate("/hosts")} style={btnStyle("ghost")}>← 返回主机列表</button>
       </div>
-      {field("验证码", code, setCode)}
-      <button onClick={() => void run(async () => { await api.verifyEmail(email.trim(), code.trim()); setMsg("邮箱已验证"); })} style={btnStyle()}>验证邮箱</button>
-
-      <h2 style={{ fontSize: 15, marginTop: 16 }}>手机号（短信验证）</h2>
-      {field("手机号（+86）", phone, setPhone)}
-      <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-        <button onClick={() => void run(async () => { await api.bindPhone(phone.trim()); setMsg("短信验证码已发送"); })} style={btnStyle()}>发送验证码</button>
-        <button onClick={() => void run(async () => { await api.unbindPhone(); setMsg("已解绑"); })} style={btnStyle("ghost")}>解绑</button>
-      </div>
-      {field("手机号验证码", phoneCode, setPhoneCode)}
-      <button onClick={() => void run(async () => { await api.verifyPhone(phone.trim(), phoneCode.trim()); setMsg("手机号已验证"); })} style={btnStyle()}>验证手机号</button>
-
-      <h2 style={{ fontSize: 15, marginTop: 16 }}>套餐与账号</h2>
-      <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-        <button onClick={() => navigate("/billing")} style={btnStyle("ghost")}>套餐与订阅</button>
-      </div>
-      {field("输入密码以删除账号", deletePw, setDeletePw, "password")}
-      <button onClick={() => void run(async () => { if (window.confirm("删除账号将立即断开全部机器并清除个人数据（账务记录保留），不可恢复。确认？")) { await api.deleteAccount(deletePw); navigate("/login"); } })} style={btnStyle("danger")}>删除账号</button>
-
-      <h2 style={{ fontSize: 15, marginTop: 16 }}>两步验证（TOTP）</h2>
-      {twofaSecret === "" ? (
-        <button onClick={() => void run(async () => { setTwofaSecret((await api.enable2fa()).secret); })} style={btnStyle()}>开启 2FA</button>
-      ) : (
-        <div>
-          <p style={{ fontSize: 13 }}>密钥（复制到 Google Authenticator / 1Password 等）：</p>
-          <code style={{ wordBreak: "break-all" }}>{twofaSecret}</code>
-          {field("当前 TOTP 验证码", twofaCode, setTwofaCode)}
-          <button onClick={() => void run(async () => { await api.activate2fa(twofaSecret, twofaCode.trim()); setMsg("2FA 已开启"); setTwofaSecret(""); })} style={btnStyle()}>确认开启</button>
-        </div>
-      )}
-      <div style={{ marginTop: 12 }}>
-        {field("关闭 2FA 需当前验证码", twofaCode, setTwofaCode)}
-        <button onClick={() => void run(async () => { await api.disable2fa(twofaCode.trim()); setMsg("2FA 已关闭"); })} style={btnStyle("danger")}>关闭 2FA</button>
-      </div>
-
-      {msg !== "" && <p style={{ color: "#16a34a", fontSize: 13, marginTop: 12 }}>{msg}</p>}
       {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
+      <CurrentPlanCard sub={sub} onClick={() => navigate("/billing")} />
+      <SettingRow
+        label="邮箱"
+        desc={info?.emailVerified === true ? `已绑定 ${maskEmail(info.email ?? "")}` : "绑定邮箱后可自助找回密码"}
+        badge={<Badge ok={info?.emailVerified === true} text={info?.emailVerified ? "已验证" : "未绑定"} />}
+        onClick={() => navigate("/settings/email")}
+      />
+      {info === null || info.smsEnabled ? (
+        <SettingRow
+          label="手机号"
+          desc={info?.phoneVerified === true ? `已绑定 ${maskPhone(info.phone ?? "")}` : "绑定手机号后可用短信验证码找回密码"}
+          badge={<Badge ok={info?.phoneVerified === true} text={info?.phoneVerified ? "已验证" : "未绑定"} />}
+          onClick={() => navigate("/settings/phone")}
+        />
+      ) : null}
+      <SettingRow
+        label="两步验证（TOTP）"
+        desc={info?.totpEnabled === true ? "已开启，登录需输入动态验证码" : "开启后登录需输入动态验证码"}
+        badge={<Badge ok={info?.totpEnabled === true} text={info?.totpEnabled ? "已开启" : "未开启"} />}
+        onClick={() => navigate("/settings/2fa")}
+      />
+      <SettingRow label="删除账号" desc="立即断开全部机器并清除个人数据，不可恢复" danger onClick={() => navigate("/settings/danger")} />
+    </Shell>
+  );
+}
+
+/** 邮箱设置（独立页，专注一件事）。 */
+function EmailSettingsPage(): React.JSX.Element {
+  const [info, setInfo] = useState<AccountInfo | null>(null);
+  const [email, setEmail] = useState("");
+  const [code, setCode] = useState("");
+  const [seconds, startCountdown] = useCountdown();
+  const { toast, show } = useToast();
+  const { err, run } = useError();
+  useEffect(() => {
+    void run(async () => setInfo(await api.accountInfo()));
+  }, []);
+  const refresh = async (): Promise<void> => setInfo(await api.accountInfo());
+  const bound = info?.emailVerified === true;
+
+  return (
+    <Shell title="邮箱设置" onLogout={logout}>
+      <BackToAccount />
+      <Toast toast={toast} />
+      {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
+      <Card title="邮箱" badge={<Badge ok={bound} text={bound ? "已验证" : "未绑定"} />}>
+        {info?.email !== null && info !== null && (
+          <p style={{ fontSize: 13, color: "#6b7280", marginTop: 0 }}>
+            当前绑定：{maskEmail(info.email!)}　
+            <button
+              onClick={() => void run(async () => { await api.unbindEmail(); show("ok", "邮箱已解绑"); await refresh(); })}
+              style={btnStyle("ghost")}
+            >解绑</button>
+          </p>
+        )}
+        {field("邮箱地址（换绑需重新验证）", email, setEmail)}
+        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+          <SendCodeButton
+            label="发送验证码"
+            seconds={seconds}
+            disabled={info === null}
+            onClick={() => void run(async () => { await api.bindEmail(email.trim()); startCountdown(); show("ok", "验证码已发送到邮箱，请查收（10 分钟内有效）"); })}
+          />
+        </div>
+        {field("验证码", code, setCode)}
+        <button onClick={() => void run(async () => { await api.verifyEmail(email.trim(), code.trim()); setCode(""); show("ok", "邮箱已验证 ✓"); await refresh(); })} style={btnStyle()}>验证邮箱</button>
+      </Card>
+    </Shell>
+  );
+}
+
+/** 手机号设置（独立页）。 */
+function PhoneSettingsPage(): React.JSX.Element {
+  const [info, setInfo] = useState<AccountInfo | null>(null);
+  const [phone, setPhone] = useState("");
+  const [code, setCode] = useState("");
+  const [seconds, startCountdown] = useCountdown();
+  const { toast, show } = useToast();
+  const { err, run } = useError();
+  useEffect(() => {
+    void run(async () => setInfo(await api.accountInfo()));
+  }, []);
+  const refresh = async (): Promise<void> => setInfo(await api.accountInfo());
+  const bound = info?.phoneVerified === true;
+
+  return (
+    <Shell title="手机号设置" onLogout={logout}>
+      <BackToAccount />
+      <Toast toast={toast} />
+      {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
+      <Card title="手机号" badge={<Badge ok={bound} text={bound ? "已验证" : "未绑定"} />}>
+        {info?.phone !== null && info !== null && (
+          <p style={{ fontSize: 13, color: "#6b7280", marginTop: 0 }}>
+            当前绑定：{maskPhone(info.phone!)}　
+            <button
+              onClick={() => void run(async () => { await api.unbindPhone(); show("ok", "手机号已解绑"); await refresh(); })}
+              style={btnStyle("ghost")}
+            >解绑</button>
+          </p>
+        )}
+        {field("手机号（+86，11 位）", phone, setPhone)}
+        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+          <SendCodeButton
+            label="发送验证码"
+            seconds={seconds}
+            disabled={info === null}
+            onClick={() => void run(async () => { await api.bindPhone(phone.trim()); startCountdown(); show("ok", "短信验证码已发送，请查收（10 分钟内有效）"); })}
+          />
+        </div>
+        {field("验证码", code, setCode)}
+        <button onClick={() => void run(async () => { await api.verifyPhone(phone.trim(), code.trim()); setCode(""); show("ok", "手机号已验证 ✓"); await refresh(); })} style={btnStyle()}>验证手机号</button>
+      </Card>
+    </Shell>
+  );
+}
+
+/** 两步验证（独立页；开启与关闭按当前状态二选一显示）。 */
+function TwoFaSettingsPage(): React.JSX.Element {
+  const [info, setInfo] = useState<AccountInfo | null>(null);
+  const [twofaSecret, setTwofaSecret] = useState("");
+  const [twofaCode, setTwofaCode] = useState("");
+  const { toast, show } = useToast();
+  const { err, run } = useError();
+  useEffect(() => {
+    void run(async () => setInfo(await api.accountInfo()));
+  }, []);
+  const refresh = async (): Promise<void> => setInfo(await api.accountInfo());
+  const enabled = info?.totpEnabled === true;
+
+  return (
+    <Shell title="两步验证" onLogout={logout}>
+      <BackToAccount />
+      <Toast toast={toast} />
+      {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
+      <Card title="两步验证（TOTP）" badge={<Badge ok={enabled} text={enabled ? "已开启" : "未开启"} />}>
+        {!enabled ? (
+          twofaSecret === "" ? (
+            <button onClick={() => void run(async () => setTwofaSecret((await api.enable2fa()).secret))} style={btnStyle()}>开启 2FA</button>
+          ) : (
+            <div>
+              <p style={{ fontSize: 13 }}>密钥（复制到 Google Authenticator / 1Password 等）：</p>
+              <code style={{ wordBreak: "break-all" }}>{twofaSecret}</code>
+              {field("当前 TOTP 验证码", twofaCode, setTwofaCode)}
+              <button
+                onClick={() => void run(async () => { await api.activate2fa(twofaSecret, twofaCode.trim()); setTwofaSecret(""); setTwofaCode(""); show("ok", "2FA 已开启 ✓"); await refresh(); })}
+                style={btnStyle()}
+              >确认开启</button>
+            </div>
+          )
+        ) : (
+          <div>
+            <p style={{ fontSize: 13, color: "#6b7280", marginTop: 0 }}>已开启两步验证，登录时需输入 TOTP 动态验证码。</p>
+            {field("输入当前验证码以关闭", twofaCode, setTwofaCode)}
+            <button
+              onClick={() => void run(async () => { await api.disable2fa(twofaCode.trim()); setTwofaCode(""); show("ok", "2FA 已关闭"); await refresh(); })}
+              style={btnStyle("danger")}
+            >关闭 2FA</button>
+          </div>
+        )}
+      </Card>
+    </Shell>
+  );
+}
+
+/** 危险操作（删除账号）。 */
+function DangerZonePage(): React.JSX.Element {
+  const [deletePw, setDeletePw] = useState("");
+  const { err, run } = useError();
+  return (
+    <Shell title="删除账号" onLogout={logout}>
+      <BackToAccount />
+      {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
+      <Card title="删除账号（不可恢复）">
+        <p style={{ fontSize: 13, color: "#6b7280", marginTop: 0 }}>
+          删除后将立即断开全部机器并清除个人数据（账务记录保留），且不可恢复。请谨慎操作。
+        </p>
+        {field("输入密码以确认", deletePw, setDeletePw, "password")}
+        <button
+          onClick={() => void run(async () => { if (!window.confirm("确认永久删除账号？此操作不可恢复。")) return; await api.deleteAccount(deletePw); navigate("/login"); })}
+          style={btnStyle("danger")}
+        >永久删除账号</button>
+      </Card>
     </Shell>
   );
 }
@@ -710,58 +1062,76 @@ interface PlanInfo {
   intervalDays: number;
 }
 
-function planLabel(status: string | null): string {
-  if (status === null) return "自托管（不限）";
-  if (status === "trial") return "试用中";
-  if (status === "subscribed") return "已订阅";
-  if (status === "grace") return "宽限期";
-  if (status === "free") return "免费档";
-  return status;
-}
-
 function BillingPage(): React.JSX.Element {
   const [plans, setPlans] = useState<PlanInfo[]>([]);
-  const [sub, setSub] = useState<{ planStatus: string | null; planId: string | null; planExpiresAt: number | null; hostQuota: number | null; hostsInUse: number } | null>(null);
-  const [msg, setMsg] = useState("");
+  const [sub, setSub] = useState<SubInfo | null>(null);
+  const { toast, show } = useToast();
   const { err, run } = useError();
 
   const load = (): void => {
     void run(async () => {
-      setPlans((await api.listPlans()).plans);
-      setSub(await api.subscription());
+      const [p, s] = await Promise.all([api.listPlans(), api.subscription()]);
+      setPlans(p.plans);
+      setSub(s);
     });
   };
-  useEffect(() => { load(); }, []);
+  useEffect(load, []);
 
   const subscribe = (planId: string): void => {
     void run(async () => {
       await api.subscribe(planId);
-      setMsg("订阅成功，配额已升级");
+      show("ok", "订阅成功，配额已升级");
       load();
     });
   };
 
+  const hasPlans = plans.length > 0;
+  const currentPlanId = sub?.planId ?? null;
+  const hasStatus = sub !== null && (hasPlans || sub.planStatus !== null);
+
   return (
     <Shell title="套餐与订阅" onLogout={logout}>
-      <button onClick={() => navigate("/hosts")} style={btnStyle("ghost")}>← 返回主机列表</button>
-      {sub !== null && (
-        <p style={{ fontSize: 13, color: "#666", marginTop: 12 }}>
-          当前：{planLabel(sub.planStatus)} · 配额 {sub.hostsInUse}/{sub.hostQuota ?? "∞"} 台
-          {sub.planExpiresAt !== null ? ` · ${sub.planStatus === "grace" ? "宽限期至" : "到期"} ${new Date(sub.planExpiresAt).toLocaleString()}` : ""}
-        </p>
-      )}
-      <div style={{ marginTop: 16 }}>
-        {plans.map((p) => (
-          <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", border: "1px solid #eee", borderRadius: 8, marginBottom: 8 }}>
-            <span style={{ fontWeight: 500 }}>{p.name}</span>
-            <span style={{ color: "#666", fontSize: 13 }}>{p.hosts} 台 · ¥{p.priceCny}/{p.intervalDays} 天</span>
-            <button onClick={() => subscribe(p.id)} style={{ ...btnStyle(), marginLeft: "auto" }}>订阅</button>
-          </div>
-        ))}
-        {plans.length === 0 && <p style={{ color: "#999", fontSize: 13 }}>暂无可用套餐（hub 未配置 billing.plans）</p>}
+      <div style={{ marginBottom: 16 }}>
+        <button onClick={() => navigate("/hosts")} style={btnStyle("ghost")}>← 返回主机列表</button>
       </div>
-      {msg !== "" && <p style={{ color: "#16a34a", fontSize: 13 }}>{msg}</p>}
+      <Toast toast={toast} />
       {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
+      {hasStatus && <CurrentPlanCard sub={sub} />}
+      {hasPlans ? (
+        <Card title="选择套餐">
+          {plans.map((p) => {
+            const current = p.id === currentPlanId;
+            return (
+              <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", border: "1px solid #e5e7eb", borderRadius: 10, marginBottom: 8 }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontWeight: 600, fontSize: 14 }}>{p.name}</span>
+                    {current && <span style={{ fontSize: 11, padding: "1px 8px", borderRadius: 999, background: "#ecfdf5", color: "#047857" }}>当前套餐</span>}
+                  </div>
+                  <div style={{ fontSize: 13, color: "#6b7280", marginTop: 2 }}>{p.hosts} 台 host · ¥{p.priceCny}/{p.intervalDays} 天</div>
+                </div>
+                <button disabled={current} onClick={() => subscribe(p.id)} style={btnStyle()}>
+                  {current ? "当前套餐" : "订阅"}
+                </button>
+              </div>
+            );
+          })}
+        </Card>
+      ) : (
+        <Card title="自托管模式">
+          <p style={{ fontSize: 13, margin: 0 }}>🏠 你正在自托管运行 remote-dsh（开源免费）：host 数量不限 · 无需订阅 · 无到期限制。</p>
+          <p style={{ fontSize: 13, color: "#6b7280", margin: "8px 0 0" }}>完整功能：多用户 / 2FA / 审计 / 共享。</p>
+          <p style={{ fontSize: 12, color: "#9ca3af", margin: "8px 0 0" }}>运营方在 hub.json 配置 billing.plans 后，此处将展示套餐与订阅入口。</p>
+        </Card>
+      )}
+      <Card title="计费说明">
+        <p style={{ fontSize: 13, color: "#6b7280", margin: 0 }}>
+          订阅/试用到期后进入 3 天宽限期（隧道保留），之后降级免费档（0 台在线，host 数据保留 30 天）。
+        </p>
+        <p style={{ fontSize: 13, color: "#6b7280", margin: "8px 0 0" }}>
+          支付：微信 / 支付宝（上线后支持）· 7 天无理由退款 · MVP 暂不提供发票。
+        </p>
+      </Card>
     </Shell>
   );
 }
