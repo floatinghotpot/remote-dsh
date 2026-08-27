@@ -224,6 +224,12 @@ const EN: Record<string, string> = {
   "产品介绍": "Product",
   "用户协议": "Terms of Service",
   "隐私政策": "Privacy Policy",
+
+  // ---- 落地页 ----
+  "你的 AI 智能体，随处可达": "Your AI agent, reachable anywhere",
+  "免部署 · 免公网 IP · 免装客户端": "No deploy · no public IP · no client install",
+  "立即注册": "Get started",
+  "进入控制台": "Go to dashboard",
 };
 
 function detectLang(): Lang {

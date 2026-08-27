@@ -9,7 +9,7 @@ import { api, ApiError, subscribeEvents } from "./api.ts";
 import type { HostInfo, JoinTokenInfo, CaptchaPayload, AccountInfo, Capabilities } from "./api.ts";
 import { useT, getLang } from "./i18n.ts";
 import type { T } from "./i18n.ts";
-import { TermsPage, PrivacyPage, ProductPage } from "./legal.tsx";
+import { TermsPage, PrivacyPage, ProductPage, LegalContent, LEGAL } from "./legal.tsx";
 
 const REFRESH_KEY = "rdsh_refresh";
 
@@ -49,7 +49,8 @@ export function App(): React.JSX.Element {
   if (path === "/settings/danger") return <DangerZonePage />;
   if (path === "/reset-password") return <ResetPasswordPage />;
   if (path === "/add-host") return <AddHostPage />;
-  if (path === "/hosts" || path === "/") return <HostsPage />;
+  if (path === "/hosts") return <HostsPage />;
+  if (path === "/") return <LandingPage />;
   return <HostsPage />; // 未知路径兜底 host 列表
 }
 
@@ -300,6 +301,53 @@ function SiteFooter(): React.JSX.Element | null {
       {beian?.icp !== undefined && <div><a href={beian.icpUrl ?? "https://beian.miit.gov.cn"} target="_blank" rel="noreferrer" style={link}>{beian.icp}</a></div>}
       {beian?.gongan !== undefined && <div><a href={beian.gonganUrl ?? "https://beian.mps.gov.cn"} target="_blank" rel="noreferrer" style={link}>{beian.gongan}</a></div>}
     </footer>
+  );
+}
+
+/** 落地页：产品介绍 + 注册/登录 CTA（新用户入口；已登录则显示「进入控制台」）。 */
+function LandingPage(): React.JSX.Element {
+  const { t } = useT();
+  const [authed, setAuthed] = useState(false);
+  useEffect(() => {
+    void api.accountInfo().then(() => setAuthed(true)).catch(() => setAuthed(false));
+  }, []);
+
+  return (
+    <div style={{ maxWidth: 760, margin: "0 auto", padding: "0 16px", fontFamily: "system-ui, sans-serif" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 0" }}>
+        <strong style={{ fontSize: 17 }}>remote-dsh</strong>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <LangToggle />
+          {authed ? (
+            <button onClick={() => navigate("/hosts")} style={btnStyle()}>{t("进入控制台")}</button>
+          ) : (
+            <>
+              <button onClick={() => navigate("/login")} style={btnStyle("ghost")}>{t("登录")}</button>
+              <button onClick={() => navigate("/register")} style={btnStyle()}>{t("注册")}</button>
+            </>
+          )}
+        </div>
+      </div>
+
+      <div style={{ textAlign: "center", padding: "48px 0 40px" }}>
+        <h1 style={{ fontSize: 28, margin: "0 0 10px" }}>{t("你的 AI 智能体，随处可达")}</h1>
+        <p style={{ color: "#666", fontSize: 15, margin: "0 0 28px" }}>{t("免部署 · 免公网 IP · 免装客户端")}</p>
+        <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
+          {authed ? (
+            <button onClick={() => navigate("/hosts")} style={{ ...btnStyle(), fontSize: 16, padding: "10px 26px" }}>{t("进入控制台")}</button>
+          ) : (
+            <>
+              <button onClick={() => navigate("/register")} style={{ ...btnStyle(), fontSize: 16, padding: "10px 26px" }}>{t("立即注册")}</button>
+              <button onClick={() => navigate("/login")} style={{ ...btnStyle("ghost"), fontSize: 16, padding: "10px 26px" }}>{t("登录")}</button>
+            </>
+          )}
+        </div>
+      </div>
+
+      <LegalContent html={LEGAL.product} />
+
+      <SiteFooter />
+    </div>
   );
 }
 

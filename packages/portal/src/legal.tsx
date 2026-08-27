@@ -8,17 +8,28 @@
 import type React from "react";
 import { LEGAL } from "./legal/generated.ts";
 
-function StaticDoc({ html }: { html: string }): React.JSX.Element {
+export { LEGAL } from "./legal/generated.ts";
+
+/** 纯内容渲染（无返回栏/外层容器），供落地页与文档页复用。 */
+export function LegalContent({ html }: { html: string }): React.JSX.Element {
   return (
-    <div style={{ maxWidth: 720, margin: "40px auto", padding: "0 16px", fontFamily: "system-ui, sans-serif" }}>
-      <a href="#" onClick={(e) => { e.preventDefault(); window.history.back(); }} style={{ color: "#2563eb", fontSize: 13 }}>← 返回</a>
+    <>
       <div
         className="rdsh-legal"
         style={{ fontSize: 14, lineHeight: 1.7, color: "#333" }}
         // 内容为构建期生成、来源可信，非用户输入
         dangerouslySetInnerHTML={{ __html: html }}
       />
-      <style>{`.rdsh-legal h1{font-size:20px;margin:12px 0}.rdsh-legal h2{font-size:15px;margin:16px 0 6px}.rdsh-legal h3{font-size:14px;margin:12px 0 4px}.rdsh-legal p{margin:8px 0}.rdsh-legal ul{margin:8px 0;padding-left:20px}.rdsh-legal li{margin:4px 0}.rdsh-legal code{background:#f3f4f6;padding:1px 5px;border-radius:4px;font-size:13px}.rdsh-legal a{color:#2563eb}.rdsh-legal blockquote{color:#999;border-left:3px solid #e5e7eb;padding-left:12px;margin:12px 0}`}</style>
+      <style>{`.rdsh-legal h1{font-size:22px;margin:12px 0}.rdsh-legal h2{font-size:16px;margin:20px 0 6px}.rdsh-legal h3{font-size:14px;margin:14px 0 4px}.rdsh-legal p{margin:8px 0}.rdsh-legal ul{margin:8px 0;padding-left:20px}.rdsh-legal li{margin:4px 0}.rdsh-legal code{background:#f3f4f6;padding:1px 5px;border-radius:4px;font-size:13px}.rdsh-legal a{color:#2563eb}.rdsh-legal blockquote{color:#999;border-left:3px solid #e5e7eb;padding-left:12px;margin:12px 0}`}</style>
+    </>
+  );
+}
+
+function StaticDoc({ html }: { html: string }): React.JSX.Element {
+  return (
+    <div style={{ maxWidth: 720, margin: "40px auto", padding: "0 16px", fontFamily: "system-ui, sans-serif" }}>
+      <a href="#" onClick={(e) => { e.preventDefault(); window.history.back(); }} style={{ color: "#2563eb", fontSize: 13 }}>← 返回</a>
+      <LegalContent html={html} />
     </div>
   );
 }
