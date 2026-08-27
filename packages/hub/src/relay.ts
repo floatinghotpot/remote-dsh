@@ -34,8 +34,8 @@ export interface RelayOptions {
   injectBackBar?: boolean;
 }
 
-/** 返回条：悬浮在 DSH 界面右上角，回 portal。 */
-export const BACK_BAR_HTML = `<a href="/portal" style="position:fixed;top:10px;right:14px;z-index:99999;background:rgba(15,23,42,.85);color:#e2e8f0;padding:6px 12px;border-radius:8px;text-decoration:none;font:13px system-ui,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.3);">← rdsh · 返回</a>`;
+/** 返回按钮：悬浮于 DSH 界面右上角（top:64px 位于 DSH 顶栏/Session Log 下方，避免遮挡）。 */
+export const BACK_BAR_HTML = `<a href="/portal" style="position:fixed;top:40px;right:30px;z-index:99999;background:rgba(15,23,42,.85);color:#e2e8f0;padding:6px 14px;border-radius:16px;text-decoration:none;font:13px system-ui,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.3);">← rdsh · 返回</a>`;
 
 /**
  * HTTP/SSE 透传。返回是否已处理（false = 路径不属于数据面）。
@@ -68,7 +68,7 @@ export async function handleRelay(req: IncomingMessage, res: ServerResponse, run
   const headers = normalizeHeaders(req.headers);
   let responded = false;
   let streamId = 0;
-  // 返回条注入：text/html 响应缓冲（KB 级）后注入；其余流量流式
+  // 返回按钮注入：text/html 响应缓冲（KB 级）后注入；其余流量流式
   let htmlBuf: Buffer[] | null = null;
   streamId = conn.openStream("http", path, req.method ?? "GET", headers, {
     onResponse: (status, _reason, respHeaders) => {
@@ -98,6 +98,7 @@ export async function handleRelay(req: IncomingMessage, res: ServerResponse, run
       if (res.destroyed) return;
       if (htmlBuf !== null) {
         let html = Buffer.concat(htmlBuf).toString("utf8");
+        // 返回按钮注入到 </head> 前（固定定位悬浮，不改动 DSH 文档流/布局）
         html = html.replace("</head>", `${BACK_BAR_HTML}</head>`);
         if (!html.includes(BACK_BAR_HTML)) html = `${BACK_BAR_HTML}${html}`;
         res.end(html);
