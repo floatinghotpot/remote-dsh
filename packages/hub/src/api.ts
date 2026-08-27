@@ -133,8 +133,9 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, runti
   if (path === "/api/captcha/config" && method === "GET") {
     const provider = runtime.config.captcha?.provider ?? "arithmetic";
     const sceneId = provider === "aliyun" ? runtime.config.captcha?.aliyun?.sceneId : undefined;
+    const prefix = provider === "aliyun" ? runtime.config.captcha?.aliyun?.prefix : undefined;
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ provider, sceneId }));
+    res.end(JSON.stringify({ provider, sceneId, prefix }));
     return true;
   }
   if (path === "/api/auth/password/reset" && method === "POST") {

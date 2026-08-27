@@ -105,7 +105,9 @@ function useError(): { err: string; clear: () => void; run: (fn: () => Promise<v
 
 declare global {
   interface Window {
-    initAliyunCaptcha?: (config: Record<string, unknown>, callback: (param: string) => void) => void;
+    initAliyunCaptcha?: (config: Record<string, unknown>) => void;
+    /** V3 架构（Web/H5）：必须在加载 SDK 前设置的全局变量（region + 身份标 prefix）。 */
+    AliyunCaptchaConfig?: { region: string; prefix: string };
   }
 }
 
@@ -130,6 +132,7 @@ function CaptchaGate({ onCaptcha }: { onCaptcha: (captcha: CaptchaPayload) => vo
   const [mode, setMode] = useState<"loading" | "none" | "arithmetic" | "aliyun">("loading");
   const [challenge, setChallenge] = useState<{ token: string; question: string } | null>(null);
   const [answer, setAnswer] = useState("");
+  const [captchaFail, setCaptchaFail] = useState("");
   const { err, run } = useError();
 
   useEffect(() => {
@@ -140,13 +143,29 @@ function CaptchaGate({ onCaptcha }: { onCaptcha: (captcha: CaptchaPayload) => vo
         onCaptcha({});
       } else if (cfg.provider === "aliyun") {
         setMode("aliyun");
+        // V3 架构（Web/H5）：必须在加载 SDK 之前设置全局 AliyunCaptchaConfig（region + 身份标 prefix），
+        // 否则初始化请求签名不匹配（401 "Specified signature is not matched with our calculation!"）。
+        window.AliyunCaptchaConfig = { region: "cn", prefix: cfg.prefix ?? "" };
         await loadScript(ALIYUN_CAPTCHA_SDK);
         const init = window.initAliyunCaptcha;
         if (init === undefined) throw new Error("aliyun captcha SDK not loaded");
-        // 前端 SDK 完成滑块后回调 captchaVerifyParam（后端 VerifyCaptcha 验签）
-        init({ SceneId: cfg.sceneId ?? "", prefix: "rdsh", button: "#rdsh-captcha-btn", language: "cn", immediate: false }, (param) => {
-          onCaptcha({ captchaVerifyParam: param });
-          setMode("none");
+        // V3：mode/element/button/success 均必填；验证通过回调直接透出 captchaVerifyParam（后端 VerifyCaptcha 验签）
+        init({
+          SceneId: cfg.sceneId ?? "",
+          mode: "popup",
+          element: "#rdsh-captcha-element",
+          button: "#rdsh-captcha-btn",
+          success: (param: string) => {
+            onCaptcha({ captchaVerifyParam: param });
+            setMode("none");
+          },
+          fail: (result: unknown) => {
+            const msg =
+              typeof result === "object" && result !== null && "message" in result
+                ? String((result as { message?: unknown }).message)
+                : "captcha verification failed";
+            setCaptchaFail(msg);
+          },
         });
       } else {
         setMode("arithmetic");
@@ -159,7 +178,9 @@ function CaptchaGate({ onCaptcha }: { onCaptcha: (captcha: CaptchaPayload) => vo
   if (mode === "aliyun") {
     return (
       <div style={{ marginBottom: 12 }}>
+        <div id="rdsh-captcha-element" />
         <button id="rdsh-captcha-btn" type="button" style={btnStyle("ghost")}>完成滑块验证</button>
+        {captchaFail !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{captchaFail}</p>}
         {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
       </div>
     );

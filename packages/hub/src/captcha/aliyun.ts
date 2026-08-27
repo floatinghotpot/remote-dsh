@@ -12,6 +12,8 @@ export interface AliyunCaptchaConfig {
   accessKeySecret: string;
   /** 验证码场景 ID（阿里云验证码 2.0 控制台创建） */
   sceneId: string;
+  /** 身份标（Prefix）：开通验证码 2.0 后控制台概览页右上角获取；前端 SDK 用它拼 captcha-open 域名 */
+  prefix: string;
   /** 默认 https://captcha.aliyuncs.com/ */
   endpoint?: string;
 }

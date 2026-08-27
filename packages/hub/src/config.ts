@@ -213,10 +213,16 @@ function normalizeCaptcha(raw: unknown, source: string): CaptchaConfig {
   const out: CaptchaConfig = { provider: c.provider };
   if (c.provider === "aliyun") {
     const a = c.aliyun as Record<string, unknown> | undefined;
-    if (a === undefined || typeof a.accessKeyId !== "string" || typeof a.accessKeySecret !== "string" || typeof a.sceneId !== "string") {
-      throw new Error(`${source}: "captcha.aliyun" needs accessKeyId/accessKeySecret/sceneId`);
+    if (
+      a === undefined ||
+      typeof a.accessKeyId !== "string" ||
+      typeof a.accessKeySecret !== "string" ||
+      typeof a.sceneId !== "string" ||
+      typeof a.prefix !== "string"
+    ) {
+      throw new Error(`${source}: "captcha.aliyun" needs accessKeyId/accessKeySecret/sceneId/prefix`);
     }
-    out.aliyun = { accessKeyId: a.accessKeyId, accessKeySecret: a.accessKeySecret, sceneId: a.sceneId };
+    out.aliyun = { accessKeyId: a.accessKeyId, accessKeySecret: a.accessKeySecret, sceneId: a.sceneId, prefix: a.prefix };
     if (a.endpoint !== undefined) {
       if (typeof a.endpoint !== "string") throw new Error(`${source}: "captcha.aliyun.endpoint" must be a string`);
       out.aliyun.endpoint = a.endpoint;

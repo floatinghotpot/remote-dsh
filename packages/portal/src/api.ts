@@ -105,7 +105,7 @@ export const api = {
   captchaChallenge(): Promise<{ token: string; question: string }> {
     return jsonFetch("/api/captcha/arithmetic", { method: "POST", body: "{}" });
   },
-  captchaConfig(): Promise<{ provider: "arithmetic" | "none" | "aliyun"; sceneId?: string }> {
+  captchaConfig(): Promise<{ provider: "arithmetic" | "none" | "aliyun"; sceneId?: string; prefix?: string }> {
     return jsonFetch("/api/captcha/config");
   },
   resetRequest(channel: "email" | "phone", identifier: string, captcha: CaptchaPayload): Promise<{ ok: boolean }> {
