@@ -7,6 +7,7 @@
 import { useEffect, useState } from "react";
 import { api, ApiError, subscribeEvents } from "./api.ts";
 import type { HostInfo, JoinTokenInfo, CaptchaPayload, AccountInfo, Capabilities } from "./api.ts";
+import { TermsPage, PrivacyPage } from "./legal.tsx";
 
 const REFRESH_KEY = "rdsh_refresh";
 
@@ -33,6 +34,8 @@ export function App(): React.JSX.Element {
   const path = full.startsWith(BASE) ? full.slice(BASE.length) || "/" : "/";
   if (path === "/login") return <Login />;
   if (path === "/register") return <RegisterPage />;
+  if (path === "/terms") return <TermsPage />;
+  if (path === "/privacy") return <PrivacyPage />;
   if (path === "/verify") return <VerifyPage />;
   if (path === "/billing") return <BillingPage />;
   if (path === "/settings/password") return <PasswordPage />;
@@ -1011,6 +1014,7 @@ function RegisterPage(): React.JSX.Element {
   const [password, setPassword] = useState("");
   const [captchaPayload, setCaptchaPayload] = useState<CaptchaPayload>({});
   const [cap, setCap] = useState<Capabilities | null>(null);
+  const [agreed, setAgreed] = useState(false);
   const { err, run } = useError();
 
   // sms 未配置 → 隐藏手机号 tab（注册页未登录，走公开 /api/capabilities）
@@ -1022,6 +1026,7 @@ function RegisterPage(): React.JSX.Element {
   }, []);
 
   const submit = (): void => {
+    if (!agreed) return;
     void run(async () => {
       await api.register(channel, identifier.trim(), password, captchaPayload);
       navigate(`/verify?channel=${channel}&identifier=${encodeURIComponent(identifier.trim())}`);
@@ -1041,8 +1046,17 @@ function RegisterPage(): React.JSX.Element {
       {field(channel === "email" ? "邮箱地址" : "手机号（+86，11 位）", identifier, setIdentifier)}
       {field("密码（至少 8 位）", password, setPassword, "password")}
       <CaptchaGate onCaptcha={setCaptchaPayload} />
+      <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 13, marginBottom: 12, lineHeight: 1.6 }}>
+        <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} style={{ marginTop: 2 }} />
+        <span>
+          我已阅读并同意
+          <a href="#" onClick={(e) => { e.preventDefault(); navigate("/terms"); }} style={{ color: "#2563eb" }}>《用户协议》</a>
+          与
+          <a href="#" onClick={(e) => { e.preventDefault(); navigate("/privacy"); }} style={{ color: "#2563eb" }}>《隐私政策》</a>
+        </span>
+      </label>
       {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
-      <button onClick={submit} style={{ ...btnStyle(), width: "100%", marginTop: 8 }}>获取验证码并注册</button>
+      <button onClick={submit} disabled={!agreed} style={{ ...btnStyle(), width: "100%", marginTop: 8, opacity: agreed ? 1 : 0.5 }}>获取验证码并注册</button>
       <p style={{ marginTop: 12, textAlign: "center" }}>
         <a href="#" onClick={(e) => { e.preventDefault(); navigate("/login"); }} style={{ color: "#2563eb", fontSize: 13 }}>已有账号？登录</a>
       </p>
