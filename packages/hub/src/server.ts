@@ -25,7 +25,7 @@ import { authenticate, clientIp, handleApi, writeError, sweepBilling } from "./a
 import type { HubRuntime } from "./api.ts";
 import type { EmailConfig } from "./email/types.ts";
 import type { SmsConfig } from "./sms/types.ts";
-import type { CaptchaConfig, SecurityConfig, BillingConfig } from "./config.ts";
+import type { CaptchaConfig, SecurityConfig, BillingConfig, BeianConfig } from "./config.ts";
 import { TunnelConn, TunnelRegistry } from "./tunnel.ts";
 import { EventHub, createEventsServer } from "./events.ts";
 import { handleRelay, handleRelayUpgrade } from "./relay.ts";
@@ -50,6 +50,8 @@ export interface HubServerOptions {
   sms?: SmsConfig;
   registration?: "open" | "closed";
   billing?: BillingConfig;
+  /** 备案信息（portal 页脚，serve.ts 从 hub.json 传入）。 */
+  beian?: BeianConfig;
 }
 
 export interface RunningHub {
@@ -101,6 +103,7 @@ export async function startHubServer(opts: HubServerOptions): Promise<RunningHub
       sms: opts.sms,
       registration: opts.registration,
       billing: opts.billing,
+      beian: opts.beian,
     },
     db: opts.db,
     auth: opts.auth,
