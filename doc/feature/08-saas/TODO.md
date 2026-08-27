@@ -7,7 +7,7 @@
 
 ## 0. 一句话状态
 
-**代码全部写完**（`pnpm build` + `pnpm test` 全绿）。剩下的是**纯配置/凭证 + 招行字段核对**，不再有 coding 阻塞。
+**代码全部写完 + 已提交推送**，`pnpm build` + `pnpm test` 全绿（tunnel 12 / hub 57 / gateway 74）。**阿里云验证码 2.0 已真实验签通过**（hub.unicgames.com）。剩余：**微信/招行支付凭证 + 开放注册业务决策**，无 coding 阻塞。
 
 ---
 
@@ -33,25 +33,25 @@
   ```
 - **要核对的**：下单/回调的**精确 endpoint 与字段**（依据[招行一网通支付 API](https://openhome.cmbchina.com/PayNew/pay/doc/cell/H5/OneCardPayAPI)）+ 客户经理确认「动态码 API / 手机端 H5 直唤起」——这是唯一需要"接入时核对"的点，不是大 coding。
 
-### ③ 阿里云验证码 2.0（填 sceneId 即验签）
-- **代码**：前端 `CaptchaGate`（加载 SDK + `initAliyunCaptcha` + 回传 `captchaVerifyParam`）+ `/api/captcha/config` 端点 + 后端 `verifyCaptchaParam` RPC。
-- **要填的配置**（`hub.json` → `captcha`）：
-  ```jsonc
-  { "captcha": { "provider": "aliyun", "aliyun": { "accessKeyId": "…", "accessKeySecret": "…", "sceneId": "…", "prefix": "…" } } }
-  ```
-- **需要的凭证**：sceneId（阿里云验证码 2.0 控制台创建）+ **prefix（身份标，控制台概览页右上角获取）** + 签名/模板审核通过。**未填时用算术验证码兜底**（`provider: "arithmetic"`，零依赖、已可用）。
+### ✅ ③ 阿里云验证码 2.0（已真实验签通过，2026-08-27）
+- **状态**：已在 **hub.unicgames.com** 真实验签通过（V3 web/H5 集成 + config-driven `prefix`），无需再动。
+
+### ④ 开放注册业务决策（需《用户协议》《隐私政策》）
+- **性质**：业务/合规 gate（非 coding、非配置）——上线把 `registration: "open"` 之前必须落地。
+- **已具备**：数据删除入口（`DELETE /api/account`，R7 已实现）；注册页「☑ 同意《用户协议》与《隐私政策》」勾选（UI 占位）。
+- **待办**：① 撰写《用户协议》+《隐私政策》（个保法：声明收集邮箱/手机号用途；短信含签名/退订指引）；② 注册勾选链接到真实文档页（portal 加 `/portal/terms` `/portal/privacy`）；③ 法务审阅。
 
 ---
 
 ## 2. 如何验证已完成代码
 
-1. `git status` + `git diff --stat`（约 30 个新/改文件 + 3 个新测试；**未 commit/push/发布**）。
-2. `pnpm build`（tsc strict 全绿）+ `pnpm test`（tunnel 12 / hub 55 / gateway 74）。
+1. `git pull` + `pnpm install`（拉入 sm-crypto 等依赖）。
+2. `pnpm build`（tsc strict 全绿）+ `pnpm test`（tunnel 12 / hub 57 / gateway 74）。
 3. 冒烟：hub.json 开 `registration: "open"` + `email/sms: {provider:"log"}` + `billing.plans` + `payment: {provider:"mock"}`，浏览器走注册→验证→试用→套餐→订阅→删除。
 
 ## 3. 提交/推送
 
-代码在工作区，等你复核后按 Batch Plan 提交（显式路径 + 英文 message）；push 需另行确认。
+代码已提交并推送至 main（含 verifier 的 captcha V3 集成、邮箱/短信验证、`/api/capabilities` 能力端点等修复）。
 
 ---
 
