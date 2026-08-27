@@ -109,6 +109,7 @@ const EN: Record<string, string> = {
   "还没有接入主机 —— 用上面的「添加主机」接入你的第一台 DSH。":
     "No hosts yet — use “Add host” above to connect your first DSH.",
   "共享管理": "Sharing",
+  "关闭": "Close",
   "成员用户名": "Member username",
   "尚未共享给任何人": "Not shared with anyone yet",
   "移除": "Remove",

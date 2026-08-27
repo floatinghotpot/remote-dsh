@@ -896,6 +896,8 @@ function HostsPage(): React.JSX.Element {
     });
   };
 
+  const shareHostName = shareHostId !== null ? hosts.find((h) => h.id === shareHostId)?.name : undefined;
+
   return (
     <Shell title={t("rdsh · 我的主机")} onLogout={logout}>
       {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
@@ -934,7 +936,10 @@ function HostsPage(): React.JSX.Element {
           })}
           {shareHostId !== null && (
             <div style={{ marginTop: 12, padding: 12, border: "1px solid #eee", borderRadius: 8 }}>
-              <p style={{ fontWeight: 500, marginBottom: 8 }}>{t("共享管理")}</p>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <p style={{ fontWeight: 500, margin: 0 }}>{t("共享管理")}{shareHostName !== undefined ? ` · ${shareHostName}` : ""}</p>
+                <button onClick={() => { setShareHostId(null); setShareName(""); }} style={btnStyle("ghost")}>{t("关闭")}</button>
+              </div>
               <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
                 <input value={shareName} onChange={(e) => setShareName(e.target.value)} placeholder={t("成员用户名")} style={{ ...inputStyle(), width: 180 }} />
                 <button onClick={doShare} style={btnStyle()}>{t("共享", { en: "Share" })}</button>
