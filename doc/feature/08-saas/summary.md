@@ -25,7 +25,7 @@
 
 ## 质量门
 
-`pnpm build` 全绿（tsc strict）；`pnpm test` 全绿（tunnel 12 / hub 50 / gateway 74）。
+`pnpm build` 全绿（tsc strict）；`pnpm test` 全绿（tunnel 12 / hub 55 / gateway 74）。
 
 ## 未做（TODO.md）
 
@@ -39,7 +39,7 @@
 - 注册发码前置算术验证码（`verifyCaptchaBody` 分发 arithmetic/aliyun/none）；
 - 阿里云验证码 2.0 后端 `verifyCaptchaParam` RPC（复用 rpcSignature）；
 - 微信支付 `wechatpay` provider（APIv3 Native + RSA 请求签名 + HMAC 回调验签 + AES-GCM 解密，`test/wechatpay.test.ts` 3 用例）；
-- 质量门：`pnpm build` 全绿 + `pnpm test` 全绿（tunnel 12 / hub 53 / gateway 74）。
+- 质量门：`pnpm build` 全绿 + `pnpm test` 全绿（tunnel 12 / hub 55 / gateway 74）。
 
 ## 第三轮补充（全部编码完成，仅剩配置，2026-08-26 晨）
 

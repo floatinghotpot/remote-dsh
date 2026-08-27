@@ -72,10 +72,11 @@ export async function serveHub(opts: HubServeOptions): Promise<void> {
   });
 
   const scheme = tls ? "https" : "http";
+  const regMode = config.registration === "open" ? "registration open" : "registration closed (admin creates users)";
   console.log(`rdsh hub serve: hub on ${scheme}://${host === "0.0.0.0" ? "0.0.0.0" : host}:${actualPort}`);
   console.log(`rdsh hub serve: db: ${config.dbPath}`);
   console.log(`rdsh hub serve: portal: ${portalDir}`);
-  console.log(`rdsh hub serve: users managed via 'rdsh hub user add|rm|ls' (registration closed)`);
+  console.log(`rdsh hub serve: users managed via 'rdsh hub user add|rm|ls' — ${regMode}`);
 
   let shuttingDown = false;
   const shutdown = (signal: string): void => {

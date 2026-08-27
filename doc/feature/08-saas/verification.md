@@ -23,7 +23,7 @@
 ## 2. 自动化证据
 
 - `pnpm build`：6 包 tsc strict 全绿（含 `info` 级）；
-- `pnpm test`：tunnel 12/12、hub 50/50（新增 `saas.test.ts` 8 用例覆盖注册/验证/trial 配额/订阅/状态机/删除）、gateway 74/74、cli 0；
+- `pnpm test`：tunnel 12/12、hub 55/55（新增 `saas.test.ts` 8 用例覆盖注册/验证/trial 配额/订阅/状态机/删除 + `wechatpay.test.ts` 3 用例 + `cmb.test.ts` 1 用例）、gateway 74/74、cli 0；
 - 回归：既有 hub 测试仅 1 处因注册端点语义变更更新（`NOT_FOUND`→`REGISTRATION_DISABLED`），其余全绿；自托管形态（注册关闭默认）保持 404 防 bot。
 
 ## 3. 缺口清单（gap + severity + 建议）
