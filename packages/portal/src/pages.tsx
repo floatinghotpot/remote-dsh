@@ -941,6 +941,28 @@ function ResetPasswordPage(): React.JSX.Element {
 
 // ---- host 列表 ----
 
+/** 端到端加密标识：盾牌 + 对勾（绿色，安全/已验证语义）。 */
+function ShieldIcon(): React.JSX.Element {
+  const { t } = useT();
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="#16a34a"
+      strokeWidth="2.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      style={{ marginRight: 5, verticalAlign: -1.5, flexShrink: 0 }}
+    >
+      <title>{t("端到端加密")}</title>
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+      <path d="m9 12 2 2 4-4" />
+    </svg>
+  );
+}
+
 function HostsPage(): React.JSX.Element {
   const { t } = useT();
   const [hosts, setHosts] = useState<HostInfo[]>([]);
@@ -1051,7 +1073,10 @@ function HostsPage(): React.JSX.Element {
             return (
               <div key={h.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", border: "1px solid #eee", borderRadius: 8, marginBottom: 8 }}>
                 <span style={{ color: h.online ? "#16a34a" : "#999", fontSize: 14 }}>{h.online ? "●" : "○"}</span>
-                <span style={{ fontWeight: 500 }}>{h.name}</span>
+                <span style={{ fontWeight: 500 }}>
+                  {h.e2eePublicKey !== undefined && h.e2eePublicKey !== null && h.e2eePublicKey !== "" && <ShieldIcon />}
+                  {h.name}
+                </span>
                 <span style={{ color: "#666", fontSize: 12 }}>{h.online ? t("在线") : t("离线")}</span>
                 {!isOwner && <span style={{ color: "#999", fontSize: 12, border: "1px solid #eee", borderRadius: 4, padding: "1px 6px" }}>{t("共享", { en: "Shared" })}</span>}
                 <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
