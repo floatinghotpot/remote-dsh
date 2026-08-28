@@ -1,6 +1,6 @@
 # remote-dsh
 
-remote-dsh 让您把 [DeepSeek Harness（DSH）](https://github.com/deepseek-ai/DeepSeek-Harness) 变成「任何地方浏览器即用」的 AI 智能体——免公网 IP、免装客户端。
+remote-dsh 让您把 DeepSeek Harness（DSH）变成「任何地方浏览器即用」的 AI 智能体——免公网 IP、免装客户端。
 
 ## 为什么选择 remote-dsh
 - **浏览器即用**：免公网 IP、免装客户端，开浏览器就能指挥智能体；
@@ -28,6 +28,3 @@ remote-dsh 让您把 [DeepSeek Harness（DSH）](https://github.com/deepseek-ai/
 1. 注册账号（3 天试用，1 台主机）；
 2. 在 DSH 中执行 `dsh plugin add dsh-web-remote`，于「远程访问」面板粘贴 hub 地址 + join token 接入；
 3. 浏览器登录 → 进入主机 → 操作 DSH。
-
-## 更多
-- 开源仓库与文档：[github.com/floatinghotpot/remote-dsh](https://github.com/floatinghotpot/remote-dsh)
