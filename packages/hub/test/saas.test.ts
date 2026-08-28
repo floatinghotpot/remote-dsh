@@ -162,6 +162,30 @@ test("订阅 → mock 支付 → subscribed + 配额升级到 5", async () => {
   assert.equal(sub.planId, "pro");
 });
 
+test("订阅 form 分流：jsapi 无 openid → 400；h5/native/缺省 → mock paid", async () => {
+  const cookie = await loginCookie("a@test.com", "pw123456");
+
+  const jsapi = await post("/api/billing/subscribe", { planId: "pro", form: "jsapi" }, cookie);
+  assert.equal(jsapi.status, 400);
+  assert.equal((jsapi.json.error as Record<string, unknown>).code, "JSAPI_OPENID_REQUIRED");
+
+  const h5 = await post("/api/billing/subscribe", { planId: "pro", form: "h5" }, cookie);
+  assert.equal(h5.status, 200);
+  assert.equal(h5.json.paid, true);
+
+  const native = await post("/api/billing/subscribe", { planId: "pro", form: "native" }, cookie);
+  assert.equal(native.status, 200);
+  assert.equal(native.json.paid, true);
+
+  const bad = await post("/api/billing/subscribe", { planId: "pro", form: "weird" }, cookie);
+  assert.equal(bad.status, 400);
+
+  const oauth = await fetch(base + "/api/wechat/oauth/authorize?redirect=%2Fbilling", { headers: { cookie } });
+  assert.equal(oauth.status, 400);
+  const oj = (await oauth.json()) as Record<string, unknown>;
+  assert.equal((oj.error as Record<string, unknown>).code, "WECHAT_OAUTH_DISABLED");
+});
+
 test("状态机：trial/subscribed 到期 → grace → free", async () => {
   const owner = db.getUserByEmail("a@test.com");
   // subscribed 到期 → grace

@@ -59,3 +59,20 @@ test("email：log 可省略 from（占位）；smtp/aliyun 必填 from + 嵌套�
   assert.throws(() => normalizeHubConfig({ email: { provider: "smtp", from: "x@y.com" } }), /"email.smtp"/);
   assert.throws(() => normalizeHubConfig({ email: { provider: "aliyun", from: "x@y.com" } }), /"email.aliyun"/);
 });
+
+test("billing.payment.wechatpay：必填字段校验 + appSecret 可选", () => {
+  const base = {
+    mchid: "1900000001",
+    appid: "wx123",
+    certSerialNo: "SN1",
+    privateKey: "-----BEGIN PRIVATE KEY-----\nX\n-----END PRIVATE KEY-----",
+    apiV3Key: "0123456789abcdef0123456789abcdef",
+    notifyUrl: "https://rdsh.cn/api/billing/callback",
+  };
+  assert.doesNotThrow(() => normalizeHubConfig({ billing: { payment: { provider: "wechatpay", wechatpay: base } } }));
+  assert.doesNotThrow(() => normalizeHubConfig({ billing: { payment: { provider: "wechatpay", wechatpay: { ...base, appSecret: "s3" } } } }));
+  assert.throws(() => normalizeHubConfig({ billing: { payment: { provider: "wechatpay" } } }), /"billing.payment.wechatpay" is required/);
+  assert.throws(() => normalizeHubConfig({ billing: { payment: { provider: "wechatpay", wechatpay: { ...base, mchid: "" } } } }), /"billing.payment.wechatpay.mchid"/);
+  assert.throws(() => normalizeHubConfig({ billing: { payment: { provider: "wechatpay", wechatpay: { ...base, apiV3Key: "" } } } }), /"billing.payment.wechatpay.apiV3Key"/);
+  assert.throws(() => normalizeHubConfig({ billing: { payment: { provider: "wechatpay", wechatpay: { ...base, appSecret: "" } } } }), /"billing.payment.wechatpay.appSecret"/);
+});

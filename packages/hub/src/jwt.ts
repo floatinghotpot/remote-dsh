@@ -18,6 +18,8 @@ export interface JwtClaims {
   exp: number;
   /** 2FA pending 标记：密码已通过、待 TOTP 的短效 token（不可作完整会话） */
   totpPending?: boolean;
+  /** JSAPI 微信 openid（OAuth 换码后签发，独立 Cookie，非会话 token） */
+  openid?: string;
 }
 
 export class Jwt {

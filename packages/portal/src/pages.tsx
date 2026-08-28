@@ -5,8 +5,9 @@
  * 供登出吊销（hub 门户自身代码，无第三方脚本）。
  */
 import { useEffect, useState } from "react";
+import QRCode from "qrcode";
 import { api, ApiError, subscribeEvents } from "./api.ts";
-import type { HostInfo, JoinTokenInfo, CaptchaPayload, AccountInfo, Capabilities } from "./api.ts";
+import type { HostInfo, JoinTokenInfo, CaptchaPayload, AccountInfo, Capabilities, WechatPayInfo } from "./api.ts";
 import { useT, getLang } from "./i18n.ts";
 import type { T } from "./i18n.ts";
 import { TermsPage, PrivacyPage, ProductPage, LegalContent, LEGAL } from "./legal.tsx";
@@ -1299,10 +1300,55 @@ interface PlanInfo {
   intervalDays: number;
 }
 
+/** 是否微信内置浏览器。 */
+function isWechatWebview(): boolean {
+  return /MicroMessenger/i.test(navigator.userAgent);
+}
+
+/** 是否移动端浏览器（非微信）。 */
+function isMobileBrowser(): boolean {
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+}
+
+/** 支付形态按运行环境探测：微信内 → jsapi；移动非微信 → h5；桌面 → native。 */
+function detectPayForm(): "native" | "h5" | "jsapi" {
+  if (isWechatWebview()) return "jsapi";
+  if (isMobileBrowser()) return "h5";
+  return "native";
+}
+
+/** 微信内 JSAPI 调起收银台（WeixinJSBridge.getBrandWCPayRequest）。 */
+function invokeWechatJsapi(payInfo: WechatPayInfo): void {
+  const w = window as unknown as { WeixinJSBridge?: { invoke: (api: string, params: Record<string, unknown>, cb: (res: { err_msg?: string }) => void) => void } };
+  const call = (): void => {
+    if (w.WeixinJSBridge === undefined) return;
+    w.WeixinJSBridge.invoke(
+      "getBrandWCPayRequest",
+      {
+        appId: payInfo.appId,
+        timeStamp: payInfo.timeStamp,
+        nonceStr: payInfo.nonceStr,
+        package: payInfo.package,
+        signType: payInfo.signType,
+        paySign: payInfo.paySign,
+      },
+      () => {
+        // 支付结果由订阅状态轮询兜底，此处不处理 err_msg
+      },
+    );
+  };
+  if (w.WeixinJSBridge === undefined) {
+    document.addEventListener("WeixinJSBridgeReady", call, { once: true });
+  } else {
+    call();
+  }
+}
+
 function BillingPage(): React.JSX.Element {
   const { t } = useT();
   const [plans, setPlans] = useState<PlanInfo[]>([]);
   const [sub, setSub] = useState<SubInfo | null>(null);
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const { toast, show } = useToast();
   const { err, run } = useError();
 
@@ -1315,12 +1361,67 @@ function BillingPage(): React.JSX.Element {
   };
   useEffect(load, []);
 
-  const subscribe = (planId: string): void => {
-    void run(async () => {
-      await api.subscribe(planId);
-      show("ok", t("订阅成功，配额已升级"));
-      load();
+  /** 轮询订阅状态直至支付成功（上限 5 分钟）。 */
+  const pollUntilPaid = (): void => {
+    const timer = window.setInterval(() => {
+      void api
+        .subscription()
+        .then((s) => {
+          if (s.planStatus === "subscribed") {
+            window.clearInterval(timer);
+            setQrDataUrl(null);
+            show("ok", t("订阅成功，配额已升级"));
+            load();
+          }
+        })
+        .catch(() => {});
+    }, 2000);
+    window.setTimeout(() => window.clearInterval(timer), 5 * 60 * 1000);
+  };
+
+  const doSubscribe = async (planId: string, form: "native" | "h5" | "jsapi"): Promise<void> => {
+    const ok = await run(async () => {
+      const r = await api.subscribe(planId, form);
+      if (r.paid) {
+        show("ok", t("订阅成功，配额已升级"));
+        load();
+        return;
+      }
+      const payInfo = r.payInfo;
+      if (form === "native" && typeof payInfo?.codeUrl === "string") {
+        const dataUrl = await QRCode.toDataURL(payInfo.codeUrl, { width: 220, margin: 1 });
+        setQrDataUrl(dataUrl);
+        pollUntilPaid();
+      } else if (form === "h5" && typeof payInfo?.h5Url === "string") {
+        window.location.href = payInfo.h5Url;
+      } else if (form === "jsapi" && typeof payInfo?.appId === "string") {
+        invokeWechatJsapi(payInfo);
+        pollUntilPaid();
+      } else {
+        show("err", t("支付已取消或失败"));
+      }
     });
+    if (!ok) load();
+  };
+
+  // jsapi OAuth 回跳：/billing?subscribe=<planId> → 直接发起 jsapi 订阅
+  useEffect(() => {
+    const planId = new URLSearchParams(window.location.search).get("subscribe");
+    if (planId !== null) {
+      window.history.replaceState({}, "", `${BASE}/billing`);
+      void doSubscribe(planId, "jsapi");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const subscribe = (planId: string): void => {
+    const form = detectPayForm();
+    if (form === "jsapi") {
+      // 微信内先 OAuth 授权拿 openid，再回跳发起支付
+      window.location.href = `/api/wechat/oauth/authorize?redirect=${encodeURIComponent(`/billing?subscribe=${planId}`)}`;
+      return;
+    }
+    void doSubscribe(planId, form);
   };
 
   const hasPlans = plans.length > 0;
@@ -1328,48 +1429,59 @@ function BillingPage(): React.JSX.Element {
   const hasStatus = sub !== null && (hasPlans || sub.planStatus !== null);
 
   return (
-    <Shell title={t("套餐与订阅")} onLogout={logout}>
-      <div style={{ marginBottom: 16 }}>
-        <button onClick={() => navigate("/hosts")} style={btnStyle("ghost")}>{t("← 返回主机列表")}</button>
-      </div>
-      <Toast toast={toast} />
-      {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
-      {hasStatus && <CurrentPlanCard sub={sub} />}
-      {hasPlans ? (
-        <Card title={t("选择套餐")}>
-          {plans.map((p) => {
-            const current = p.id === currentPlanId;
-            return (
-              <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", border: "1px solid #e5e7eb", borderRadius: 10, marginBottom: 8 }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ fontWeight: 600, fontSize: 14 }}>{p.name}</span>
-                    {current && <span style={{ fontSize: 11, padding: "1px 8px", borderRadius: 999, background: "#ecfdf5", color: "#047857" }}>{t("当前套餐")}</span>}
+    <>
+      <Shell title={t("套餐与订阅")} onLogout={logout}>
+        <div style={{ marginBottom: 16 }}>
+          <button onClick={() => navigate("/hosts")} style={btnStyle("ghost")}>{t("← 返回主机列表")}</button>
+        </div>
+        <Toast toast={toast} />
+        {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
+        {hasStatus && <CurrentPlanCard sub={sub} />}
+        {hasPlans ? (
+          <Card title={t("选择套餐")}>
+            {plans.map((p) => {
+              const current = p.id === currentPlanId;
+              return (
+                <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", border: "1px solid #e5e7eb", borderRadius: 10, marginBottom: 8 }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontWeight: 600, fontSize: 14 }}>{p.name}</span>
+                      {current && <span style={{ fontSize: 11, padding: "1px 8px", borderRadius: 999, background: "#ecfdf5", color: "#047857" }}>{t("当前套餐")}</span>}
+                    </div>
+                    <div style={{ fontSize: 13, color: "#6b7280", marginTop: 2 }}>{t("{hosts} 台 host · ¥{price}/{interval} 天", { params: { hosts: p.hosts, price: p.priceCny, interval: p.intervalDays } })}</div>
                   </div>
-                  <div style={{ fontSize: 13, color: "#6b7280", marginTop: 2 }}>{t("{hosts} 台 host · ¥{price}/{interval} 天", { params: { hosts: p.hosts, price: p.priceCny, interval: p.intervalDays } })}</div>
+                  <button disabled={current} onClick={() => subscribe(p.id)} style={btnStyle()}>
+                    {current ? t("当前套餐") : t("订阅")}
+                  </button>
                 </div>
-                <button disabled={current} onClick={() => subscribe(p.id)} style={btnStyle()}>
-                  {current ? t("当前套餐") : t("订阅")}
-                </button>
-              </div>
-            );
-          })}
+              );
+            })}
+          </Card>
+        ) : (
+          <Card title={t("自托管模式")}>
+            <p style={{ fontSize: 13, margin: 0 }}>{t("你正在自托管运行 remote-dsh（开源免费）：host 数量不限 · 无需订阅 · 无到期限制。")}</p>
+            <p style={{ fontSize: 13, color: "#6b7280", margin: "8px 0 0" }}>{t("完整功能：多用户 / 2FA / 审计 / 共享。")}</p>
+            <p style={{ fontSize: 12, color: "#9ca3af", margin: "8px 0 0" }}>{t("运营方在 hub.json 配置 billing.plans 后，此处将展示套餐与订阅入口。")}</p>
+          </Card>
+        )}
+        <Card title={t("计费说明")}>
+          <p style={{ fontSize: 13, color: "#6b7280", margin: 0 }}>
+            {t("订阅/试用到期后进入 3 天宽限期（隧道保留），之后降级免费档（0 台在线，host 数据保留 30 天）。")}
+          </p>
+          <p style={{ fontSize: 13, color: "#6b7280", margin: "8px 0 0" }}>
+            {t("支付：微信支付（上线后支持）· MVP 暂不提供发票。")}
+          </p>
         </Card>
-      ) : (
-        <Card title={t("自托管模式")}>
-          <p style={{ fontSize: 13, margin: 0 }}>{t("你正在自托管运行 remote-dsh（开源免费）：host 数量不限 · 无需订阅 · 无到期限制。")}</p>
-          <p style={{ fontSize: 13, color: "#6b7280", margin: "8px 0 0" }}>{t("完整功能：多用户 / 2FA / 审计 / 共享。")}</p>
-          <p style={{ fontSize: 12, color: "#9ca3af", margin: "8px 0 0" }}>{t("运营方在 hub.json 配置 billing.plans 后，此处将展示套餐与订阅入口。")}</p>
-        </Card>
+      </Shell>
+      {qrDataUrl !== null && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setQrDataUrl(null)}>
+          <div style={{ background: "#fff", padding: 20, borderRadius: 12, textAlign: "center", maxWidth: 280 }} onClick={(e) => e.stopPropagation()}>
+            <img src={qrDataUrl} width={220} height={220} alt="qr" />
+            <p style={{ margin: "12px 0 8px", fontSize: 14 }}>{t("请用微信扫一扫完成支付")}</p>
+            <button onClick={() => setQrDataUrl(null)} style={btnStyle("ghost")}>{t("取消")}</button>
+          </div>
+        </div>
       )}
-      <Card title={t("计费说明")}>
-        <p style={{ fontSize: 13, color: "#6b7280", margin: 0 }}>
-          {t("订阅/试用到期后进入 3 天宽限期（隧道保留），之后降级免费档（0 台在线，host 数据保留 30 天）。")}
-        </p>
-        <p style={{ fontSize: 13, color: "#6b7280", margin: "8px 0 0" }}>
-          {t("支付：微信 / 支付宝（上线后支持）· 7 天无理由退款 · MVP 暂不提供发票。")}
-        </p>
-      </Card>
-    </Shell>
+    </>
   );
 }

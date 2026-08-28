@@ -207,11 +207,14 @@ const EN: Record<string, string> = {
   "当前套餐": "Current plan",
   "订阅": "Subscribe",
   "订阅成功，配额已升级": "Subscribed — quota upgraded",
+  "请用微信扫一扫完成支付": "Scan the QR with WeChat to pay",
+  "支付已取消或失败": "Payment cancelled or failed",
+  "取消": "Cancel",
   "计费说明": "Billing notes",
   "订阅/试用到期后进入 3 天宽限期（隧道保留），之后降级免费档（0 台在线，host 数据保留 30 天）。":
     "After trial/subscription expiry: 3-day grace period (tunnels kept), then downgrade to free tier (0 online, data kept 30 days).",
-  "支付：微信 / 支付宝（上线后支持）· 7 天无理由退款 · MVP 暂不提供发票。":
-    "Payment: WeChat / Alipay (when live) · 7-day no-reason refund · invoices not yet available.",
+  "支付：微信支付（上线后支持）· MVP 暂不提供发票。":
+    "Payment: WeChat Pay (when live) · invoices not yet available.",
 
   // ---- 修改密码 ----
   "修改密码": "Change password",

@@ -18,12 +18,13 @@ import { createEmailSender } from "./email/index.ts";
 import type { EmailSender } from "./email/index.ts";
 import { createSmsSender } from "./sms/index.ts";
 import type { SmsSender } from "./sms/index.ts";
-import { createPaymentProvider, verifyWechatCallback, decryptWechatResource } from "./billing/index.ts";
+import { createPaymentProvider, verifyWechatCallback, decryptWechatResource, getWechatOpenid } from "./billing/index.ts";
 import { createChallenge, verifyChallenge } from "./captcha.ts";
 import { verifyCaptchaParam } from "./captcha/aliyun.ts";
 import { DailyWindowLimiter } from "./ratelimit.ts";
 
 export const SESSION_COOKIE = "rdsh_session";
+export const OPENID_COOKIE = "rdsh_openid";
 const JOIN_TOKEN_DEFAULT_TTL = 30 * 24 * 3600; // join token 默认 30 天（秒）
 const JOIN_TOKEN_MAX_TTL = 365 * 24 * 3600; // join token 上限 1 年（秒）
 const REGISTER_RATE_LIMIT = { max: 10, windowMs: 60 * 1000 }; // register 未认证端点：10 次/分钟/IP
@@ -192,6 +193,14 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, runti
   }
   if (path === "/api/billing/callback" && method === "POST") {
     await handleBillingCallback(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/wechat/oauth/authorize" && method === "GET") {
+    await handleWechatOauthAuthorize(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/wechat/oauth/callback" && method === "GET") {
+    await handleWechatOauthCallback(req, res, runtime);
     return true;
   }
   if (path === "/api/account" && method === "GET") {
@@ -1217,6 +1226,78 @@ async function handleBillingPlans(_req: IncomingMessage, res: ServerResponse, ru
   res.end(JSON.stringify({ plans: runtime.config.billing?.plans ?? [] }));
 }
 
+/** 校验站内相对重定向路径（防开放重定向）。 */
+function safeRedirect(p: unknown): string | null {
+  if (typeof p !== "string" || !p.startsWith("/") || p.startsWith("//")) return null;
+  return p;
+}
+
+/** 读取并校验 jsapi openid 短期签名 Cookie。 */
+function readOpenidCookie(req: IncomingMessage, runtime: HubRuntime): string | null {
+  const cookies = parseCookies(req.headers.cookie);
+  const token = cookies[OPENID_COOKIE];
+  if (typeof token !== "string" || token === "") return null;
+  const v = runtime.auth.verifyOpenidToken(token);
+  return v === null ? null : v.openid;
+}
+
+/** 组装微信 OAuth 授权 URL（redirect_uri 由 notifyUrl 的 origin 推导，回调固定 /api/wechat/oauth/callback）。 */
+function wechatOauthUrl(cfg: { appid: string; notifyUrl: string }, redirect: string): string {
+  const origin = new URL(cfg.notifyUrl).origin;
+  const redirectUri = encodeURIComponent(`${origin}/api/wechat/oauth/callback`);
+  const state = encodeURIComponent(redirect);
+  return `https://open.weixin.qq.com/connect/oauth2/authorize?appid=${cfg.appid}&redirect_uri=${redirectUri}&response_type=code&scope=snsapi_base&state=${state}#wechat_redirect`;
+}
+
+async function handleWechatOauthAuthorize(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const auth = authenticate(req, runtime);
+  if (auth === null) {
+    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
+    return;
+  }
+  const cfg = runtime.config.billing?.payment?.wechatpay;
+  if (runtime.config.billing?.payment?.provider !== "wechatpay" || cfg === undefined || typeof cfg.appSecret !== "string" || cfg.appSecret === "") {
+    writeError(res, 400, "WECHAT_OAUTH_DISABLED", "wechat oauth (jsapi) requires billing.payment.wechatpay.appSecret");
+    return;
+  }
+  const url = new URL(req.url ?? "/", "http://rdsh.local");
+  const redirect = safeRedirect(url.searchParams.get("redirect"));
+  if (redirect === null) {
+    writeError(res, 400, "BAD_REQUEST", "invalid redirect");
+    return;
+  }
+  res.writeHead(302, { location: wechatOauthUrl(cfg, redirect) });
+  res.end();
+}
+
+async function handleWechatOauthCallback(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const auth = authenticate(req, runtime);
+  if (auth === null) {
+    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
+    return;
+  }
+  const cfg = runtime.config.billing?.payment?.wechatpay;
+  if (runtime.config.billing?.payment?.provider !== "wechatpay" || cfg === undefined || typeof cfg.appSecret !== "string" || cfg.appSecret === "") {
+    writeError(res, 400, "WECHAT_OAUTH_DISABLED", "wechat oauth (jsapi) requires billing.payment.wechatpay.appSecret");
+    return;
+  }
+  const url = new URL(req.url ?? "/", "http://rdsh.local");
+  const code = url.searchParams.get("code");
+  const redirect = safeRedirect(url.searchParams.get("state"));
+  if (typeof code !== "string" || code === "" || redirect === null) {
+    writeError(res, 400, "BAD_REQUEST", "missing code or state");
+    return;
+  }
+  const openid = await getWechatOpenid(cfg.appid, cfg.appSecret, code);
+  if (openid === null) {
+    writeError(res, 400, "OAUTH_FAILED", "failed to exchange code for openid");
+    return;
+  }
+  const token = runtime.auth.issueOpenidToken(auth.userId, openid);
+  res.writeHead(302, { location: redirect, "set-cookie": `${OPENID_COOKIE}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=600` });
+  res.end();
+}
+
 async function handleSubscribe(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
   const auth = authenticate(req, runtime);
   if (auth === null) {
@@ -1230,9 +1311,30 @@ async function handleSubscribe(req: IncomingMessage, res: ServerResponse, runtim
     writeError(res, 400, "BAD_REQUEST", "unknown planId");
     return;
   }
+  const rawForm = typeof body?.form === "string" ? body.form : "native";
+  if (rawForm !== "native" && rawForm !== "h5" && rawForm !== "jsapi") {
+    writeError(res, 400, "BAD_REQUEST", "unknown form");
+    return;
+  }
+  let openid: string | undefined;
+  if (rawForm === "jsapi") {
+    const oid = readOpenidCookie(req, runtime);
+    if (oid === null) {
+      writeError(res, 400, "JSAPI_OPENID_REQUIRED", "jsapi payment requires wechat oauth openid");
+      return;
+    }
+    openid = oid;
+  }
   const orderId = randomUUID();
   runtime.db.createOrder(orderId, auth.userId, plan.id, plan.priceCny);
-  const result = await createPaymentProvider(runtime.config.billing?.payment).createPayment({ orderId, amountCny: plan.priceCny, subject: `remote-dsh ${plan.name}` });
+  const result = await createPaymentProvider(runtime.config.billing?.payment).createPayment({
+    orderId,
+    amountCny: plan.priceCny,
+    subject: `remote-dsh ${plan.name}`,
+    form: rawForm,
+    openid,
+    clientIp: clientIp(req, runtime),
+  });
   if (result.paid) {
     runtime.db.markOrderPaid(orderId, "mock", result.channelOrderId);
     runtime.db.createPayment(randomUUID(), orderId, auth.userId, "mock", result.channelOrderId, plan.priceCny, Date.now(), "{}");

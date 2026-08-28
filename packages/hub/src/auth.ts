@@ -259,6 +259,19 @@ private hmac(payload: string): string {
     if (user.ver !== claims.ver) return null;
     return { user, claims };
   }
+
+  /** JSAPI 微信 openid 短期 token（OAuth 回调后签发；独立 Cookie，非会话 token）。 */
+  issueOpenidToken(userId: number, openid: string): string {
+    return this.jwt.sign({ sub: userId, name: "", ver: 0, exp: Date.now() + 10 * 60 * 1000, openid });
+  }
+
+  /** 校验 openid token：签名 + 过期 + 含 openid。 */
+  verifyOpenidToken(token: string): { userId: number; openid: string } | null {
+    const claims = this.jwt.verify(token);
+    if (claims === null || claims.totpPending === true) return null;
+    if (typeof claims.openid !== "string" || claims.openid === "") return null;
+    return { userId: claims.sub, openid: claims.openid };
+  }
 }
 
 /** 登录失败限流（按 IP，5 次/10 分钟 —— 与 M2 一致）。 */

@@ -9,7 +9,7 @@ import { createWechatPayProvider } from "./wechatpay.ts";
 import { createCmbProvider } from "./cmb.ts";
 
 export type { PaymentRequest, PaymentResult, PaymentProvider, PaymentConfig, WechatPayConfig, CmbConfig } from "./types.ts";
-export { signWechatRequest, buildWechatAuthHeader, verifyWechatCallback, decryptWechatResource } from "./wechatpay.ts";
+export { signWechatRequest, buildWechatAuthHeader, signWechatJsapi, verifyWechatCallback, decryptWechatResource, getWechatOpenid } from "./wechatpay.ts";
 export { sm2Sign, sm2Verify } from "./cmb.ts";
 
 /** 按 billing.payment.provider 创建：mock（默认）| wechatpay | cmb。 */

@@ -42,8 +42,13 @@
 响应：`{ "plans": [ { "id", "name", "hosts", "priceCny", "intervalDays" } ] }`（来源 `config.billing.plans`）
 
 ### POST /api/billing/subscribe —— 订阅
-认证：需要。请求 `{ "planId" }` → 建 order（`status=created`）→ PaymentProvider 发起 → 回调/mock 支付 → `status=paid` → 激活 `plan_status=subscribed` + `plan_expires_at`。
-响应：`200 { "orderId", "payUrl" | "qrCode" | ... }`（形态按 PaymentProvider 自适应）
+认证：需要。请求 `{ "planId", "form"?: "native" | "h5" | "jsapi" }`（`form` 缺省 `native`；`jsapi` 需先经 OAuth 取 openid 存于签名 Cookie，见 §9）→ 建 order（`status=created`）→ PaymentProvider 按 form 下单 → 回调/mock 支付 → `status=paid` → 激活 `plan_status=subscribed` + `plan_expires_at`。
+响应：`200 { "orderId", "paid", "payInfo" }`：
+- mock：`paid=true`，`payInfo={orderId, amountCny, subject}`；
+- native：`paid=false`，`payInfo={ orderId, codeUrl }`（前端渲染二维码）；
+- h5：`paid=false`，`payInfo={ orderId, h5Url }`（前端跳转唤起微信 App）；
+- jsapi：`paid=false`，`payInfo={ orderId, appId, timeStamp, nonceStr, package, signType, paySign }`（前端 `WeixinJSBridge.chooseWXPay`）。
+错误：`400 BAD_REQUEST`（未知 planId / form）/ `401` / `400 JSAPI_OPENID_REQUIRED`（jsapi 未取到 openid）。
 
 ### GET /api/billing/subscription —— 当前订阅状态
 认证：需要。响应 `{ "planStatus", "plan", "planExpiresAt", "graceUntil", "hostsInUse", "hostQuota" }`
@@ -52,8 +57,8 @@
 认证：需要。标记 `subscriptions.status=canceled`；当前周期仍有效至到期。
 
 ### POST /api/billing/callback —— 支付异步回调（幂等）
-未认证 + 验签（S3 接招行 SM2/SM3；S2 mock 直通）。同一 `channel_order_id` 只入账一次（幂等）；验签失败 400 `BAD_SIGNATURE`。
-响应：`200 { "ok": true }`（渠道要求固定格式时按渠道）
+未认证。`provider=wechatpay` 时按 **WeChat APIv3**：`Wechatpay-Timestamp` / `Wechatpay-Nonce` / `Wechatpay-Signature` 头做 **HMAC-SHA256 验签**（APIv3 密钥）+ `resource` **AES-256-GCM 解密**；`provider=mock` 直通（body 带 `channel` / `orderId` / `channelOrderId`）。同一 `channel_order_id` 只入账一次（幂等）；验签失败 400 `BAD_SIGNATURE`。
+响应：`200 { "ok": true }`（渠道要求固定格式时按渠道）。
 
 ## 4. 账号信息与删除（S2，R7）
 
@@ -86,3 +91,14 @@
 
 - 注册 identifier 已存在：**已定（2026-08-26 用户拍板 A）**——返回 `409 ALREADY_EXISTS`（公开注册场景，用户需知晓"该邮箱/手机号已被占用"；不做防枚举的统一 ok）。
 - 短信真发依赖阿里云签名/模板审核；`config.sms` 缺省关闭（log provider 用于测试）。
+
+## 9. 微信 OAuth（JSAPI 前置，S3）
+
+JSAPI 支付需用户 openid（公众号 OAuth2）。门户在微信内浏览器先跳授权，再由后端取 openid 存签名 Cookie：
+
+### GET /api/wechat/oauth/authorize —— 发起授权
+认证：需要。`?redirect=<path>`（站内相对路径，校验防开放重定向）→ 302 到微信 OAuth（`snsapi_base`，`state` 携带 redirect）。
+
+### GET /api/wechat/oauth/callback —— 授权回调（code 换 openid）
+微信回调 `?code=&state=` → 后端以 `appid`/`appSecret` 调 `api.weixin.qq.com/sns/oauth2/access_token` 换 openid → 签**短期 HttpOnly Cookie**（openid 短期有效）→ 302 回 `state.redirect`。
+错误：`400 OAUTH_FAILED`；`config.billing.payment.wechatpay.appSecret` 未配置时 authorize 返回 `400 WECHAT_OAUTH_DISABLED`。

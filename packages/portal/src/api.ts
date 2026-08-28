@@ -42,6 +42,19 @@ export interface Capabilities {
 /** 验证码载荷：arithmetic 用 captchaToken+captchaAnswer；aliyun 用 captchaVerifyParam。 */
 export type CaptchaPayload = Record<string, string>;
 
+/** subscribe 返回的支付形态数据（native=codeUrl / h5=h5Url / jsapi=WeixinJSBridge 参数）。 */
+export interface WechatPayInfo {
+  orderId?: string;
+  codeUrl?: string;
+  h5Url?: string;
+  appId?: string;
+  timeStamp?: string;
+  nonceStr?: string;
+  package?: string;
+  signType?: string;
+  paySign?: string;
+}
+
 export interface LoginResponse {
   accessToken?: string;
   refreshToken?: string;
@@ -185,8 +198,8 @@ export const api = {
   listPlans(): Promise<{ plans: Array<{ id: string; name: string; hosts: number; priceCny: number; intervalDays: number }> }> {
     return jsonFetch("/api/billing/plans");
   },
-  subscribe(planId: string): Promise<{ orderId: string; paid: boolean; payInfo?: unknown }> {
-    return jsonFetch("/api/billing/subscribe", { method: "POST", body: JSON.stringify({ planId }) });
+  subscribe(planId: string, form?: "native" | "h5" | "jsapi"): Promise<{ orderId: string; paid: boolean; payInfo?: WechatPayInfo }> {
+    return jsonFetch("/api/billing/subscribe", { method: "POST", body: JSON.stringify(form === undefined ? { planId } : { planId, form }) });
   },
   subscription(): Promise<{ planStatus: string | null; planId: string | null; planExpiresAt: number | null; hostQuota: number | null; hostsInUse: number }> {
     return jsonFetch("/api/billing/subscription");

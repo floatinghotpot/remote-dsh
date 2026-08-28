@@ -3,10 +3,19 @@
  *
  * 镜像 EmailSender/SmsSender 的 provider 模式：S2 用 mock；S3 接招行聚合收款。
  */
+/** 支付形态：native（PC 扫码）/ h5（手机浏览器唤起）/ jsapi（微信内）。 */
+export type PaymentForm = "native" | "h5" | "jsapi";
+
 export interface PaymentRequest {
   orderId: string;
   amountCny: number;
   subject: string;
+  /** 支付形态，缺省 native。 */
+  form?: PaymentForm;
+  /** jsapi 时的用户 openid（OAuth 获取，存签名 Cookie）。 */
+  openid?: string;
+  /** h5 下单所需的支付方 IP（后端从请求取）。 */
+  clientIp?: string;
 }
 
 export interface PaymentResult {
@@ -25,6 +34,8 @@ export interface PaymentProvider {
 export interface WechatPayConfig {
   mchid: string;
   appid: string;
+  /** 公众号 appSecret（JSAPI OAuth 换 openid；不配则 JSAPI 不可用） */
+  appSecret?: string;
   /** 商户 API 证书序列号 */
   certSerialNo: string;
   /** 商户私钥 PEM（请求签名 RSA-SHA256） */
