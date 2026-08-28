@@ -67,13 +67,13 @@
 
 ### T3 gateway：Noise 响应方 + 内层 HTTP/WS
 - `gateway/src/join.ts`：`handleOpen` 加 `kind:"raw"` 分支 → Noise NK 响应方握手 → 握手后解密 DATA、解析内层多路复用（HTTP/WS）→ 复用 `proxy.ts` `forwardHttp`/`createUpgradeProxy` 转发 DSH → 加密回写；
-- `gateway/src/noise.ts`（新）：Noise NK（X25519 + AES-256-GCM）握手/加密/解密（Node 库封装）；
+- `gateway/src/e2ee.ts`（新，已实现）：Noise NK（X25519 + AES-256-GCM）握手/加密/解密（直接实现，无第三方库）；
 - `gateway/src/proxy.ts`：返回条注入迁移（`htmlInject` 已存在，复用）。
 
 ### T4 浏览器：SW + WS 包装 + pin
 - `portal/public/sw.js`（新）：拦 `/h/<hostId>/` 的 `fetch`/SSE → 走内层 Noise 通道；
 - `portal/public/ws-shim.js`（新）：注入 `window.WebSocket` 包装 → 走内层 Noise 通道；
-- `portal/src/e2ee.ts`（新）：Noise NK 发起方（WebCrypto + JS Noise 库）+ 内层 HTTP/WS 多路复用；
+- `portal/src/e2ee.ts`（新，已实现）：Noise NK 发起方（WebCrypto 直接实现）+ 内层 HTTP/WS 多路复用；
 - `portal/src/pages.tsx` + `api.ts`：host 指纹展示 + 首次信任/变更告警 UI；pin 存 `localStorage`；
 - host 密钥对生成 + join 时指纹上送（gateway join 流程 + hub 存指纹 + `/api` 返回指纹）。
 
@@ -83,11 +83,11 @@
 - 端到端：`hub 抓包 /h/ 为密文、/portal/ 明文`；
 - `pnpm build` + `pnpm test` 全绿。
 
-## 6. 待选型 / 待查证（不阻塞本方案批准）
+## 6. 待选型 / 待查证（已部分定案）
 
-- **Noise 库**：浏览器 JS（候选 `@chainsafe/noise` 等，需 WebCrypto 支持 + 审计）与 gateway Node 库，实现前确认最新版/审计/维护状态；
-- **SW 与 WS 包装的交互协议**（SW 拦 fetch、包装拦 WS，二者如何共享同一条 Noise 通道——如 SW 通过 `postMessage`/`BroadcastChannel` 桥接）；
-- **内层多路复用格式**（Noise 通道内如何封装 HTTP/WS，可否复用现有 OPEN/DATA 帧语义，或用一个极简内部帧格式）。
+- **~~Noise 库~~ → 已定**：不引第三方库，直接实现 Noise NK——`gateway/src/e2ee.ts`（node:crypto）+ `portal/src/e2ee.ts`（WebCrypto）；**wire 互操作测试已通过**（`e2ee-interop.test.ts`：两端密钥一致 + 双向 AEAD）。上线前仍建议与 Noise 规范 / 被审计库交叉复核。
+- **~~内层多路复用格式~~ → 已定（2026-08-28 拍板）**：复用 tunnel 帧语义（OPEN http/ws + DATA + CLOSE）跑在 Noise 通道内，网关解密后喂回现有 `handleOpen`/`handleFrame` 转发 DSH。
+- **SW 与 WS 包装的交互协议**（SW 拦 fetch、包装拦 WS，二者如何共享同一条 Noise 通道——如 SW 通过 `postMessage`/`BroadcastChannel` 桥接）—— 仍待定，实现 portal 时定。
 
 ## 7. 持续观察项（外部依赖风险，DSH 演进可能影响本方案）
 
@@ -100,7 +100,7 @@
 | DSH Web Worker 网络 | 无 | 网络进 worker → 主线程 WS 包装拦不到 |
 | DSH CSP | 无 | 加严格 CSP → 内联注入脚本被拦，改外链 `<script src>` |
 | DSH Host/Origin 围栏 | `isTrustedApiRequest` 要求 loopback | 改逻辑 → `rewriteHeadersForDsh` 单点跟改 |
-| Noise 库维护/审计 | 待选型 | 停更 / 新 CVE → 换库 |
+| Noise 实现复核 | 直接实现（无第三方库） | 上线前与 Noise 规范 / 被审计库交叉复核 |
 | WebCrypto 支持矩阵（X25519/AES-GCM） | 现代浏览器 OK | 老浏览器缺 X25519 → 降级策略 |
 
 **应对**：
