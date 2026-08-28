@@ -45,7 +45,10 @@
 ```json
 { "kind": "http", "method": "POST", "path": "/api/session.list", "headers": { "content-type": "application/json" } }
 { "kind": "ws", "path": "/api/events.mux", "headers": { "sec-websocket-version": "13" } }
+{ "kind": "raw" }
 ```
+
+- `kind: "raw"` 建立 **E2EE 原始字节流**（见下「E2E 加密预留」）：无 method/path/headers，DATA 帧双向承载 Noise 握手 + 密文。
 
 **响应（gateway → hub）**：
 
@@ -77,8 +80,9 @@
 
 ## E2E 加密预留
 
-- flags bit0 为加密帧标记（公共 SaaS 化时实现端到端加密，见 proposal §10 Q5）
-- 当前实现必须**忽略未知 flag 位并原样透传**，保证向后兼容
+- `flags` bit0（`FLAG_E2E` = 0x01）为 E2EE 帧标记；OPEN `kind:"raw"` 建立 E2EE 原始字节流。
+- **raw stream 语义**：OPEN `{ kind:"raw" }` 后，该 streamId 的 DATA 帧双向承载**原始字节**（内层 Noise NK 握手消息 + AES-256-GCM 密文）；hub 只做纯字节双向转发、不解析内容。
+- 当前实现必须**忽略未知 flag 位并原样透传**，保证向后兼容（老 gateway/hub 无 raw 分支、bit=0 走 http/ws 转发）。
 
 ## 错误映射（数据面）
 
@@ -93,3 +97,4 @@
 | 日期 | 变更 |
 |---|---|
 | 2026-08-23 | **冻结 v1**：payload 编码定稿（OPEN/DATA/CLOSE/PING/PONG/ERROR 语义 + HTTP/WS 封装 + 隧道认证 + 错误映射） |
+| 2026-08-28 | **E2EE raw stream**：OPEN 加 `kind:"raw"`；定义 raw stream 语义（`flags` bit0 + DATA 原始字节透传） |

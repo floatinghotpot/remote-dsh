@@ -76,3 +76,13 @@ test("billing.payment.wechatpay：必填字段校验 + appSecret 可选", () => 
   assert.throws(() => normalizeHubConfig({ billing: { payment: { provider: "wechatpay", wechatpay: { ...base, apiV3Key: "" } } } }), /"billing.payment.wechatpay.apiV3Key"/);
   assert.throws(() => normalizeHubConfig({ billing: { payment: { provider: "wechatpay", wechatpay: { ...base, appSecret: "" } } } }), /"billing.payment.wechatpay.appSecret"/);
 });
+
+test("e2ee：mode 枚举校验 + 缺省", () => {
+  assert.doesNotThrow(() => normalizeHubConfig({ e2ee: { mode: "optional" } }));
+  assert.doesNotThrow(() => normalizeHubConfig({ e2ee: { mode: "off" } }));
+  assert.doesNotThrow(() => normalizeHubConfig({ e2ee: { mode: "required" } }));
+  assert.throws(() => normalizeHubConfig({ e2ee: { mode: "weird" } }), /"e2ee.mode"/);
+  assert.throws(() => normalizeHubConfig({ e2ee: "optional" }), /"e2ee" must be an object/);
+  assert.equal(normalizeHubConfig({}).e2ee, undefined); // 缺省 → undefined（消费方按 optional）
+  assert.equal(normalizeHubConfig({ e2ee: { mode: "required" } }).e2ee?.mode, "required");
+});

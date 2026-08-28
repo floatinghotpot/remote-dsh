@@ -100,7 +100,7 @@ export function parseJsonPayload(frame: Frame): Record<string, unknown> {
 
 /** OPEN 帧 payload：客户端请求（hub → gateway）。 */
 export interface RequestOpen {
-  kind: "http" | "ws";
+  kind: "http" | "ws" | "raw";
   method?: string;
   path?: string;
   headers?: Record<string, string | string[]>;
@@ -115,7 +115,8 @@ export interface ResponseOpen {
 }
 
 export function isRequestOpen(p: unknown): p is RequestOpen {
-  return typeof p === "object" && p !== null && ((p as Record<string, unknown>).kind === "http" || (p as Record<string, unknown>).kind === "ws");
+  const kind = (p as Record<string, unknown> | null)?.kind;
+  return typeof p === "object" && p !== null && (kind === "http" || kind === "ws" || kind === "raw");
 }
 
 export function isResponseOpen(p: unknown): p is ResponseOpen {

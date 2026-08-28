@@ -5,7 +5,7 @@
  * 在线状态：注册/摘除 → events.ts 推送。
  */
 import type { WebSocket } from "ws";
-import { FrameParser, FRAME_TYPE, jsonPayload, parseJsonPayload, encodeFrame } from "rdsh-tunnel";
+import { FrameParser, FRAME_TYPE, jsonPayload, parseJsonPayload, encodeFrame, FLAG_E2E } from "rdsh-tunnel";
 import type { Frame } from "rdsh-tunnel";
 import { ProtocolError } from "rdsh-tunnel";
 
@@ -56,6 +56,19 @@ export class TunnelConn {
     this.send(FRAME_TYPE.DATA, streamId, chunk);
   }
 
+  /** 打开一个 E2EE raw 流（Noise 握手 + 密文字节，hub 不解析内容）。 */
+  openRawStream(handler: StreamHandler): number {
+    const streamId = this.assignStreamId();
+    this.streams.set(streamId, handler);
+    this.send(FRAME_TYPE.OPEN, streamId, jsonPayload({ kind: "raw" }), FLAG_E2E);
+    return streamId;
+  }
+
+  /** 发送 raw 流字节（E2E 帧标记）。 */
+  sendRawData(streamId: number, chunk: Buffer): void {
+    this.send(FRAME_TYPE.DATA, streamId, chunk, FLAG_E2E);
+  }
+
   /**
    * 请求体结束：发 CLOSE 通知 gateway 请求发送完毕（**不删 handler**，
    * 响应尚未回来；GET 无请求体时 req end 立即触发）。
@@ -70,9 +83,9 @@ export class TunnelConn {
     this.streams.delete(streamId);
   }
 
-  send(type: number, streamId: number, payload: Buffer | string): void {
+  send(type: number, streamId: number, payload: Buffer | string, flags = 0): void {
     if (this.ws.readyState === this.ws.OPEN) {
-      this.ws.send(encodeFrame(type, streamId, payload));
+      this.ws.send(encodeFrame(type, streamId, payload, flags));
     }
   }
 

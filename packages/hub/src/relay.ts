@@ -202,3 +202,66 @@ export function handleRelayUpgrade(req: IncomingMessage, socket: Duplex, head: B
   });
   return true;
 }
+
+/**
+ * E2EE raw 流透传：浏览器 WS ↔ 隧道 raw 流字节互转（内层 Noise 握手 + 密文，hub 不解析内容）。
+ * 返回是否已处理。受 `config.e2ee.mode` 控制：off 拒绝。
+ */
+export function handleRawUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer, runtime: HubRuntime): boolean {
+  if ((runtime.config.e2ee?.mode ?? "optional") === "off") {
+    socket.write(`HTTP/1.1 403 Forbidden\r\n\r\n`);
+    socket.destroy();
+    return true;
+  }
+  const auth = authorizeHost(req, runtime);
+  if (auth === null) {
+    socket.write(`HTTP/1.1 401 Unauthorized\r\n\r\n`);
+    socket.destroy();
+    return true;
+  }
+  const conn = runtime.tunnels.get(auth.hostId);
+  if (conn === null) {
+    socket.write(`HTTP/1.1 503 Service Unavailable\r\n\r\n`);
+    socket.destroy();
+    return true;
+  }
+
+  wss.handleUpgrade(req, socket, head, (clientWs) => {
+    const streamId = conn.openRawStream({
+      onData: (chunk) => {
+        if (clientWs.readyState === clientWs.OPEN) clientWs.send(chunk, { binary: true });
+      },
+      onClose: () => {
+        try {
+          clientWs.terminate();
+        } catch {
+          /* 已关闭 */
+        }
+        conn.abortStream(streamId);
+      },
+      onError: () => {
+        try {
+          clientWs.terminate();
+        } catch {
+          /* 已关闭 */
+        }
+        conn.abortStream(streamId);
+      },
+    });
+
+    clientWs.on("message", (data) => {
+      const buf = Array.isArray(data)
+        ? Buffer.concat(data as Buffer[])
+        : Buffer.isBuffer(data)
+          ? (data as Buffer)
+          : Buffer.from(data as ArrayBuffer);
+      conn.sendRawData(streamId, buf);
+    });
+    const close = (): void => {
+      conn.abortStream(streamId);
+    };
+    clientWs.on("close", close);
+    clientWs.on("error", close);
+  });
+  return true;
+}

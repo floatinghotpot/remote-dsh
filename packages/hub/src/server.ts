@@ -28,7 +28,7 @@ import type { SmsConfig } from "./sms/types.ts";
 import type { CaptchaConfig, SecurityConfig, BillingConfig, BeianConfig, SiteConfig } from "./config.ts";
 import { TunnelConn, TunnelRegistry } from "./tunnel.ts";
 import { EventHub, createEventsServer } from "./events.ts";
-import { handleRelay, handleRelayUpgrade } from "./relay.ts";
+import { handleRelay, handleRelayUpgrade, handleRawUpgrade } from "./relay.ts";
 import { servePortal } from "./portal.ts";
 
 export interface HubServerOptions {
@@ -151,6 +151,10 @@ export async function startHubServer(opts: HubServerOptions): Promise<RunningHub
         return;
       }
       // 有 host 上下文：根路径 WS（DSH 的 events.mux / events.host）
+      if (pathname === "/e2e" && hostId !== undefined) {
+        handleRawUpgrade(req, socket, head, runtime);
+        return;
+      }
       if (hostId !== undefined) {
         handleRelayUpgrade(req, socket, head, runtime, pathname + url.search);
         return;

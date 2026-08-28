@@ -60,6 +60,11 @@ export interface BillingConfig {
 export const BILLING_DEFAULTS = { trialDays: 3, trialHosts: 1, graceDays: 3, retentionDays: 30 } as const;
 
 /** 备案信息（portal 页脚展示；国内经营性网站合规必需，全部可选）。 */
+/** 端到端加密策略（hub 侧）。mode: off 禁用 / optional 按 host 能力协商 / required 强制。 */
+export interface E2eeConfig {
+  mode: "off" | "optional" | "required";
+}
+
 export interface BeianConfig {
   /** ICP 备案号，如 "蜀ICP备XXXXXXXX号" */
   icp?: string;
@@ -110,6 +115,8 @@ export interface HubConfig {
   registration?: "open" | "closed";
   /** 计费/套餐配置；缺省 → 无套餐（订阅功能禁用） */
   billing?: BillingConfig;
+  /** 端到端加密策略；缺省 → optional（按 host 能力协商） */
+  e2ee?: E2eeConfig;
   /** 备案信息（portal 页脚展示） */
   beian?: BeianConfig;
   /** 站点信息（portal 页脚导航） */
@@ -188,6 +195,7 @@ export function normalizeHubConfig(raw: unknown, source = "config"): HubConfig {
   if (cfg.sms !== undefined) out.sms = normalizeSms(cfg.sms, source);
   if (cfg.registration !== undefined) out.registration = normalizeRegistration(cfg.registration, source);
   if (cfg.billing !== undefined) out.billing = normalizeBilling(cfg.billing, source);
+  if (cfg.e2ee !== undefined) out.e2ee = normalizeE2ee(cfg.e2ee, source);
   if (cfg.beian !== undefined) out.beian = normalizeBeian(cfg.beian, source);
   if (cfg.site !== undefined) out.site = normalizeSite(cfg.site, source);
   out.security = normalizeSecurity(cfg.security, source);
@@ -346,6 +354,15 @@ function normalizeBilling(raw: unknown, source: string): BillingConfig {
     out.payment = b.payment as PaymentConfig;
   }
   return out;
+}
+
+function normalizeE2ee(raw: unknown, source: string): E2eeConfig {
+  if (typeof raw !== "object" || raw === null) throw new Error(`${source}: "e2ee" must be an object`);
+  const e = raw as Record<string, unknown>;
+  if (e.mode !== "off" && e.mode !== "optional" && e.mode !== "required") {
+    throw new Error(`${source}: "e2ee.mode" must be off|optional|required`);
+  }
+  return { mode: e.mode };
 }
 
 function normalizeBeian(raw: unknown, source: string): BeianConfig {
