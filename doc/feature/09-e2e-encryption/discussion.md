@@ -91,7 +91,7 @@ DSH 的 `/api/events.mux` 是 text/JSON 协议，协议明确「WS 内容按文�
 1. **方案 A**：内层加密通道（raw stream + Noise，X25519 + AES-256-GCM，**NK 握手**：host 静态 + 浏览器临时）——不自造密码学、字节流、零新增基建、对 DSH 透明；
 2. **pinning UX**：portal 展示指纹 + 用户首次信任（TOFU）；host 可能是 DSH 插件无 CLI，不做 CLI 比对；
 3. **配置默认**：`e2ee: { mode: "off" | "optional" | "required" }`，**默认 `optional`**（兼容老 host；SaaS 宣称 E2EE 时覆盖为 required）；
-4. **时机**：SaaS 正式上线时实现（作为 09-e2e-encryption 独立里程碑提前排期），以「带 E2EE」为信任卖点；
+4. **时机**：**现在实现、SaaS 上线前完成**（与备案/微信商户号并行），以「带 E2EE」为上线卖点；
 5. **数据面边界**：只加密 DSH 流量（`/h/<hostId>/`），portal（`/portal/`）不加密（hub 即 portal 服务端）；
 6. **WS text/binary**：方案 A 的 raw stream（原始字节）天然解决。
 
