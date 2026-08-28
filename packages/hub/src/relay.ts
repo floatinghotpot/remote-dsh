@@ -11,6 +11,7 @@ import type { WebSocket } from "ws";
 import { writeError } from "./api.ts";
 import { parseCookies, HOST_COOKIE } from "./server.ts";
 import type { HubRuntime } from "./api.ts";
+import { E2EE_SHIM_HTML } from "./e2ee-shim.ts";
 
 const wss = new WebSocketServer({ noServer: true });
 
@@ -98,6 +99,10 @@ export async function handleRelay(req: IncomingMessage, res: ServerResponse, run
       if (res.destroyed) return;
       if (htmlBuf !== null) {
         let html = Buffer.concat(htmlBuf).toString("utf8");
+        // E2EE shim 注入到 <head> 最前（须先于 DSH 脚本 wrap fetch/WebSocket；off 时不注入）
+        if ((runtime.config.e2ee?.mode ?? "optional") !== "off") {
+          html = html.replace(/<head([^>]*)>/i, `<head$1>${E2EE_SHIM_HTML}`);
+        }
         // 返回按钮注入到 </head> 前（固定定位悬浮，不改动 DSH 文档流/布局）
         html = html.replace("</head>", `${BACK_BAR_HTML}</head>`);
         if (!html.includes(BACK_BAR_HTML)) html = `${BACK_BAR_HTML}${html}`;

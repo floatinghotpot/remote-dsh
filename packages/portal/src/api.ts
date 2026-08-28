@@ -7,6 +7,7 @@ export interface HostInfo {
   online: boolean;
   createdAt: string;
   role?: "owner" | "member";
+  e2eePublicKey?: string | null;
 }
 
 export interface JoinTokenInfo {

@@ -8,6 +8,7 @@ import { useEffect, useState } from "react";
 import QRCode from "qrcode";
 import { api, ApiError, subscribeEvents } from "./api.ts";
 import type { HostInfo, JoinTokenInfo, CaptchaPayload, AccountInfo, Capabilities, WechatPayInfo } from "./api.ts";
+import { fingerprint } from "./e2ee.ts";
 import { useT, getLang } from "./i18n.ts";
 import type { T } from "./i18n.ts";
 import { TermsPage, PrivacyPage, ProductPage, LegalContent, LEGAL } from "./legal.tsx";
@@ -20,6 +21,34 @@ const BASE = "/portal";
 function navigate(path: string): void {
   window.history.pushState({}, "", `${BASE}${path}`);
   window.dispatchEvent(new PopStateEvent("popstate"));
+}
+
+// ---- E2EE pin（localStorage 首次信任/变更告警）----
+const E2EE_PINS_KEY = "rdsh_e2ee_pins";
+function fromBase64url(s: string): Uint8Array {
+  const b = s.replace(/-/g, "+").replace(/_/g, "/");
+  const pad = b.length % 4;
+  const bin = atob(pad ? b + "=".repeat(4 - pad) : b);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function readE2eePin(hostId: string): string | null {
+  try {
+    const pins = JSON.parse(localStorage.getItem(E2EE_PINS_KEY) ?? "{}") as Record<string, string>;
+    return typeof pins[hostId] === "string" ? pins[hostId] : null;
+  } catch {
+    return null;
+  }
+}
+function writeE2eePin(hostId: string, publicKey: string): void {
+  try {
+    const pins = JSON.parse(localStorage.getItem(E2EE_PINS_KEY) ?? "{}") as Record<string, string>;
+    pins[hostId] = publicKey;
+    localStorage.setItem(E2EE_PINS_KEY, JSON.stringify(pins));
+  } catch {
+    /* ignore */
+  }
 }
 
 export function useRoute(): string {
@@ -921,11 +950,38 @@ function HostsPage(): React.JSX.Element {
   const [shareHostId, setShareHostId] = useState<string | null>(null);
   const [shareName, setShareName] = useState("");
   const [shares, setShares] = useState<Array<{ userId: number; name: string; role: string }>>([]);
+  const [pendingTrust, setPendingTrust] = useState<{ hostId: string; name: string; publicKey: string; fingerprint: string; changed: boolean } | null>(null);
   const { err, run } = useError();
 
   const openShare = (hostId: string): void => {
     setShareHostId(hostId);
     void run(async () => setShares((await api.listShares(hostId)).shares));
+  };
+
+  const requestEnter = (h: HostInfo): void => {
+    void run(async () => {
+      const pub = h.e2eePublicKey;
+      if (pub === undefined || pub === null || pub === "") {
+        enterHost(h.id); // 无 E2EE 公钥 → 直连（明文）
+        return;
+      }
+      const fp = await fingerprint(fromBase64url(pub));
+      const pinned = readE2eePin(h.id);
+      if (pinned === pub) {
+        enterHost(h.id);
+        return;
+      }
+      setPendingTrust({ hostId: h.id, name: h.name, publicKey: pub, fingerprint: fp, changed: pinned !== null });
+    });
+  };
+
+  const trustAndEnter = (): void => {
+    if (pendingTrust !== null) {
+      writeE2eePin(pendingTrust.hostId, pendingTrust.publicKey);
+      const hostId = pendingTrust.hostId;
+      setPendingTrust(null);
+      enterHost(hostId);
+    }
   };
   const doShare = (): void => {
     if (shareHostId === null) return;
@@ -999,7 +1055,7 @@ function HostsPage(): React.JSX.Element {
                 <span style={{ color: "#666", fontSize: 12 }}>{h.online ? t("在线") : t("离线")}</span>
                 {!isOwner && <span style={{ color: "#999", fontSize: 12, border: "1px solid #eee", borderRadius: 4, padding: "1px 6px" }}>{t("共享", { en: "Shared" })}</span>}
                 <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
-                  <button onClick={() => enterHost(h.id)} style={btnStyle()}>{t("进入")}</button>
+                  <button onClick={() => requestEnter(h)} style={btnStyle()}>{t("进入")}</button>
                   {isOwner && <button onClick={() => { setRenameId(h.id); setRenameName(h.name); }} style={btnStyle("ghost")}>{t("改名")}</button>}
                   {isOwner && <button onClick={() => openShare(h.id)} style={btnStyle("ghost")}>{t("共享", { en: "Share" })}</button>}
                   {isOwner && <button onClick={() => revoke(h.id)} style={btnStyle("danger")}>{t("吊销")}</button>}
@@ -1035,6 +1091,22 @@ function HostsPage(): React.JSX.Element {
               )}
             </div>
           )}
+        </div>
+      )}
+      {pendingTrust !== null && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setPendingTrust(null)}>
+          <div style={{ background: "#fff", padding: 20, borderRadius: 12, maxWidth: 400, textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
+            <p style={{ margin: 0, fontWeight: 600 }}>{pendingTrust.changed ? t("主机的安全指纹已改变") : t("首次连接这台主机")}</p>
+            <p style={{ color: "#666", fontSize: 13, margin: "8px 0 0" }}>{t("主机")}: {pendingTrust.name}</p>
+            <p style={{ fontFamily: "monospace", fontSize: 16, letterSpacing: 1, margin: "10px 0" }}>{pendingTrust.fingerprint}</p>
+            <p style={{ color: "#999", fontSize: 12, margin: "0 0 12px" }}>
+              {pendingTrust.changed ? t("可能原因：主机重装 / 重建，或连接被劫持。请确认后重新信任。") : t("信任后，与这台主机的数据将端到端加密（hub 不可读）。")}
+            </p>
+            <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+              <button onClick={trustAndEnter} style={btnStyle()}>{t("信任并进入")}</button>
+              <button onClick={() => setPendingTrust(null)} style={btnStyle("ghost")}>{t("取消")}</button>
+            </div>
+          </div>
         </div>
       )}
     </Shell>
