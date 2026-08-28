@@ -35,7 +35,7 @@ export interface RelayOptions {
 }
 
 /** 返回按钮：悬浮于 DSH 界面右上角（top:64px 位于 DSH 顶栏/Session Log 下方，避免遮挡）。 */
-export const BACK_BAR_HTML = `<a href="/portal" style="position:fixed;top:40px;right:30px;z-index:99999;background:rgba(15,23,42,.85);color:#e2e8f0;padding:6px 14px;border-radius:16px;text-decoration:none;font:13px system-ui,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.3);">← rdsh · 返回</a>`;
+export const BACK_BAR_HTML = `<a href="/portal" style="position:fixed;top:40px;right:30px;z-index:99999;background:rgba(30,30,30,.88);color:#e2e8f0;padding:6px 14px;border-radius:16px;border:1px solid rgba(255,255,255,.4);text-decoration:none;font:13px system-ui,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.3);">← rdsh · 返回</a>`;
 
 /**
  * HTTP/SSE 透传。返回是否已处理（false = 路径不属于数据面）。
