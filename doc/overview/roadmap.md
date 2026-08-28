@@ -1,8 +1,8 @@
 # remote-dsh 路线图（roadmap）
 
-> **日期**: 2026-08-27
+> **日期**: 2026-08-29
 > **来源**: `proposal.md` §8 里程碑 + §10 决策记录（Q1–Q10）
-> **状态**: M1–M5 已完成并发布；**SaaS 商业化（08-saas）进行中**（注册/试用/订阅/支付，实现进度与商业细节见私有文档）；M8/M9 降级为品牌/营销渠道
+> **状态**: M1–M5 已完成并发布；**09-e2e-encryption 已完成**（真实环境验证）；**SaaS 商业化（08-saas）进行中**（注册/试用/订阅/支付，实现进度与商业细节见私有文档）；M8/M9 降级为品牌/营销渠道
 
 ## 开源里程碑
 
@@ -15,7 +15,7 @@
 | **04/05 前置特性** | CLI 组件化（`rdsh host *` + host.json 3 模式）+ join token 自助接入 | ✅ 完成（2026-08-24，随 05 发布） |
 | **M4 dsh 插件（远程访问）** | DSH 插件形态的 rdsh-gateway：`dsh plugin add dsh-web-remote` 即获网关/join，免装 CLI | ✅ 已发布（2026-08-24：gateway 0.4.0 + 插件 0.1.0） |
 | **M5 多租户增强** | 邮箱验证、2FA、共享授权、审计、限流 | ✅ 完成（2026-08-24，真机验证通过 + 发布） |
-| **09-e2e-encryption** | 端到端加密（浏览器 ↔ host，hub 不可读） | 💡 讨论中（discussion 已建，社区 + SaaS 通用） |
+| **09-e2e-encryption** | 端到端加密（浏览器 ↔ host，hub 不可读） | ✅ 完成（2026-08-29，真实环境验证：端到端加密 + 老 host 明文降级） |
 
 ## SaaS 里程碑
 
@@ -108,11 +108,14 @@
 - **内容**：邮箱验证 + 找回密码（EmailSender：smtp/aliyun/log）、2FA（TOTP）、共享授权（owner/member）、审计日志、发信限流 + 账户锁定（10 次/15 分钟）
 - **验收**：`pnpm test` 128/0；真机验证通过（portal 走查 + 真实邮件发送）
 
-### 09-e2e-encryption 💡
+### 09-e2e-encryption ✅（2026-08-29 完成并真实环境验证）
 
 - **内容**：端到端加密（浏览器 ↔ host，hub 中转但不可读内容）；社区 + SaaS 双版本通用
-- **方案**：讨论中（内层 TLS vs 帧级 AEAD，见 `doc/feature/09-e2e-encryption/discussion.md`）
-- **验收**：hub 无法读取业务报文内容（仅路由元数据可见）
+- **方案**：raw stream（`flags` bit0）+ 内层 Noise NK（X25519 + HKDF-SHA256 + AES-256-GCM）+ **data-plane-only**（HTML/JS 壳明文，API/WS 加密）+ portal TOFU pin（localStorage，绝不上 hub）；hub `e2ee.mode: off|optional|required`（默认 optional）
+- **进度**：代码完成 + 单测全绿（hub 64/64、gateway 81/81、`pnpm build` 全绿）+ 真实环境验证（新 host 端到端加密 / 老 host 明文降级 / 生产 portal 已部署 E2EE UI）
+- **来源**：`doc/feature/09-e2e-encryption/`（discussion/req/solution/plan/verification/summary/TODO）
+- **剩余**：host 侧 `e2ee` 开关 defer（见 feature TODO）
+- **验收**：hub 无法读取业务报文内容（仅路由元数据可见）—— 达成
 
 ## SaaS 里程碑详情
 
@@ -187,5 +190,6 @@
 | 2026-08-27 | **08-saas 实现推进**：S1/S2 完成，S3/S4 部分，portal 全套（i18n/落地页/法务文档）——细节见私有文档 |
 | 2026-08-28 | **公开路线图 SaaS 章节细化**：开源/商业化双轨定位 + S1–S4 进度公开化（隐私优先，敏感细节保留在私有文档） |
 | 2026-08-28 | **E2E 独立 feature + 里程碑重排**：09-e2e-encryption 立项（社区 + SaaS 通用）；M7 hub Go 化 / M8 App / M9 小程序移入 SaaS 里程碑轨 |
+| 2026-08-29 | **09-e2e-encryption 完成并真实环境验证**：raw stream + Noise NK + data-plane-only + portal TOFU pin；hub 64/64、gateway 81/81；新 host 端到端加密 / 老 host 明文降级均实测通过；剩余 host 侧 `e2ee` 开关 defer |
 
 *关联文档：proposal.md | doc/overview/architecture.md | doc/feature/01-remote-access/**
