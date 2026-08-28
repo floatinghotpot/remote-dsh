@@ -2,17 +2,51 @@
 
 **English** | [中文](README.zh.md)
 
-Make your DeepSeek Harness available anywhere.
+**remote-dsh turns your DeepSeek Harness (DSH) into an AI agent you can use from any browser — no public IP, no client install.**
 
 ![rdsh logo](media/rdsh256.png)
 
-## Summary
+## Why remote-dsh
 
-**remote-dsh** adds a secure remote-access layer on top of
-[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH):
-run `dsh web` as usual on your machine, then operate it from any device —
-another laptop or phone in the same LAN, and (with the hub) from anywhere on
-the internet.
+- **Browser-first**: no public IP, no client install — open a browser and drive your agent;
+- **Two access paths**: the DSH plugin (`dsh-web-remote`) for one-click setup, or the CLI (`remote-dsh`) for full control;
+- **Open & auditable**: MIT-licensed, frozen protocol (the gateway never needs changes) — self-host it or embed it.
+
+## Use cases
+
+### ① Get started fast (rdsh Hub cloud relay)
+- **For**: most users who want the fastest path — no self-hosted hub, no public IP; just install the DSH plugin on your machine;
+- **Needs**: an rdsh account + the `dsh-web-remote` DSH plugin;
+- **Result**: access from anywhere (laptop / phone / in-WeChat browser) by signing in.
+
+```bash
+dsh plugin add dsh-web-remote   # install the plugin in DSH, paste hub URL + join token in the panel
+# or via the CLI:
+npm install -g remote-dsh
+rdsh host join <hub-url>        # outbound tunnel to the hub
+```
+
+### ② Direct connection (no hub)
+- **LAN**: on the same network, `rdsh host serve` then connect by IP after pairing;
+- **Cloud server**: a host with a public IP/domain, `rdsh host serve` + TLS password auth, connect by IP/domain;
+- **For**: technical users who want full control and no third-party hub.
+
+```bash
+npm install -g remote-dsh
+rdsh host setup lan             # or setup cloud (needs --tls-cert/--tls-key)
+rdsh host serve                 # run it (spawns dsh web)
+# open http://<ip>:<port> in a browser on the same network, enter the pairing code
+```
+
+### ③ Self-hosted (self-hosted hub · full control)
+- **Self-hosted hub**: run `rdsh hub serve` on your own machine or cloud host, with multi-user / audit / sharing;
+- **For**: teams / enterprises that want unified accounts, audit, and data ownership.
+
+```bash
+npm install -g remote-dsh
+rdsh hub serve                  # self-host the hub (built-in TLS or behind a reverse proxy)
+# members join via ① (plugin) or `rdsh host join <your-hub>`
+```
 
 ## Architecture
 
@@ -49,74 +83,19 @@ hub and gateway only — clients never implement it.
 | Mobile app | rdsh-app | Flutter (Android/iOS) |
 | WeChat mini program | rdsh-weapp | lightweight client |
 
-## Status
+## Capabilities & status
 
-**M1–M5 complete**: the LAN gateway (`rdsh host serve`), cloud-server direct
-access (TLS + password), the public hub (`rdsh host join` + `rdsh hub` + portal),
-the `dsh-web-remote` DSH plugin (remote access with no CLI install), and
-multi-tenant hardening (email verification + 2FA + host sharing + audit log +
-login rate-limiting) are implemented and verified. Next milestones: **M6 launch,
-M7 Go hub, M8 mobile app, M9 WeChat mini program** (see roadmap).
+**Current status**: M1–M5 implemented and verified; **end-to-end encryption
+(E2EE) is complete** (community + SaaS). See [features.md](doc/overview/features.md)
+for the full feature list; [roadmap](doc/overview/roadmap.md) for milestones.
 
-## Features
+**Core capabilities**:
+- **Three access modes**: LAN direct / cloud-server direct (TLS + password) / public hub relay (outbound tunnel)
+- **End-to-end encryption**: the hub relays your DSH traffic but cannot read the content (prompts / code / files / API keys stay encrypted) — Noise NK handshake (X25519 + AES-256-GCM), fresh session keys per connection, browser TOFU fingerprint trust, pin stored locally only
+- **Multi-tenant & security**: email verification + 2FA, host sharing (owner/member), audit log, login rate-limiting (lockout + throttling), IP allow-list
+- **Two access paths**: the `dsh-web-remote` plugin (no CLI) or the `remote-dsh` CLI; `rdsh hub` runs with built-in TLS or behind a reverse proxy
 
-Implemented `[x]` · planned `[ ]` — from the user's point of view
-
-**M1 — Use DSH from any device on your network (implemented)**
-- [x] Open your DSH in a browser on another laptop or phone — no SSH, no setup
-- [x] Secure pairing: type the code shown in your host terminal, once
-- [x] No account needed — the pairing code is your key
-- [x] Full DSH experience: chat, run tools, browse files, live event stream
-- [x] Stay signed in for 12 hours — no re-pairing on the same device
-- [x] Unauthorized devices are locked out until they pair
-- [x] Three commands to start: `npm i -g remote-dsh` → `rdsh host setup lan` → `rdsh host serve`
-- [x] Optional no-auth mode (`auth.mode: "none"`, fully trusted networks only)
-- [x] Quit cleanly (Ctrl+C / close terminal) — no leftover processes
-
-**M2 — Run it on a rented cloud server (e.g. Alibaba Cloud) (implemented)**
-- [x] HTTPS (TLS) — secure direct access over the public internet (user-provided cert)
-- [x] Deploy behind Apache2 / nginx reverse proxy (TLS terminated by the proxy; standard port 443, auto-renewed certs)
-- [x] User/password sign-in (`rdsh host user add/passwd`; scrypt-hashed; changing password revokes all sessions)
-- [x] IP allow-list (`allowFrom` in config file) for extra hardening
-- [x] Config file (default `~/.rdsh/host.json`, or `--config <path>` / `$RDSH_CONFIG`)
-- [x] Run as a system service (systemd / launchd — auto-start on boot)
-
-**M3 — Use DSH from anywhere via the hub (implemented)**
-- [x] Reach any of your machines from the internet — no public IP or router setup (`rdsh host join` outbound tunnel)
-- [x] One account, manage multiple machines (hosts belong to the account; registration closed, admin-created users)
-- [x] Web portal to see and pick your machines (login / host list / enter DSH / change password / revoke)
-- [x] Join flow (`rdsh host join <hub>` pastes the token from the portal, or `--token` for scripting)
-- [x] Instant revocation — a revoked host token drops the tunnel and blocks reconnects
-- [x] Frozen wire protocol (layer 2, `packages/tunnel/PROTOCOL.md`) and public API (layer 1)
-- [x] Run the hub with built-in TLS, or behind Apache2 / nginx (443, auto-renewed certs)
-
-**M4 — Use it as a DSH plugin (implemented)**
-- [x] `dsh plugin add dsh-web-remote` — remote access with no CLI install (a "Remote Access" panel in the DSH UI: connect / disconnect / revoke + live status)
-
-**M5 — Multi-tenant hardening (implemented)**
-- [x] Email verification + password reset (configurable SMTP / Aliyun DirectMail / local log)
-- [x] Two-factor authentication (TOTP)
-- [x] Share a machine with your team (owner / member — member can use the DSH but not manage)
-- [x] Audit log (`rdsh hub audit ls`)
-- [x] Login rate-limiting (account lockout 10 fails / 15 min + send-email limits + arithmetic captcha)
-
-**M6+ — Planned**
-- [ ] Managed hub (SaaS: open sign-up, subscription billing, WeChat/Alipay payments)
-- [ ] Mobile apps (Android / iOS)
-- [ ] WeChat mini program
-- [ ] End-to-end encrypted sessions
-
-## Quick start
-
-```bash
-npm install -g remote-dsh   # alongside dsh; command is `rdsh`
-rdsh host setup lan         # LAN: configure this machine as an auth gateway
-rdsh host serve             # run it (spawns dsh web)
-rdsh host join <hub-url>    # or connect to a hub (outbound tunnel)
-```
-
-LAN: open `http://<your-ip>:<port>`, enter the pairing code from your terminal.
-Public: open the hub URL, sign in, pick a machine — full DSH in the browser.
+**Planned**: SaaS managed hub, mobile apps (Android/iOS), WeChat mini program.
 
 ## Blog
 

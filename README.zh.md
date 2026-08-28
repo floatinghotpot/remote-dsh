@@ -2,14 +2,51 @@
 
 [English](README.md) | **中文**
 
-让 DeepSeek Harness 随时随地可用。
+**remote-dsh 让您把 DeepSeek Harness（DSH）变成「任何地方浏览器即用」的 AI 智能体 —— 免公网 IP、免装客户端。**
 
 ![rdsh logo](media/rdsh256.png)
 
-## 摘要
+## 为什么选择 remote-dsh
 
-**remote-dsh** 在 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）之上构建一层安全远程访问：
-本机照常 `dsh web`，之后用任意设备 —— 同局域网的笔记本/手机，以及（配合 hub）公网任意位置 —— 都能操作这台机器上的 DSH。
+- **浏览器即用**：免公网 IP、免装客户端，开浏览器就能指挥智能体；
+- **双通道接入**：DSH 插件（`dsh-web-remote`）一键接入，或 CLI（`remote-dsh`）灵活自控；
+- **开源可信**：MIT 开源、协议冻结（gateway 永不需改动），可自托管、可被集成。
+
+## 使用场景
+
+### ① 快速上手（rdsh Hub 云转发）
+- **适合**：大多数用户，想最快用上 —— 不用自己搭 Hub、不用公网 IP，在自己机器上装个 DSH 插件即可；
+- **需要**：一个 rdsh 账号 + DSH 插件 `dsh-web-remote`；
+- **效果**：任何地方（电脑 / 手机 / 微信内浏览器）登录即用。
+
+```bash
+dsh plugin add dsh-web-remote   # 在 DSH 里装插件，面板粘贴 hub 地址 + join token
+# 或走 CLI：
+npm install -g remote-dsh
+rdsh host join <hub-url>        # 出站隧道接入 hub
+```
+
+### ② 专业直连（免 Hub）
+- **局域网**：机器与你在同一网络，`rdsh host serve` 配对后按 IP 直连；
+- **云服务器**：有公网 IP / 域名的云主机，`rdsh host serve` + TLS 密码认证直连；
+- **适合**：想保留完全控制、不经过任何第三方 Hub 的技术用户。
+
+```bash
+npm install -g remote-dsh
+rdsh host setup lan             # 或 setup cloud（云服务器，需 --tls-cert/--tls-key）
+rdsh host serve                 # 前台运行（自动拉起 dsh web）
+# 同网络浏览器打开 http://<IP>:<port>，输终端显示的配对码
+```
+
+### ③ 企业自建（自托管 Hub · 完全自控）
+- **自托管 Hub**：在自有机器或云主机上运行 `rdsh hub serve`，多用户 / 审计 / 共享；
+- **适合**：团队 / 企业，要统一账号、审计、数据自持。
+
+```bash
+npm install -g remote-dsh
+rdsh hub serve                  # 自建 hub（内置 TLS 或反代部署）
+# 成员经 ①（插件）或 `rdsh host join <你的hub>` 接入
+```
 
 ## 架构
 
@@ -45,68 +82,17 @@
 | 手机 App | rdsh-app | Flutter（Android/iOS） |
 | 微信小程序 | rdsh-weapp | 轻量客户端 |
 
-## 状态
+## 能力与状态
 
-**M1–M5 完成**：局域网网关（`rdsh host serve`）、云服务器直连（TLS + 密码）、公网 hub（`rdsh host join` + `rdsh hub` + portal）、`dsh-web-remote` DSH 插件（免装 CLI 的远程访问）、多租户增强（邮箱验证 + 2FA + 共享 + 审计 + 登录风控）均已实现并验收。下一里程碑：**M6 上线、M7 Go hub、M8 手机 App、M9 微信小程序**（见路线图）。
+**当前状态**：M1–M5 已完成并验收；**端到端加密（E2EE）已完成**（社区 + SaaS 通用）。完整功能清单见 [features.zh.md](doc/overview/features.zh.md)；里程碑与路线图见 [roadmap](doc/overview/roadmap.md)。
 
-## 功能清单
+**核心能力**：
+- **三模式接入**：局域网直连 / 云服务器直连（TLS + 密码）/ 公网 hub 转发（出站隧道）
+- **端到端加密**：hub 中转你的 DSH 流量但**读不到内容**（prompt / 代码 / 文件 / API key 全程密文）——Noise NK 握手（X25519 + AES-256-GCM）、会话密钥每连接轮换、浏览器 TOFU 指纹信任、pin 仅存本地
+- **多租户与安全**：邮箱验证 + 2FA、共享授权（owner/member）、审计日志、登录风控（锁定 + 限流）、IP 白名单
+- **双通道分发**：`dsh-web-remote` 插件（免装 CLI）或 `remote-dsh` CLI；`rdsh hub` 支持内置 TLS 或反代部署
 
-已实现 `[x]` · 规划中 `[ ]` —— 用户视角
-
-**M1 — 在局域网任意设备上使用 DSH（已实现）**
-- [x] 另一台笔记本/手机浏览器直接打开你的 DSH —— 无需 SSH、无需配置
-- [x] 安全配对：在开发机终端看一眼配对码，输入一次即可
-- [x] 无需账号 —— 配对码就是钥匙
-- [x] 完整 DSH 体验：对话、跑工具、浏览文件、实时事件流
-- [x] 登录态保持 12 小时 —— 同一设备不用重复配对
-- [x] 未配对设备一律进不来（锁定在配对页）
-- [x] 三步启动：`npm i -g remote-dsh` → `rdsh host setup lan` → `rdsh host serve`
-- [x] 可选免认证（`auth.mode: "none"`，仅完全可信网络）
-- [x] 干净退出（Ctrl+C / 关终端）—— 不留任何残留进程
-
-**M2 — 部署到租用的云服务器（如阿里云）（已实现）**
-- [x] HTTPS（TLS）—— 公网安全直连（用户自备证书）
-- [x] 部署在 apache2 / nginx 反代后面（反代终止 TLS；标准 443 端口 + 证书自动续期）
-- [x] 用户名 + 密码登录（`rdsh host user add/passwd`；scrypt 哈希；改密后全部会话失效）
-- [x] IP 白名单（配置文件 `allowFrom` 字段）加固
-- [x] 配置文件（默认 `~/.rdsh/host.json`，可用 `--config <path>` 或 `$RDSH_CONFIG` 指定）
-- [x] 作为系统服务运行（systemd / launchd —— 开机自启）
-
-**M3 — 经 hub 随时随地使用 DSH（已实现）**
-- [x] 从公网访问你的任意机器 —— 无需公网 IP、无需路由器设置（`rdsh host join` 出站隧道）
-- [x] 一个账号管理多台机器（host 归属账号；注册关闭，管理员建号防 bot）
-- [x] 网页门户：登录 / host 列表 / 进入 DSH / 改密 / 吊销（React）
-- [x] 加入流程（`rdsh host join <hub>` 交互粘贴 token，或 `--token` 脚本化直填）
-- [x] 吊销即时生效 —— host token 吊销后隧道立即断开、重连被拒
-- [x] 层 2 线协议（`packages/tunnel/PROTOCOL.md`）与层 1 对外 API 冻结
-- [x] hub 支持内置 TLS，或部署在 apache2 / nginx 后面（443 + 证书自动续期）
-
-**M4 — 以 DSH 插件使用（已实现）**
-- [x] `dsh plugin add dsh-web-remote` 即获远程访问能力，免装 CLI —— DSH 界面「远程访问」面板：接入 / 断开 / 注销 + 实时状态
-
-**M5 — 多租户增强（已实现）**
-- [x] 邮箱验证 + 找回密码（可配置 SMTP / 阿里云 DirectMail / 本地 log）
-- [x] 两步验证（TOTP）
-- [x] 与团队成员共享一台机器（owner / member，member 可进 DSH 但不可管理）
-- [x] 审计日志（`rdsh hub audit ls`）
-- [x] 登录风控（账户锁定 10 次/15 分钟 + 发信限流 + 算术验证码防 bot）
-
-**M6+ — 规划中**
-- [ ] 商业化托管 hub（SaaS：开放注册、订阅计费、微信/支付宝支付）
-- [ ] 手机 App（Android / iOS）
-- [ ] 微信小程序
-- [ ] 端到端加密会话
-
-## 快速开始
-
-```bash
-npm install -g remote-dsh   # 与 dsh 一起安装；命令是 rdsh
-rdsh host setup lan         # 配置本机为局域网认证网关
-rdsh host serve             # 前台运行（自动拉起 dsh web）
-rdsh host join <hub-url>    # 或接入 hub（出站隧道）
-```
-
-同网络下另一台笔记本浏览器打开 `http://<你的IP>:<端口>`，输入终端显示的配对码即可使用。
+**规划中**：SaaS 商业化托管 hub、手机 App（Android/iOS）、微信小程序。
 
 ## 博客
 
