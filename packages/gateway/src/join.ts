@@ -13,7 +13,7 @@ import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import type { IncomingHttpHeaders } from "node:http";
 import { WebSocket } from "ws";
-import { FrameParser, FRAME_TYPE, encodeFrame, jsonPayload, parseJsonPayload } from "rdsh-tunnel";
+import { FrameParser, FRAME_TYPE, encodeFrame, jsonPayload, parseJsonPayload, FLAG_E2E } from "rdsh-tunnel";
 import type { Frame } from "rdsh-tunnel";
 import { findDsh, spawnDsh } from "./spawn-dsh.ts";
 import { rewriteHeadersForDsh } from "./proxy.ts";
@@ -21,6 +21,9 @@ import type { ProxyTarget } from "./proxy.ts";
 import { clearPersistedToken, persistToken, readPersistedToken } from "./token-store.ts";
 import { acquireJoinLock, releaseJoinLock } from "./lock.ts";
 import type { JoinLockRole } from "./lock.ts";
+import { responderHandshake, Aead } from "./e2ee.ts";
+import type { KeyPair, E2eeKeys } from "./e2ee.ts";
+import { loadOrCreateE2eeKeyPair } from "./e2ee-key-store.ts";
 
 export interface JoinOptions {
   hubUrl: string;
@@ -149,7 +152,8 @@ export async function registerJoin(opts: JoinOptions): Promise<RegisterOutcome> 
   let token: string;
   if (opts.token !== undefined) {
     // --token = join token（或旧 host token）→ register 端点换 host token
-    const { hostToken } = await register(opts.hubUrl, opts.token, opts.name, insecure);
+    const e2eeKeyPair = loadOrCreateE2eeKeyPair();
+    const { hostToken } = await register(opts.hubUrl, opts.token, opts.name, insecure, e2eeKeyPair.publicRaw.toString("base64url"));
     token = hostToken;
     persistToken(opts.hubUrl, token);
   } else {
@@ -171,8 +175,11 @@ async function register(
   joinToken: string,
   name: string | undefined,
   insecure: boolean,
+  e2eePublicKey?: string,
 ): Promise<{ hostId: string; hostToken: string }> {
-  const res = await hubRequest(hubUrl, "/api/hosts/register", { method: "POST", insecure, body: { token: joinToken, name } });
+  const body: Record<string, unknown> = { token: joinToken, name };
+  if (e2eePublicKey !== undefined) body.e2eePublicKey = e2eePublicKey;
+  const res = await hubRequest(hubUrl, "/api/hosts/register", { method: "POST", insecure, body });
   if (!res.ok) {
     const msg = (res.body as { error?: { message?: string } }).error?.message ?? `HTTP ${res.status}`;
     throw new Error(`hub rejected register: ${msg}`);
@@ -204,48 +211,283 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
   }
 
   const parser = new FrameParser();
-  /** http 流：streamId → 本地请求（写请求体 / 结束）。 */
-  const httpStreams = new Map<number, { up: ReturnType<typeof httpRequest> }>();
-  /** ws 流：streamId → 本地 ws 客户端（DATA 帧 → upstream）。 */
-  const wsStreams = new Map<number, { upstream: WebSocket; queue: Buffer[] }>();
 
   let shuttingDown = false;
   let reconnectDelay = RECONNECT_BASE_MS;
   let heartbeat: NodeJS.Timeout | undefined;
   let currentClient: WebSocket | undefined;
 
-  function handleFrame(frame: Frame, client: WebSocket): void {
+  /** 发送一个隧道帧（走当前隧道 WS；flags 由调用方在 encodeFrame 时给定）。 */
+  function sendTunnelFrame(frame: Buffer): void {
+    if (currentClient !== undefined && currentClient.readyState === currentClient.OPEN) {
+      currentClient.send(frame);
+    }
+  }
+
+  /** 内层帧分发器（plain 与 raw 共用）：OPEN http/ws + DATA → DSH 转发，响应帧经 `send` 回传。 */
+  function makeInnerDispatcher(send: (frame: Buffer) => void) {
+    const httpStreams = new Map<number, { up: ReturnType<typeof httpRequest> }>();
+    const wsStreams = new Map<number, { upstream: WebSocket; queue: Buffer[] }>();
+
+    function closeStream(streamId: number): void {
+      const ws = wsStreams.get(streamId);
+      if (ws !== undefined) {
+        wsStreams.delete(streamId);
+        try {
+          ws.upstream.terminate();
+        } catch {
+          /* 已关闭 */
+        }
+        return;
+      }
+      const http = httpStreams.get(streamId);
+      if (http !== undefined) {
+        httpStreams.delete(streamId);
+        http.up.end();
+      }
+    }
+
+    function openWsStream(streamId: number, path: string, headers: Record<string, string | string[]>): void {
+      const upstream = new WebSocket(`ws://${opts.target.host}:${opts.target.port}${path}`, {
+        headers: rewriteHeadersForDsh(headers, opts.target),
+      });
+      const queue: Buffer[] = [];
+      wsStreams.set(streamId, { upstream, queue });
+
+      upstream.on("open", () => {
+        for (const q of queue) upstream.send(q, { binary: false });
+        queue.length = 0;
+      });
+      upstream.on("message", (data) => {
+        const buf = Array.isArray(data)
+          ? Buffer.concat(data as Buffer[])
+          : Buffer.isBuffer(data)
+            ? (data as Buffer)
+            : Buffer.from(data as ArrayBuffer);
+        send(encodeFrame(FRAME_TYPE.DATA, streamId, buf));
+      });
+      const cleanup = (): void => {
+        wsStreams.delete(streamId);
+        send(encodeFrame(FRAME_TYPE.CLOSE, streamId, jsonPayload({ code: 0 })));
+      };
+      upstream.on("close", cleanup);
+      upstream.on("error", cleanup);
+    }
+
+    function handleOpen(frame: Frame): void {
+      let kind: string | undefined;
+      let method = "GET";
+      let path = "/";
+      let headers: Record<string, string | string[]> = {};
+      try {
+        const p = parseJsonPayload(frame);
+        kind = p.kind as string;
+        if (typeof p.method === "string") method = p.method;
+        if (typeof p.path === "string") path = p.path;
+        if (typeof p.headers === "object" && p.headers !== null) headers = p.headers as Record<string, string | string[]>;
+      } catch {
+        send(encodeFrame(FRAME_TYPE.ERROR, frame.streamId, jsonPayload({ code: "BAD_OPEN", message: "malformed open" })));
+        return;
+      }
+
+      if (kind === "ws") {
+        openWsStream(frame.streamId, path, headers);
+        return;
+      }
+      if (kind !== "http") {
+        send(encodeFrame(FRAME_TYPE.ERROR, frame.streamId, jsonPayload({ code: "BAD_OPEN", message: "unknown kind" })));
+        return;
+      }
+
+      const streamId = frame.streamId;
+      const up = httpRequest(
+        {
+          host: opts.target.host,
+          port: opts.target.port,
+          path,
+          method,
+          headers: rewriteHeadersForDsh(headers, opts.target),
+        },
+        (upRes) => {
+          send(
+            encodeFrame(
+              FRAME_TYPE.OPEN,
+              streamId,
+              jsonPayload({
+                kind: "http",
+                status: upRes.statusCode ?? 502,
+                reason: upRes.statusMessage,
+                headers: normalizeRespHeaders(upRes.headers),
+              }),
+            ),
+          );
+          upRes.on("data", (chunk: Buffer) => {
+            send(encodeFrame(FRAME_TYPE.DATA, streamId, chunk));
+          });
+          upRes.on("end", () => {
+            send(encodeFrame(FRAME_TYPE.CLOSE, streamId, jsonPayload({ code: 0 })));
+            httpStreams.delete(streamId);
+          });
+          upRes.on("error", () => {
+            send(encodeFrame(FRAME_TYPE.CLOSE, streamId, jsonPayload({ code: 502, message: "upstream error" })));
+            httpStreams.delete(streamId);
+          });
+        },
+      );
+      up.on("error", () => {
+        send(encodeFrame(FRAME_TYPE.ERROR, streamId, jsonPayload({ code: "UPSTREAM_UNREACHABLE", message: "dsh not reachable" })));
+        httpStreams.delete(streamId);
+      });
+      httpStreams.set(streamId, { up });
+    }
+
+    function handleFrame(frame: Frame): void {
+      switch (frame.type) {
+        case FRAME_TYPE.OPEN: {
+          handleOpen(frame);
+          return;
+        }
+        case FRAME_TYPE.DATA: {
+          const ws = wsStreams.get(frame.streamId);
+          if (ws !== undefined) {
+            if (ws.upstream.readyState === ws.upstream.OPEN) ws.upstream.send(frame.payload, { binary: false }); // DSH WS 为 text(JSON)
+            else ws.queue.push(frame.payload);
+            return;
+          }
+          const http = httpStreams.get(frame.streamId);
+          if (http !== undefined) http.up.write(frame.payload);
+          return;
+        }
+        case FRAME_TYPE.CLOSE:
+        case FRAME_TYPE.ERROR: {
+          closeStream(frame.streamId);
+          return;
+        }
+        default:
+          return;
+      }
+    }
+
+    function cleanup(): void {
+      for (const s of httpStreams.values()) {
+        try {
+          s.up.destroy();
+        } catch {
+          /* 已断 */
+        }
+      }
+      httpStreams.clear();
+      for (const s of wsStreams.values()) {
+        try {
+          s.upstream.terminate();
+        } catch {
+          /* 已断 */
+        }
+      }
+      wsStreams.clear();
+    }
+
+    return { handleFrame, cleanup };
+  }
+
+  const plainDispatcher = makeInnerDispatcher(sendTunnelFrame);
+
+  // host 端 E2EE 静态密钥对（持久化 ~/.rdsh/e2ee-key.json；join 注册时上送指纹）
+  const hostE2eeKeypair: KeyPair = loadOrCreateE2eeKeyPair();
+
+  /** E2EE raw 流状态（Noise 响应方 + 内层分发）。 */
+  interface RawStreamState {
+    handshakeBuf: Buffer;
+    keys: E2eeKeys | null;
+    decryptor: Aead | null;
+    encryptor: Aead | null;
+    innerParser: FrameParser;
+    inner: ReturnType<typeof makeInnerDispatcher>;
+  }
+  const rawStreams = new Map<number, RawStreamState>();
+
+  function startRawStream(streamId: number): void {
+    const inner = makeInnerDispatcher((frame) => {
+      const raw = rawStreams.get(streamId);
+      if (raw?.encryptor !== null && raw?.encryptor !== undefined) {
+        const ct = raw.encryptor.encrypt(frame, Buffer.alloc(0));
+        sendTunnelFrame(encodeFrame(FRAME_TYPE.DATA, streamId, ct, FLAG_E2E));
+      }
+    });
+    rawStreams.set(streamId, {
+      handshakeBuf: Buffer.alloc(0),
+      keys: null,
+      decryptor: null,
+      encryptor: null,
+      innerParser: new FrameParser(),
+      inner,
+    });
+  }
+
+  function handleRawData(streamId: number, state: RawStreamState, chunk: Buffer): void {
+    try {
+      if (state.keys === null) {
+        // Noise 握手：缓冲到 32B（发起方临时公钥）→ 派生密钥
+        state.handshakeBuf = Buffer.concat([state.handshakeBuf, chunk]);
+        if (state.handshakeBuf.length < 32) return;
+        const ephPub = state.handshakeBuf.subarray(0, 32);
+        state.handshakeBuf = state.handshakeBuf.subarray(32);
+        state.keys = responderHandshake(hostE2eeKeypair, ephPub);
+        state.decryptor = new Aead(state.keys.initiatorToResponder);
+        state.encryptor = new Aead(state.keys.responderToInitiator);
+        if (state.handshakeBuf.length === 0) return;
+        chunk = state.handshakeBuf; // 剩余 = 首个密文分片
+        state.handshakeBuf = Buffer.alloc(0);
+      }
+      const dec = state.decryptor!.decrypt(chunk, Buffer.alloc(0));
+      for (const f of state.innerParser.push(dec)) state.inner.handleFrame(f);
+    } catch {
+      // 解密失败（篡改/错序）→ 结束该 raw 流
+      rawStreams.delete(streamId);
+      sendTunnelFrame(encodeFrame(FRAME_TYPE.CLOSE, streamId, jsonPayload({ code: 1, message: "e2ee decrypt failed" })));
+    }
+  }
+
+  /** 隧道级帧分发：PING/PONG + OPEN（http/ws/raw）+ DATA/CLOSE/ERROR（plain 或 raw 路由）。 */
+  function handleFrame(frame: Frame): void {
     switch (frame.type) {
       case FRAME_TYPE.PING: {
-        client.send(encodeFrame(FRAME_TYPE.PONG, frame.streamId, frame.payload));
+        sendTunnelFrame(encodeFrame(FRAME_TYPE.PONG, frame.streamId, frame.payload));
         return;
       }
       case FRAME_TYPE.PONG:
         return;
       case FRAME_TYPE.OPEN: {
-        handleOpen(frame, client);
+        let kind: string | undefined;
+        try {
+          const p = parseJsonPayload(frame);
+          kind = typeof p.kind === "string" ? p.kind : undefined;
+        } catch {
+          /* 交给 plain dispatcher 报 BAD_OPEN */
+        }
+        if (kind === "raw") {
+          startRawStream(frame.streamId);
+          return;
+        }
+        plainDispatcher.handleFrame(frame);
         return;
       }
       case FRAME_TYPE.DATA: {
-        const ws = wsStreams.get(frame.streamId);
-        if (ws !== undefined) {
-          if (ws.upstream.readyState === ws.upstream.OPEN) {
-            ws.upstream.send(frame.payload, { binary: false }); // DSH WS 为 text(JSON)，保持文本帧
-          } else {
-            ws.queue.push(frame.payload);
-          }
+        const raw = rawStreams.get(frame.streamId);
+        if (raw !== undefined) {
+          handleRawData(frame.streamId, raw, frame.payload);
           return;
         }
-        const http = httpStreams.get(frame.streamId);
-        if (http !== undefined) http.up.write(frame.payload);
+        plainDispatcher.handleFrame(frame);
         return;
       }
-      case FRAME_TYPE.CLOSE: {
-        closeStream(frame.streamId);
-        return;
-      }
+      case FRAME_TYPE.CLOSE:
       case FRAME_TYPE.ERROR: {
-        closeStream(frame.streamId);
+        if (rawStreams.has(frame.streamId)) {
+          rawStreams.delete(frame.streamId);
+          return;
+        }
+        plainDispatcher.handleFrame(frame);
         return;
       }
       default:
@@ -253,156 +495,15 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
     }
   }
 
-  function closeStream(streamId: number): void {
-    const ws = wsStreams.get(streamId);
-    if (ws !== undefined) {
-      wsStreams.delete(streamId);
-      try {
-        ws.upstream.terminate();
-      } catch {
-        /* 已关闭 */
-      }
-      return;
-    }
-    const http = httpStreams.get(streamId);
-    if (http !== undefined) {
-      httpStreams.delete(streamId);
-      http.up.end();
-    }
-  }
-
-  function handleOpen(frame: Frame, client: WebSocket): void {
-    let kind: string | undefined;
-    let method = "GET";
-    let path = "/";
-    let headers: Record<string, string | string[]> = {};
-    try {
-      const p = parseJsonPayload(frame);
-      kind = p.kind as string;
-      if (typeof p.method === "string") method = p.method;
-      if (typeof p.path === "string") path = p.path;
-      if (typeof p.headers === "object" && p.headers !== null) headers = p.headers as Record<string, string | string[]>;
-    } catch {
-      client.send(encodeFrame(FRAME_TYPE.ERROR, frame.streamId, jsonPayload({ code: "BAD_OPEN", message: "malformed open" })));
-      return;
-    }
-
-    if (kind === "ws") {
-      openWsStream(frame, client, path, headers);
-      return;
-    }
-    if (kind !== "http") {
-      client.send(encodeFrame(FRAME_TYPE.ERROR, frame.streamId, jsonPayload({ code: "BAD_OPEN", message: "unknown kind" })));
-      return;
-    }
-
-    const streamId = frame.streamId;
-    // http 转发：本地 dsh（loopback http）
-    const up = httpRequest(
-      {
-        host: opts.target.host,
-        port: opts.target.port,
-        path,
-        method,
-        headers: rewriteHeadersForDsh(headers, opts.target),
-      },
-      (upRes) => {
-        client.send(
-          encodeFrame(
-            FRAME_TYPE.OPEN,
-            streamId,
-            jsonPayload({
-              kind: "http",
-              status: upRes.statusCode ?? 502,
-              reason: upRes.statusMessage,
-              headers: normalizeRespHeaders(upRes.headers),
-            }),
-          ),
-        );
-        upRes.on("data", (chunk: Buffer) => {
-          if (client.readyState === client.OPEN) {
-            client.send(encodeFrame(FRAME_TYPE.DATA, streamId, chunk));
-          }
-        });
-        upRes.on("end", () => {
-          if (client.readyState === client.OPEN) {
-            client.send(encodeFrame(FRAME_TYPE.CLOSE, streamId, jsonPayload({ code: 0 })));
-          }
-          httpStreams.delete(streamId);
-        });
-        upRes.on("error", () => {
-          if (client.readyState === client.OPEN) {
-            client.send(encodeFrame(FRAME_TYPE.CLOSE, streamId, jsonPayload({ code: 502, message: "upstream error" })));
-          }
-          httpStreams.delete(streamId);
-        });
-      },
-    );
-    up.on("error", () => {
-      if (client.readyState === client.OPEN) {
-        client.send(
-          encodeFrame(FRAME_TYPE.ERROR, streamId, jsonPayload({ code: "UPSTREAM_UNREACHABLE", message: "dsh not reachable" })),
-        );
-      }
-      httpStreams.delete(streamId);
-    });
-    httpStreams.set(streamId, { up });
-  }
-
-  function openWsStream(frame: Frame, client: WebSocket, path: string, headers: Record<string, string | string[]>): void {
-    const streamId = frame.streamId;
-    const upstream = new WebSocket(`ws://${opts.target.host}:${opts.target.port}${path}`, {
-      headers: rewriteHeadersForDsh(headers, opts.target),
-    });
-    const queue: Buffer[] = [];
-    wsStreams.set(streamId, { upstream, queue });
-
-    upstream.on("open", () => {
-      for (const q of queue) upstream.send(q, { binary: false });
-      queue.length = 0;
-    });
-    upstream.on("message", (data, isBinary) => {
-      const buf = Array.isArray(data)
-        ? Buffer.concat(data as Buffer[])
-        : Buffer.isBuffer(data)
-          ? (data as Buffer)
-          : Buffer.from(data as ArrayBuffer);
-      if (client.readyState === client.OPEN) {
-        client.send(encodeFrame(FRAME_TYPE.DATA, streamId, buf));
-      }
-    });
-    const cleanup = (): void => {
-      wsStreams.delete(streamId);
-      if (client.readyState === client.OPEN) {
-        client.send(encodeFrame(FRAME_TYPE.CLOSE, streamId, jsonPayload({ code: 0 })));
-      }
-    };
-    upstream.on("close", cleanup);
-    upstream.on("error", cleanup);
-  }
-
-  /** 清空本地 http/ws 流 + heartbeat（断线/停止时）。 */
+  /** 清空本地 http/ws/raw 流 + heartbeat（断线/停止时）。 */
   function cleanupStreams(): void {
     if (heartbeat !== undefined) {
       clearInterval(heartbeat);
       heartbeat = undefined;
     }
-    for (const s of httpStreams.values()) {
-      try {
-        s.up.destroy();
-      } catch {
-        /* 已断 */
-      }
-    }
-    httpStreams.clear();
-    for (const s of wsStreams.values()) {
-      try {
-        s.upstream.terminate();
-      } catch {
-        /* 已断 */
-      }
-    }
-    wsStreams.clear();
+    plainDispatcher.cleanup();
+    for (const raw of rawStreams.values()) raw.inner.cleanup();
+    rawStreams.clear();
   }
 
   function connect(): void {
@@ -450,7 +551,7 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
         client.terminate();
         return;
       }
-      for (const frame of frames) handleFrame(frame, client);
+      for (const frame of frames) handleFrame(frame);
     });
 
     client.on("close", () => {

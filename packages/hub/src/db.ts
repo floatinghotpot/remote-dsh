@@ -48,6 +48,7 @@ export interface HostRow {
   ownerId: number;
   name: string;
   tokenHash: string;
+  e2eePublicKey: string | null;
   createdAt: string;
 }
 
@@ -181,6 +182,7 @@ export class HubDb {
         owner_id INTEGER NOT NULL REFERENCES users(id),
         name TEXT NOT NULL,
         token_hash TEXT UNIQUE NOT NULL,
+        e2ee_public_key TEXT,
         created_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS refresh_tokens (
@@ -289,6 +291,10 @@ export class HubDb {
     }
     this.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email);`);
     this.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone ON users(phone);`);
+    const hostCols = new Set(
+      (this.db.prepare("PRAGMA table_info(hosts)").all() as unknown as Array<{ name: string }>).map((c) => c.name),
+    );
+    if (!hostCols.has("e2ee_public_key")) this.db.exec(`ALTER TABLE hosts ADD COLUMN e2ee_public_key TEXT`);
   }
 
 
@@ -323,6 +329,7 @@ export class HubDb {
       ownerId: Number(row.owner_id),
       name: String(row.name),
       tokenHash: String(row.token_hash),
+      e2eePublicKey: row.e2ee_public_key === null || row.e2ee_public_key === undefined ? null : String(row.e2ee_public_key),
       createdAt: String(row.created_at),
     };
   }
@@ -498,12 +505,13 @@ export class HubDb {
 
   // ---- hosts ----
 
-  createHost(id: string, ownerId: number, name: string, tokenHash: string, now = new Date().toISOString()): HostRow {
-    this.db.prepare("INSERT INTO hosts (id, owner_id, name, token_hash, created_at) VALUES (?, ?, ?, ?, ?)").run(
+  createHost(id: string, ownerId: number, name: string, tokenHash: string, e2eePublicKey?: string, now = new Date().toISOString()): HostRow {
+    this.db.prepare("INSERT INTO hosts (id, owner_id, name, token_hash, e2ee_public_key, created_at) VALUES (?, ?, ?, ?, ?, ?)").run(
       id,
       ownerId,
       name,
       tokenHash,
+      e2eePublicKey ?? null,
       now,
     );
     const row = this.db.prepare("SELECT * FROM hosts WHERE id = ?").get(id);

@@ -613,6 +613,7 @@ async function handleListHosts(req: IncomingMessage, res: ServerResponse, runtim
     online: runtime.tunnels.isOnline(h.id),
     createdAt: h.createdAt,
     role: h.ownerId === auth.userId ? "owner" : "member",
+    e2eePublicKey: h.e2eePublicKey,
   }));
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({ hosts: out }));
@@ -804,7 +805,8 @@ async function handleRegister(req: IncomingMessage, res: ServerResponse, runtime
   }
   const hostId = randomUUID();
   const hostToken = randomToken();
-  runtime.db.createHost(hostId, jt.ownerId, name ?? `host-${hostId.slice(0, 8)}`, sha256(hostToken));
+  const e2eePublicKey = typeof body.e2eePublicKey === "string" && body.e2eePublicKey.length > 0 ? body.e2eePublicKey.slice(0, 256) : undefined;
+  runtime.db.createHost(hostId, jt.ownerId, name ?? `host-${hostId.slice(0, 8)}`, sha256(hostToken), e2eePublicKey);
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({ hostId, hostToken }));
 }
