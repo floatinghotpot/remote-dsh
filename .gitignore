@@ -40,5 +40,5 @@ Thumbs.db
 # One-off verification scripts (removed after MVP)
 spike/
 
-# Private planning notes (domain names, accounts — never commit/push)
-doc/private.md
+# Private docs (business/credentials/strategy — never commit/push to public repo)
+private/

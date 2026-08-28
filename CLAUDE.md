@@ -86,7 +86,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Feature Pipeline**: Follow `discussion → req → solution → plan → verification → summary + TODO` in `doc/feature/{NN-name}/`，特性目录以两位数字编号作索引（如 `01-remote-access`、`02-xxx`）。
 - **架构/概览/提案文档**: 跨项目的架构、概览、提案类文档放 `doc/overview/`（如 `architecture.md`、`roadmap.md`、`proposal.md`），**不进 `doc/feature/`**。
 - **博客**: 场景化教程/传播文章放 `doc/blog/`，按语言分子目录 `doc/blog/zh/`（中文，`NN-name.md`）与 `doc/blog/en/`（英文，`NN-name.md`），两版互链；README 双语各自链接对应语言版本。
-- **市场/营销**: 市场分析、定位、定价对标放 `doc/marketing/`（中文内部活文档；基于事实带来源，查不到标"待查证"；未定内容不对外发布，正式传播走 `doc/blog/`）。
+- **市场/营销**: 市场分析、定位、定价对标放 `private/doc/marketing/`（内部活文档，**不入公开仓**，见 `.gitignore`；基于事实带来源，查不到标"待查证"；未定内容不对外发布，正式传播走 `doc/blog/`）。
 - **Bugfix Pipeline**: Record complex fixes in `doc/fix/{name}/`; simple fixes go to Daily Summary only.
 - **Consistency**: Keep `doc/daily/YYYYMMDD.md` updated at the end of task series upon user request.
 

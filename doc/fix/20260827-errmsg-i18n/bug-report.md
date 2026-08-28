@@ -3,7 +3,7 @@
 > **日期**: 2026-08-27
 > **严重度**: P2（体验/多语言障碍，不阻塞功能）
 > **涉及**: `packages/portal/src/pages.tsx`（`useError` / 错误显示层）
-> **关联**: `doc/feature/08-saas/req.md` R10（portal 商业化页 i18n zh/en 验收项）
+> **关联**: portal 商业化页 i18n zh/en 验收项（08-saas R10，现移至私有文档 `private/doc/feature/08-saas/`）
 
 ---
 
