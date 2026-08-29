@@ -362,14 +362,16 @@ function SiteFooter(): React.JSX.Element | null {
 function LandingPage(): React.JSX.Element {
   const { t } = useT();
   const [authed, setAuthed] = useState(false);
+  const [brand, setBrand] = useState("RDSH.CN");
   useEffect(() => {
     void api.accountInfo().then(() => setAuthed(true)).catch(() => setAuthed(false));
+    void api.capabilities().then((c) => { if (c.site?.brand !== undefined && c.site.brand !== "") setBrand(c.site.brand); }).catch(() => undefined);
   }, []);
 
   return (
     <div style={{ maxWidth: 760, margin: "0 auto", padding: "0 16px", fontFamily: "system-ui, sans-serif" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 0" }}>
-        <strong style={{ fontSize: 17 }}>remote-dsh</strong>
+        <strong style={{ fontSize: 17 }}>{brand}</strong>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <LangToggle />
           {authed ? (
@@ -414,7 +416,12 @@ function Login(): React.JSX.Element {
   const [password, setPassword] = useState("");
   const [totpPending, setTotpPending] = useState<string | null>(null);
   const [totpCode, setTotpCode] = useState("");
+  const [brand, setBrand] = useState("RDSH.CN");
   const { err, run } = useError();
+
+  useEffect(() => {
+    void api.capabilities().then((c) => { if (c.site?.brand !== undefined && c.site.brand !== "") setBrand(c.site.brand); }).catch(() => undefined);
+  }, []);
 
   const submit = (): void => {
     void run(async () => {
@@ -443,7 +450,8 @@ function Login(): React.JSX.Element {
       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
         <LangToggle />
       </div>
-      <h1 style={{ fontSize: 20, marginBottom: 4 }}>{t("rdsh · 你的 AI 智能体，随处安全可达")}</h1>
+      <p style={{ fontSize: 22, fontWeight: 700, color: "#111", letterSpacing: 0.5, margin: "0 0 8px" }}>{brand}</p>
+      <h1 style={{ fontSize: 20, marginBottom: 4 }}>{t("你的 AI 智能体，随处安全可达")}</h1>
       <p style={{ color: "#666", fontSize: 13, marginBottom: 24 }}>
         {totpPending !== null ? t("输入你的两步验证码（TOTP）") : isFirst ? t("首次登录：设置你的密码") : t("远程指挥你的 DeepSeek Harness 智能体，仅需浏览器，任意设备、随时随地，端到端加密")}
       </p>
@@ -1105,7 +1113,7 @@ function HostsPage(): React.JSX.Element {
   const shareHostName = shareHostId !== null ? hosts.find((h) => h.id === shareHostId)?.name : undefined;
 
   return (
-    <Shell title={t("rdsh · 我的主机")} onLogout={logout}>
+    <Shell title={t("我的主机")} onLogout={logout}>
       {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
       <div style={{ marginBottom: 16 }}>
         <button onClick={() => navigate("/add-host")} style={btnStyle()}>{t("添加主机 / 接入 token")}</button>

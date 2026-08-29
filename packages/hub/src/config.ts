@@ -78,6 +78,8 @@ export interface BeianConfig {
 
 /** 站点信息（portal 页脚导航：公司名/官网 + 产品介绍页）。 */
 export interface SiteConfig {
+  /** 产品品牌名（入口页左上角/登录页眉标；缺省 portal 回退 "RDSH.CN"） */
+  brand?: string;
   /** 公司名（页脚展示；无 url 时纯文本） */
   name?: string;
   /** 公司官网 URL */
@@ -382,7 +384,7 @@ function normalizeSite(raw: unknown, source: string): SiteConfig {
   if (typeof raw !== "object" || raw === null) throw new Error(`${source}: "site" must be an object`);
   const s = raw as Record<string, unknown>;
   const out: SiteConfig = {};
-  for (const key of ["name", "url", "productUrl", "termsUrl", "privacyUrl"] as const) {
+  for (const key of ["brand", "name", "url", "productUrl", "termsUrl", "privacyUrl"] as const) {
     if (s[key] !== undefined) {
       if (typeof s[key] !== "string") throw new Error(`${source}: "site.${key}" must be a string`);
       out[key] = s[key] as string;

@@ -55,7 +55,6 @@ const EN: Record<string, string> = {
   "重新发送 {s}s": "Resend in {s}s",
 
   // ---- 登录 ----
-  "rdsh · 你的 AI 智能体，随处安全可达": "rdsh · Your AI agent, securely reachable anywhere",
   "远程指挥你的 DeepSeek Harness 智能体，仅需浏览器，任意设备、随时随地，端到端加密":
     "Remotely command your DeepSeek Harness agent — just a browser, any device, anytime, anywhere, end-to-end encrypted",
   "登录": "Sign in",
@@ -107,7 +106,7 @@ const EN: Record<string, string> = {
   "重置密码": "Reset password",
 
   // ---- 主机列表 ----
-  "rdsh · 我的主机": "rdsh · My Hosts",
+  "我的主机": "My Hosts",
   "添加主机 / 接入 token": "Add host / join token",
   "还没有接入主机 —— 用上面的「添加主机」接入你的第一台 DSH。":
     "No hosts yet — use “Add host” above to connect your first DSH.",
