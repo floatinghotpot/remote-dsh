@@ -384,7 +384,7 @@ function LandingPage(): React.JSX.Element {
       </div>
 
       <div style={{ textAlign: "center", padding: "48px 0 40px" }}>
-        <h1 style={{ fontSize: 28, margin: "0 0 10px" }}>{t("你的 AI 智能体，随处可达")}</h1>
+        <h1 style={{ fontSize: 28, margin: "0 0 10px" }}>{t("你的 AI 智能体，随处安全可达")}</h1>
         <p style={{ color: "#666", fontSize: 15, margin: "0 0 28px" }}>{t("免公网 IP · 免装客户端")}</p>
         <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
           {authed ? (
@@ -443,9 +443,9 @@ function Login(): React.JSX.Element {
       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
         <LangToggle />
       </div>
-      <h1 style={{ fontSize: 20, marginBottom: 4 }}>{t("rdsh · 你的 AI 智能体，随处可达")}</h1>
+      <h1 style={{ fontSize: 20, marginBottom: 4 }}>{t("rdsh · 你的 AI 智能体，随处安全可达")}</h1>
       <p style={{ color: "#666", fontSize: 13, marginBottom: 24 }}>
-        {totpPending !== null ? t("输入你的两步验证码（TOTP）") : isFirst ? t("首次登录：设置你的密码") : t("远程指挥你的 DeepSeek Harness 智能体，只需使用浏览器，任意设备、随时、随地")}
+        {totpPending !== null ? t("输入你的两步验证码（TOTP）") : isFirst ? t("首次登录：设置你的密码") : t("远程指挥你的 DeepSeek Harness 智能体，仅需浏览器，任意设备、随时随地，端到端加密")}
       </p>
       {totpPending !== null ? (
         field(t("验证码"), totpCode, setTotpCode)
