@@ -19,7 +19,7 @@
 |---|---|---|
 | magic | 4B | `0x52 0x44 0x53 0x48`（"RDSH"） |
 | version | 1B | 协议版本（当前 1） |
-| flags | 1B | bit0: E2E 加密位（**预留**）；实现必须**忽略未知位并原样透传** |
+| flags | 1B | bit0（`FLAG_E2E` = 0x01）: E2E 帧标记（09 已实现，见「E2E 加密（raw stream）」）；实现必须**忽略未知位并原样透传** |
 | type | 1B | 帧类型（下表） |
 | streamId | 4B | 流 id（大端，多路复用） |
 | length | 4B | payload 长度（大端） |
@@ -48,7 +48,7 @@
 { "kind": "raw" }
 ```
 
-- `kind: "raw"` 建立 **E2EE 原始字节流**（见下「E2E 加密预留」）：无 method/path/headers，DATA 帧双向承载 Noise 握手 + 密文。
+- `kind: "raw"` 建立 **E2EE 原始字节流**（见下「E2E 加密（raw stream）」）：无 method/path/headers，DATA 帧双向承载 Noise 握手 + 密文。
 
 **响应（gateway → hub）**：
 
@@ -78,7 +78,7 @@
 - 大负载（DSH 请求体上限 300 MB）必须**流式分片转发、禁止整体缓冲**
 - 上下游 write backpressure 联动（DATA 帧按上游可写状态节奏发送）
 
-## E2E 加密预留
+## E2E 加密（raw stream）
 
 - `flags` bit0（`FLAG_E2E` = 0x01）为 E2EE 帧标记；OPEN `kind:"raw"` 建立 E2EE 原始字节流。
 - **raw stream 语义**：OPEN `{ kind:"raw" }` 后，该 streamId 的 DATA 帧双向承载**原始字节**（内层 Noise NK 握手消息 + AES-256-GCM 密文）；hub 只做纯字节双向转发、不解析内容。
