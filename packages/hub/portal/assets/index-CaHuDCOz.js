@@ -93,8 +93,10 @@ Minimum version required to store current data is: `+ne+`.
 <blockquote>本文档为草稿，仅供内部评审，正式生效版本以法务定稿为准。</blockquote>
 `,product:`<h2>为什么选择 remote-dsh</h2>
 <ul>
-  <li><strong>浏览器即用</strong>：免公网 IP、免装客户端，开浏览器就能指挥智能体；</li>
+  <li><strong>浏览器即用</strong>：免公网 IP、免装客户端，开浏览器就能指挥智能体，不限设备（PC、平板、手机），不限系统（Mac、Windows、Linux、iOS、安卓、鸿蒙）；</li>
+  <li><strong>持续在线</strong>：会话保持连续，跨设备（PC、平板、手机）无缝接力，工作流不中断；</li>
   <li><strong>双通道接入</strong>：DSH 插件（<code>dsh-web-remote</code>）一键接入，或 CLI（<code>remote-dsh</code>）灵活自控；</li>
+  <li><strong>安全加密</strong>：端到端加密（E2EE）隧道，Hub 仅转发密文，数据安全、隐私保护；</li>
   <li><strong>开源可信</strong>：MIT 开源、协议冻结（gateway 永不需改动），可自托管、可被集成。</li>
 </ul>
 <h2>使用场景</h2>
