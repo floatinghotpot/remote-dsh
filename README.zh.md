@@ -50,6 +50,8 @@ rdsh hub serve                  # 自建 hub（内置 TLS 或反代部署）
 
 ## 架构
 
+![remote-dsh 架构图](media/rdsh-arch.jpg)
+
 ```
         客户端（浏览器 / App / 小程序）
                     │

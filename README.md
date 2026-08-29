@@ -50,6 +50,8 @@ rdsh hub serve                  # self-host the hub (built-in TLS or behind a re
 
 ## Architecture
 
+![remote-dsh architecture](media/rdsh-arch.jpg)
+
 ```
         Client (browser / app / weapp)
                     │
