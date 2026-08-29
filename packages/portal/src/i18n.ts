@@ -36,6 +36,7 @@ const EN: Record<string, string> = {
   "进入": "Enter",
   "改名": "Rename",
   "更多操作": "More actions",
+  "共享主机": "Share host",
   "保存": "Save",
   "解绑": "Unbind",
   "未绑定": "Not bound",

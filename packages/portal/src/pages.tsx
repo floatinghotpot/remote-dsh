@@ -1148,7 +1148,7 @@ function HostsPage(): React.JSX.Element {
                             <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
                             <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
                           </MenuIcon>
-                          {t("共享", { en: "Share" })}
+                          {t("共享主机")}
                         </button>
                         <button style={menuItemStyle(true)} onClick={() => { setMenuHostId(null); revoke(h.id); }}>
                           <MenuIcon>
