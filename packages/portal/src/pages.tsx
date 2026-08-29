@@ -140,6 +140,21 @@ function inputStyle(): React.CSSProperties {
   return { padding: "8px 10px", borderRadius: 6, border: "1px solid #ccc", fontSize: 14, width: "100%", boxSizing: "border-box" };
 }
 
+function menuItemStyle(danger = false): React.CSSProperties {
+  return {
+    display: "block",
+    width: "100%",
+    textAlign: "left",
+    padding: "8px 12px",
+    border: "none",
+    background: "none",
+    cursor: "pointer",
+    fontSize: 14,
+    borderRadius: 6,
+    color: danger ? "#dc2626" : "#111",
+  };
+}
+
 function field(label: string, value: string, onChange: (v: string) => void, type = "text"): React.JSX.Element {
   return (
     <label style={{ display: "block", marginBottom: 12 }}>
@@ -969,6 +984,7 @@ function HostsPage(): React.JSX.Element {
   const [loading, setLoading] = useState(true);
   const [renameId, setRenameId] = useState<string | null>(null);
   const [renameName, setRenameName] = useState("");
+  const [menuHostId, setMenuHostId] = useState<string | null>(null);
   const [shareHostId, setShareHostId] = useState<string | null>(null);
   const [shareName, setShareName] = useState("");
   const [shares, setShares] = useState<Array<{ userId: number; name: string; role: string }>>([]);
@@ -1037,6 +1053,13 @@ function HostsPage(): React.JSX.Element {
     return unsub;
   }, []);
 
+  useEffect(() => {
+    if (menuHostId === null) return;
+    const close = (): void => setMenuHostId(null);
+    document.addEventListener("click", close);
+    return () => document.removeEventListener("click", close);
+  }, [menuHostId]);
+
   const revoke = (hostId: string): void => {
     if (!window.confirm(t("吊销该 host？其隧道立即断开，需重新接入。"))) return;
     void run(async () => {
@@ -1070,24 +1093,38 @@ function HostsPage(): React.JSX.Element {
         <div>
           {hosts.map((h) => {
             const isOwner = h.role !== "member";
+            const menuOpen = menuHostId === h.id;
             return (
-              <div key={h.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", border: "1px solid #eee", borderRadius: 8, marginBottom: 8 }}>
-                <span style={{ color: h.online ? "#16a34a" : "#999", fontSize: 14 }}>{h.online ? "●" : "○"}</span>
-                <span style={{ fontWeight: 500 }}>
-                  {h.e2eePublicKey !== undefined && h.e2eePublicKey !== null && h.e2eePublicKey !== "" && <ShieldIcon />}
-                  {h.name}
-                </span>
-                <span style={{ color: "#666", fontSize: 12 }}>{h.online ? t("在线") : t("离线")}</span>
-                {!isOwner && <span style={{ color: "#999", fontSize: 12, border: "1px solid #eee", borderRadius: 4, padding: "1px 6px" }}>{t("共享", { en: "Shared" })}</span>}
-                <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
-                  <button onClick={() => requestEnter(h)} style={btnStyle()}>{t("进入")}</button>
-                  {isOwner && <button onClick={() => { setRenameId(h.id); setRenameName(h.name); }} style={btnStyle("ghost")}>{t("改名")}</button>}
-                  {isOwner && <button onClick={() => openShare(h.id)} style={btnStyle("ghost")}>{t("共享", { en: "Share" })}</button>}
-                  {isOwner && <button onClick={() => revoke(h.id)} style={btnStyle("danger")}>{t("吊销")}</button>}
+              <div key={h.id} style={{ border: "1px solid #eee", borderRadius: 8, marginBottom: 8 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px" }}>
+                  <span style={{ color: h.online ? "#16a34a" : "#999", fontSize: 14 }}>{h.online ? "●" : "○"}</span>
+                  <span style={{ fontWeight: 500 }}>
+                    {h.e2eePublicKey !== undefined && h.e2eePublicKey !== null && h.e2eePublicKey !== "" && <ShieldIcon />}
+                    {h.name}
+                  </span>
+                  <span style={{ color: "#666", fontSize: 12 }}>{h.online ? t("在线") : t("离线")}</span>
+                  {!isOwner && <span style={{ color: "#999", fontSize: 12, border: "1px solid #eee", borderRadius: 4, padding: "1px 6px" }}>{t("共享", { en: "Shared" })}</span>}
+                  <div style={{ marginLeft: "auto", display: "flex", gap: 6, position: "relative" }}>
+                    <button onClick={() => requestEnter(h)} style={btnStyle()}>{t("进入")}</button>
+                    {isOwner && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setMenuHostId(menuOpen ? null : h.id); }}
+                        style={btnStyle("ghost")}
+                        title={t("更多操作")}
+                      >⋯</button>
+                    )}
+                    {menuOpen && (
+                      <div style={{ position: "absolute", top: "100%", right: 0, marginTop: 4, background: "#fff", border: "1px solid #eee", borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,.1)", zIndex: 20, minWidth: 130, padding: 4 }} onClick={(e) => e.stopPropagation()}>
+                        <button style={menuItemStyle()} onClick={() => { setMenuHostId(null); setRenameId(h.id); setRenameName(h.name); }}>{t("改名")}</button>
+                        <button style={menuItemStyle()} onClick={() => { setMenuHostId(null); openShare(h.id); }}>{t("共享", { en: "Share" })}</button>
+                        <button style={menuItemStyle(true)} onClick={() => { setMenuHostId(null); revoke(h.id); }}>{t("吊销")}</button>
+                      </div>
+                    )}
+                  </div>
                 </div>
                 {renameId === h.id && (
-                  <div style={{ display: "flex", gap: 6 }}>
-                    <input value={renameName} onChange={(e) => setRenameName(e.target.value)} style={{ ...inputStyle(), width: 140 }} />
+                  <div style={{ display: "flex", gap: 6, padding: "0 12px 10px" }}>
+                    <input value={renameName} onChange={(e) => setRenameName(e.target.value)} style={{ ...inputStyle(), width: 220 }} autoFocus />
                     <button onClick={() => rename(h.id)} style={btnStyle()}>{t("保存")}</button>
                   </div>
                 )}

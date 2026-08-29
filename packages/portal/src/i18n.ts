@@ -35,6 +35,7 @@ const EN: Record<string, string> = {
   "端到端加密": "End-to-end encrypted",
   "进入": "Enter",
   "改名": "Rename",
+  "更多操作": "More actions",
   "保存": "Save",
   "解绑": "Unbind",
   "未绑定": "Not bound",
