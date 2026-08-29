@@ -10,7 +10,6 @@
  */
 import { createInterface } from "node:readline";
 import { rm } from "node:fs/promises";
-import { hostname as osHostname } from "node:os";
 import { dirname } from "node:path";
 import {
   serve,
@@ -311,7 +310,7 @@ async function handleHostJoin(args: string[], configPath?: string): Promise<void
   const config = await loadConfig(target);
   config.mode = "join";
   config.hub = hubUrl;
-  config.name = opts.name ?? osHostname();
+  config.name = outcome.name;
   config.insecure = outcome.insecure;
   config.dshPath = opts.dshPath ?? findDsh() ?? config.dshPath;
   await saveConfig(target, config);
@@ -379,7 +378,7 @@ async function maybeRegisterForServiceInstall(args: string[], target: string): P
   const cfg = await loadConfig(target);
   cfg.mode = "join";
   cfg.hub = maybeHub;
-  cfg.name = joinOpts.name ?? osHostname();
+  cfg.name = outcome.name;
   cfg.insecure = outcome.insecure;
   cfg.dshPath = joinOpts.dshPath ?? findDsh() ?? cfg.dshPath;
   await saveConfig(target, cfg);

@@ -741,6 +741,7 @@ async function handleListJoinTokens(req: IncomingMessage, res: ServerResponse, r
     id: t.id,
     label: t.label,
     fingerprint: `${t.tokenHash.slice(0, 6)}…${t.tokenHash.slice(-4)}`,
+    createdAt: t.createdAt,
     expiresAt: t.expiresAt,
     revoked: t.revoked === 1,
   }));

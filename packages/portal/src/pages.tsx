@@ -114,7 +114,7 @@ function Shell({ title, children, onLogout }: { title: string; children: React.R
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <LangToggle />
             <button onClick={() => navigate("/settings/account")} style={btnStyle("ghost")}>{t("账户")}</button>
-            <button onClick={onLogout} style={btnStyle()}>{t("退出登录")}</button>
+            <button onClick={onLogout} style={btnStyle()}>{t("登出")}</button>
           </div>
         )}
       </div>
@@ -1249,13 +1249,21 @@ function enterHost(hostId: string): void {
 
 // ---- 添加主机：生成用户级 join token + 接入命令（明文只显示一次）----
 
+/** ISO 时间 → yyyyMMddhhmmss（本地时区；令牌无备注时的默认显示名）。 */
+function compactTimestamp(iso: string): string {
+  const d = new Date(iso);
+  const p = (n: number): string => String(n).padStart(2, "0");
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+
 function AddHostPage(): React.JSX.Element {
   const { t } = useT();
   const [tokens, setTokens] = useState<JoinTokenInfo[]>([]);
-  const [name, setName] = useState("");
-  const [service, setService] = useState(false);
+  const [note, setNote] = useState("");
   const [ttl, setTtl] = useState(30 * 24 * 3600);
-  const [generated, setGenerated] = useState<{ token: string; command: string } | null>(null);
+  const [generated, setGenerated] = useState<{ token: string; hub: string; command: string } | null>(null);
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [copyErr, setCopyErr] = useState("");
   const { err, run } = useError();
 
   const load = (): void => {
@@ -1271,13 +1279,9 @@ function AddHostPage(): React.JSX.Element {
 
   const generate = (): void => {
     void run(async () => {
-      const r = await api.createJoinToken(name.trim() || null, ttl);
+      const r = await api.createJoinToken(note.trim() || null, ttl);
       const hub = `https://${window.location.host}`;
-      const args = `--token ${r.token}${name.trim() ? ` --name ${name.trim()}` : ""}`;
-      setGenerated({
-        token: r.token,
-        command: service ? `rdsh host service install ${hub} ${args}` : `rdsh host join ${hub} ${args}`,
-      });
+      setGenerated({ token: r.token, hub, command: `rdsh host join ${hub} --token ${r.token}` });
       load();
     });
   };
@@ -1290,8 +1294,36 @@ function AddHostPage(): React.JSX.Element {
     });
   };
 
-  const copy = (text: string): void => {
-    void navigator.clipboard.writeText(text).catch(() => undefined);
+  const copy = (key: string, text: string): void => {
+    setCopyErr("");
+    void navigator.clipboard.writeText(text).then(
+      () => {
+        setCopiedKey(key);
+        setTimeout(() => setCopiedKey((k) => (k === key ? null : k)), 1500);
+      },
+      () => {
+        // 兜底：旧浏览器/权限拒绝 → textarea + execCommand
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        let ok = false;
+        try {
+          ok = document.execCommand("copy");
+        } catch {
+          ok = false;
+        }
+        document.body.removeChild(ta);
+        if (ok) {
+          setCopiedKey(key);
+          setTimeout(() => setCopiedKey((k) => (k === key ? null : k)), 1500);
+        } else {
+          setCopyErr(t("复制失败，请手动选择复制"));
+        }
+      },
+    );
   };
 
   return (
@@ -1300,11 +1332,18 @@ function AddHostPage(): React.JSX.Element {
         <button onClick={() => navigate("/hosts")} style={btnStyle("ghost")}>{t("← 返回主机列表")}</button>
       </div>
       {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
+      <div style={{ marginBottom: 16 }}>
+        <h2 style={{ fontSize: 18, fontWeight: 600, margin: "0 0 8px" }}>{t("生成接入令牌")}</h2>
+        <p style={{ fontSize: 14, color: "#111", margin: "0 0 8px" }}>{t("用于将主机接入 Hub，并绑定到用户的账号。")}</p>
+        <div style={{ fontSize: 12, color: "#666", paddingLeft: 16 }}>
+          <p style={{ margin: "2px 0" }}>· {t("明文只在生成时显示一次——刷新或离开本页后无法再次查看，请立即复制")}</p>
+          <p style={{ margin: "2px 0" }}>· {t("令牌在有效期内可重复使用，可接入多台主机")}</p>
+          <p style={{ margin: "2px 0" }}>· {t("接入后主机保持连接，不依赖此令牌——吊销它不影响已接入主机")}</p>
+          <p style={{ margin: "2px 0" }}>· {t("遗忘或泄露，请立即吊销并重新生成，旧令牌即刻失效")}</p>
+        </div>
+      </div>
       <div style={{ border: "1px solid #ccc", borderRadius: 8, padding: 16, marginBottom: 16 }}>
-        {field(t("主机名（可选，默认取本机 hostname）"), name, setName)}
-        <label style={{ display: "block", marginBottom: 12, fontSize: 13 }}>
-          <input type="checkbox" checked={service} onChange={(e) => setService(e.target.checked)} /> {t("常驻服务（服务器 7×24）")}
-        </label>
+        {field(t("令牌备注（可选）"), note, setNote)}
         <label style={{ display: "block", marginBottom: 16, fontSize: 13 }}>
           <span style={{ display: "block", marginBottom: 4 }}>{t("有效期")}</span>
           <select value={ttl} onChange={(e) => setTtl(Number(e.target.value))} style={inputStyle()}>
@@ -1315,29 +1354,51 @@ function AddHostPage(): React.JSX.Element {
             <option value={365 * 86400}>{t("1 年")}</option>
           </select>
         </label>
-        <button onClick={generate} style={btnStyle()}>{t("生成接入命令")}</button>
+        <button onClick={generate} style={btnStyle()}>{t("生成接入令牌")}</button>
       </div>
 
       {generated !== null && (
-        <div style={{ border: "1px solid #16a34a", borderRadius: 8, padding: 16, marginBottom: 16, background: "#f0fdf4" }}>
-          <p style={{ marginTop: 0, fontSize: 13, fontWeight: 600 }}>{t("接入命令（明文只显示这一次，请立即复制）")}</p>
-          <pre style={{ background: "#fff", border: "1px solid #ccc", borderRadius: 6, padding: 10, fontSize: 12, overflowX: "auto" }}>{generated.command}</pre>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={() => copy(generated.command)} style={btnStyle()}>{t("复制命令")}</button>
-            <button onClick={() => copy(generated.token)} style={btnStyle("ghost")}>{t("复制 token")}</button>
+        <div style={{ marginBottom: 16 }}>
+          <p style={{ color: "#dc2626", fontSize: 13, fontWeight: 600, margin: "0 0 8px" }}>{t("接入令牌明文只显示这一次，请立即复制")}</p>
+          <div style={{ border: "1px solid #eee", borderRadius: 8, padding: 16, marginBottom: 12 }}>
+            <p style={{ margin: "0 0 10px", fontWeight: 600, fontSize: 14 }}>{t("方式一：DSH 插件（界面操作，免装 CLI）")}</p>
+            <p style={{ color: "#666", fontSize: 12, margin: 0 }}>{t("未装插件？在主机终端执行：")}</p>
+            <pre style={{ background: "#f8fafc", border: "1px solid #eee", borderRadius: 6, padding: 8, fontSize: 12, margin: "4px 0 6px", overflowX: "auto" }}>dsh plugin --profile web add dsh-web-remote</pre>
+            <p style={{ color: "#666", fontSize: 12, margin: "0 0 10px" }}>{t("然后重启 dsh web（插件 boot 时加载）")}</p>
+            <p style={{ color: "#666", fontSize: 13, margin: "0 0 8px" }}>{t("在 DSH 设置 →「远程访问」面板填入：")}</p>
+            <div style={{ marginBottom: 10 }}>
+              <code style={{ display: "block", fontSize: 12, color: "#666", background: "#f3f4f6", padding: "6px 8px", borderRadius: 4, wordBreak: "break-all" }}>{generated.hub}</code>
+              <button onClick={() => copy("hub", generated.hub)} style={{ ...btnStyle(), marginTop: 6 }}>{copiedKey === "hub" ? `${t("已复制")} ✓` : t("复制 Hub 地址")}</button>
+            </div>
+            <div style={{ marginBottom: 0 }}>
+              <code style={{ display: "block", fontSize: 12, color: "#111", background: "#f3f4f6", padding: "6px 8px", borderRadius: 4, wordBreak: "break-all" }}>{generated.token}</code>
+              <button onClick={() => copy("token", generated.token)} style={{ ...btnStyle(), marginTop: 6 }}>{copiedKey === "token" ? `${t("已复制")} ✓` : t("复制令牌")}</button>
+            </div>
           </div>
-          <p style={{ fontSize: 12, color: "#666", marginBottom: 0 }}>{t("在主机终端粘贴执行（未装 rdsh 时先 <code>npm i -g remote-dsh</code>）。")}</p>
+          <div style={{ border: "1px solid #eee", borderRadius: 8, padding: 16 }}>
+            <p style={{ margin: "0 0 10px", fontWeight: 600, fontSize: 14 }}>{t("方式二：rdsh-gateway（命令行）")}</p>
+            <p style={{ color: "#666", fontSize: 12, margin: 0 }}>{t("未装 CLI？终端执行：")}</p>
+            <pre style={{ background: "#f8fafc", border: "1px solid #eee", borderRadius: 6, padding: 8, fontSize: 12, margin: "4px 0 10px", overflowX: "auto" }}>npm i -g remote-dsh</pre>
+            <p style={{ color: "#666", fontSize: 13, margin: "0 0 6px" }}>{t("在主机终端执行：")}</p>
+            <pre style={{ background: "#f8fafc", border: "1px solid #eee", borderRadius: 6, padding: 8, fontSize: 12, margin: "0 0 8px", overflowX: "auto" }}>{generated.command}</pre>
+            <button onClick={() => copy("command", generated.command)} style={btnStyle()}>{copiedKey === "command" ? `${t("已复制")} ✓` : t("复制命令")}</button>
+            {copyErr !== "" && <p style={{ color: "#dc2626", fontSize: 13, margin: "8px 0 0" }}>{copyErr}</p>}
+            <p style={{ color: "#666", fontSize: 12, margin: "10px 0 2px" }}>{t("接入后运行隧道：")}</p>
+            <p style={{ color: "#666", fontSize: 12, margin: "2px 0" }}>· {t("前台运行：rdsh host serve")}</p>
+            <p style={{ color: "#666", fontSize: 12, margin: "2px 0" }}>· {t("常驻服务（服务器 7×24）：rdsh host service install")}</p>
+            <p style={{ color: "#666", fontSize: 12, margin: "10px 0 0" }}>{t("主机名默认取机器 hostname，可追加 --name 覆盖")}</p>
+          </div>
         </div>
       )}
 
-      <p style={{ fontSize: 13, color: "#666", fontWeight: 600 }}>{t("Auth Tokens")}</p>
+      <p style={{ fontSize: 13, color: "#666", fontWeight: 600, marginBottom: 6 }}>{t("接入令牌")}</p>
       {tokens.length === 0 ? (
         <p style={{ color: "#999", fontSize: 13 }}>{t("（无）")}</p>
       ) : (
         <div>
           {tokens.map((tok) => (
             <div key={tok.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", border: "1px solid #eee", borderRadius: 8, marginBottom: 8 }}>
-              <span style={{ fontWeight: 500 }}>{tok.label ?? t("未命名")}</span>
+              <span style={{ fontWeight: 500 }}>{tok.label ?? compactTimestamp(tok.createdAt)}</span>
               <code style={{ fontSize: 12, color: "#666", background: "#f3f4f6", padding: "2px 6px", borderRadius: 4 }}>{tok.fingerprint}</code>
               <span style={{ color: "#666", fontSize: 12 }}>{t("到期 {date}", { params: { date: new Date(tok.expiresAt).toLocaleDateString() } })}</span>
               <button onClick={() => revoke(tok.id)} style={{ ...btnStyle("danger"), marginLeft: "auto" }}>{t("吊销")}</button>

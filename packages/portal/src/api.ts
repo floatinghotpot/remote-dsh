@@ -14,6 +14,7 @@ export interface JoinTokenInfo {
   id: string;
   label: string | null;
   fingerprint: string;
+  createdAt: string;
   expiresAt: number;
   revoked: boolean;
 }

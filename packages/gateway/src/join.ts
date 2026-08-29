@@ -11,6 +11,7 @@
  */
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
+import { hostname as osHostname } from "node:os";
 import type { IncomingHttpHeaders } from "node:http";
 import { WebSocket } from "ws";
 import { FrameParser, FRAME_TYPE, encodeFrame, jsonPayload, parseJsonPayload, FLAG_E2E } from "rdsh-tunnel";
@@ -38,10 +39,11 @@ export interface JoinOptions {
   name?: string;
 }
 
-/** 注册/接入结果：解析出的 host token + 是否需 insecure。 */
+/** 注册/接入结果：解析出的 host token + 是否需 insecure + 生效的主机名（缺省=机器 hostname）。 */
 export interface RegisterOutcome {
   token: string;
   insecure: boolean;
+  name: string;
 }
 
 /** 隧道状态机（onState 事件值）。 */
@@ -149,11 +151,13 @@ export async function selfRevoke(hubUrl: string, token: string, insecure: boolea
 /** 解析 host token（--token 注册 > 持久化复用）+ 自动检测证书；供 CLI 配置命令与 join() 复用。 */
 export async function registerJoin(opts: JoinOptions): Promise<RegisterOutcome> {
   const insecure = opts.insecure === true || (await detectInsecure(opts.hubUrl));
+  // 主机名缺省 = 机器 hostname（CLI / service install / 插件三条路径统一；--name 可覆盖）
+  const name = opts.name !== undefined && opts.name.trim() !== "" ? opts.name.trim() : osHostname();
   let token: string;
   if (opts.token !== undefined) {
     // --token = join token（或旧 host token）→ register 端点换 host token
     const e2eeKeyPair = loadOrCreateE2eeKeyPair();
-    const { hostToken } = await register(opts.hubUrl, opts.token, opts.name, insecure, e2eeKeyPair.publicRaw.toString("base64url"));
+    const { hostToken } = await register(opts.hubUrl, opts.token, name, insecure, e2eeKeyPair.publicRaw.toString("base64url"));
     token = hostToken;
     persistToken(opts.hubUrl, token);
   } else {
@@ -166,7 +170,7 @@ export async function registerJoin(opts: JoinOptions): Promise<RegisterOutcome> 
       throw new Error("未接入：无持久化 session 且未提供 --token；先 `rdsh host join <hub>` 生成/粘贴 join token");
     }
   }
-  return { token, insecure };
+  return { token, insecure, name };
 }
 
 /** 调 register 端点：join token → host token（对旧 host token 幂等返回同一 token）。 */

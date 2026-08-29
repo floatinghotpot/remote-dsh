@@ -123,19 +123,19 @@ export function apply(ctx: Ctx): void {
       }
 
       // 注册（join token → host token）或复用持久化 host token；留空 = 复用
-      const { token: hostToken, insecure } = await registerJoin({ hubUrl: hub, token, name });
+      const { token: hostToken, insecure, name: joinedName } = await registerJoin({ hubUrl: hub, token, name });
 
       // 写 host.json（mode join）
       const config = await loadConfig(DEFAULT_HOST_CONFIG_PATH);
       config.mode = "join";
       config.hub = hub;
-      config.name = name;
+      config.name = joinedName;
       config.insecure = insecure;
       await saveConfig(DEFAULT_HOST_CONFIG_PATH, config);
 
       // 起隧道：转发到本进程 dsh
       currentHub = hub;
-      currentName = name;
+      currentName = joinedName;
       lastMessage = undefined;
       handle = startJoin({
         hubUrl: hub,

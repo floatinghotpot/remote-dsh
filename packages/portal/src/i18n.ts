@@ -20,7 +20,7 @@ const STORAGE_KEY = "rdsh_lang";
 const EN: Record<string, string> = {
   // ---- 通用 ----
   "账户": "Account",
-  "退出登录": "Sign out",
+  "登出": "Sign out",
   "账户与安全": "Account & Security",
   "套餐": "Plan",
   "当前绑定：{x}": "Currently bound: {x}",
@@ -49,7 +49,6 @@ const EN: Record<string, string> = {
   "手机号": "Phone",
   "加载中…": "Loading…",
   "（无）": "(none)",
-  "未命名": "Unnamed",
   "到期 {date}": "Expires {date}",
   "吊销": "Revoke",
   "重新发送 {s}s": "Resend in {s}s",
@@ -124,21 +123,42 @@ const EN: Record<string, string> = {
 
   // ---- 添加主机 ----
   "rdsh · 添加主机": "rdsh · Add Host",
-  "主机名（可选，默认取本机 hostname）": "Host name (optional, defaults to this machine's hostname)",
-  "常驻服务（服务器 7×24）": "Run as a persistent service (24×7)",
+  "令牌备注（可选）": "Token note (optional)",
   "有效期": "Validity",
   "1 天": "1 day",
   "7 天": "7 days",
   "30 天（默认）": "30 days (default)",
   "90 天": "90 days",
   "1 年": "1 year",
-  "生成接入命令": "Generate join command",
-  "接入命令（明文只显示这一次，请立即复制）": "Join command (shown once — copy it now)",
+  "生成接入令牌": "Generate join token",
+  "接入令牌明文只显示这一次，请立即复制": "Join token plaintext is shown only once — copy it now",
   "复制命令": "Copy command",
-  "复制 token": "Copy token",
-  "在主机终端粘贴执行（未装 rdsh 时先 <code>npm i -g remote-dsh</code>）。":
-    "Run it in the host terminal (install rdsh first if needed: <code>npm i -g remote-dsh</code>).",
-  "Auth Tokens": "Auth Tokens",
+  "复制 Hub 地址": "Copy Hub URL",
+  "复制令牌": "Copy token",
+  "Hub 地址": "Hub URL",
+  "已复制": "Copied",
+  "复制失败，请手动选择复制": "Copy failed — please select and copy manually",
+  "方式一：DSH 插件（界面操作，免装 CLI）": "Option 1: DSH plugin (in-app, no CLI)",
+  "在 DSH 设置 →「远程访问」面板填入：": "In DSH Settings → Remote Access panel, enter:",
+  "未装插件？在主机终端执行：": "Plugin not installed? In the host terminal run:",
+  "然后重启 dsh web（插件 boot 时加载）": "Then restart dsh web (plugins load at boot)",
+  "方式二：rdsh-gateway（命令行）": "Option 2: rdsh-gateway (command line)",
+  "在主机终端执行：": "In the host terminal run:",
+  "未装 CLI？终端执行：": "CLI not installed? Run:",
+  "接入后运行隧道：": "After joining, start the tunnel:",
+  "前台运行：rdsh host serve": "Foreground: rdsh host serve",
+  "常驻服务（服务器 7×24）：rdsh host service install": "Resident service (server 7×24): rdsh host service install",
+  "主机名默认取机器 hostname，可追加 --name 覆盖": "Host name defaults to the machine hostname; append --name to override",
+  "接入令牌": "Join Tokens",
+  "用于将主机接入 Hub，并绑定到用户的账号。": "Onboards a host to the Hub and binds it to your account.",
+  "明文只在生成时显示一次——刷新或离开本页后无法再次查看，请立即复制":
+    "The plaintext is shown only once at creation — it cannot be viewed again after refresh or leaving this page, so copy it right away",
+  "令牌在有效期内可重复使用，可接入多台主机":
+    "A token can be reused within its validity period to onboard multiple hosts",
+  "接入后主机保持连接，不依赖此令牌——吊销它不影响已接入主机":
+    "Hosts stay connected without this token — revoking it does not affect already-onboarded hosts",
+  "遗忘或泄露，请立即吊销并重新生成，旧令牌即刻失效":
+    "If lost or leaked, revoke and regenerate immediately — the old token becomes invalid at once",
 
   // ---- 账户 ----
   "rdsh · 账户与安全": "rdsh · Account & Security",
