@@ -222,6 +222,7 @@ const EN: Record<string, string> = {
   // ---- 修改密码 ----
   "修改密码": "Change password",
   "当前密码": "Current password",
+  "定期更换密码，保障账号安全": "Change your password regularly to keep your account secure",
   "确认新密码": "Confirm new password",
   "两次输入不一致": "Passwords do not match",
   "密码已修改，全部会话已失效 —— 即将跳转登录…": "Password changed — all sessions revoked. Redirecting to sign in…",

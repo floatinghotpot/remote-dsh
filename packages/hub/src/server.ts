@@ -73,7 +73,7 @@ function hostCookie(hostId: string, userId: number, auth: HubAuth): string {
   return `${HOST_COOKIE}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${HOST_COOKIE_MAX_AGE}`;
 }
 
-function clearHostCookie(): string {
+export function clearHostCookie(): string {
   return `${HOST_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`;
 }
 

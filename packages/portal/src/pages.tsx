@@ -729,6 +729,11 @@ function AccountPage(): React.JSX.Element {
         />
       ) : null}
       <SettingRow
+        label={t("修改密码")}
+        desc={t("定期更换密码，保障账号安全")}
+        onClick={() => navigate("/settings/password")}
+      />
+      <SettingRow
         label={t("两步验证（TOTP）")}
         desc={info?.totpEnabled === true ? t("已开启，登录需输入动态验证码") : t("开启后登录需输入动态验证码")}
         badge={<Badge ok={info?.totpEnabled === true} text={info?.totpEnabled ? t("已开启") : t("未开启")} />}
@@ -1216,11 +1221,14 @@ function HostsPage(): React.JSX.Element {
 
 function logout(): void {
   const refresh = sessionStorage.getItem(REFRESH_KEY);
-  if (refresh !== null) {
-    void api.logout(refresh).catch(() => undefined);
-  }
   sessionStorage.removeItem(REFRESH_KEY);
-  navigate("/login");
+  const done = (): void => navigate("/login");
+  if (refresh === null) {
+    done();
+    return;
+  }
+  // 等服务端清 cookie 完成再跳转（httpOnly cookie 客户端无法删除）；失败也先本地登出。
+  void api.logout(refresh).catch(() => undefined).finally(done);
 }
 
 // ---- 进入 host：整页跳转 /h/<hostId>/（hub 校验归属 → Set-Cookie → 302 根路径，DSH 在根路径运行） ----

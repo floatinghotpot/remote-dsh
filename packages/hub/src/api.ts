@@ -22,6 +22,7 @@ import { createPaymentProvider, verifyWechatCallback, decryptWechatResource, get
 import { createChallenge, verifyChallenge } from "./captcha.ts";
 import { verifyCaptchaParam } from "./captcha/aliyun.ts";
 import { DailyWindowLimiter } from "./ratelimit.ts";
+import { clearHostCookie } from "./server.ts";
 
 export const SESSION_COOKIE = "rdsh_session";
 export const OPENID_COOKIE = "rdsh_openid";
@@ -571,7 +572,11 @@ async function handleLogout(req: IncomingMessage, res: ServerResponse, runtime: 
   if (body !== null && typeof body.refreshToken === "string") {
     runtime.auth.logout(body.refreshToken);
   }
-  res.writeHead(204);
+  // 清除访问令牌 cookie（httpOnly，客户端无法自行删除）+ host 转发 cookie：
+  // 否则登出后 access JWT（1h）仍可认证 /api/*，根路径仍会直接转发进 host。
+  res.writeHead(204, {
+    "set-cookie": [`${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`, clearHostCookie()],
+  });
   res.end();
 }
 
