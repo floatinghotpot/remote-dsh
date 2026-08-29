@@ -55,9 +55,9 @@ const EN: Record<string, string> = {
   "重新发送 {s}s": "Resend in {s}s",
 
   // ---- 登录 ----
-  "rdsh · 你的 AI 智能体，随处可达": "rdsh · Your AI agent, reachable anywhere",
-  "远程指挥你的 DeepSeek Harness 智能体，只需使用浏览器，任意设备、随时、随地":
-    "Remotely command your DeepSeek Harness agent — just a browser, any device, anytime, anywhere",
+  "rdsh · 你的 AI 智能体，随处安全可达": "rdsh · Your AI agent, securely reachable anywhere",
+  "远程指挥你的 DeepSeek Harness 智能体，仅需浏览器，任意设备、随时随地，端到端加密":
+    "Remotely command your DeepSeek Harness agent — just a browser, any device, anytime, anywhere, end-to-end encrypted",
   "登录": "Sign in",
   "用户名": "Username",
   "用户名（管理员创建）": "Username (created by admin)",
@@ -232,7 +232,7 @@ const EN: Record<string, string> = {
   "隐私政策": "Privacy Policy",
 
   // ---- 落地页 ----
-  "你的 AI 智能体，随处可达": "Your AI agent, reachable anywhere",
+  "你的 AI 智能体，随处安全可达": "Your AI agent, securely reachable anywhere",
   "免公网 IP · 免装客户端": "No public IP · no client install",
   "立即注册": "Get started",
   "进入控制台": "Go to dashboard",
