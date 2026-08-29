@@ -1123,12 +1123,14 @@ function HostsPage(): React.JSX.Element {
             return (
               <div key={h.id} style={{ border: "1px solid #eee", borderRadius: 8, marginBottom: 8 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px" }}>
-                  <span style={{ color: h.online ? "#16a34a" : "#999", fontSize: 14 }}>{h.online ? "●" : "○"}</span>
                   <span style={{ fontWeight: 500 }}>
                     {h.e2eePublicKey !== undefined && h.e2eePublicKey !== null && h.e2eePublicKey !== "" && <ShieldIcon />}
                     {h.name}
                   </span>
-                  <span style={{ color: "#666", fontSize: 12 }}>{h.online ? t("在线") : t("离线")}</span>
+                  <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    <span style={{ color: h.online ? "#16a34a" : "#999", fontSize: 14 }}>{h.online ? "●" : "○"}</span>
+                    <span style={{ color: "#666", fontSize: 12 }}>{h.online ? t("在线") : t("离线")}</span>
+                  </span>
                   {!isOwner && <span style={{ color: "#999", fontSize: 12, border: "1px solid #eee", borderRadius: 4, padding: "1px 6px" }}>{t("共享", { en: "Shared" })}</span>}
                   <div style={{ marginLeft: "auto", display: "flex", gap: 6, position: "relative" }}>
                     <button onClick={() => requestEnter(h)} style={btnStyle()}>{t("进入")}</button>
