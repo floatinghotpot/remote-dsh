@@ -142,10 +142,12 @@ function inputStyle(): React.CSSProperties {
 
 function menuItemStyle(danger = false): React.CSSProperties {
   return {
-    display: "block",
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
     width: "100%",
     textAlign: "left",
-    padding: "8px 12px",
+    padding: "10px 12px",
     border: "none",
     background: "none",
     cursor: "pointer",
@@ -978,6 +980,25 @@ function ShieldIcon(): React.JSX.Element {
   );
 }
 
+/** 菜单项图标：继承 currentColor（随普通/危险文字变色），stroke 风格与全站一致。 */
+function MenuIcon({ children }: { children: React.ReactNode }): React.JSX.Element {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      style={{ flexShrink: 0 }}
+    >
+      {children}
+    </svg>
+  );
+}
+
 function HostsPage(): React.JSX.Element {
   const { t } = useT();
   const [hosts, setHosts] = useState<HostInfo[]>([]);
@@ -1114,10 +1135,28 @@ function HostsPage(): React.JSX.Element {
                       >⋯</button>
                     )}
                     {menuOpen && (
-                      <div style={{ position: "absolute", top: "100%", right: 0, marginTop: 4, background: "#fff", border: "1px solid #eee", borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,.1)", zIndex: 20, minWidth: 130, padding: 4 }} onClick={(e) => e.stopPropagation()}>
-                        <button style={menuItemStyle()} onClick={() => { setMenuHostId(null); setRenameId(h.id); setRenameName(h.name); }}>{t("改名")}</button>
-                        <button style={menuItemStyle()} onClick={() => { setMenuHostId(null); openShare(h.id); }}>{t("共享", { en: "Share" })}</button>
-                        <button style={menuItemStyle(true)} onClick={() => { setMenuHostId(null); revoke(h.id); }}>{t("吊销")}</button>
+                      <div style={{ position: "absolute", top: "100%", right: 0, marginTop: 4, background: "#fff", border: "1px solid #eee", borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,.1)", zIndex: 20, minWidth: 140, padding: 4 }} onClick={(e) => e.stopPropagation()}>
+                        <button style={menuItemStyle()} onClick={() => { setMenuHostId(null); setRenameId(h.id); setRenameName(h.name); }}>
+                          <MenuIcon><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /></MenuIcon>
+                          {t("改名")}
+                        </button>
+                        <button style={menuItemStyle()} onClick={() => { setMenuHostId(null); openShare(h.id); }}>
+                          <MenuIcon>
+                            <circle cx="18" cy="5" r="3" />
+                            <circle cx="6" cy="12" r="3" />
+                            <circle cx="18" cy="19" r="3" />
+                            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+                            <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+                          </MenuIcon>
+                          {t("共享", { en: "Share" })}
+                        </button>
+                        <button style={menuItemStyle(true)} onClick={() => { setMenuHostId(null); revoke(h.id); }}>
+                          <MenuIcon>
+                            <circle cx="12" cy="12" r="10" />
+                            <path d="m4.9 4.9 14.2 14.2" />
+                          </MenuIcon>
+                          {t("吊销")}
+                        </button>
                       </div>
                     )}
                   </div>
