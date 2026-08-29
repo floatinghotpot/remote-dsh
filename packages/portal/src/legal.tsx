@@ -7,6 +7,7 @@
  */
 import type React from "react";
 import { LEGAL } from "./legal/generated.ts";
+import { useT } from "./i18n.ts";
 
 export { LEGAL } from "./legal/generated.ts";
 
@@ -43,5 +44,16 @@ export function PrivacyPage(): React.JSX.Element {
 }
 
 export function ProductPage(): React.JSX.Element {
-  return <StaticDoc html={LEGAL.product} />;
+  const { t } = useT();
+  return (
+    <div style={{ maxWidth: 760, margin: "40px auto", padding: "0 16px", fontFamily: "system-ui, sans-serif" }}>
+      <a href="#" onClick={(e) => { e.preventDefault(); window.history.back(); }} style={{ color: "#2563eb", fontSize: 13 }}>← 返回</a>
+      <div style={{ textAlign: "center", padding: "24px 0 16px" }}>
+        <h1 style={{ fontSize: 22, margin: "0 0 8px" }}>{t("你的 AI 智能体，随处安全可达")}</h1>
+        <p style={{ color: "#666", fontSize: 15, margin: "0 0 20px" }}>{t("免公网 IP · 免装客户端 · 端到端加密")}</p>
+        <img src="/portal/media/rdsh-arch.jpg" alt={t("rdsh 架构图")} style={{ width: "100%", maxWidth: 640, borderRadius: 8, border: "1px solid #eee" }} />
+      </div>
+      <LegalContent html={LEGAL.product} />
+    </div>
+  );
 }

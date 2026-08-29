@@ -1,7 +1,3 @@
-# remote-dsh
-
-remote-dsh 让您把 DeepSeek Harness（DSH）变成「任何地方浏览器即用」的 AI 智能体——免公网 IP、免装客户端。
-
 ## 为什么选择 remote-dsh
 - **浏览器即用**：免公网 IP、免装客户端，开浏览器就能指挥智能体；
 - **双通道接入**：DSH 插件（`dsh-web-remote`）一键接入，或 CLI（`remote-dsh`）灵活自控；

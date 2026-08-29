@@ -234,6 +234,8 @@ const EN: Record<string, string> = {
   // ---- 落地页 ----
   "你的 AI 智能体，随处安全可达": "Your AI agent, securely reachable anywhere",
   "免公网 IP · 免装客户端": "No public IP · no client install",
+  "免公网 IP · 免装客户端 · 端到端加密": "No public IP · no client install · end-to-end encrypted",
+  "rdsh 架构图": "rdsh architecture",
   "立即注册": "Get started",
   "进入控制台": "Go to dashboard",
 };
