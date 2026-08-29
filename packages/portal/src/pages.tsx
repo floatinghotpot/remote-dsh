@@ -384,7 +384,7 @@ function LandingPage(): React.JSX.Element {
       </div>
 
       <div style={{ textAlign: "center", padding: "48px 0 40px" }}>
-        <h1 style={{ fontSize: 28, margin: "0 0 10px" }}>{t("你的 AI 智能体，随处安全可达")}</h1>
+        <h1 style={{ fontSize: 22, margin: "0 0 10px" }}>{t("你的 AI 智能体，随处安全可达")}</h1>
         <p style={{ color: "#666", fontSize: 15, margin: "0 0 28px" }}>{t("免公网 IP · 免装客户端")}</p>
         <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
           {authed ? (
