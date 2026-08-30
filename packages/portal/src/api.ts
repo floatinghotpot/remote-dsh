@@ -287,6 +287,164 @@ export const api = {
   },
 };
 
+// ---- 管理后台（/api/admin/*，独立会话；401 不触发用户续期/跳登录） ----
+
+export interface AdminMe {
+  userId: number;
+  name: string;
+  role: string;
+}
+export interface AdminUserRow {
+  id: number;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  role: string;
+  accountStatus: string;
+  planStatus: string | null;
+  planExpiresAt: number | null;
+  createdAt: string;
+}
+export interface AdminHostRow {
+  id: string;
+  ownerId: number;
+  name: string;
+  e2eePublicKey: string | null;
+  online: boolean;
+  createdAt: string;
+}
+export interface AdminOrderRow {
+  id: string;
+  userId: number;
+  planId: string;
+  amountCny: number;
+  status: string;
+  channel: string | null;
+  createdAt: number;
+  paidAt: number | null;
+}
+export interface AdminPaymentRow {
+  id: string;
+  orderId: string;
+  userId: number;
+  channel: string;
+  channelOrderId: string;
+  amountCny: number;
+  paidAt: number;
+}
+export interface AdminAuditRow {
+  id: number;
+  userId: number | null;
+  event: string;
+  detailJson: string;
+  ip: string;
+  source: string;
+  actorUserId: number | null;
+  createdAt: number;
+}
+export interface AdminDashboard {
+  totalUsers: number;
+  totalHosts: number;
+  onlineHosts: number;
+  tunnelCount: number;
+  subscribed: number;
+  dbSize: number;
+  uptimeSeconds: number;
+  version: string;
+}
+export interface AdminConfig {
+  registration: string;
+  emailEnabled: boolean;
+  smsEnabled: boolean;
+  captchaProvider: string;
+  e2eeMode: string;
+  plans: Array<{ id: string; name: string; hosts: number; priceCny: number; intervalDays: number }>;
+  site: Record<string, unknown>;
+}
+
+async function adminJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(path, {
+    credentials: "include",
+    headers: { "content-type": "application/json" },
+    ...init,
+  });
+  if (!res.ok) {
+    let code = "ERROR";
+    let message = `HTTP ${res.status}`;
+    try {
+      const body = (await res.json()) as { error?: { code?: string; message?: string } };
+      code = body.error?.code ?? code;
+      message = body.error?.message ?? message;
+    } catch {
+      /* 非 JSON */
+    }
+    throw new ApiError(res.status, code, message);
+  }
+  return (await res.json()) as T;
+}
+
+export const adminApi = {
+  login(totp: string): Promise<{ ok: boolean }> {
+    return adminJson("/api/admin/login", { method: "POST", body: JSON.stringify({ totp }) });
+  },
+  logout(): Promise<{ ok: boolean }> {
+    return adminJson("/api/admin/logout", { method: "POST", body: "{}" });
+  },
+  me(): Promise<AdminMe> {
+    return adminJson("/api/admin/me");
+  },
+  dashboard(): Promise<AdminDashboard> {
+    return adminJson("/api/admin/dashboard");
+  },
+  users(): Promise<{ users: AdminUserRow[] }> {
+    return adminJson("/api/admin/users");
+  },
+  userAction(id: number, action: string, body: Record<string, unknown>): Promise<{ ok: boolean }> {
+    return adminJson(`/api/admin/users/${id}/${action}`, { method: "POST", body: JSON.stringify(body) });
+  },
+  hosts(): Promise<{ hosts: AdminHostRow[] }> {
+    return adminJson("/api/admin/hosts");
+  },
+  revokeHost(id: string, reason: string): Promise<{ ok: boolean }> {
+    return adminJson(`/api/admin/hosts/${encodeURIComponent(id)}/revoke`, { method: "POST", body: JSON.stringify({ reason }) });
+  },
+  orders(): Promise<{ orders: AdminOrderRow[] }> {
+    return adminJson("/api/admin/orders");
+  },
+  payments(): Promise<{ payments: AdminPaymentRow[] }> {
+    return adminJson("/api/admin/payments");
+  },
+  refundOrder(id: string, reason: string): Promise<{ ok: boolean }> {
+    return adminJson(`/api/admin/orders/${encodeURIComponent(id)}/refund`, { method: "POST", body: JSON.stringify({ reason }) });
+  },
+  credit(body: { userId: number; planId: string; amountCny: number; expiresAtMs: number; reason: string }): Promise<{ ok: boolean; orderId: string }> {
+    return adminJson("/api/admin/credit", { method: "POST", body: JSON.stringify(body) });
+  },
+  audit(params?: { userId?: number; event?: string; source?: string }): Promise<{ events: AdminAuditRow[] }> {
+    const q = new URLSearchParams();
+    if (params?.userId !== undefined) q.set("userId", String(params.userId));
+    if (params?.event !== undefined) q.set("event", params.event);
+    if (params?.source !== undefined) q.set("source", params.source);
+    const qs = q.toString();
+    return adminJson(`/api/admin/audit${qs !== "" ? `?${qs}` : ""}`);
+  },
+  health(): Promise<{ uptimeSeconds: number; tunnelCount: number; onlineHosts: number; dbSize: number; version: string }> {
+    return adminJson("/api/admin/health");
+  },
+  config(): Promise<AdminConfig> {
+    return adminJson("/api/admin/config");
+  },
+  admins(): Promise<{ admins: Array<{ id: number; name: string; email: string | null; role: string }> }> {
+    return adminJson("/api/admin/admins");
+  },
+  setRole(id: number, role: string, reason: string): Promise<{ ok: boolean }> {
+    return adminJson(`/api/admin/admins/${id}/role`, { method: "POST", body: JSON.stringify({ role, reason }) });
+  },
+  removeAdmin(id: number, reason: string): Promise<{ ok: boolean }> {
+    return adminJson(`/api/admin/admins/${id}/remove`, { method: "POST", body: JSON.stringify({ reason }) });
+  },
+};
+
 /** 简易事件流订阅（host 在线/离线实时推送）。 */
 export function subscribeEvents(onEvent: (e: { type: string; hostId: string }) => void): () => void {
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";

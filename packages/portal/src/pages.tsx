@@ -6,8 +6,8 @@
  */
 import { useEffect, useState } from "react";
 import QRCode from "qrcode";
-import { api, ApiError, subscribeEvents, REFRESH_KEY } from "./api.ts";
-import type { HostInfo, JoinTokenInfo, CaptchaPayload, AccountInfo, Capabilities, WechatPayInfo } from "./api.ts";
+import { api, ApiError, subscribeEvents, REFRESH_KEY, adminApi } from "./api.ts";
+import type { HostInfo, JoinTokenInfo, CaptchaPayload, AccountInfo, Capabilities, WechatPayInfo, AdminMe, AdminUserRow, AdminHostRow, AdminOrderRow, AdminPaymentRow, AdminAuditRow, AdminDashboard, AdminConfig } from "./api.ts";
 import { fingerprint } from "./e2ee.ts";
 import { useT, getLang } from "./i18n.ts";
 import type { T } from "./i18n.ts";
@@ -15,9 +15,16 @@ import { TermsPage, PrivacyPage, ProductPage, LegalContent, LEGAL } from "./lega
 
 /** portal 部署在 /portal 前缀下（host 转发的 DSH 占用根路径）。 */
 const BASE = "/portal";
+/** 管理后台部署在 /admin 前缀下（独立管理面）。 */
+const ADMIN_BASE = "/admin";
 
 function navigate(path: string): void {
   window.history.pushState({}, "", `${BASE}${path}`);
+  window.dispatchEvent(new PopStateEvent("popstate"));
+}
+
+function navigateAdmin(path: string): void {
+  window.history.pushState({}, "", `${ADMIN_BASE}${path}`);
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
@@ -61,6 +68,7 @@ export function useRoute(): string {
 
 export function App(): React.JSX.Element {
   const full = useRoute();
+  if (full.startsWith(ADMIN_BASE)) return <AdminApp path={full.slice(ADMIN_BASE.length) || "/"} />;
   const path = full.startsWith(BASE) ? full.slice(BASE.length) || "/" : "/";
   if (path === "/login") return <Login />;
   if (path === "/register") return <RegisterPage />;
@@ -1774,5 +1782,465 @@ function BillingPage(): React.JSX.Element {
         </div>
       )}
     </>
+  );
+}
+
+// ============================================================
+// 管理后台 /admin（独立管理面：三档 RBAC + 强制 2FA + 审计）
+// ============================================================
+
+const ADMIN_ROLE_LABEL: Record<string, string> = { readonly: "只读", operator: "运营", admin: "管理员" };
+
+function adminBtnStyle(variant: "primary" | "danger" | "ghost" = "primary"): React.CSSProperties {
+  const base: React.CSSProperties = { padding: "4px 10px", borderRadius: 6, border: "1px solid #ccc", cursor: "pointer", fontSize: 12 };
+  if (variant === "primary") return { ...base, background: "#2563eb", color: "#fff", borderColor: "#2563eb" };
+  if (variant === "danger") return { ...base, background: "#dc2626", color: "#fff", borderColor: "#dc2626" };
+  return { ...base, background: "#fff" };
+}
+
+function adminTableStyle(): React.CSSProperties {
+  return { width: "100%", borderCollapse: "collapse", fontSize: 13 };
+}
+
+/** 危险操作：二次确认 + 必填 reason（prompt 即确认 + 原因；MVP 版）。 */
+function confirmReason(label: string): string | null {
+  if (!window.confirm(`确认执行「${label}」？`)) return null;
+  const reason = window.prompt("原因（必填）：");
+  if (reason === null || reason.trim() === "") {
+    window.alert("原因必填，已取消");
+    return null;
+  }
+  return reason.trim();
+}
+
+/** 管理后台总入口：无 admin 会话 → 登录页；有 → 导航 + 页面。 */
+function AdminApp({ path }: { path: string }): React.JSX.Element {
+  const { t } = useT();
+  const [me, setMe] = useState<AdminMe | null | undefined>(undefined);
+  const [reload, setReload] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    adminApi
+      .me()
+      .then((m) => alive && setMe(m))
+      .catch(() => alive && setMe(null));
+    return () => {
+      alive = false;
+    };
+  }, [reload]);
+  if (me === undefined) return <div style={{ padding: 40, fontFamily: "system-ui, sans-serif" }}>{t("加载中…")}</div>;
+  if (me === null) return <AdminLogin onSuccess={() => setReload((r) => r + 1)} />;
+
+  const nav: Array<{ p: string; label: string; adminOnly?: boolean }> = [
+    { p: "/", label: "总览" },
+    { p: "/users", label: "用户" },
+    { p: "/hosts", label: "主机" },
+    { p: "/billing", label: "账单" },
+    { p: "/audit", label: "审计" },
+    { p: "/health", label: "健康" },
+    { p: "/config", label: "配置" },
+    { p: "/admins", label: "管理员", adminOnly: true },
+  ];
+  const isAdmin = me.role === "admin";
+  const isWrite = me.role === "admin" || me.role === "operator";
+
+  return (
+    <div style={{ maxWidth: 980, margin: "24px auto", padding: "0 16px", fontFamily: "system-ui, sans-serif" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <strong style={{ fontSize: 16 }}>rdsh 管理后台</strong>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <span style={{ fontSize: 12, color: "#666" }}>
+            {me.name} · {ADMIN_ROLE_LABEL[me.role] ?? me.role}
+          </span>
+          <button
+            onClick={() => {
+              void adminApi.logout().finally(() => setReload((r) => r + 1));
+            }}
+            style={adminBtnStyle("ghost")}
+          >
+            {t("登出")}
+          </button>
+        </div>
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
+        {nav
+          .filter((n) => !n.adminOnly || isAdmin)
+          .map((n) => (
+            <button key={n.p} onClick={() => navigateAdmin(n.p)} style={{ ...adminBtnStyle("ghost"), fontWeight: path === n.p ? 700 : 400, background: path === n.p ? "#eef2ff" : "#fff" }}>
+              {n.label}
+            </button>
+          ))}
+      </div>
+      {path === "/" || path === "" ? (
+        <AdminDashboard />
+      ) : path === "/users" ? (
+        <AdminUsers isWrite={isWrite} isAdmin={isAdmin} />
+      ) : path === "/hosts" ? (
+        <AdminHosts isWrite={isWrite} />
+      ) : path === "/billing" ? (
+        <AdminBilling isWrite={isWrite} isAdmin={isAdmin} />
+      ) : path === "/audit" ? (
+        <AdminAudit />
+      ) : path === "/health" ? (
+        <AdminHealth />
+      ) : path === "/config" ? (
+        <AdminConfigPage />
+      ) : path === "/admins" ? (
+        <AdminAdmins isAdmin={isAdmin} />
+      ) : (
+        <AdminDashboard />
+      )}
+    </div>
+  );
+}
+
+function AdminLogin({ onSuccess }: { onSuccess: () => void }): React.JSX.Element {
+  const { t } = useT();
+  const [totp, setTotp] = useState("");
+  const [err, setErr] = useState("");
+  const submit = (): void => {
+    setErr("");
+    adminApi
+      .login(totp)
+      .then(onSuccess)
+      .catch((e: unknown) => setErr(e instanceof ApiError ? e.message : "登录失败"));
+  };
+  return (
+    <div style={{ maxWidth: 360, margin: "80px auto", padding: "24px", border: "1px solid #e5e7eb", borderRadius: 12, fontFamily: "system-ui, sans-serif" }}>
+      <h2 style={{ fontSize: 18, margin: "0 0 8px" }}>进入管理后台</h2>
+      <p style={{ fontSize: 12, color: "#6b7280", margin: "0 0 16px" }}>管理后台需两步验证（TOTP）。未开启 2FA 的账号请先在「账户与安全」开启。</p>
+      <input value={totp} onChange={(e) => setTotp(e.target.value)} placeholder="动态验证码" style={{ width: "100%", padding: "8px 10px", fontSize: 14, marginBottom: 12, boxSizing: "border-box" }} />
+      {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
+      <button onClick={submit} style={{ ...adminBtnStyle(), width: "100%", padding: "8px", fontSize: 14 }}>
+        {t("进入")}
+      </button>
+    </div>
+  );
+}
+
+function AdminDashboard(): React.JSX.Element {
+  const [d, setD] = useState<AdminDashboard | null>(null);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    adminApi.dashboard().then(setD).catch((e: unknown) => setErr(e instanceof Error ? e.message : "加载失败"));
+  }, []);
+  if (err !== "") return <p style={{ color: "#dc2626" }}>{err}</p>;
+  if (d === null) return <p>加载中…</p>;
+  const stats: Array<[string, string | number]> = [
+    ["注册用户", d.totalUsers],
+    ["主机总数", d.totalHosts],
+    ["在线主机", d.onlineHosts],
+    ["隧道连接", d.tunnelCount],
+    ["付费订阅", d.subscribed],
+    ["DB 大小", d.dbSize < 0 ? "—" : `${(d.dbSize / 1024 / 1024).toFixed(1)} MB`],
+    ["uptime", `${Math.floor(d.uptimeSeconds / 3600)}h ${Math.floor((d.uptimeSeconds % 3600) / 60)}m`],
+    ["版本", d.version],
+  ];
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 12 }}>
+      {stats.map(([k, v]) => (
+        <div key={k} style={{ border: "1px solid #e5e7eb", borderRadius: 10, padding: "14px 16px" }}>
+          <div style={{ fontSize: 12, color: "#6b7280" }}>{k}</div>
+          <div style={{ fontSize: 22, fontWeight: 700 }}>{v}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AdminUsers({ isWrite, isAdmin }: { isWrite: boolean; isAdmin: boolean }): React.JSX.Element {
+  const [users, setUsers] = useState<AdminUserRow[] | null>(null);
+  const [q, setQ] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const reload = (): void => {
+    adminApi.users().then((r) => setUsers(r.users)).catch(() => setUsers([]));
+  };
+  useEffect(reload, []);
+  const act = (id: number, action: string, extra?: Record<string, unknown>): void => {
+    const reason = confirmReason(action);
+    if (reason === null) return;
+    setBusy(true);
+    adminApi
+      .userAction(id, action, { reason, ...extra })
+      .then(() => {
+        setMsg("完成");
+        reload();
+      })
+      .catch((e: unknown) => setMsg(e instanceof Error ? e.message : "失败"))
+      .finally(() => setBusy(false));
+  };
+  const list = (users ?? []).filter((u) => u.name.includes(q) || (u.email ?? "").includes(q) || (u.phone ?? "").includes(q));
+  return (
+    <div>
+      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索 用户名/邮箱/手机号" style={{ padding: "6px 10px", marginBottom: 10, width: 280 }} />
+      {msg !== "" && <p style={{ fontSize: 12, color: "#2563eb" }}>{msg}</p>}
+      <table style={adminTableStyle()}>
+        <thead>
+          <tr style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb" }}>
+            {["用户", "角色", "状态", "套餐", "操作"].map((h) => (
+              <th key={h} style={{ padding: "6px 8px" }}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {list.map((u) => (
+            <tr key={u.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
+              <td style={{ padding: "6px 8px" }}>{u.name}</td>
+              <td style={{ padding: "6px 8px", color: "#6b7280" }}>{u.role}</td>
+              <td style={{ padding: "6px 8px" }}>{u.accountStatus}</td>
+              <td style={{ padding: "6px 8px" }}>{u.planStatus ?? "—"}</td>
+              <td style={{ padding: "6px 8px", display: "flex", gap: 4, flexWrap: "wrap" }}>
+                {isWrite && u.accountStatus !== "banned" && <button disabled={busy} onClick={() => act(u.id, "ban")} style={adminBtnStyle("danger")}>封禁</button>}
+                {isWrite && u.accountStatus === "banned" && <button disabled={busy} onClick={() => act(u.id, "unban")} style={adminBtnStyle()}>解封</button>}
+                {isWrite && <button disabled={busy} onClick={() => act(u.id, "reset-password", { password: window.prompt("新密码（≥8 位）：") ?? "" })} style={adminBtnStyle("ghost")}>重置密码</button>}
+                {isWrite && <button disabled={busy} onClick={() => act(u.id, "reset-2fa")} style={adminBtnStyle("ghost")}>重置2FA</button>}
+                {isWrite && <button disabled={busy} onClick={() => act(u.id, "plan", { planStatus: window.prompt("planStatus（subscribed/grace/free/null 文本）：") ?? "" })} style={adminBtnStyle("ghost")}>改套餐</button>}
+                {isAdmin && <button disabled={busy} onClick={() => act(u.id, "delete")} style={adminBtnStyle("danger")}>删除</button>}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function AdminHosts({ isWrite }: { isWrite: boolean }): React.JSX.Element {
+  const [hosts, setHosts] = useState<AdminHostRow[] | null>(null);
+  const [msg, setMsg] = useState("");
+  const reload = (): void => {
+    adminApi.hosts().then((r) => setHosts(r.hosts)).catch(() => setHosts([]));
+  };
+  useEffect(reload, []);
+  const revoke = (id: string): void => {
+    const reason = confirmReason("吊销主机");
+    if (reason === null) return;
+    adminApi
+      .revokeHost(id, reason)
+      .then(() => {
+        setMsg("已吊销");
+        reload();
+      })
+      .catch((e: unknown) => setMsg(e instanceof Error ? e.message : "失败"));
+  };
+  return (
+    <div>
+      {msg !== "" && <p style={{ fontSize: 12, color: "#2563eb" }}>{msg}</p>}
+      <table style={adminTableStyle()}>
+        <thead>
+          <tr style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb" }}>
+            {["主机名", "归属", "在线", "E2EE", "操作"].map((h) => (
+              <th key={h} style={{ padding: "6px 8px" }}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {(hosts ?? []).map((h) => (
+            <tr key={h.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
+              <td style={{ padding: "6px 8px" }}>{h.name}</td>
+              <td style={{ padding: "6px 8px", color: "#6b7280" }}>{h.ownerId}</td>
+              <td style={{ padding: "6px 8px" }}>{h.online ? "●" : "○"}</td>
+              <td style={{ padding: "6px 8px" }}>{h.e2eePublicKey != null ? "🛡" : "—"}</td>
+              <td style={{ padding: "6px 8px" }}>{isWrite && <button onClick={() => revoke(h.id)} style={adminBtnStyle("danger")}>吊销</button>}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function AdminBilling({ isWrite, isAdmin }: { isWrite: boolean; isAdmin: boolean }): React.JSX.Element {
+  const [orders, setOrders] = useState<AdminOrderRow[] | null>(null);
+  const [payments, setPayments] = useState<AdminPaymentRow[] | null>(null);
+  const [msg, setMsg] = useState("");
+  const reload = (): void => {
+    adminApi.orders().then((r) => setOrders(r.orders)).catch(() => setOrders([]));
+    adminApi.payments().then((r) => setPayments(r.payments)).catch(() => setPayments([]));
+  };
+  useEffect(reload, []);
+  const refund = (id: string): void => {
+    const reason = confirmReason("退款");
+    if (reason === null) return;
+    adminApi.refundOrder(id, reason).then(() => { setMsg("已退款"); reload(); }).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "失败"));
+  };
+  return (
+    <div>
+      {msg !== "" && <p style={{ fontSize: 12, color: "#2563eb" }}>{msg}</p>}
+      <h3 style={{ fontSize: 14 }}>订单</h3>
+      <table style={adminTableStyle()}>
+        <thead>
+          <tr style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb" }}>
+            {["订单号", "用户", "套餐", "金额", "状态", "操作"].map((h) => (
+              <th key={h} style={{ padding: "6px 8px" }}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {(orders ?? []).map((o) => (
+            <tr key={o.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
+              <td style={{ padding: "6px 8px" }}>{o.id}</td>
+              <td style={{ padding: "6px 8px" }}>{o.userId}</td>
+              <td style={{ padding: "6px 8px" }}>{o.planId}</td>
+              <td style={{ padding: "6px 8px" }}>¥{o.amountCny}</td>
+              <td style={{ padding: "6px 8px" }}>{o.status}</td>
+              <td style={{ padding: "6px 8px" }}>{isWrite && o.status === "paid" && <button onClick={() => refund(o.id)} style={adminBtnStyle("danger")}>退款</button>}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <h3 style={{ fontSize: 14, marginTop: 16 }}>支付流水</h3>
+      <table style={adminTableStyle()}>
+        <thead>
+          <tr style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb" }}>
+            {["流水号", "订单", "渠道", "渠道单号", "金额", "支付时间"].map((h) => (
+              <th key={h} style={{ padding: "6px 8px" }}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {(payments ?? []).map((p) => (
+            <tr key={p.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
+              <td style={{ padding: "6px 8px" }}>{p.id}</td>
+              <td style={{ padding: "6px 8px" }}>{p.orderId}</td>
+              <td style={{ padding: "6px 8px" }}>{p.channel}</td>
+              <td style={{ padding: "6px 8px" }}>{p.channelOrderId}</td>
+              <td style={{ padding: "6px 8px" }}>¥{p.amountCny}</td>
+              <td style={{ padding: "6px 8px" }}>{new Date(p.paidAt).toLocaleString()}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {isAdmin && <p style={{ fontSize: 12, color: "#6b7280", marginTop: 12 }}>补单（admin）：走 CLI / API，本期页面不提供。</p>}
+    </div>
+  );
+}
+
+function AdminAudit(): React.JSX.Element {
+  const [events, setEvents] = useState<AdminAuditRow[] | null>(null);
+  const [source, setSource] = useState("");
+  useEffect(() => {
+    adminApi.audit(source === "" ? undefined : { source }).then((r) => setEvents(r.events)).catch(() => setEvents([]));
+  }, [source]);
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+        <select value={source} onChange={(e) => setSource(e.target.value)} style={{ padding: "4px 8px" }}>
+          <option value="">全部来源</option>
+          <option value="user">用户</option>
+          <option value="admin">管理员</option>
+        </select>
+        <a href="/api/admin/audit.csv" target="_blank" rel="noreferrer" style={{ ...adminBtnStyle("ghost"), textDecoration: "none" }}>导出 CSV</a>
+      </div>
+      <table style={adminTableStyle()}>
+        <thead>
+          <tr style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb" }}>
+            {["时间", "用户", "事件", "来源", "操作者"].map((h) => (
+              <th key={h} style={{ padding: "6px 8px" }}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {(events ?? []).map((e) => (
+            <tr key={e.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
+              <td style={{ padding: "6px 8px" }}>{new Date(e.createdAt).toLocaleString()}</td>
+              <td style={{ padding: "6px 8px" }}>{e.userId ?? "—"}</td>
+              <td style={{ padding: "6px 8px" }}>{e.event}</td>
+              <td style={{ padding: "6px 8px" }}>{e.source}</td>
+              <td style={{ padding: "6px 8px", color: "#6b7280" }}>{e.actorUserId ?? "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function AdminHealth(): React.JSX.Element {
+  const [h, setH] = useState<{ uptimeSeconds: number; tunnelCount: number; onlineHosts: number; dbSize: number; version: string } | null>(null);
+  useEffect(() => {
+    adminApi.health().then(setH).catch(() => undefined);
+  }, []);
+  if (h === null) return <p>加载中…</p>;
+  const rows: Array<[string, string]> = [
+    ["uptime", `${Math.floor(h.uptimeSeconds / 3600)}h ${Math.floor((h.uptimeSeconds % 3600) / 60)}m`],
+    ["隧道连接", String(h.tunnelCount)],
+    ["在线主机", String(h.onlineHosts)],
+    ["DB 大小", h.dbSize < 0 ? "—" : `${(h.dbSize / 1024 / 1024).toFixed(1)} MB`],
+    ["版本", h.version],
+    ["最近备份", "未配置"],
+  ];
+  return (
+    <table style={adminTableStyle()}>
+      <tbody>
+        {rows.map(([k, v]) => (
+          <tr key={k} style={{ borderBottom: "1px solid #f3f4f6" }}>
+            <td style={{ padding: "8px", color: "#6b7280", width: 140 }}>{k}</td>
+            <td style={{ padding: "8px" }}>{v}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function AdminConfigPage(): React.JSX.Element {
+  const [c, setC] = useState<AdminConfig | null>(null);
+  useEffect(() => {
+    adminApi.config().then(setC).catch(() => undefined);
+  }, []);
+  if (c === null) return <p>加载中…</p>;
+  return (
+    <pre style={{ fontSize: 13, background: "#f9fafb", padding: 16, borderRadius: 10, overflow: "auto" }}>{JSON.stringify(c, null, 2)}</pre>
+  );
+}
+
+function AdminAdmins({ isAdmin }: { isAdmin: boolean }): React.JSX.Element {
+  const [admins, setAdmins] = useState<Array<{ id: number; name: string; email: string | null; role: string }> | null>(null);
+  const [msg, setMsg] = useState("");
+  const reload = (): void => {
+    adminApi.admins().then((r) => setAdmins(r.admins)).catch(() => setAdmins([]));
+  };
+  useEffect(reload, []);
+  const setRole = (id: number): void => {
+    if (!isAdmin) return;
+    const role = window.prompt("角色（readonly/operator/admin）：");
+    if (role === null || role === "") return;
+    const reason = confirmReason("改角色");
+    if (reason === null) return;
+    adminApi.setRole(id, role, reason).then(() => { setMsg("已改"); reload(); }).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "失败"));
+  };
+  const remove = (id: number): void => {
+    const reason = confirmReason("移除管理员");
+    if (reason === null) return;
+    adminApi.removeAdmin(id, reason).then(() => { setMsg("已移除"); reload(); }).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "失败"));
+  };
+  return (
+    <div>
+      {msg !== "" && <p style={{ fontSize: 12, color: "#2563eb" }}>{msg}</p>}
+      <table style={adminTableStyle()}>
+        <thead>
+          <tr style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb" }}>
+            {["账号", "邮箱", "角色", "操作"].map((h) => (
+              <th key={h} style={{ padding: "6px 8px" }}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {(admins ?? []).map((a) => (
+            <tr key={a.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
+              <td style={{ padding: "6px 8px" }}>{a.name}</td>
+              <td style={{ padding: "6px 8px", color: "#6b7280" }}>{a.email ?? "—"}</td>
+              <td style={{ padding: "6px 8px" }}>{a.role}</td>
+              <td style={{ padding: "6px 8px", display: "flex", gap: 4 }}>
+                {isAdmin && <button onClick={() => setRole(a.id)} style={adminBtnStyle("ghost")}>改角色</button>}
+                {isAdmin && <button onClick={() => remove(a.id)} style={adminBtnStyle("danger")}>移除</button>}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
