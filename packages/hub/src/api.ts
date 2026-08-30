@@ -119,6 +119,21 @@ function clampLimit(raw: string | null): number {
   return Math.min(n, 200);
 }
 
+/** admin 面用户视图：仅暴露展示/运营所需字段，绝不外泄 passwordHash / totpSecret / ver / failedAttempts / lockedUntil。 */
+function adminUserView(u: UserRow): Record<string, unknown> {
+  return {
+    id: u.id,
+    name: u.name,
+    email: u.email,
+    phone: u.phone,
+    role: u.role,
+    accountStatus: u.accountStatus,
+    planStatus: u.planStatus,
+    planExpiresAt: u.planExpiresAt,
+    createdAt: u.createdAt,
+  };
+}
+
 function requireReason(body: Record<string, unknown> | null): string | null {  return body !== null && typeof body.reason === "string" && body.reason.trim() !== "" ? body.reason.trim() : null;
 }
 
@@ -208,7 +223,7 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
     // 主机数仍一次 GROUP BY 聚合（索引），避免对每个用户子查询
     const hostCounts = new Map<number, number>();
     for (const row of db.countHostsByOwner()) hostCounts.set(row.ownerId, row.count);
-    const users = rows.map((u) => ({ ...u, hostCount: hostCounts.get(u.id) ?? 0 }));
+    const users = rows.map((u) => ({ ...adminUserView(u), hostCount: hostCounts.get(u.id) ?? 0 }));
     res.end(JSON.stringify({ users, total }));
     return true;
   }
@@ -296,7 +311,7 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
     return true;
   }
 
-  // ---- 用户详情 ----
+  // ---- 用户详情（账号 + 配额 + 订阅/订单/支付 + 审计）----
   const userDetail = /^\/api\/admin\/users\/([^/]+)$/.exec(path);
   if (userDetail !== null && method === "GET") {
     const id = Number(decodeURIComponent(userDetail[1]!));
@@ -305,8 +320,16 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
       writeError(res, 404, "NOT_FOUND", "user not found");
       return true;
     }
-    const events = db.listAudit({ userId: id });
-    res.end(JSON.stringify({ user, audit: events }));
+    const hostCount = db.listHostsByOwner(id).length;
+    res.end(JSON.stringify({
+      user: adminUserView(user),
+      hostCount,
+      quota: hostQuota(runtime, user),
+      subscriptions: db.listSubscriptionsByUser(id),
+      orders: db.listOrdersByUser(id),
+      payments: db.listPaymentsByUser(id),
+      audit: admin.listAudit(db, { userId: id }),
+    }));
     return true;
   }
 

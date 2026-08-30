@@ -7,7 +7,7 @@
 import { useEffect, useState } from "react";
 import QRCode from "qrcode";
 import { api, ApiError, subscribeEvents, REFRESH_KEY, adminApi } from "./api.ts";
-import type { HostInfo, JoinTokenInfo, CaptchaPayload, AccountInfo, Capabilities, WechatPayInfo, AdminMe, AdminUserRow, AdminHostRow, AdminOrderRow, AdminPaymentRow, AdminAuditRow, AdminDashboard, AdminConfig } from "./api.ts";
+import type { HostInfo, JoinTokenInfo, CaptchaPayload, AccountInfo, Capabilities, WechatPayInfo, AdminMe, AdminUserRow, AdminHostRow, AdminOrderRow, AdminPaymentRow, AdminAuditRow, AdminSubscriptionRow, AdminUserDetail, AdminDashboard, AdminConfig } from "./api.ts";
 import { fingerprint } from "./e2ee.ts";
 import { useT, getLang } from "./i18n.ts";
 import type { T } from "./i18n.ts";
@@ -1999,9 +1999,87 @@ function ActionDialog({ spec, onClose }: { spec: DialogSpec; onClose: () => void
   );
 }
 
-/** 管理后台总入口：无 admin 会话 → 登录页；有 → 导航 + 页面。 */
-function AdminApp({ path }: { path: string }): React.JSX.Element {
+/** 用户详情：账号信息 + 配额 + 订阅/订单/支付历史 + 审计轨迹（req R5 详情）。 */
+function AdminUserDetail({ userId }: { userId: number }): React.JSX.Element {
   const { t } = useT();
+  const [d, setD] = useState<AdminUserDetail | null>(null);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    adminApi.userDetail(userId).then(setD).catch((e: unknown) => setErr(e instanceof Error ? e.message : "load failed"));
+  }, [userId]);
+  if (err !== "") return <p style={{ color: "#dc2626" }}>{err}</p>;
+  if (d === null) return <p>{t("加载中…")}</p>;
+  const u = d.user;
+  const ts = (ms: number | null): string => (ms === null ? "—" : new Date(ms).toLocaleString());
+  const section = (title: string): React.JSX.Element => <h3 style={{ fontSize: 14, margin: "16px 0 6px", color: "#111827" }}>{title}</h3>;
+  return (
+    <div>
+      <button onClick={() => navigate("/admin/users")} style={adminBtnStyle("ghost")}>{t("← 返回用户列表")}</button>
+      <h2 style={{ fontSize: 18, margin: "10px 0 4px" }}>{u.name}</h2>
+      <p style={{ fontSize: 12, color: "#6b7280", margin: "0 0 8px" }}>{t("ID")} {u.id} · {adminRoleLabel(t, u.role)} · {u.accountStatus}</p>
+
+      {section(t("账号信息"))}
+      <table className="admintbl" style={adminTableStyle()}>
+        <tbody>
+          <tr>{adminTd(t("邮箱"), u.email ?? "—")}{adminTd(t("手机号"), u.phone ?? "—")}</tr>
+          <tr>{adminTd(t("状态"), u.accountStatus)}{adminTd(t("套餐"), u.planStatus ?? "—")}</tr>
+          <tr>{adminTd(t("主机"), d.quota !== null ? `${d.hostCount} / ${d.quota}` : String(d.hostCount))}{adminTd(t("注册时间"), ts(u.createdAt === "" ? null : Date.parse(u.createdAt)))}</tr>
+        </tbody>
+      </table>
+
+      {section(t("订阅历史"))}
+      {d.subscriptions.length === 0 ? <p style={{ color: "#9ca3af", fontSize: 13 }}>{t("（无）")}</p> : (
+        <table className="admintbl" style={adminTableStyle()}>
+          <thead><tr style={{ borderBottom: "1px solid #e5e7eb" }}>{[t("套餐"), t("状态"), t("开始"), t("到期")].map(adminTh)}</tr></thead>
+          <tbody>{d.subscriptions.map((s) => (
+            <tr key={s.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
+              {adminTd(t("套餐"), s.planId)}{adminTd(t("状态"), s.status)}{adminTd(t("开始"), ts(s.startedAt))}{adminTd(t("到期"), ts(s.expiresAt))}
+            </tr>
+          ))}</tbody>
+        </table>
+      )}
+
+      {section(t("订单"))}
+      {d.orders.length === 0 ? <p style={{ color: "#9ca3af", fontSize: 13 }}>{t("（无）")}</p> : (
+        <table className="admintbl" style={adminTableStyle()}>
+          <thead><tr style={{ borderBottom: "1px solid #e5e7eb" }}>{[t("订单号"), t("套餐"), t("金额"), t("状态"), t("时间")].map(adminTh)}</tr></thead>
+          <tbody>{d.orders.map((o) => (
+            <tr key={o.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
+              {adminTd(t("订单号"), o.id)}{adminTd(t("套餐"), o.planId)}{adminTd(t("金额"), `¥${o.amountCny}`)}{adminTd(t("状态"), o.status)}{adminTd(t("时间"), ts(o.createdAt))}
+            </tr>
+          ))}</tbody>
+        </table>
+      )}
+
+      {section(t("支付流水"))}
+      {d.payments.length === 0 ? <p style={{ color: "#9ca3af", fontSize: 13 }}>{t("（无）")}</p> : (
+        <table className="admintbl" style={adminTableStyle()}>
+          <thead><tr style={{ borderBottom: "1px solid #e5e7eb" }}>{[t("渠道"), t("渠道单号"), t("金额"), t("时间")].map(adminTh)}</tr></thead>
+          <tbody>{d.payments.map((p) => (
+            <tr key={p.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
+              {adminTd(t("渠道"), p.channel)}{adminTd(t("渠道单号"), p.channelOrderId)}{adminTd(t("金额"), `¥${p.amountCny}`)}{adminTd(t("时间"), ts(p.paidAt))}
+            </tr>
+          ))}</tbody>
+        </table>
+      )}
+
+      {section(t("审计轨迹"))}
+      {d.audit.length === 0 ? <p style={{ color: "#9ca3af", fontSize: 13 }}>{t("（无）")}</p> : (
+        <table className="admintbl" style={adminTableStyle()}>
+          <thead><tr style={{ borderBottom: "1px solid #e5e7eb" }}>{[t("时间"), t("事件"), t("来源"), t("IP")].map(adminTh)}</tr></thead>
+          <tbody>{d.audit.map((a) => (
+            <tr key={a.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
+              {adminTd(t("时间"), ts(a.createdAt))}{adminTd(t("事件"), a.event)}{adminTd(t("来源"), a.source)}{adminTd(t("IP"), a.ip)}
+            </tr>
+          ))}</tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+/** 管理后台总入口：无 admin 会话 → 登录页；有 → 导航 + 页面。 */
+function AdminApp({ path }: { path: string }): React.JSX.Element {  const { t } = useT();
   const [me, setMe] = useState<AdminMe | null | undefined>(undefined);
   const [reload, setReload] = useState(0);
   useEffect(() => {
@@ -2037,13 +2115,15 @@ function AdminApp({ path }: { path: string }): React.JSX.Element {
         {nav
           .filter((n) => !n.adminOnly || isAdmin)
           .map((n) => (
-            <button key={n.p} onClick={() => navigate(n.p === "/" ? "/admin" : `/admin${n.p}`)} style={{ ...adminBtnStyle("ghost"), fontWeight: path === n.p ? 700 : 400, background: path === n.p ? "#eef2ff" : "#fff" }}>
+            <button key={n.p} onClick={() => navigate(n.p === "/" ? "/admin" : `/admin${n.p}`)} style={{ ...adminBtnStyle("ghost"), fontWeight: path === n.p || path.startsWith(n.p + "/") ? 700 : 400, background: path === n.p || path.startsWith(n.p + "/") ? "#eef2ff" : "#fff" }}>
               {n.label}
             </button>
           ))}
       </div>
       {path === "/" || path === "" ? (
         <AdminDashboard />
+      ) : path.startsWith("/users/") ? (
+        <AdminUserDetail userId={Number(path.slice("/users/".length))} />
       ) : path === "/users" ? (
         <AdminUsers isWrite={isWrite} isAdmin={isAdmin} />
       ) : path === "/hosts" ? (
@@ -2232,6 +2312,7 @@ function AdminUsers({ isWrite, isAdmin }: { isWrite: boolean; isAdmin: boolean }
                   >⋯</button>
                   {menuUserId === u.id && (
                     <div style={{ position: "absolute", right: 0, top: "100%", marginTop: 4, background: "#fff", border: "1px solid #e5e7eb", borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,.1)", zIndex: 20, minWidth: 130, padding: 4 }} onClick={(e) => e.stopPropagation()}>
+                      <button style={menuItemStyle()} onClick={() => { setMenuUserId(null); navigate(`/admin/users/${u.id}`); }}>{t("详情")}</button>
                       {isWrite && u.accountStatus !== "banned" && <button style={menuItemStyle(true)} onClick={() => { setMenuUserId(null); open(u, t("封禁"), "ban", [], true); }}>{t("封禁")}</button>}
                       {isWrite && u.accountStatus === "banned" && <button style={menuItemStyle()} onClick={() => { setMenuUserId(null); open(u, t("解封"), "unban"); }}>{t("解封")}</button>}
                       {isWrite && <button style={menuItemStyle()} onClick={() => { setMenuUserId(null); open(u, t("重置密码"), "reset-password", [{ key: "password", label: t("新密码（≥8 位）") }]); }}>{t("重置密码")}</button>}
@@ -2288,7 +2369,7 @@ function AdminHosts({ isWrite }: { isWrite: boolean }): React.JSX.Element {
       {msg !== "" && <p style={{ fontSize: 12, color: "#2563eb" }}>{msg}</p>}
       <table className="admintbl" style={adminTableStyle()}>
         <thead>
-          <tr style={{ borderBottom: "1px solid #e5e7eb" }}>{[t("主机名"), t("归属"), t("在线"), t("E2EE"), t("操作")].map(adminTh)}</tr>
+          <tr style={{ borderBottom: "1px solid #e5e7eb" }}>{[t("主机名"), t("归属"), t("在线"), t("E2EE"), t("加入时间"), t("操作")].map(adminTh)}</tr>
         </thead>
         <tbody>
           {(hosts ?? []).map((h) => (
@@ -2297,6 +2378,7 @@ function AdminHosts({ isWrite }: { isWrite: boolean }): React.JSX.Element {
               {adminTd(t("归属"), <span style={{ color: "#6b7280" }}>{h.ownerName}</span>)}
               {adminTd(t("在线"), h.online ? "●" : "○")}
               {adminTd(t("E2EE"), h.e2eePublicKey != null ? "🛡" : "—")}
+              {adminTd(t("加入时间"), new Date(h.createdAt).toLocaleDateString())}
               {adminTd(null, isWrite && <button onClick={() => revoke(h)} style={adminBtnStyle("danger")}>{t("吊销")}</button>)}
             </tr>
           ))}

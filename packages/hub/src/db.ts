@@ -956,6 +956,24 @@ export class HubDb {
     return rows.map((r) => this.mapOrder(r));
   }
 
+  /** 某用户的订单（详情页，按时间倒序）。 */
+  listOrdersByUser(userId: number): OrderRow[] {
+    const rows = this.db.prepare("SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC").all(userId) as unknown as Array<Record<string, unknown>>;
+    return rows.map((r) => this.mapOrder(r));
+  }
+
+  /** 某用户的支付流水（详情页）。 */
+  listPaymentsByUser(userId: number): PaymentRow[] {
+    const rows = this.db.prepare("SELECT * FROM payments WHERE user_id = ? ORDER BY paid_at DESC").all(userId) as unknown as Array<Record<string, unknown>>;
+    return rows.map((r) => this.mapPayment(r));
+  }
+
+  /** 某用户的订阅历史（详情页）。 */
+  listSubscriptionsByUser(userId: number): SubscriptionRow[] {
+    const rows = this.db.prepare("SELECT * FROM subscriptions WHERE user_id = ? ORDER BY created_at DESC").all(userId) as unknown as Array<Record<string, unknown>>;
+    return rows.map((r) => this.mapSubscription(r));
+  }
+
   /** 全部支付流水（admin 账单运营，按支付时间倒序）。 */
   listPayments(): PaymentRow[] {
     const rows = this.db.prepare("SELECT * FROM payments ORDER BY paid_at DESC LIMIT 1000").all() as unknown as Array<Record<string, unknown>>;

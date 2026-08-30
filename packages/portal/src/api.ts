@@ -345,6 +345,24 @@ export interface AdminAuditRow {
   actorUserId: number | null;
   createdAt: number;
 }
+export interface AdminSubscriptionRow {
+  id: number;
+  userId: number;
+  planId: string;
+  status: string;
+  startedAt: number;
+  expiresAt: number;
+  createdAt: number;
+}
+export interface AdminUserDetail {
+  user: AdminUserRow;
+  hostCount: number;
+  quota: number | null;
+  subscriptions: AdminSubscriptionRow[];
+  orders: AdminOrderRow[];
+  payments: AdminPaymentRow[];
+  audit: AdminAuditRow[];
+}
 export interface AdminDashboard {
   totalUsers: number;
   totalHosts: number;
@@ -409,6 +427,9 @@ export const adminApi = {
   },
   userAction(id: number, action: string, body: Record<string, unknown>): Promise<{ ok: boolean }> {
     return adminJson(`/api/admin/users/${id}/${action}`, { method: "POST", body: JSON.stringify(body) });
+  },
+  userDetail(id: number): Promise<AdminUserDetail> {
+    return adminJson(`/api/admin/users/${id}`);
   },
   hosts(params?: { q?: string; limit?: number; offset?: number }): Promise<{ hosts: AdminHostRow[]; total: number }> {
     const sp = new URLSearchParams();
