@@ -163,11 +163,19 @@ function menuItemStyle(danger = false): React.CSSProperties {
   };
 }
 
-function field(label: string, value: string, onChange: (v: string) => void, type = "text"): React.JSX.Element {
+function field(label: string, value: string, onChange: (v: string) => void, type = "text", opts?: { numeric?: boolean }): React.JSX.Element {
   return (
     <label style={{ display: "block", marginBottom: 12 }}>
       <span style={{ display: "block", marginBottom: 4, fontSize: 13 }}>{label}</span>
-      <input type={type} value={value} onChange={(e) => onChange(e.target.value)} style={inputStyle()} autoComplete="off" />
+      <input
+        type={type}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        inputMode={opts?.numeric === true ? "numeric" : undefined}
+        autoComplete={opts?.numeric === true ? "one-time-code" : "off"}
+        maxLength={opts?.numeric === true ? 6 : undefined}
+        style={inputStyle()}
+      />
     </label>
   );
 }
@@ -963,7 +971,7 @@ function TwoFaSettingsPage(): React.JSX.Element {
                 <p style={{ margin: "2px 0" }}>· {t("绑定后每次登录需输入动态码；可选「记住此设备 30 天」免重复输入")}</p>
                 <p style={{ margin: "2px 0" }}>· {t("若换机/丢失 Authenticator，需联系管理员重置 2FA")}</p>
               </div>
-              {field(t("当前 TOTP 验证码"), twofaCode, setTwofaCode)}
+              {field(t("当前 TOTP 验证码"), twofaCode, setTwofaCode, "text", { numeric: true })}
               <button
                 onClick={() => void run(async () => { await api.activate2fa(twofa.secret, twofaCode.trim()); setTwofa(null); setTwofaCode(""); show("ok", t("2FA 已开启 ✓")); await refresh(); })}
                 style={btnStyle()}
@@ -973,7 +981,7 @@ function TwoFaSettingsPage(): React.JSX.Element {
         ) : (
           <div>
             <p style={{ fontSize: 13, color: "#6b7280", marginTop: 0 }}>{t("已开启两步验证，登录时需输入 TOTP 动态验证码。")}</p>
-            {field(t("输入当前验证码以关闭"), twofaCode, setTwofaCode)}
+            {field(t("输入当前验证码以关闭"), twofaCode, setTwofaCode, "text", { numeric: true })}
             <button
               onClick={() => void run(async () => { await api.disable2fa(twofaCode.trim()); setTwofaCode(""); show("ok", t("2FA 已关闭")); await refresh(); })}
               style={btnStyle("danger")}
