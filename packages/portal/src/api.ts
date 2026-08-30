@@ -90,7 +90,7 @@ export interface Capabilities {
   smsEnabled: boolean;
   captchaProvider: "arithmetic" | "none" | "aliyun";
   beian?: { icp?: string; icpUrl?: string; gongan?: string; gonganUrl?: string };
-  site?: { brand?: string; name?: string; url?: string; productUrl?: string; termsUrl?: string; privacyUrl?: string; footer?: Array<{ text: string; href?: string }> };
+  site?: { brand?: string; name?: string; url?: string; productUrl?: string; termsUrl?: string; privacyUrl?: string; customerServiceUrl?: string; footer?: Array<{ text: string; href?: string }> };
 }
 
 /** 验证码载荷：arithmetic 用 captchaToken+captchaAnswer；aliyun 用 captchaVerifyParam。 */

@@ -22,6 +22,8 @@ const EN: Record<string, string> = {
   "账户": "Account",
   "登出": "Sign out",
   "账户与安全": "Account & Security",
+  "微信客服": "Customer Service",
+  "遇到问题？联系在线客服": "Questions? Contact online support",
   "套餐": "Plan",
   "当前绑定：{x}": "Currently bound: {x}",
   "剩余 {x} · 隧道保留 · 到期后降级免费档": "{x} left · tunnels kept · downgrades to free after expiry",

@@ -605,6 +605,39 @@ function SettingRow({ label, desc, badge, onClick, danger }: { label: string; de
   );
 }
 
+/** 设置项外链（账户总览页：微信客服等跳转外部，新开标签）。 */
+function SettingLink({ label, desc, href }: { label: string; desc?: string; href: string }): React.JSX.Element {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      style={{
+        display: "flex",
+        width: "100%",
+        alignItems: "center",
+        gap: 10,
+        padding: "12px 14px",
+        border: "1px solid #e5e7eb",
+        borderRadius: 10,
+        background: "#fff",
+        cursor: "pointer",
+        marginBottom: 8,
+        textAlign: "left",
+        font: "inherit",
+        textDecoration: "none",
+        boxSizing: "border-box",
+      }}
+    >
+      <span style={{ flex: 1 }}>
+        <span style={{ display: "block", fontSize: 14, fontWeight: 500, color: "#111827" }}>{label}</span>
+        {desc !== undefined && <span style={{ display: "block", fontSize: 12, color: "#6b7280", marginTop: 2 }}>{desc}</span>}
+      </span>
+      <span style={{ color: "#9ca3af", fontSize: 18 }}>↗</span>
+    </a>
+  );
+}
+
 /** 子设置页顶部：返回账户总览。 */
 function BackToAccount(): React.JSX.Element {
   const { t } = useT();
@@ -706,6 +739,7 @@ function AccountPage(): React.JSX.Element {
   const { t } = useT();
   const [info, setInfo] = useState<AccountInfo | null>(null);
   const [sub, setSub] = useState<SubInfo | null>(null);
+  const [customerServiceUrl, setCustomerServiceUrl] = useState<string | undefined>(undefined);
   const { err, run } = useError();
   useEffect(() => {
     void run(async () => {
@@ -713,6 +747,9 @@ function AccountPage(): React.JSX.Element {
       setInfo(acc);
       setSub(subInfo);
     });
+  }, []);
+  useEffect(() => {
+    void api.capabilities().then((c) => setCustomerServiceUrl(c.site?.customerServiceUrl)).catch(() => undefined);
   }, []);
   return (
     <Shell title={t("账户与安全")} onLogout={logout}>
@@ -746,6 +783,9 @@ function AccountPage(): React.JSX.Element {
         badge={<Badge ok={info?.totpEnabled === true} text={info?.totpEnabled ? t("已开启") : t("未开启")} />}
         onClick={() => navigate("/settings/2fa")}
       />
+      {customerServiceUrl !== undefined && customerServiceUrl !== "" ? (
+        <SettingLink label={t("微信客服")} desc={t("遇到问题？联系在线客服")} href={customerServiceUrl} />
+      ) : null}
       <SettingRow label={t("删除账号")} desc={t("立即断开全部主机并清除个人数据，不可恢复")} danger onClick={() => navigate("/settings/danger")} />
     </Shell>
   );

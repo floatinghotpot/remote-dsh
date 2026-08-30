@@ -42,6 +42,12 @@ test("非法字段明确报错", () => {
   assert.throws(() => normalizeHubConfig("nope"), /expected a JSON object/);
 });
 
+test("site.customerServiceUrl：字符串规范化 + 非法报错", () => {
+  assert.equal(normalizeHubConfig({ site: { customerServiceUrl: "https://work.weixin.qq.com/kfid/x" } }).site?.customerServiceUrl, "https://work.weixin.qq.com/kfid/x");
+  assert.equal(normalizeHubConfig({ site: {} }).site?.customerServiceUrl, undefined);
+  assert.throws(() => normalizeHubConfig({ site: { customerServiceUrl: 123 } }), /"site.customerServiceUrl" must be a string/);
+});
+
 test("behindProxy 字段（默认 false / 可配置 / 非法报错）", async () => {
   assert.equal(normalizeHubConfig({}).behindProxy, false);
   assert.equal(normalizeHubConfig({ behindProxy: true }).behindProxy, true);

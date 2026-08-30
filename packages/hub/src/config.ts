@@ -90,6 +90,8 @@ export interface SiteConfig {
   termsUrl?: string;
   /** 隐私政策 URL；配置后覆盖内置 /portal/privacy */
   privacyUrl?: string;
+  /** 微信客服（企业微信客服）跳转 URL；配置后门户账户页显示「微信客服」入口 */
+  customerServiceUrl?: string;
   /** 页脚信息行（地址/版权/许可等，按序渲染；href 可选外链）。 */
   footer?: Array<{ text: string; href?: string }>;
 }
@@ -384,7 +386,7 @@ function normalizeSite(raw: unknown, source: string): SiteConfig {
   if (typeof raw !== "object" || raw === null) throw new Error(`${source}: "site" must be an object`);
   const s = raw as Record<string, unknown>;
   const out: SiteConfig = {};
-  for (const key of ["brand", "name", "url", "productUrl", "termsUrl", "privacyUrl"] as const) {
+  for (const key of ["brand", "name", "url", "productUrl", "termsUrl", "privacyUrl", "customerServiceUrl"] as const) {
     if (s[key] !== undefined) {
       if (typeof s[key] !== "string") throw new Error(`${source}: "site.${key}" must be a string`);
       out[key] = s[key] as string;
