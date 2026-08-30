@@ -1789,7 +1789,11 @@ function BillingPage(): React.JSX.Element {
 // 管理后台 /admin（独立管理面：三档 RBAC + 强制 2FA + 审计）
 // ============================================================
 
-const ADMIN_ROLE_LABEL: Record<string, string> = { readonly: "只读", operator: "运营", admin: "管理员" };
+function adminRoleLabel(t: T, role: string): string {
+  if (role === "admin") return t("管理员", { en: "Admin" });
+  if (role === "operator") return t("运营");
+  return t("只读");
+}
 
 function adminBtnStyle(variant: "primary" | "danger" | "ghost" = "primary"): React.CSSProperties {
   const base: React.CSSProperties = { padding: "4px 10px", borderRadius: 6, border: "1px solid #ccc", cursor: "pointer", fontSize: 12 };
@@ -1802,15 +1806,60 @@ function adminTableStyle(): React.CSSProperties {
   return { width: "100%", borderCollapse: "collapse", fontSize: 13 };
 }
 
-/** 危险操作：二次确认 + 必填 reason（prompt 即确认 + 原因；MVP 版）。 */
-function confirmReason(label: string): string | null {
-  if (!window.confirm(`确认执行「${label}」？`)) return null;
-  const reason = window.prompt("原因（必填）：");
-  if (reason === null || reason.trim() === "") {
-    window.alert("原因必填，已取消");
-    return null;
-  }
-  return reason.trim();
+interface ActionField {
+  key: string;
+  label: string;
+  placeholder?: string;
+}
+interface DialogSpec {
+  title: string;
+  fields: ActionField[];
+  danger?: boolean;
+  submit: (reason: string, values: Record<string, string>) => void;
+}
+
+/** 危险操作模态框：字段 + 必填原因 + 确认/取消（req R10）。 */
+function ActionDialog({ spec, onClose }: { spec: DialogSpec; onClose: () => void }): React.JSX.Element {
+  const { t } = useT();
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
+      <div style={{ background: "#fff", borderRadius: 12, padding: 20, width: 440, maxWidth: "92vw", fontFamily: "system-ui, sans-serif" }}>
+        <h3 style={{ margin: "0 0 12px", fontSize: 16 }}>{spec.title}</h3>
+        {spec.fields.map((f) => (
+          <div key={f.key} style={{ marginBottom: 10 }}>
+            <label style={{ display: "block", fontSize: 12, color: "#6b7280", marginBottom: 4 }}>{f.label}</label>
+            <input
+              placeholder={f.placeholder}
+              value={values[f.key] ?? ""}
+              onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
+              style={{ width: "100%", padding: "7px 10px", boxSizing: "border-box", fontSize: 14 }}
+            />
+          </div>
+        ))}
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ display: "block", fontSize: 12, color: "#6b7280", marginBottom: 4 }}>{t("原因（必填）")}</label>
+          <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} style={{ width: "100%", padding: "7px 10px", boxSizing: "border-box", fontSize: 14 }} />
+        </div>
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <button onClick={onClose} disabled={busy} style={adminBtnStyle("ghost")}>{t("取消")}</button>
+          <button
+            disabled={busy || reason.trim() === ""}
+            onClick={() => {
+              if (reason.trim() === "") return;
+              setBusy(true);
+              spec.submit(reason.trim(), values);
+            }}
+            style={adminBtnStyle(spec.danger === true ? "danger" : "primary")}
+          >
+            {t("确认")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /** 管理后台总入口：无 admin 会话 → 登录页；有 → 导航 + 页面。 */
@@ -1832,14 +1881,14 @@ function AdminApp({ path }: { path: string }): React.JSX.Element {
   if (me === null) return <AdminLogin onSuccess={() => setReload((r) => r + 1)} />;
 
   const nav: Array<{ p: string; label: string; adminOnly?: boolean }> = [
-    { p: "/", label: "总览" },
-    { p: "/users", label: "用户" },
-    { p: "/hosts", label: "主机" },
-    { p: "/billing", label: "账单" },
-    { p: "/audit", label: "审计" },
-    { p: "/health", label: "健康" },
-    { p: "/config", label: "配置" },
-    { p: "/admins", label: "管理员", adminOnly: true },
+    { p: "/", label: t("总览") },
+    { p: "/users", label: t("用户") },
+    { p: "/hosts", label: t("主机") },
+    { p: "/billing", label: t("账单") },
+    { p: "/audit", label: t("审计") },
+    { p: "/health", label: t("健康") },
+    { p: "/config", label: t("配置") },
+    { p: "/admins", label: t("管理员"), adminOnly: true },
   ];
   const isAdmin = me.role === "admin";
   const isWrite = me.role === "admin" || me.role === "operator";
@@ -1847,19 +1896,10 @@ function AdminApp({ path }: { path: string }): React.JSX.Element {
   return (
     <div style={{ maxWidth: 980, margin: "24px auto", padding: "0 16px", fontFamily: "system-ui, sans-serif" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-        <strong style={{ fontSize: 16 }}>rdsh 管理后台</strong>
+        <strong style={{ fontSize: 16 }}>{t("rdsh 管理后台")}</strong>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <span style={{ fontSize: 12, color: "#666" }}>
-            {me.name} · {ADMIN_ROLE_LABEL[me.role] ?? me.role}
-          </span>
-          <button
-            onClick={() => {
-              void adminApi.logout().finally(() => setReload((r) => r + 1));
-            }}
-            style={adminBtnStyle("ghost")}
-          >
-            {t("登出")}
-          </button>
+          <span style={{ fontSize: 12, color: "#666" }}>{me.name} · {adminRoleLabel(t, me.role)}</span>
+          <button onClick={() => void adminApi.logout().finally(() => setReload((r) => r + 1))} style={adminBtnStyle("ghost")}>{t("登出")}</button>
         </div>
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
@@ -1903,38 +1943,37 @@ function AdminLogin({ onSuccess }: { onSuccess: () => void }): React.JSX.Element
     adminApi
       .login(totp)
       .then(onSuccess)
-      .catch((e: unknown) => setErr(e instanceof ApiError ? e.message : "登录失败"));
+      .catch((e: unknown) => setErr(e instanceof ApiError ? e.message : "login failed"));
   };
   return (
     <div style={{ maxWidth: 360, margin: "80px auto", padding: "24px", border: "1px solid #e5e7eb", borderRadius: 12, fontFamily: "system-ui, sans-serif" }}>
-      <h2 style={{ fontSize: 18, margin: "0 0 8px" }}>进入管理后台</h2>
-      <p style={{ fontSize: 12, color: "#6b7280", margin: "0 0 16px" }}>管理后台需两步验证（TOTP）。未开启 2FA 的账号请先在「账户与安全」开启。</p>
-      <input value={totp} onChange={(e) => setTotp(e.target.value)} placeholder="动态验证码" style={{ width: "100%", padding: "8px 10px", fontSize: 14, marginBottom: 12, boxSizing: "border-box" }} />
+      <h2 style={{ fontSize: 18, margin: "0 0 8px" }}>{t("进入管理后台")}</h2>
+      <p style={{ fontSize: 12, color: "#6b7280", margin: "0 0 16px" }}>{t("管理后台需两步验证（TOTP）。未开启 2FA 的账号请先在「账户与安全」开启。")}</p>
+      <input value={totp} onChange={(e) => setTotp(e.target.value)} placeholder={t("动态验证码")} style={{ width: "100%", padding: "8px 10px", fontSize: 14, marginBottom: 12, boxSizing: "border-box" }} />
       {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
-      <button onClick={submit} style={{ ...adminBtnStyle(), width: "100%", padding: "8px", fontSize: 14 }}>
-        {t("进入")}
-      </button>
+      <button onClick={submit} style={{ ...adminBtnStyle(), width: "100%", padding: "8px", fontSize: 14 }}>{t("进入")}</button>
     </div>
   );
 }
 
 function AdminDashboard(): React.JSX.Element {
+  const { t } = useT();
   const [d, setD] = useState<AdminDashboard | null>(null);
   const [err, setErr] = useState("");
   useEffect(() => {
-    adminApi.dashboard().then(setD).catch((e: unknown) => setErr(e instanceof Error ? e.message : "加载失败"));
+    adminApi.dashboard().then(setD).catch((e: unknown) => setErr(e instanceof Error ? e.message : "load failed"));
   }, []);
   if (err !== "") return <p style={{ color: "#dc2626" }}>{err}</p>;
-  if (d === null) return <p>加载中…</p>;
+  if (d === null) return <p>{t("加载中…")}</p>;
   const stats: Array<[string, string | number]> = [
-    ["注册用户", d.totalUsers],
-    ["主机总数", d.totalHosts],
-    ["在线主机", d.onlineHosts],
-    ["隧道连接", d.tunnelCount],
-    ["付费订阅", d.subscribed],
-    ["DB 大小", d.dbSize < 0 ? "—" : `${(d.dbSize / 1024 / 1024).toFixed(1)} MB`],
-    ["uptime", `${Math.floor(d.uptimeSeconds / 3600)}h ${Math.floor((d.uptimeSeconds % 3600) / 60)}m`],
-    ["版本", d.version],
+    [t("注册用户"), d.totalUsers],
+    [t("主机总数"), d.totalHosts],
+    [t("在线主机"), d.onlineHosts],
+    [t("隧道连接"), d.tunnelCount],
+    [t("付费订阅"), d.subscribed],
+    [t("DB 大小"), d.dbSize < 0 ? "—" : `${(d.dbSize / 1024 / 1024).toFixed(1)} MB`],
+    [t("uptime"), `${Math.floor(d.uptimeSeconds / 3600)}h ${Math.floor((d.uptimeSeconds % 3600) / 60)}m`],
+    [t("版本"), d.version],
   ];
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 12 }}>
@@ -1949,39 +1988,41 @@ function AdminDashboard(): React.JSX.Element {
 }
 
 function AdminUsers({ isWrite, isAdmin }: { isWrite: boolean; isAdmin: boolean }): React.JSX.Element {
+  const { t } = useT();
   const [users, setUsers] = useState<AdminUserRow[] | null>(null);
   const [q, setQ] = useState("");
-  const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
+  const [dialog, setDialog] = useState<DialogSpec | null>(null);
   const reload = (): void => {
     adminApi.users().then((r) => setUsers(r.users)).catch(() => setUsers([]));
   };
   useEffect(reload, []);
-  const act = (id: number, action: string, extra?: Record<string, unknown>): void => {
-    const reason = confirmReason(action);
-    if (reason === null) return;
-    setBusy(true);
-    adminApi
-      .userAction(id, action, { reason, ...extra })
-      .then(() => {
-        setMsg("完成");
-        reload();
-      })
-      .catch((e: unknown) => setMsg(e instanceof Error ? e.message : "失败"))
-      .finally(() => setBusy(false));
+  const open = (u: AdminUserRow, title: string, action: string, fields: ActionField[] = [], danger = false): void => {
+    setDialog({
+      title,
+      fields,
+      danger,
+      submit: (reason, values) => {
+        adminApi
+          .userAction(u.id, action, { reason, ...(action === "reset-password" ? { password: values.password ?? "" } : {}), ...(action === "plan" ? { planStatus: values.planStatus ?? "" } : {}) })
+          .then(() => {
+            setMsg("ok");
+            setDialog(null);
+            reload();
+          })
+          .catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed"));
+      },
+    });
   };
   const list = (users ?? []).filter((u) => u.name.includes(q) || (u.email ?? "").includes(q) || (u.phone ?? "").includes(q));
+  const th = (h: string): React.JSX.Element => <th key={h} style={{ padding: "6px 8px", textAlign: "left" }}>{h}</th>;
   return (
     <div>
-      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索 用户名/邮箱/手机号" style={{ padding: "6px 10px", marginBottom: 10, width: 280 }} />
+      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("搜索 用户名/邮箱/手机号")} style={{ padding: "6px 10px", marginBottom: 10, width: 280 }} />
       {msg !== "" && <p style={{ fontSize: 12, color: "#2563eb" }}>{msg}</p>}
       <table style={adminTableStyle()}>
         <thead>
-          <tr style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb" }}>
-            {["用户", "角色", "状态", "套餐", "操作"].map((h) => (
-              <th key={h} style={{ padding: "6px 8px" }}>{h}</th>
-            ))}
-          </tr>
+          <tr style={{ borderBottom: "1px solid #e5e7eb" }}>{[t("用户"), t("角色"), t("状态"), t("套餐"), t("操作")].map(th)}</tr>
         </thead>
         <tbody>
           {list.map((u) => (
@@ -1990,50 +2031,51 @@ function AdminUsers({ isWrite, isAdmin }: { isWrite: boolean; isAdmin: boolean }
               <td style={{ padding: "6px 8px", color: "#6b7280" }}>{u.role}</td>
               <td style={{ padding: "6px 8px" }}>{u.accountStatus}</td>
               <td style={{ padding: "6px 8px" }}>{u.planStatus ?? "—"}</td>
-              <td style={{ padding: "6px 8px", display: "flex", gap: 4, flexWrap: "wrap" }}>
-                {isWrite && u.accountStatus !== "banned" && <button disabled={busy} onClick={() => act(u.id, "ban")} style={adminBtnStyle("danger")}>封禁</button>}
-                {isWrite && u.accountStatus === "banned" && <button disabled={busy} onClick={() => act(u.id, "unban")} style={adminBtnStyle()}>解封</button>}
-                {isWrite && <button disabled={busy} onClick={() => act(u.id, "reset-password", { password: window.prompt("新密码（≥8 位）：") ?? "" })} style={adminBtnStyle("ghost")}>重置密码</button>}
-                {isWrite && <button disabled={busy} onClick={() => act(u.id, "reset-2fa")} style={adminBtnStyle("ghost")}>重置2FA</button>}
-                {isWrite && <button disabled={busy} onClick={() => act(u.id, "plan", { planStatus: window.prompt("planStatus（subscribed/grace/free/null 文本）：") ?? "" })} style={adminBtnStyle("ghost")}>改套餐</button>}
-                {isAdmin && <button disabled={busy} onClick={() => act(u.id, "delete")} style={adminBtnStyle("danger")}>删除</button>}
+              <td style={{ padding: "6px 8px" }}>
+                <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                  {isWrite && u.accountStatus !== "banned" && <button onClick={() => open(u, t("封禁"), "ban", [], true)} style={adminBtnStyle("danger")}>{t("封禁")}</button>}
+                  {isWrite && u.accountStatus === "banned" && <button onClick={() => open(u, t("解封"), "unban")} style={adminBtnStyle()}>{t("解封")}</button>}
+                  {isWrite && <button onClick={() => open(u, t("重置密码"), "reset-password", [{ key: "password", label: t("新密码（≥8 位）") }])} style={adminBtnStyle("ghost")}>{t("重置密码")}</button>}
+                  {isWrite && <button onClick={() => open(u, t("重置2FA"), "reset-2fa", [], true)} style={adminBtnStyle("ghost")}>{t("重置2FA")}</button>}
+                  {isWrite && <button onClick={() => open(u, t("改套餐"), "plan", [{ key: "planStatus", label: t("planStatus（subscribed/grace/free/null）") }])} style={adminBtnStyle("ghost")}>{t("改套餐")}</button>}
+                  {isAdmin && <button onClick={() => open(u, t("删除"), "delete", [], true)} style={adminBtnStyle("danger")}>{t("删除")}</button>}
+                </div>
               </td>
             </tr>
           ))}
         </tbody>
       </table>
+      {dialog !== null && <ActionDialog spec={dialog} onClose={() => setDialog(null)} />}
     </div>
   );
 }
 
 function AdminHosts({ isWrite }: { isWrite: boolean }): React.JSX.Element {
+  const { t } = useT();
   const [hosts, setHosts] = useState<AdminHostRow[] | null>(null);
   const [msg, setMsg] = useState("");
+  const [dialog, setDialog] = useState<DialogSpec | null>(null);
   const reload = (): void => {
     adminApi.hosts().then((r) => setHosts(r.hosts)).catch(() => setHosts([]));
   };
   useEffect(reload, []);
-  const revoke = (id: string): void => {
-    const reason = confirmReason("吊销主机");
-    if (reason === null) return;
-    adminApi
-      .revokeHost(id, reason)
-      .then(() => {
-        setMsg("已吊销");
-        reload();
-      })
-      .catch((e: unknown) => setMsg(e instanceof Error ? e.message : "失败"));
+  const revoke = (h: AdminHostRow): void => {
+    setDialog({
+      title: `${t("吊销")} · ${h.name}`,
+      fields: [],
+      danger: true,
+      submit: (reason) => {
+        adminApi.revokeHost(h.id, reason).then(() => { setMsg("ok"); setDialog(null); reload(); }).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed"));
+      },
+    });
   };
+  const th = (x: string): React.JSX.Element => <th key={x} style={{ padding: "6px 8px", textAlign: "left" }}>{x}</th>;
   return (
     <div>
       {msg !== "" && <p style={{ fontSize: 12, color: "#2563eb" }}>{msg}</p>}
       <table style={adminTableStyle()}>
         <thead>
-          <tr style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb" }}>
-            {["主机名", "归属", "在线", "E2EE", "操作"].map((h) => (
-              <th key={h} style={{ padding: "6px 8px" }}>{h}</th>
-            ))}
-          </tr>
+          <tr style={{ borderBottom: "1px solid #e5e7eb" }}>{[t("主机名"), t("归属"), t("在线"), t("E2EE"), t("操作")].map(th)}</tr>
         </thead>
         <tbody>
           {(hosts ?? []).map((h) => (
@@ -2042,40 +2084,65 @@ function AdminHosts({ isWrite }: { isWrite: boolean }): React.JSX.Element {
               <td style={{ padding: "6px 8px", color: "#6b7280" }}>{h.ownerId}</td>
               <td style={{ padding: "6px 8px" }}>{h.online ? "●" : "○"}</td>
               <td style={{ padding: "6px 8px" }}>{h.e2eePublicKey != null ? "🛡" : "—"}</td>
-              <td style={{ padding: "6px 8px" }}>{isWrite && <button onClick={() => revoke(h.id)} style={adminBtnStyle("danger")}>吊销</button>}</td>
+              <td style={{ padding: "6px 8px" }}>{isWrite && <button onClick={() => revoke(h)} style={adminBtnStyle("danger")}>{t("吊销")}</button>}</td>
             </tr>
           ))}
         </tbody>
       </table>
+      {dialog !== null && <ActionDialog spec={dialog} onClose={() => setDialog(null)} />}
     </div>
   );
 }
 
 function AdminBilling({ isWrite, isAdmin }: { isWrite: boolean; isAdmin: boolean }): React.JSX.Element {
+  const { t } = useT();
   const [orders, setOrders] = useState<AdminOrderRow[] | null>(null);
   const [payments, setPayments] = useState<AdminPaymentRow[] | null>(null);
   const [msg, setMsg] = useState("");
+  const [dialog, setDialog] = useState<DialogSpec | null>(null);
   const reload = (): void => {
     adminApi.orders().then((r) => setOrders(r.orders)).catch(() => setOrders([]));
     adminApi.payments().then((r) => setPayments(r.payments)).catch(() => setPayments([]));
   };
   useEffect(reload, []);
-  const refund = (id: string): void => {
-    const reason = confirmReason("退款");
-    if (reason === null) return;
-    adminApi.refundOrder(id, reason).then(() => { setMsg("已退款"); reload(); }).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "失败"));
+  const refund = (o: AdminOrderRow): void => {
+    setDialog({
+      title: `${t("退款")} ¥${o.amountCny}`,
+      fields: [],
+      danger: true,
+      submit: (reason) => {
+        adminApi.refundOrder(o.id, reason).then(() => { setMsg("ok"); setDialog(null); reload(); }).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed"));
+      },
+    });
   };
+  const credit = (): void => {
+    setDialog({
+      title: t("补单"),
+      fields: [
+        { key: "userId", label: t("用户 ID") },
+        { key: "planId", label: t("套餐 ID") },
+        { key: "amountCny", label: t("金额（元）") },
+        { key: "expiresAtMs", label: t("到期时间戳（ms）") },
+      ],
+      submit: (reason, values) => {
+        adminApi
+          .credit({ userId: Number(values.userId), planId: values.planId ?? "", amountCny: Number(values.amountCny), expiresAtMs: Number(values.expiresAtMs), reason })
+          .then(() => { setMsg("ok"); setDialog(null); reload(); })
+          .catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed"));
+      },
+    });
+  };
+  const th = (x: string): React.JSX.Element => <th key={x} style={{ padding: "6px 8px", textAlign: "left" }}>{x}</th>;
   return (
     <div>
       {msg !== "" && <p style={{ fontSize: 12, color: "#2563eb" }}>{msg}</p>}
-      <h3 style={{ fontSize: 14 }}>订单</h3>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <h3 style={{ fontSize: 14 }}>{t("订单")}</h3>
+        {isAdmin && <button onClick={credit} style={adminBtnStyle("primary")}>{t("补单")}</button>}
+      </div>
       <table style={adminTableStyle()}>
         <thead>
-          <tr style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb" }}>
-            {["订单号", "用户", "套餐", "金额", "状态", "操作"].map((h) => (
-              <th key={h} style={{ padding: "6px 8px" }}>{h}</th>
-            ))}
-          </tr>
+          <tr style={{ borderBottom: "1px solid #e5e7eb" }}>{[t("订单号"), t("用户"), t("套餐"), t("金额"), t("状态"), t("操作")].map(th)}</tr>
         </thead>
         <tbody>
           {(orders ?? []).map((o) => (
@@ -2085,19 +2152,15 @@ function AdminBilling({ isWrite, isAdmin }: { isWrite: boolean; isAdmin: boolean
               <td style={{ padding: "6px 8px" }}>{o.planId}</td>
               <td style={{ padding: "6px 8px" }}>¥{o.amountCny}</td>
               <td style={{ padding: "6px 8px" }}>{o.status}</td>
-              <td style={{ padding: "6px 8px" }}>{isWrite && o.status === "paid" && <button onClick={() => refund(o.id)} style={adminBtnStyle("danger")}>退款</button>}</td>
+              <td style={{ padding: "6px 8px" }}>{isWrite && o.status === "paid" && <button onClick={() => refund(o)} style={adminBtnStyle("danger")}>{t("退款")}</button>}</td>
             </tr>
           ))}
         </tbody>
       </table>
-      <h3 style={{ fontSize: 14, marginTop: 16 }}>支付流水</h3>
+      <h3 style={{ fontSize: 14, marginTop: 16 }}>{t("支付流水")}</h3>
       <table style={adminTableStyle()}>
         <thead>
-          <tr style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb" }}>
-            {["流水号", "订单", "渠道", "渠道单号", "金额", "支付时间"].map((h) => (
-              <th key={h} style={{ padding: "6px 8px" }}>{h}</th>
-            ))}
-          </tr>
+          <tr style={{ borderBottom: "1px solid #e5e7eb" }}>{[t("流水号"), t("订单号"), t("渠道"), t("渠道单号"), t("金额"), t("支付时间")].map(th)}</tr>
         </thead>
         <tbody>
           {(payments ?? []).map((p) => (
@@ -2112,34 +2175,32 @@ function AdminBilling({ isWrite, isAdmin }: { isWrite: boolean; isAdmin: boolean
           ))}
         </tbody>
       </table>
-      {isAdmin && <p style={{ fontSize: 12, color: "#6b7280", marginTop: 12 }}>补单（admin）：走 CLI / API，本期页面不提供。</p>}
+      {dialog !== null && <ActionDialog spec={dialog} onClose={() => setDialog(null)} />}
     </div>
   );
 }
 
 function AdminAudit(): React.JSX.Element {
+  const { t } = useT();
   const [events, setEvents] = useState<AdminAuditRow[] | null>(null);
   const [source, setSource] = useState("");
   useEffect(() => {
     adminApi.audit(source === "" ? undefined : { source }).then((r) => setEvents(r.events)).catch(() => setEvents([]));
   }, [source]);
+  const th = (x: string): React.JSX.Element => <th key={x} style={{ padding: "6px 8px", textAlign: "left" }}>{x}</th>;
   return (
     <div>
       <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
         <select value={source} onChange={(e) => setSource(e.target.value)} style={{ padding: "4px 8px" }}>
-          <option value="">全部来源</option>
-          <option value="user">用户</option>
-          <option value="admin">管理员</option>
+          <option value="">{t("全部来源")}</option>
+          <option value="user">{t("用户")}</option>
+          <option value="admin">{t("管理员")}</option>
         </select>
-        <a href="/api/admin/audit.csv" target="_blank" rel="noreferrer" style={{ ...adminBtnStyle("ghost"), textDecoration: "none" }}>导出 CSV</a>
+        <a href="/api/admin/audit.csv" target="_blank" rel="noreferrer" style={{ ...adminBtnStyle("ghost"), textDecoration: "none" }}>{t("导出 CSV")}</a>
       </div>
       <table style={adminTableStyle()}>
         <thead>
-          <tr style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb" }}>
-            {["时间", "用户", "事件", "来源", "操作者"].map((h) => (
-              <th key={h} style={{ padding: "6px 8px" }}>{h}</th>
-            ))}
-          </tr>
+          <tr style={{ borderBottom: "1px solid #e5e7eb" }}>{[t("时间"), t("用户"), t("事件"), t("来源"), t("操作者")].map(th)}</tr>
         </thead>
         <tbody>
           {(events ?? []).map((e) => (
@@ -2158,18 +2219,19 @@ function AdminAudit(): React.JSX.Element {
 }
 
 function AdminHealth(): React.JSX.Element {
-  const [h, setH] = useState<{ uptimeSeconds: number; tunnelCount: number; onlineHosts: number; dbSize: number; version: string } | null>(null);
+  const { t } = useT();
+  const [h, setH] = useState<{ uptimeSeconds: number; tunnelCount: number; onlineHosts: number; dbSize: number; version: string; lastBackupAt: number | null } | null>(null);
   useEffect(() => {
     adminApi.health().then(setH).catch(() => undefined);
   }, []);
-  if (h === null) return <p>加载中…</p>;
+  if (h === null) return <p>{t("加载中…")}</p>;
   const rows: Array<[string, string]> = [
-    ["uptime", `${Math.floor(h.uptimeSeconds / 3600)}h ${Math.floor((h.uptimeSeconds % 3600) / 60)}m`],
-    ["隧道连接", String(h.tunnelCount)],
-    ["在线主机", String(h.onlineHosts)],
-    ["DB 大小", h.dbSize < 0 ? "—" : `${(h.dbSize / 1024 / 1024).toFixed(1)} MB`],
-    ["版本", h.version],
-    ["最近备份", "未配置"],
+    [t("uptime"), `${Math.floor(h.uptimeSeconds / 3600)}h ${Math.floor((h.uptimeSeconds % 3600) / 60)}m`],
+    [t("隧道连接"), String(h.tunnelCount)],
+    [t("在线主机"), String(h.onlineHosts)],
+    [t("DB 大小"), h.dbSize < 0 ? "—" : `${(h.dbSize / 1024 / 1024).toFixed(1)} MB`],
+    [t("版本"), h.version],
+    [t("最近备份"), h.lastBackupAt === null ? t("未配置") : new Date(h.lastBackupAt).toLocaleString()],
   ];
   return (
     <table style={adminTableStyle()}>
@@ -2186,61 +2248,68 @@ function AdminHealth(): React.JSX.Element {
 }
 
 function AdminConfigPage(): React.JSX.Element {
+  const { t } = useT();
   const [c, setC] = useState<AdminConfig | null>(null);
   useEffect(() => {
     adminApi.config().then(setC).catch(() => undefined);
   }, []);
-  if (c === null) return <p>加载中…</p>;
-  return (
-    <pre style={{ fontSize: 13, background: "#f9fafb", padding: 16, borderRadius: 10, overflow: "auto" }}>{JSON.stringify(c, null, 2)}</pre>
-  );
+  if (c === null) return <p>{t("加载中…")}</p>;
+  return <pre style={{ fontSize: 13, background: "#f9fafb", padding: 16, borderRadius: 10, overflow: "auto" }}>{JSON.stringify(c, null, 2)}</pre>;
 }
 
 function AdminAdmins({ isAdmin }: { isAdmin: boolean }): React.JSX.Element {
+  const { t } = useT();
   const [admins, setAdmins] = useState<Array<{ id: number; name: string; email: string | null; role: string }> | null>(null);
   const [msg, setMsg] = useState("");
+  const [dialog, setDialog] = useState<DialogSpec | null>(null);
   const reload = (): void => {
     adminApi.admins().then((r) => setAdmins(r.admins)).catch(() => setAdmins([]));
   };
   useEffect(reload, []);
-  const setRole = (id: number): void => {
-    if (!isAdmin) return;
-    const role = window.prompt("角色（readonly/operator/admin）：");
-    if (role === null || role === "") return;
-    const reason = confirmReason("改角色");
-    if (reason === null) return;
-    adminApi.setRole(id, role, reason).then(() => { setMsg("已改"); reload(); }).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "失败"));
+  const setRole = (a: { id: number; name: string }): void => {
+    setDialog({
+      title: `${t("改角色")} · ${a.name}`,
+      fields: [{ key: "role", label: t("角色"), placeholder: "readonly / operator / admin" }],
+      submit: (reason, values) => {
+        adminApi.setRole(a.id, values.role ?? "", reason).then(() => { setMsg("ok"); setDialog(null); reload(); }).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed"));
+      },
+    });
   };
-  const remove = (id: number): void => {
-    const reason = confirmReason("移除管理员");
-    if (reason === null) return;
-    adminApi.removeAdmin(id, reason).then(() => { setMsg("已移除"); reload(); }).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "失败"));
+  const remove = (a: { id: number; name: string }): void => {
+    setDialog({
+      title: `${t("移除")} · ${a.name}`,
+      fields: [],
+      danger: true,
+      submit: (reason) => {
+        adminApi.removeAdmin(a.id, reason).then(() => { setMsg("ok"); setDialog(null); reload(); }).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed"));
+      },
+    });
   };
+  const th = (x: string): React.JSX.Element => <th key={x} style={{ padding: "6px 8px", textAlign: "left" }}>{x}</th>;
   return (
     <div>
       {msg !== "" && <p style={{ fontSize: 12, color: "#2563eb" }}>{msg}</p>}
       <table style={adminTableStyle()}>
         <thead>
-          <tr style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb" }}>
-            {["账号", "邮箱", "角色", "操作"].map((h) => (
-              <th key={h} style={{ padding: "6px 8px" }}>{h}</th>
-            ))}
-          </tr>
+          <tr style={{ borderBottom: "1px solid #e5e7eb" }}>{[t("账号"), t("邮箱"), t("角色"), t("操作")].map(th)}</tr>
         </thead>
         <tbody>
           {(admins ?? []).map((a) => (
             <tr key={a.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
               <td style={{ padding: "6px 8px" }}>{a.name}</td>
               <td style={{ padding: "6px 8px", color: "#6b7280" }}>{a.email ?? "—"}</td>
-              <td style={{ padding: "6px 8px" }}>{a.role}</td>
-              <td style={{ padding: "6px 8px", display: "flex", gap: 4 }}>
-                {isAdmin && <button onClick={() => setRole(a.id)} style={adminBtnStyle("ghost")}>改角色</button>}
-                {isAdmin && <button onClick={() => remove(a.id)} style={adminBtnStyle("danger")}>移除</button>}
+              <td style={{ padding: "6px 8px" }}>{adminRoleLabel(t, a.role)}</td>
+              <td style={{ padding: "6px 8px" }}>
+                <div style={{ display: "flex", gap: 4 }}>
+                  {isAdmin && <button onClick={() => setRole(a)} style={adminBtnStyle("ghost")}>{t("改角色")}</button>}
+                  {isAdmin && <button onClick={() => remove(a)} style={adminBtnStyle("danger")}>{t("移除")}</button>}
+                </div>
               </td>
             </tr>
           ))}
         </tbody>
       </table>
+      {dialog !== null && <ActionDialog spec={dialog} onClose={() => setDialog(null)} />}
     </div>
   );
 }

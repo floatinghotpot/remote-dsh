@@ -428,7 +428,7 @@ export const adminApi = {
     const qs = q.toString();
     return adminJson(`/api/admin/audit${qs !== "" ? `?${qs}` : ""}`);
   },
-  health(): Promise<{ uptimeSeconds: number; tunnelCount: number; onlineHosts: number; dbSize: number; version: string }> {
+  health(): Promise<{ uptimeSeconds: number; tunnelCount: number; onlineHosts: number; dbSize: number; version: string; lastBackupAt: number | null }> {
     return adminJson("/api/admin/health");
   },
   config(): Promise<AdminConfig> {
