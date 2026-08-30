@@ -1,6 +1,58 @@
 /**
  * api.ts — portal 的 hub API client（同源 fetch，httpOnly Cookie 会话）。
  */
+
+/** sessionStorage 里的 refresh token key（登录时写入，401 静默续期使用）。 */
+export const REFRESH_KEY = "rdsh_refresh";
+const REFRESH_TIMEOUT_MS = 8000;
+
+/** 续期结果分级：ok=成功 / invalid=令牌真过期 / transient=网络异常或超时。 */
+type RefreshResult = "ok" | "invalid" | "transient";
+
+/** 单飞静默续期：并发 401 只触发一次 refresh；成功换新 cookie + 轮换 refresh token。 */
+let refreshPromise: Promise<RefreshResult> | null = null;
+function silentRefresh(): Promise<RefreshResult> {
+  const rt = sessionStorage.getItem(REFRESH_KEY);
+  if (rt === null) return Promise.resolve("invalid");
+  if (refreshPromise === null) {
+    refreshPromise = (async (): Promise<RefreshResult> => {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), REFRESH_TIMEOUT_MS);
+      try {
+        const res = await fetch("/api/auth/refresh", {
+          method: "POST",
+          credentials: "include",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ refreshToken: rt }),
+          signal: ctrl.signal,
+        });
+        if (res.status === 401 || res.status === 403) return "invalid";
+        if (!res.ok) return "transient";
+        const body = (await res.json()) as { refreshToken?: string };
+        if (typeof body.refreshToken === "string" && body.refreshToken !== "") {
+          sessionStorage.setItem(REFRESH_KEY, body.refreshToken);
+        }
+        return "ok";
+      } catch {
+        return "transient"; // 网络失败 / 超时（abort）
+      } finally {
+        clearTimeout(timer);
+        refreshPromise = null;
+      }
+    })();
+  }
+  return refreshPromise;
+}
+
+/** 续期确认为令牌过期 → 清本地会话，整页跳登录并携带回跳路径（相对 /portal）。 */
+function redirectToLogin(): void {
+  sessionStorage.removeItem(REFRESH_KEY);
+  const full = window.location.pathname + window.location.search;
+  const rel = full.startsWith("/portal") ? full.slice("/portal".length) : full;
+  const next = rel.length > 1 ? `?next=${encodeURIComponent(rel)}` : "";
+  window.location.assign(`/portal/login${next}`);
+}
+
 export interface HostInfo {
   id: string;
   name: string;
@@ -67,12 +119,27 @@ export interface LoginResponse {
   name?: string;
 }
 
-async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
-    credentials: "include",
-    headers: { "content-type": "application/json" },
-    ...init,
-  });
+async function jsonFetch<T>(path: string, init?: RequestInit, opts?: { probe?: boolean }): Promise<T> {
+  const doFetch = (): Promise<Response> =>
+    fetch(path, {
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      ...init,
+    });
+  let res = await doFetch();
+  if (res.status === 401) {
+    const outcome = await silentRefresh();
+    if (outcome === "ok") {
+      res = await doFetch(); // 续期成功 → 重试一次
+    } else if (outcome === "invalid") {
+      // 令牌真过期：非探测才跳登录；探测由调用方按未登录处理
+      if (opts?.probe !== true) redirectToLogin();
+      throw new ApiError(401, "UNAUTHORIZED", "session expired");
+    } else {
+      // 网络异常/超时：不跳登录，抛可区分错误让页面提示重试
+      throw new ApiError(0, "REFRESH_FAILED", "session refresh failed (network)");
+    }
+  }
   if (res.status === 401) {
     throw new ApiError(401, "UNAUTHORIZED", "session expired");
   }
@@ -212,8 +279,8 @@ export const api = {
   deleteAccount(password: string): Promise<{ ok: boolean }> {
     return jsonFetch("/api/account", { method: "DELETE", body: JSON.stringify({ password }) });
   },
-  accountInfo(): Promise<AccountInfo> {
-    return jsonFetch("/api/account");
+  accountInfo(opts?: { probe?: boolean }): Promise<AccountInfo> {
+    return jsonFetch("/api/account", undefined, opts);
   },
   capabilities(): Promise<Capabilities> {
     return jsonFetch("/api/capabilities");

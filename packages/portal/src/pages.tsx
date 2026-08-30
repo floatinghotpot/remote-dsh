@@ -6,14 +6,12 @@
  */
 import { useEffect, useState } from "react";
 import QRCode from "qrcode";
-import { api, ApiError, subscribeEvents } from "./api.ts";
+import { api, ApiError, subscribeEvents, REFRESH_KEY } from "./api.ts";
 import type { HostInfo, JoinTokenInfo, CaptchaPayload, AccountInfo, Capabilities, WechatPayInfo } from "./api.ts";
 import { fingerprint } from "./e2ee.ts";
 import { useT, getLang } from "./i18n.ts";
 import type { T } from "./i18n.ts";
 import { TermsPage, PrivacyPage, ProductPage, LegalContent, LEGAL } from "./legal.tsx";
-
-const REFRESH_KEY = "rdsh_refresh";
 
 /** portal 部署在 /portal 前缀下（host 转发的 DSH 占用根路径）。 */
 const BASE = "/portal";
@@ -189,6 +187,7 @@ const ERROR_ZH: Record<string, string> = {
   UPSTREAM_ERROR: "主机端处理出错",
   SEND_FAILED: "发送失败，请稍后再试",
   INVALID_REFRESH: "登录状态已失效，请重新登录",
+  REFRESH_FAILED: "会话续期失败（网络异常），请稍后重试",
   NOT_ELIGIBLE: "当前操作不可用",
   INTERNAL: "服务器内部错误",
   BAD_SIGNATURE: "签名校验失败",
@@ -364,7 +363,7 @@ function LandingPage(): React.JSX.Element {
   const [authed, setAuthed] = useState(false);
   const [brand, setBrand] = useState("RDSH.CN");
   useEffect(() => {
-    void api.accountInfo().then(() => setAuthed(true)).catch(() => setAuthed(false));
+    void api.accountInfo({ probe: true }).then(() => setAuthed(true)).catch(() => setAuthed(false));
     void api.capabilities().then((c) => { if (c.site?.brand !== undefined && c.site.brand !== "") setBrand(c.site.brand); }).catch(() => undefined);
   }, []);
 
