@@ -895,7 +895,8 @@ function PhoneSettingsPage(): React.JSX.Element {
 function TwoFaSettingsPage(): React.JSX.Element {
   const { t } = useT();
   const [info, setInfo] = useState<AccountInfo | null>(null);
-  const [twofaSecret, setTwofaSecret] = useState("");
+  const [twofa, setTwofa] = useState<{ secret: string; otpauthUrl: string } | null>(null);
+  const [qrDataUrl, setQrDataUrl] = useState("");
   const [twofaCode, setTwofaCode] = useState("");
   const { toast, show } = useToast();
   const { err, run } = useError();
@@ -912,15 +913,24 @@ function TwoFaSettingsPage(): React.JSX.Element {
       {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
       <Card title={t("两步验证（TOTP）")} badge={<Badge ok={enabled} text={enabled ? t("已开启") : t("未开启")} />}>
         {!enabled ? (
-          twofaSecret === "" ? (
-            <button onClick={() => void run(async () => setTwofaSecret((await api.enable2fa()).secret))} style={btnStyle()}>{t("开启 2FA")}</button>
+          twofa === null ? (
+            <button
+              onClick={() => void run(async () => {
+                const r = await api.enable2fa();
+                setTwofa({ secret: r.secret, otpauthUrl: r.otpauthUrl });
+                setQrDataUrl(await QRCode.toDataURL(r.otpauthUrl, { width: 220, margin: 1 }));
+              })}
+              style={btnStyle()}
+            >{t("开启 2FA")}</button>
           ) : (
             <div>
-              <p style={{ fontSize: 13 }}>{t("密钥（复制到 Google Authenticator / 1Password 等）：")}</p>
-              <code style={{ wordBreak: "break-all" }}>{twofaSecret}</code>
+              <p style={{ fontSize: 13, marginTop: 0 }}>{t("用 Authenticator App 扫描二维码，或手动输入密钥：")}</p>
+              {qrDataUrl !== "" && <img src={qrDataUrl} alt="TOTP QR" style={{ width: 200, height: 200, borderRadius: 6, border: "1px solid #eee", marginBottom: 8 }} />}
+              <p style={{ fontSize: 13 }}>{t("密钥（复制到 Google Authenticator / Microsoft Authenticator / 1Password 等）：")}</p>
+              <code style={{ wordBreak: "break-all" }}>{twofa.secret}</code>
               {field(t("当前 TOTP 验证码"), twofaCode, setTwofaCode)}
               <button
-                onClick={() => void run(async () => { await api.activate2fa(twofaSecret, twofaCode.trim()); setTwofaSecret(""); setTwofaCode(""); show("ok", t("2FA 已开启 ✓")); await refresh(); })}
+                onClick={() => void run(async () => { await api.activate2fa(twofa.secret, twofaCode.trim()); setTwofa(null); setTwofaCode(""); show("ok", t("2FA 已开启 ✓")); await refresh(); })}
                 style={btnStyle()}
               >{t("确认开启")}</button>
             </div>
