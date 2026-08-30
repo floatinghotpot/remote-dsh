@@ -56,7 +56,6 @@ const EN: Record<string, string> = {
   "操作": "Actions",
   "封禁": "Ban",
   "解封": "Unban",
-  "重置密码": "Reset password",
   "重置2FA": "Reset 2FA",
   "改套餐": "Change plan",
   "删除": "Delete",

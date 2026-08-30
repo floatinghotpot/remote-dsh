@@ -1786,8 +1786,20 @@ function BillingPage(): React.JSX.Element {
 }
 
 // ============================================================
-// 管理后台 /admin（独立管理面：三档 RBAC + 强制 2FA + 审计）
+// 管理后台 /admin（独立管理面：三档 RBAC + 强制 2FA + 审计；移动端响应式）
 // ============================================================
+
+/** 响应式表格 CSS：<640px 时表格变卡片（label 在左、值在右、操作行右对齐）。 */
+const ADMIN_CSS = `
+  @media (max-width: 640px) {
+    .admintbl thead { display: none; }
+    .admintbl, .admintbl tbody, .admintbl tr, .admintbl td { display: block !important; width: 100% !important; box-sizing: border-box; }
+    .admintbl tr { margin-bottom: 10px; border: 1px solid #e5e7eb !important; border-radius: 10px; padding: 8px 12px !important; background: #fff; }
+    .admintbl td { border: none !important; padding: 5px 0 !important; display: flex !important; justify-content: space-between; align-items: center; gap: 12px; text-align: left !important; }
+    .admintbl td::before { content: attr(data-label); font-weight: 600; color: #6b7280; flex-shrink: 0; }
+    .admintbl td.act { justify-content: flex-end !important; }
+  }
+`;
 
 function adminRoleLabel(t: T, role: string): string {
   if (role === "admin") return t("管理员", { en: "Admin" });
@@ -1796,7 +1808,7 @@ function adminRoleLabel(t: T, role: string): string {
 }
 
 function adminBtnStyle(variant: "primary" | "danger" | "ghost" = "primary"): React.CSSProperties {
-  const base: React.CSSProperties = { padding: "4px 10px", borderRadius: 6, border: "1px solid #ccc", cursor: "pointer", fontSize: 12 };
+  const base: React.CSSProperties = { padding: "6px 12px", borderRadius: 6, border: "1px solid #ccc", cursor: "pointer", fontSize: 13 };
   if (variant === "primary") return { ...base, background: "#2563eb", color: "#fff", borderColor: "#2563eb" };
   if (variant === "danger") return { ...base, background: "#dc2626", color: "#fff", borderColor: "#dc2626" };
   return { ...base, background: "#fff" };
@@ -1804,6 +1816,15 @@ function adminBtnStyle(variant: "primary" | "danger" | "ghost" = "primary"): Rea
 
 function adminTableStyle(): React.CSSProperties {
   return { width: "100%", borderCollapse: "collapse", fontSize: 13 };
+}
+
+/** 单元格：数据格带 label（移动端卡片左标签）、操作格右对齐。 */
+function adminTd(label: string | null, children: React.ReactNode): React.JSX.Element {
+  if (label === null) return <td className="act" style={{ padding: "6px 8px" }}>{children}</td>;
+  return <td data-label={label} style={{ padding: "6px 8px" }}>{children}</td>;
+}
+function adminTh(label: string): React.JSX.Element {
+  return <th key={label} style={{ padding: "6px 8px", textAlign: "left" }}>{label}</th>;
 }
 
 interface ActionField {
@@ -1815,7 +1836,7 @@ interface DialogSpec {
   title: string;
   fields: ActionField[];
   danger?: boolean;
-  submit: (reason: string, values: Record<string, string>) => void;
+  submit: (reason: string, values: Record<string, string>) => void | Promise<void>;
 }
 
 /** 危险操作模态框：字段 + 必填原因 + 确认/取消（req R10）。 */
@@ -1824,9 +1845,14 @@ function ActionDialog({ spec, onClose }: { spec: DialogSpec; onClose: () => void
   const [values, setValues] = useState<Record<string, string>>({});
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
+  const confirm = (): void => {
+    if (reason.trim() === "") return;
+    setBusy(true);
+    void Promise.resolve(spec.submit(reason.trim(), values)).finally(() => setBusy(false));
+  };
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
-      <div style={{ background: "#fff", borderRadius: 12, padding: 20, width: 440, maxWidth: "92vw", fontFamily: "system-ui, sans-serif" }}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 16, boxSizing: "border-box" }}>
+      <div style={{ background: "#fff", borderRadius: 12, padding: 20, width: 440, maxWidth: "100%", fontFamily: "system-ui, sans-serif" }}>
         <h3 style={{ margin: "0 0 12px", fontSize: 16 }}>{spec.title}</h3>
         {spec.fields.map((f) => (
           <div key={f.key} style={{ marginBottom: 10 }}>
@@ -1835,27 +1861,17 @@ function ActionDialog({ spec, onClose }: { spec: DialogSpec; onClose: () => void
               placeholder={f.placeholder}
               value={values[f.key] ?? ""}
               onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
-              style={{ width: "100%", padding: "7px 10px", boxSizing: "border-box", fontSize: 14 }}
+              style={{ width: "100%", padding: "8px 10px", boxSizing: "border-box", fontSize: 14 }}
             />
           </div>
         ))}
         <div style={{ marginBottom: 12 }}>
           <label style={{ display: "block", fontSize: 12, color: "#6b7280", marginBottom: 4 }}>{t("原因（必填）")}</label>
-          <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} style={{ width: "100%", padding: "7px 10px", boxSizing: "border-box", fontSize: 14 }} />
+          <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} style={{ width: "100%", padding: "8px 10px", boxSizing: "border-box", fontSize: 14 }} />
         </div>
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
           <button onClick={onClose} disabled={busy} style={adminBtnStyle("ghost")}>{t("取消")}</button>
-          <button
-            disabled={busy || reason.trim() === ""}
-            onClick={() => {
-              if (reason.trim() === "") return;
-              setBusy(true);
-              spec.submit(reason.trim(), values);
-            }}
-            style={adminBtnStyle(spec.danger === true ? "danger" : "primary")}
-          >
-            {t("确认")}
-          </button>
+          <button disabled={busy || reason.trim() === ""} onClick={confirm} style={adminBtnStyle(spec.danger === true ? "danger" : "primary")}>{t("确认")}</button>
         </div>
       </div>
     </div>
@@ -1894,10 +1910,11 @@ function AdminApp({ path }: { path: string }): React.JSX.Element {
   const isWrite = me.role === "admin" || me.role === "operator";
 
   return (
-    <div style={{ maxWidth: 980, margin: "24px auto", padding: "0 16px", fontFamily: "system-ui, sans-serif" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+    <div style={{ maxWidth: 980, margin: "16px auto 32px", padding: "0 16px", fontFamily: "system-ui, sans-serif" }}>
+      <style>{ADMIN_CSS}</style>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
         <strong style={{ fontSize: 16 }}>{t("rdsh 管理后台")}</strong>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <span style={{ fontSize: 12, color: "#666" }}>{me.name} · {adminRoleLabel(t, me.role)}</span>
           <button onClick={() => void adminApi.logout().finally(() => setReload((r) => r + 1))} style={adminBtnStyle("ghost")}>{t("登出")}</button>
         </div>
@@ -1946,12 +1963,12 @@ function AdminLogin({ onSuccess }: { onSuccess: () => void }): React.JSX.Element
       .catch((e: unknown) => setErr(e instanceof ApiError ? e.message : "login failed"));
   };
   return (
-    <div style={{ maxWidth: 360, margin: "80px auto", padding: "24px", border: "1px solid #e5e7eb", borderRadius: 12, fontFamily: "system-ui, sans-serif" }}>
+    <div style={{ maxWidth: 360, margin: "40px auto", padding: "24px", border: "1px solid #e5e7eb", borderRadius: 12, fontFamily: "system-ui, sans-serif" }}>
       <h2 style={{ fontSize: 18, margin: "0 0 8px" }}>{t("进入管理后台")}</h2>
       <p style={{ fontSize: 12, color: "#6b7280", margin: "0 0 16px" }}>{t("管理后台需两步验证（TOTP）。未开启 2FA 的账号请先在「账户与安全」开启。")}</p>
-      <input value={totp} onChange={(e) => setTotp(e.target.value)} placeholder={t("动态验证码")} style={{ width: "100%", padding: "8px 10px", fontSize: 14, marginBottom: 12, boxSizing: "border-box" }} />
+      <input value={totp} onChange={(e) => setTotp(e.target.value)} placeholder={t("动态验证码")} style={{ width: "100%", padding: "10px", fontSize: 14, marginBottom: 12, boxSizing: "border-box" }} />
       {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
-      <button onClick={submit} style={{ ...adminBtnStyle(), width: "100%", padding: "8px", fontSize: 14 }}>{t("进入")}</button>
+      <button onClick={submit} style={{ ...adminBtnStyle(), width: "100%", padding: "10px", fontSize: 15 }}>{t("进入")}</button>
     </div>
   );
 }
@@ -1976,7 +1993,7 @@ function AdminDashboard(): React.JSX.Element {
     [t("版本"), d.version],
   ];
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 12 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
       {stats.map(([k, v]) => (
         <div key={k} style={{ border: "1px solid #e5e7eb", borderRadius: 10, padding: "14px 16px" }}>
           <div style={{ fontSize: 12, color: "#6b7280" }}>{k}</div>
@@ -2002,7 +2019,7 @@ function AdminUsers({ isWrite, isAdmin }: { isWrite: boolean; isAdmin: boolean }
       title,
       fields,
       danger,
-      submit: (reason, values) => {
+      submit: (reason, values) =>
         adminApi
           .userAction(u.id, action, { reason, ...(action === "reset-password" ? { password: values.password ?? "" } : {}), ...(action === "plan" ? { planStatus: values.planStatus ?? "" } : {}) })
           .then(() => {
@@ -2010,29 +2027,27 @@ function AdminUsers({ isWrite, isAdmin }: { isWrite: boolean; isAdmin: boolean }
             setDialog(null);
             reload();
           })
-          .catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed"));
-      },
+          .catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed")),
     });
   };
   const list = (users ?? []).filter((u) => u.name.includes(q) || (u.email ?? "").includes(q) || (u.phone ?? "").includes(q));
-  const th = (h: string): React.JSX.Element => <th key={h} style={{ padding: "6px 8px", textAlign: "left" }}>{h}</th>;
   return (
     <div>
-      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("搜索 用户名/邮箱/手机号")} style={{ padding: "6px 10px", marginBottom: 10, width: 280 }} />
+      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("搜索 用户名/邮箱/手机号")} style={{ padding: "8px 10px", marginBottom: 10, width: "100%", maxWidth: 300, boxSizing: "border-box" }} />
       {msg !== "" && <p style={{ fontSize: 12, color: "#2563eb" }}>{msg}</p>}
-      <table style={adminTableStyle()}>
+      <table className="admintbl" style={adminTableStyle()}>
         <thead>
-          <tr style={{ borderBottom: "1px solid #e5e7eb" }}>{[t("用户"), t("角色"), t("状态"), t("套餐"), t("操作")].map(th)}</tr>
+          <tr style={{ borderBottom: "1px solid #e5e7eb" }}>{[t("用户"), t("角色"), t("状态"), t("套餐"), t("操作")].map(adminTh)}</tr>
         </thead>
         <tbody>
           {list.map((u) => (
             <tr key={u.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
-              <td style={{ padding: "6px 8px" }}>{u.name}</td>
-              <td style={{ padding: "6px 8px", color: "#6b7280" }}>{u.role}</td>
-              <td style={{ padding: "6px 8px" }}>{u.accountStatus}</td>
-              <td style={{ padding: "6px 8px" }}>{u.planStatus ?? "—"}</td>
-              <td style={{ padding: "6px 8px" }}>
-                <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+              {adminTd(t("用户"), u.name)}
+              {adminTd(t("角色"), <span style={{ color: "#6b7280" }}>{u.role}</span>)}
+              {adminTd(t("状态"), u.accountStatus)}
+              {adminTd(t("套餐"), u.planStatus ?? "—")}
+              {adminTd(null, (
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                   {isWrite && u.accountStatus !== "banned" && <button onClick={() => open(u, t("封禁"), "ban", [], true)} style={adminBtnStyle("danger")}>{t("封禁")}</button>}
                   {isWrite && u.accountStatus === "banned" && <button onClick={() => open(u, t("解封"), "unban")} style={adminBtnStyle()}>{t("解封")}</button>}
                   {isWrite && <button onClick={() => open(u, t("重置密码"), "reset-password", [{ key: "password", label: t("新密码（≥8 位）") }])} style={adminBtnStyle("ghost")}>{t("重置密码")}</button>}
@@ -2040,7 +2055,7 @@ function AdminUsers({ isWrite, isAdmin }: { isWrite: boolean; isAdmin: boolean }
                   {isWrite && <button onClick={() => open(u, t("改套餐"), "plan", [{ key: "planStatus", label: t("planStatus（subscribed/grace/free/null）") }])} style={adminBtnStyle("ghost")}>{t("改套餐")}</button>}
                   {isAdmin && <button onClick={() => open(u, t("删除"), "delete", [], true)} style={adminBtnStyle("danger")}>{t("删除")}</button>}
                 </div>
-              </td>
+              ))}
             </tr>
           ))}
         </tbody>
@@ -2064,27 +2079,25 @@ function AdminHosts({ isWrite }: { isWrite: boolean }): React.JSX.Element {
       title: `${t("吊销")} · ${h.name}`,
       fields: [],
       danger: true,
-      submit: (reason) => {
-        adminApi.revokeHost(h.id, reason).then(() => { setMsg("ok"); setDialog(null); reload(); }).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed"));
-      },
+      submit: (reason) =>
+        adminApi.revokeHost(h.id, reason).then(() => { setMsg("ok"); setDialog(null); reload(); }).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed")),
     });
   };
-  const th = (x: string): React.JSX.Element => <th key={x} style={{ padding: "6px 8px", textAlign: "left" }}>{x}</th>;
   return (
     <div>
       {msg !== "" && <p style={{ fontSize: 12, color: "#2563eb" }}>{msg}</p>}
-      <table style={adminTableStyle()}>
+      <table className="admintbl" style={adminTableStyle()}>
         <thead>
-          <tr style={{ borderBottom: "1px solid #e5e7eb" }}>{[t("主机名"), t("归属"), t("在线"), t("E2EE"), t("操作")].map(th)}</tr>
+          <tr style={{ borderBottom: "1px solid #e5e7eb" }}>{[t("主机名"), t("归属"), t("在线"), t("E2EE"), t("操作")].map(adminTh)}</tr>
         </thead>
         <tbody>
           {(hosts ?? []).map((h) => (
             <tr key={h.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
-              <td style={{ padding: "6px 8px" }}>{h.name}</td>
-              <td style={{ padding: "6px 8px", color: "#6b7280" }}>{h.ownerId}</td>
-              <td style={{ padding: "6px 8px" }}>{h.online ? "●" : "○"}</td>
-              <td style={{ padding: "6px 8px" }}>{h.e2eePublicKey != null ? "🛡" : "—"}</td>
-              <td style={{ padding: "6px 8px" }}>{isWrite && <button onClick={() => revoke(h)} style={adminBtnStyle("danger")}>{t("吊销")}</button>}</td>
+              {adminTd(t("主机名"), h.name)}
+              {adminTd(t("归属"), <span style={{ color: "#6b7280" }}>{h.ownerId}</span>)}
+              {adminTd(t("在线"), h.online ? "●" : "○")}
+              {adminTd(t("E2EE"), h.e2eePublicKey != null ? "🛡" : "—")}
+              {adminTd(null, isWrite && <button onClick={() => revoke(h)} style={adminBtnStyle("danger")}>{t("吊销")}</button>)}
             </tr>
           ))}
         </tbody>
@@ -2110,9 +2123,8 @@ function AdminBilling({ isWrite, isAdmin }: { isWrite: boolean; isAdmin: boolean
       title: `${t("退款")} ¥${o.amountCny}`,
       fields: [],
       danger: true,
-      submit: (reason) => {
-        adminApi.refundOrder(o.id, reason).then(() => { setMsg("ok"); setDialog(null); reload(); }).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed"));
-      },
+      submit: (reason) =>
+        adminApi.refundOrder(o.id, reason).then(() => { setMsg("ok"); setDialog(null); reload(); }).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed")),
     });
   };
   const credit = (): void => {
@@ -2124,53 +2136,51 @@ function AdminBilling({ isWrite, isAdmin }: { isWrite: boolean; isAdmin: boolean
         { key: "amountCny", label: t("金额（元）") },
         { key: "expiresAtMs", label: t("到期时间戳（ms）") },
       ],
-      submit: (reason, values) => {
+      submit: (reason, values) =>
         adminApi
           .credit({ userId: Number(values.userId), planId: values.planId ?? "", amountCny: Number(values.amountCny), expiresAtMs: Number(values.expiresAtMs), reason })
           .then(() => { setMsg("ok"); setDialog(null); reload(); })
-          .catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed"));
-      },
+          .catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed")),
     });
   };
-  const th = (x: string): React.JSX.Element => <th key={x} style={{ padding: "6px 8px", textAlign: "left" }}>{x}</th>;
   return (
     <div>
       {msg !== "" && <p style={{ fontSize: 12, color: "#2563eb" }}>{msg}</p>}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <h3 style={{ fontSize: 14 }}>{t("订单")}</h3>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "space-between", alignItems: "center" }}>
+        <h3 style={{ fontSize: 14, margin: 0 }}>{t("订单")}</h3>
         {isAdmin && <button onClick={credit} style={adminBtnStyle("primary")}>{t("补单")}</button>}
       </div>
-      <table style={adminTableStyle()}>
+      <table className="admintbl" style={{ ...adminTableStyle(), marginTop: 8 }}>
         <thead>
-          <tr style={{ borderBottom: "1px solid #e5e7eb" }}>{[t("订单号"), t("用户"), t("套餐"), t("金额"), t("状态"), t("操作")].map(th)}</tr>
+          <tr style={{ borderBottom: "1px solid #e5e7eb" }}>{[t("订单号"), t("用户"), t("套餐"), t("金额"), t("状态"), t("操作")].map(adminTh)}</tr>
         </thead>
         <tbody>
           {(orders ?? []).map((o) => (
             <tr key={o.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
-              <td style={{ padding: "6px 8px" }}>{o.id}</td>
-              <td style={{ padding: "6px 8px" }}>{o.userId}</td>
-              <td style={{ padding: "6px 8px" }}>{o.planId}</td>
-              <td style={{ padding: "6px 8px" }}>¥{o.amountCny}</td>
-              <td style={{ padding: "6px 8px" }}>{o.status}</td>
-              <td style={{ padding: "6px 8px" }}>{isWrite && o.status === "paid" && <button onClick={() => refund(o)} style={adminBtnStyle("danger")}>{t("退款")}</button>}</td>
+              {adminTd(t("订单号"), o.id)}
+              {adminTd(t("用户"), o.userId)}
+              {adminTd(t("套餐"), o.planId)}
+              {adminTd(t("金额"), `¥${o.amountCny}`)}
+              {adminTd(t("状态"), o.status)}
+              {adminTd(null, isWrite && o.status === "paid" && <button onClick={() => refund(o)} style={adminBtnStyle("danger")}>{t("退款")}</button>)}
             </tr>
           ))}
         </tbody>
       </table>
       <h3 style={{ fontSize: 14, marginTop: 16 }}>{t("支付流水")}</h3>
-      <table style={adminTableStyle()}>
+      <table className="admintbl" style={adminTableStyle()}>
         <thead>
-          <tr style={{ borderBottom: "1px solid #e5e7eb" }}>{[t("流水号"), t("订单号"), t("渠道"), t("渠道单号"), t("金额"), t("支付时间")].map(th)}</tr>
+          <tr style={{ borderBottom: "1px solid #e5e7eb" }}>{[t("流水号"), t("订单号"), t("渠道"), t("渠道单号"), t("金额"), t("支付时间")].map(adminTh)}</tr>
         </thead>
         <tbody>
           {(payments ?? []).map((p) => (
             <tr key={p.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
-              <td style={{ padding: "6px 8px" }}>{p.id}</td>
-              <td style={{ padding: "6px 8px" }}>{p.orderId}</td>
-              <td style={{ padding: "6px 8px" }}>{p.channel}</td>
-              <td style={{ padding: "6px 8px" }}>{p.channelOrderId}</td>
-              <td style={{ padding: "6px 8px" }}>¥{p.amountCny}</td>
-              <td style={{ padding: "6px 8px" }}>{new Date(p.paidAt).toLocaleString()}</td>
+              {adminTd(t("流水号"), p.id)}
+              {adminTd(t("订单号"), p.orderId)}
+              {adminTd(t("渠道"), p.channel)}
+              {adminTd(t("渠道单号"), p.channelOrderId)}
+              {adminTd(t("金额"), `¥${p.amountCny}`)}
+              {adminTd(t("支付时间"), new Date(p.paidAt).toLocaleString())}
             </tr>
           ))}
         </tbody>
@@ -2187,29 +2197,28 @@ function AdminAudit(): React.JSX.Element {
   useEffect(() => {
     adminApi.audit(source === "" ? undefined : { source }).then((r) => setEvents(r.events)).catch(() => setEvents([]));
   }, [source]);
-  const th = (x: string): React.JSX.Element => <th key={x} style={{ padding: "6px 8px", textAlign: "left" }}>{x}</th>;
   return (
     <div>
-      <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
-        <select value={source} onChange={(e) => setSource(e.target.value)} style={{ padding: "4px 8px" }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+        <select value={source} onChange={(e) => setSource(e.target.value)} style={{ padding: "8px" }}>
           <option value="">{t("全部来源")}</option>
           <option value="user">{t("用户")}</option>
           <option value="admin">{t("管理员")}</option>
         </select>
         <a href="/api/admin/audit.csv" target="_blank" rel="noreferrer" style={{ ...adminBtnStyle("ghost"), textDecoration: "none" }}>{t("导出 CSV")}</a>
       </div>
-      <table style={adminTableStyle()}>
+      <table className="admintbl" style={adminTableStyle()}>
         <thead>
-          <tr style={{ borderBottom: "1px solid #e5e7eb" }}>{[t("时间"), t("用户"), t("事件"), t("来源"), t("操作者")].map(th)}</tr>
+          <tr style={{ borderBottom: "1px solid #e5e7eb" }}>{[t("时间"), t("用户"), t("事件"), t("来源"), t("操作者")].map(adminTh)}</tr>
         </thead>
         <tbody>
           {(events ?? []).map((e) => (
             <tr key={e.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
-              <td style={{ padding: "6px 8px" }}>{new Date(e.createdAt).toLocaleString()}</td>
-              <td style={{ padding: "6px 8px" }}>{e.userId ?? "—"}</td>
-              <td style={{ padding: "6px 8px" }}>{e.event}</td>
-              <td style={{ padding: "6px 8px" }}>{e.source}</td>
-              <td style={{ padding: "6px 8px", color: "#6b7280" }}>{e.actorUserId ?? "—"}</td>
+              {adminTd(t("时间"), new Date(e.createdAt).toLocaleString())}
+              {adminTd(t("用户"), e.userId ?? "—")}
+              {adminTd(t("事件"), e.event)}
+              {adminTd(t("来源"), e.source)}
+              {adminTd(t("操作者"), <span style={{ color: "#6b7280" }}>{e.actorUserId ?? "—"}</span>)}
             </tr>
           ))}
         </tbody>
@@ -2234,16 +2243,14 @@ function AdminHealth(): React.JSX.Element {
     [t("最近备份"), h.lastBackupAt === null ? t("未配置") : new Date(h.lastBackupAt).toLocaleString()],
   ];
   return (
-    <table style={adminTableStyle()}>
-      <tbody>
-        {rows.map(([k, v]) => (
-          <tr key={k} style={{ borderBottom: "1px solid #f3f4f6" }}>
-            <td style={{ padding: "8px", color: "#6b7280", width: 140 }}>{k}</td>
-            <td style={{ padding: "8px" }}>{v}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <div>
+      {rows.map(([k, v]) => (
+        <div key={k} style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "10px 0", borderBottom: "1px solid #f3f4f6", flexWrap: "wrap" }}>
+          <span style={{ color: "#6b7280" }}>{k}</span>
+          <span style={{ fontWeight: 500 }}>{v}</span>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -2254,7 +2261,7 @@ function AdminConfigPage(): React.JSX.Element {
     adminApi.config().then(setC).catch(() => undefined);
   }, []);
   if (c === null) return <p>{t("加载中…")}</p>;
-  return <pre style={{ fontSize: 13, background: "#f9fafb", padding: 16, borderRadius: 10, overflow: "auto" }}>{JSON.stringify(c, null, 2)}</pre>;
+  return <pre style={{ fontSize: 12, background: "#f9fafb", padding: 16, borderRadius: 10, overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{JSON.stringify(c, null, 2)}</pre>;
 }
 
 function AdminAdmins({ isAdmin }: { isAdmin: boolean }): React.JSX.Element {
@@ -2270,9 +2277,8 @@ function AdminAdmins({ isAdmin }: { isAdmin: boolean }): React.JSX.Element {
     setDialog({
       title: `${t("改角色")} · ${a.name}`,
       fields: [{ key: "role", label: t("角色"), placeholder: "readonly / operator / admin" }],
-      submit: (reason, values) => {
-        adminApi.setRole(a.id, values.role ?? "", reason).then(() => { setMsg("ok"); setDialog(null); reload(); }).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed"));
-      },
+      submit: (reason, values) =>
+        adminApi.setRole(a.id, values.role ?? "", reason).then(() => { setMsg("ok"); setDialog(null); reload(); }).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed")),
     });
   };
   const remove = (a: { id: number; name: string }): void => {
@@ -2280,31 +2286,29 @@ function AdminAdmins({ isAdmin }: { isAdmin: boolean }): React.JSX.Element {
       title: `${t("移除")} · ${a.name}`,
       fields: [],
       danger: true,
-      submit: (reason) => {
-        adminApi.removeAdmin(a.id, reason).then(() => { setMsg("ok"); setDialog(null); reload(); }).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed"));
-      },
+      submit: (reason) =>
+        adminApi.removeAdmin(a.id, reason).then(() => { setMsg("ok"); setDialog(null); reload(); }).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed")),
     });
   };
-  const th = (x: string): React.JSX.Element => <th key={x} style={{ padding: "6px 8px", textAlign: "left" }}>{x}</th>;
   return (
     <div>
       {msg !== "" && <p style={{ fontSize: 12, color: "#2563eb" }}>{msg}</p>}
-      <table style={adminTableStyle()}>
+      <table className="admintbl" style={adminTableStyle()}>
         <thead>
-          <tr style={{ borderBottom: "1px solid #e5e7eb" }}>{[t("账号"), t("邮箱"), t("角色"), t("操作")].map(th)}</tr>
+          <tr style={{ borderBottom: "1px solid #e5e7eb" }}>{[t("账号"), t("邮箱"), t("角色"), t("操作")].map(adminTh)}</tr>
         </thead>
         <tbody>
           {(admins ?? []).map((a) => (
             <tr key={a.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
-              <td style={{ padding: "6px 8px" }}>{a.name}</td>
-              <td style={{ padding: "6px 8px", color: "#6b7280" }}>{a.email ?? "—"}</td>
-              <td style={{ padding: "6px 8px" }}>{adminRoleLabel(t, a.role)}</td>
-              <td style={{ padding: "6px 8px" }}>
-                <div style={{ display: "flex", gap: 4 }}>
-                  {isAdmin && <button onClick={() => setRole(a)} style={adminBtnStyle("ghost")}>{t("改角色")}</button>}
-                  {isAdmin && <button onClick={() => remove(a)} style={adminBtnStyle("danger")}>{t("移除")}</button>}
+              {adminTd(t("账号"), a.name)}
+              {adminTd(t("邮箱"), <span style={{ color: "#6b7280" }}>{a.email ?? "—"}</span>)}
+              {adminTd(t("角色"), adminRoleLabel(t, a.role))}
+              {adminTd(null, isAdmin && (
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  <button onClick={() => setRole(a)} style={adminBtnStyle("ghost")}>{t("改角色")}</button>
+                  <button onClick={() => remove(a)} style={adminBtnStyle("danger")}>{t("移除")}</button>
                 </div>
-              </td>
+              ))}
             </tr>
           ))}
         </tbody>
