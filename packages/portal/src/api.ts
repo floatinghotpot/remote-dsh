@@ -73,6 +73,7 @@ export interface JoinTokenInfo {
 
 export interface AccountInfo {
   name: string;
+  role: string;
   email: string | null;
   emailVerified: boolean;
   phone: string | null;
@@ -304,10 +305,12 @@ export interface AdminUserRow {
   planStatus: string | null;
   planExpiresAt: number | null;
   createdAt: string;
+  hostCount: number;
 }
 export interface AdminHostRow {
   id: string;
   ownerId: number;
+  ownerName: string;
   name: string;
   e2eePublicKey: string | null;
   online: boolean;
@@ -396,14 +399,24 @@ export const adminApi = {
   dashboard(): Promise<AdminDashboard> {
     return adminJson("/api/admin/dashboard");
   },
-  users(): Promise<{ users: AdminUserRow[] }> {
-    return adminJson("/api/admin/users");
+  users(params?: { q?: string; limit?: number; offset?: number }): Promise<{ users: AdminUserRow[]; total: number }> {
+    const sp = new URLSearchParams();
+    if (params?.q) sp.set("q", params.q);
+    if (params?.limit !== undefined) sp.set("limit", String(params.limit));
+    if (params?.offset !== undefined) sp.set("offset", String(params.offset));
+    const qs = sp.toString();
+    return adminJson(`/api/admin/users${qs !== "" ? `?${qs}` : ""}`);
   },
   userAction(id: number, action: string, body: Record<string, unknown>): Promise<{ ok: boolean }> {
     return adminJson(`/api/admin/users/${id}/${action}`, { method: "POST", body: JSON.stringify(body) });
   },
-  hosts(): Promise<{ hosts: AdminHostRow[] }> {
-    return adminJson("/api/admin/hosts");
+  hosts(params?: { q?: string; limit?: number; offset?: number }): Promise<{ hosts: AdminHostRow[]; total: number }> {
+    const sp = new URLSearchParams();
+    if (params?.q) sp.set("q", params.q);
+    if (params?.limit !== undefined) sp.set("limit", String(params.limit));
+    if (params?.offset !== undefined) sp.set("offset", String(params.offset));
+    const qs = sp.toString();
+    return adminJson(`/api/admin/hosts${qs !== "" ? `?${qs}` : ""}`);
   },
   revokeHost(id: string, reason: string): Promise<{ ok: boolean }> {
     return adminJson(`/api/admin/hosts/${encodeURIComponent(id)}/revoke`, { method: "POST", body: JSON.stringify({ reason }) });

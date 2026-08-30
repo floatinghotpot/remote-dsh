@@ -162,6 +162,7 @@ export function deleteUser(db: HubDb, ctx: AdminCtx, userId: number, reason: str
 
 export function setUserRole(db: HubDb, ctx: AdminCtx, userId: number, role: string, reason: string): void {
   assertRole(ctx, "admin");
+  if (ctx.actorId === userId) throw new AdminError("FORBIDDEN", "cannot change your own role");
   if (!ADMIN_ROLES.includes(role as AdminRole) && role !== "user") throw new AdminError("BAD_REQUEST", `invalid role "${role}"`);
   const user = db.getUserById(userId);
   if (user === null) throw new AdminError("NOT_FOUND", "user not found");

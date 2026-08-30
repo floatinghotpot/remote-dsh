@@ -15,16 +15,9 @@ import { TermsPage, PrivacyPage, ProductPage, LegalContent, LEGAL } from "./lega
 
 /** portal 部署在 /portal 前缀下（host 转发的 DSH 占用根路径）。 */
 const BASE = "/portal";
-/** 管理后台部署在 /admin 前缀下（独立管理面）。 */
-const ADMIN_BASE = "/admin";
 
 function navigate(path: string): void {
   window.history.pushState({}, "", `${BASE}${path}`);
-  window.dispatchEvent(new PopStateEvent("popstate"));
-}
-
-function navigateAdmin(path: string): void {
-  window.history.pushState({}, "", `${ADMIN_BASE}${path}`);
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
@@ -68,26 +61,39 @@ export function useRoute(): string {
 
 export function App(): React.JSX.Element {
   const full = useRoute();
-  if (full.startsWith(ADMIN_BASE)) return <AdminApp path={full.slice(ADMIN_BASE.length) || "/"} />;
   const path = full.startsWith(BASE) ? full.slice(BASE.length) || "/" : "/";
+  if (path.startsWith("/admin")) return <AppShell><AdminApp path={path.slice("/admin".length) || "/"} /></AppShell>;
   if (path === "/login") return <Login />;
   if (path === "/register") return <RegisterPage />;
   if (path === "/terms") return <TermsPage />;
   if (path === "/privacy") return <PrivacyPage />;
   if (path === "/product") return <ProductPage />;
   if (path === "/verify") return <VerifyPage />;
-  if (path === "/billing") return <BillingPage />;
-  if (path === "/settings/password") return <PasswordPage />;
-  if (path === "/settings/account") return <AccountPage />;
-  if (path === "/settings/email") return <EmailSettingsPage />;
-  if (path === "/settings/phone") return <PhoneSettingsPage />;
-  if (path === "/settings/2fa") return <TwoFaSettingsPage />;
-  if (path === "/settings/danger") return <DangerZonePage />;
   if (path === "/reset-password") return <ResetPasswordPage />;
-  if (path === "/add-host") return <AddHostPage />;
-  if (path === "/hosts") return <HostsPage />;
   if (path === "/") return <LandingPage />;
-  return <HostsPage />; // 未知路径兜底 host 列表
+  const page =
+    path === "/billing" ? (
+      <BillingPage />
+    ) : path === "/settings/password" ? (
+      <PasswordPage />
+    ) : path === "/settings/account" ? (
+      <AccountPage />
+    ) : path === "/settings/email" ? (
+      <EmailSettingsPage />
+    ) : path === "/settings/phone" ? (
+      <PhoneSettingsPage />
+    ) : path === "/settings/2fa" ? (
+      <TwoFaSettingsPage />
+    ) : path === "/settings/danger" ? (
+      <DangerZonePage />
+    ) : path === "/add-host" ? (
+      <AddHostPage />
+    ) : path === "/hosts" ? (
+      <HostsPage />
+    ) : (
+      <HostsPage /> // 未知路径兜底 host 列表
+    );
+  return <AppShell>{page}</AppShell>;
 }
 
 /** 语言切换（中 / EN），顶部右侧常驻。 */
@@ -110,19 +116,50 @@ function LangToggle(): React.JSX.Element {
   );
 }
 
-function Shell({ title, children, onLogout }: { title: string; children: React.ReactNode; onLogout?: () => void }): React.JSX.Element {
-  const { t } = useT();
+/** 页面内容容器：可选的标题头 + 内容（宽度由 AppShell 统一，避免双重 padding）。 */
+function Shell({ title, children }: { title?: string; children: React.ReactNode }): React.JSX.Element {
   return (
-    <div style={{ maxWidth: 720, margin: "40px auto", padding: "0 16px", fontFamily: "system-ui, sans-serif" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-        <h1 style={{ fontSize: 18 }}>{title}</h1>
-        {onLogout !== undefined && (
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <LangToggle />
-            <button onClick={() => navigate("/settings/account")} style={btnStyle("ghost")}>{t("账户")}</button>
-            <button onClick={onLogout} style={btnStyle()}>{t("登出")}</button>
-          </div>
-        )}
+    <div>
+      {title !== undefined && <h1 style={{ fontSize: 18, margin: "0 0 20px" }}>{title}</h1>}
+      {children}
+    </div>
+  );
+}
+
+/** 登录后应用壳：顶栏（用户名·角色 | 语言·齿轮·登出）+ 标签（我的主机/添加主机/管理后台）。 */
+function AppShell({ children }: { children: React.ReactNode }): React.JSX.Element {
+  const { t } = useT();
+  const full = useRoute();
+  const rel = full.startsWith(BASE) ? full.slice(BASE.length) : "/";
+  const [me, setMe] = useState<{ name: string; role: string } | null>(null);
+  useEffect(() => {
+    // probe：尽力而为取用户名/角色，不触发 401 跳登录（页面自身的鉴权调用负责处理）
+    void api.accountInfo({ probe: true }).then((a) => setMe({ name: a.name, role: a.role })).catch(() => undefined);
+  }, []);
+  const tabs = [
+    { p: "/settings/account", label: t("账户与安全") },
+    { p: "/hosts", label: t("我的主机") },
+    ...(me !== null && me.role !== "user" ? [{ p: "/admin", label: t("管理后台") }] : []),
+  ];
+  const active = tabs.find((x) => rel === x.p || rel.startsWith(x.p + "/"))?.p;
+  const logoutAll = (): void => {
+    // 管理角色才有管理会话 → 仅此时调 admin 登出；普通用户直接门户登出
+    if (me !== null && me.role !== "user") void adminApi.logout().catch(() => undefined);
+    logout();
+  };
+  return (
+    <div style={{ maxWidth: 720, margin: "16px auto 32px", padding: "0 16px", fontFamily: "system-ui, sans-serif" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+        <span style={{ fontSize: 14, fontWeight: 600 }}>{me === null ? "" : `${me.name} · ${adminRoleLabel(t, me.role)}`}</span>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <LangToggle />
+          <button onClick={logoutAll} style={btnStyle()}>{t("登出")}</button>
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
+        {tabs.map((x) => (
+          <button key={x.p} onClick={() => navigate(x.p)} style={{ ...btnStyle("ghost"), fontWeight: active === x.p ? 700 : 400, background: active === x.p ? "#eef2ff" : "#fff" }}>{x.label}</button>
+        ))}
       </div>
       {children}
     </div>
@@ -427,6 +464,8 @@ function LandingPage(): React.JSX.Element {
 function Login(): React.JSX.Element {
   const { t } = useT();
   const isFirst = new URLSearchParams(window.location.search).get("first") === "1";
+  const next = new URLSearchParams(window.location.search).get("next");
+  const home = next !== null && next.startsWith("/") && !next.startsWith("//") ? next : "/hosts";
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [totpPending, setTotpPending] = useState<string | null>(null);
@@ -444,18 +483,18 @@ function Login(): React.JSX.Element {
       if (isFirst) {
         const r = await api.firstPassword(name, password);
         sessionStorage.setItem(REFRESH_KEY, r.refreshToken);
-        navigate("/hosts");
+        navigate(home);
       } else if (totpPending !== null) {
         const r = await api.totpLogin(totpPending, totpCode, trustDevice);
         sessionStorage.setItem(REFRESH_KEY, r.refreshToken);
-        navigate(r.mustChangePassword ? "/login?first=1" : "/hosts");
+        navigate(r.mustChangePassword ? "/login?first=1" : home);
       } else {
         const r = await api.login(name, password);
         if (r.requiresTotp === true && r.pendingToken !== undefined) {
           setTotpPending(r.pendingToken);
         } else {
           sessionStorage.setItem(REFRESH_KEY, r.refreshToken ?? "");
-          navigate(r.mustChangePassword ? "/login?first=1" : "/hosts");
+          navigate(r.mustChangePassword ? "/login?first=1" : home);
         }
       }
     });
@@ -792,10 +831,7 @@ function AccountPage(): React.JSX.Element {
     void api.capabilities().then((c) => setCustomerServiceUrl(c.site?.customerServiceUrl)).catch(() => undefined);
   }, []);
   return (
-    <Shell title={t("账户与安全")} onLogout={logout}>
-      <div style={{ marginBottom: 16 }}>
-        <button onClick={() => navigate("/hosts")} style={btnStyle("ghost")}>{t("← 返回主机列表")}</button>
-      </div>
+    <Shell title={t("账户与安全")}>
       {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
       <CurrentPlanCard sub={sub} onClick={() => navigate("/billing")} />
       <SettingRow
@@ -847,7 +883,7 @@ function EmailSettingsPage(): React.JSX.Element {
   const bound = info?.emailVerified === true;
 
   return (
-    <Shell title={t("邮箱设置")} onLogout={logout}>
+    <Shell title={t("邮箱设置")}>
       <BackToAccount />
       <Toast toast={toast} />
       {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
@@ -893,7 +929,7 @@ function PhoneSettingsPage(): React.JSX.Element {
   const bound = info?.phoneVerified === true;
 
   return (
-    <Shell title={t("手机号设置")} onLogout={logout}>
+    <Shell title={t("手机号设置")}>
       <BackToAccount />
       <Toast toast={toast} />
       {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
@@ -939,7 +975,7 @@ function TwoFaSettingsPage(): React.JSX.Element {
   const enabled = info?.totpEnabled === true;
 
   return (
-    <Shell title={t("两步验证")} onLogout={logout}>
+    <Shell title={t("两步验证")}>
       <BackToAccount />
       <Toast toast={toast} />
       {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
@@ -999,7 +1035,7 @@ function DangerZonePage(): React.JSX.Element {
   const [deletePw, setDeletePw] = useState("");
   const { err, run } = useError();
   return (
-    <Shell title={t("删除账号")} onLogout={logout}>
+    <Shell title={t("删除账号")}>
       <BackToAccount />
       {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
       <Card title={t("删除账号（不可恢复）")}>
@@ -1213,10 +1249,10 @@ function HostsPage(): React.JSX.Element {
   const shareHostName = shareHostId !== null ? hosts.find((h) => h.id === shareHostId)?.name : undefined;
 
   return (
-    <Shell title={t("我的主机")} onLogout={logout}>
+    <Shell>
       {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
       <div style={{ marginBottom: 16 }}>
-        <button onClick={() => navigate("/add-host")} style={btnStyle()}>{t("添加主机 / 接入 token")}</button>
+        <button onClick={() => navigate("/add-host")} style={btnStyle()}>{t("添加主机接入")}</button>
       </div>
 
       {loading ? (
@@ -1427,10 +1463,7 @@ function AddHostPage(): React.JSX.Element {
   };
 
   return (
-    <Shell title={t("rdsh · 添加主机")} onLogout={logout}>
-      <div style={{ marginBottom: 16 }}>
-        <button onClick={() => navigate("/hosts")} style={btnStyle("ghost")}>{t("← 返回主机列表")}</button>
-      </div>
+    <Shell title={t("添加主机接入")}>
       {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
       <div style={{ marginBottom: 16 }}>
         <h2 style={{ fontSize: 18, fontWeight: 600, margin: "0 0 8px" }}>{t("生成接入令牌")}</h2>
@@ -1535,7 +1568,7 @@ function PasswordPage(): React.JSX.Element {
   };
 
   return (
-    <Shell title={t("修改密码")} onLogout={logout}>
+    <Shell title={t("修改密码")}>
       {done && <p style={{ color: "#16a34a", fontSize: 14 }}>{t("密码已修改，全部会话已失效 —— 即将跳转登录…")}</p>}
       {!done && (
         <>
@@ -1782,10 +1815,7 @@ function BillingPage(): React.JSX.Element {
 
   return (
     <>
-      <Shell title={t("套餐与订阅")} onLogout={logout}>
-        <div style={{ marginBottom: 16 }}>
-          <button onClick={() => navigate("/hosts")} style={btnStyle("ghost")}>{t("← 返回主机列表")}</button>
-        </div>
+      <Shell title={t("套餐与订阅")}>
         <Toast toast={toast} />
         {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
         {hasStatus && <CurrentPlanCard sub={sub} />}
@@ -1857,7 +1887,8 @@ const ADMIN_CSS = `
 function adminRoleLabel(t: T, role: string): string {
   if (role === "admin") return t("管理员", { en: "Admin" });
   if (role === "operator") return t("运营");
-  return t("只读");
+  if (role === "readonly") return t("只读");
+  return t("普通用户");
 }
 
 function adminBtnStyle(variant: "primary" | "danger" | "ghost" = "primary"): React.CSSProperties {
@@ -1880,10 +1911,27 @@ function adminTh(label: string): React.JSX.Element {
   return <th key={label} style={{ padding: "6px 8px", textAlign: "left" }}>{label}</th>;
 }
 
+/** 分页控件：上一页/下一页 + 当前页/总条数。 */
+function Pager({ page, total, pageSize, onPage }: { page: number; total: number; pageSize: number; onPage: (p: number) => void }): React.JSX.Element | null {
+  const { t } = useT();
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  return (
+    <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 10, fontSize: 13 }}>
+      <button disabled={page === 0} onClick={() => onPage(page - 1)} style={{ ...adminBtnStyle("ghost"), opacity: page === 0 ? 0.4 : 1 }}>{t("上一页")}</button>
+      <span style={{ color: "#6b7280" }}>{page + 1} / {totalPages} · {total} {t("条")}</span>
+      <button disabled={page >= totalPages - 1} onClick={() => onPage(page + 1)} style={{ ...adminBtnStyle("ghost"), opacity: page >= totalPages - 1 ? 0.4 : 1 }}>{t("下一页")}</button>
+    </div>
+  );
+}
+
 interface ActionField {
   key: string;
   label: string;
   placeholder?: string;
+  /** 提供后渲染为下拉选择（免手输枚举值）。 */
+  options?: Array<{ value: string; label: string }>;
+  /** 下拉初始值（预选当前值）。 */
+  value?: string;
 }
 interface DialogSpec {
   title: string;
@@ -1895,11 +1943,18 @@ interface DialogSpec {
 /** 危险操作模态框：字段 + 必填原因 + 确认/取消（req R10）。 */
 function ActionDialog({ spec, onClose }: { spec: DialogSpec; onClose: () => void }): React.JSX.Element {
   const { t } = useT();
-  const [values, setValues] = useState<Record<string, string>>({});
+  const [values, setValues] = useState<Record<string, string>>(() =>
+    Object.fromEntries(spec.fields.filter((f) => f.value !== undefined).map((f) => [f.key, f.value as string])),
+  );
   const [reason, setReason] = useState("");
+  const [reasonErr, setReasonErr] = useState("");
   const [busy, setBusy] = useState(false);
   const confirm = (): void => {
-    if (reason.trim() === "") return;
+    if (reason.trim() === "") {
+      setReasonErr(t("请填写操作原因"));
+      return;
+    }
+    setReasonErr("");
     setBusy(true);
     void Promise.resolve(spec.submit(reason.trim(), values)).finally(() => setBusy(false));
   };
@@ -1910,21 +1965,34 @@ function ActionDialog({ spec, onClose }: { spec: DialogSpec; onClose: () => void
         {spec.fields.map((f) => (
           <div key={f.key} style={{ marginBottom: 10 }}>
             <label style={{ display: "block", fontSize: 12, color: "#6b7280", marginBottom: 4 }}>{f.label}</label>
-            <input
-              placeholder={f.placeholder}
-              value={values[f.key] ?? ""}
-              onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
-              style={{ width: "100%", padding: "8px 10px", boxSizing: "border-box", fontSize: 14 }}
-            />
+            {f.options !== undefined ? (
+              <select
+                value={values[f.key] ?? f.value ?? f.options[0]?.value ?? ""}
+                onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
+                style={{ width: "100%", padding: "8px 10px", boxSizing: "border-box", fontSize: 14, background: "#fff" }}
+              >
+                {f.options.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            ) : (
+              <input
+                placeholder={f.placeholder}
+                value={values[f.key] ?? ""}
+                onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
+                style={{ width: "100%", padding: "8px 10px", boxSizing: "border-box", fontSize: 14 }}
+              />
+            )}
           </div>
         ))}
         <div style={{ marginBottom: 12 }}>
           <label style={{ display: "block", fontSize: 12, color: "#6b7280", marginBottom: 4 }}>{t("原因（必填）")}</label>
-          <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} style={{ width: "100%", padding: "8px 10px", boxSizing: "border-box", fontSize: 14 }} />
+          <textarea value={reason} onChange={(e) => { setReason(e.target.value); if (reasonErr !== "") setReasonErr(""); }} rows={2} placeholder={t("请填写操作原因")} style={{ width: "100%", padding: "8px 10px", boxSizing: "border-box", fontSize: 14 }} />
+          {reasonErr !== "" && <p style={{ color: "#dc2626", fontSize: 12, margin: "4px 0 0" }}>{reasonErr}</p>}
         </div>
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-          <button onClick={onClose} disabled={busy} style={adminBtnStyle("ghost")}>{t("取消")}</button>
-          <button disabled={busy || reason.trim() === ""} onClick={confirm} style={adminBtnStyle(spec.danger === true ? "danger" : "primary")}>{t("确认")}</button>
+          <button onClick={onClose} disabled={busy} style={{ ...adminBtnStyle("ghost"), opacity: busy ? 0.5 : 1 }}>{t("取消")}</button>
+          <button disabled={busy} onClick={confirm} style={{ ...adminBtnStyle(spec.danger === true ? "danger" : "primary"), opacity: busy ? 0.5 : 1 }}>{t("确认")}</button>
         </div>
       </div>
     </div>
@@ -1963,20 +2031,13 @@ function AdminApp({ path }: { path: string }): React.JSX.Element {
   const isWrite = me.role === "admin" || me.role === "operator";
 
   return (
-    <div style={{ maxWidth: 980, margin: "16px auto 32px", padding: "0 16px", fontFamily: "system-ui, sans-serif" }}>
+    <div>
       <style>{ADMIN_CSS}</style>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-        <strong style={{ fontSize: 16 }}>{t("rdsh 管理后台")}</strong>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <span style={{ fontSize: 12, color: "#666" }}>{me.name} · {adminRoleLabel(t, me.role)}</span>
-          <button onClick={() => void adminApi.logout().finally(() => setReload((r) => r + 1))} style={adminBtnStyle("ghost")}>{t("登出")}</button>
-        </div>
-      </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
         {nav
           .filter((n) => !n.adminOnly || isAdmin)
           .map((n) => (
-            <button key={n.p} onClick={() => navigateAdmin(n.p)} style={{ ...adminBtnStyle("ghost"), fontWeight: path === n.p ? 700 : 400, background: path === n.p ? "#eef2ff" : "#fff" }}>
+            <button key={n.p} onClick={() => navigate(n.p === "/" ? "/admin" : `/admin${n.p}`)} style={{ ...adminBtnStyle("ghost"), fontWeight: path === n.p ? 700 : 400, background: path === n.p ? "#eef2ff" : "#fff" }}>
               {n.label}
             </button>
           ))}
@@ -1996,7 +2057,7 @@ function AdminApp({ path }: { path: string }): React.JSX.Element {
       ) : path === "/config" ? (
         <AdminConfigPage />
       ) : path === "/admins" ? (
-        <AdminAdmins isAdmin={isAdmin} />
+        <AdminAdmins isAdmin={isAdmin} meId={me.userId} />
       ) : (
         <AdminDashboard />
       )}
@@ -2009,6 +2070,25 @@ function AdminLogin({ onSuccess }: { onSuccess: () => void }): React.JSX.Element
   const [totp, setTotp] = useState("");
   const [trustDevice, setTrustDevice] = useState(false);
   const [err, setErr] = useState("");
+  const [portalInfo, setPortalInfo] = useState<AccountInfo | null | undefined>(undefined); // undefined=检查中
+  useEffect(() => {
+    // 管理台登录依赖门户会话：未登录门户 → 直接跳门户登录
+    void api.accountInfo({ probe: true }).then(setPortalInfo).catch(() => {
+      window.location.assign("/portal/login");
+    });
+  }, []);
+  // 门户会话 30 分钟内验证过 2FA（或可信设备）→ 自动免二次输入；否则落到 TOTP 表单
+  useEffect(() => {
+    if (portalInfo === undefined || portalInfo === null || portalInfo.totpEnabled !== true) return;
+    let alive = true;
+    adminApi
+      .login("")
+      .then(() => alive && onSuccess())
+      .catch(() => undefined); // TOTP_REQUIRED → 显示表单让用户输入
+    return () => {
+      alive = false;
+    };
+  }, [portalInfo]);
   const submit = (): void => {
     setErr("");
     adminApi
@@ -2019,6 +2099,16 @@ function AdminLogin({ onSuccess }: { onSuccess: () => void }): React.JSX.Element
   useEffect(() => {
     if (totp.length === 6) submit();
   }, [totp]);
+  if (portalInfo === undefined) return <div style={{ padding: 40, fontFamily: "system-ui, sans-serif" }}>{t("加载中…")}</div>;
+  if (portalInfo.totpEnabled !== true) {
+    return (
+      <div style={{ maxWidth: 360, margin: "40px auto", padding: "24px", border: "1px solid #e5e7eb", borderRadius: 12, fontFamily: "system-ui, sans-serif" }}>
+        <h2 style={{ fontSize: 18, margin: "0 0 8px" }}>{t("进入管理后台")}</h2>
+        <p style={{ fontSize: 13, color: "#6b7280", margin: "0 0 16px" }}>{t("管理后台需要两步验证（TOTP）才能使用，请先开启 2FA。")}</p>
+        <button onClick={() => navigate("/settings/2fa")} style={{ ...adminBtnStyle(), width: "100%", padding: "10px", fontSize: 15 }}>{t("去开启 2FA")}</button>
+      </div>
+    );
+  }
   return (
     <div style={{ maxWidth: 360, margin: "40px auto", padding: "24px", border: "1px solid #e5e7eb", borderRadius: 12, fontFamily: "system-ui, sans-serif" }}>
       <h2 style={{ fontSize: 18, margin: "0 0 8px" }}>{t("进入管理后台")}</h2>
@@ -2075,14 +2165,31 @@ function AdminDashboard(): React.JSX.Element {
 
 function AdminUsers({ isWrite, isAdmin }: { isWrite: boolean; isAdmin: boolean }): React.JSX.Element {
   const { t } = useT();
+  const PAGE = 50;
   const [users, setUsers] = useState<AdminUserRow[] | null>(null);
   const [q, setQ] = useState("");
+  const [page, setPage] = useState(0);
+  const [total, setTotal] = useState(0);
   const [msg, setMsg] = useState("");
   const [dialog, setDialog] = useState<DialogSpec | null>(null);
-  const reload = (): void => {
-    adminApi.users().then((r) => setUsers(r.users)).catch(() => setUsers([]));
+  const [menuUserId, setMenuUserId] = useState<number | null>(null);
+  const fetch = (query: string, p: number): void => {
+    adminApi
+      .users({ q: query !== "" ? query : undefined, limit: PAGE, offset: p * PAGE })
+      .then((r) => { setUsers(r.users); setTotal(r.total); })
+      .catch(() => { setUsers([]); setTotal(0); });
   };
-  useEffect(reload, []);
+  const reload = (): void => fetch(q, page);
+  useEffect(() => {
+    const timer = setTimeout(() => fetch(q, page), 300);
+    return () => clearTimeout(timer);
+  }, [q, page]);
+  useEffect(() => {
+    if (menuUserId === null) return;
+    const close = (): void => setMenuUserId(null);
+    document.addEventListener("click", close);
+    return () => document.removeEventListener("click", close);
+  }, [menuUserId]);
   const open = (u: AdminUserRow, title: string, action: string, fields: ActionField[] = [], danger = false): void => {
     setDialog({
       title,
@@ -2090,7 +2197,7 @@ function AdminUsers({ isWrite, isAdmin }: { isWrite: boolean; isAdmin: boolean }
       danger,
       submit: (reason, values) =>
         adminApi
-          .userAction(u.id, action, { reason, ...(action === "reset-password" ? { password: values.password ?? "" } : {}), ...(action === "plan" ? { planStatus: values.planStatus ?? "" } : {}) })
+          .userAction(u.id, action, { reason, ...(action === "reset-password" ? { password: values.password ?? "" } : {}), ...(action === "plan" ? { planStatus: values.planStatus ?? "" } : {}), ...(action === "set-role" ? { role: values.role ?? "" } : {}) })
           .then(() => {
             setMsg("ok");
             setDialog(null);
@@ -2099,36 +2206,48 @@ function AdminUsers({ isWrite, isAdmin }: { isWrite: boolean; isAdmin: boolean }
           .catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed")),
     });
   };
-  const list = (users ?? []).filter((u) => u.name.includes(q) || (u.email ?? "").includes(q) || (u.phone ?? "").includes(q));
+  const list = users ?? [];
   return (
     <div>
-      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("搜索 用户名/邮箱/手机号")} style={{ padding: "8px 10px", marginBottom: 10, width: "100%", maxWidth: 300, boxSizing: "border-box" }} />
+      <input value={q} onChange={(e) => { setQ(e.target.value); setPage(0); }} placeholder={t("搜索 用户名/邮箱/手机号")} style={{ padding: "8px 10px", marginBottom: 10, width: "100%", maxWidth: 300, boxSizing: "border-box" }} />
       {msg !== "" && <p style={{ fontSize: 12, color: "#2563eb" }}>{msg}</p>}
       <table className="admintbl" style={adminTableStyle()}>
         <thead>
-          <tr style={{ borderBottom: "1px solid #e5e7eb" }}>{[t("用户"), t("角色"), t("状态"), t("套餐"), t("操作")].map(adminTh)}</tr>
+          <tr style={{ borderBottom: "1px solid #e5e7eb" }}>{[t("用户"), t("角色"), t("状态"), t("主机"), t("套餐"), t("操作")].map(adminTh)}</tr>
         </thead>
         <tbody>
           {list.map((u) => (
             <tr key={u.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
               {adminTd(t("用户"), u.name)}
-              {adminTd(t("角色"), <span style={{ color: "#6b7280" }}>{u.role}</span>)}
+              {adminTd(t("角色"), <span style={{ color: "#6b7280" }}>{adminRoleLabel(t, u.role)}</span>)}
               {adminTd(t("状态"), u.accountStatus)}
+              {adminTd(t("主机"), u.hostCount)}
               {adminTd(t("套餐"), u.planStatus ?? "—")}
-              {adminTd(null, (
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  {isWrite && u.accountStatus !== "banned" && <button onClick={() => open(u, t("封禁"), "ban", [], true)} style={adminBtnStyle("danger")}>{t("封禁")}</button>}
-                  {isWrite && u.accountStatus === "banned" && <button onClick={() => open(u, t("解封"), "unban")} style={adminBtnStyle()}>{t("解封")}</button>}
-                  {isWrite && <button onClick={() => open(u, t("重置密码"), "reset-password", [{ key: "password", label: t("新密码（≥8 位）") }])} style={adminBtnStyle("ghost")}>{t("重置密码")}</button>}
-                  {isWrite && <button onClick={() => open(u, t("重置2FA"), "reset-2fa", [], true)} style={adminBtnStyle("ghost")}>{t("重置2FA")}</button>}
-                  {isWrite && <button onClick={() => open(u, t("改套餐"), "plan", [{ key: "planStatus", label: t("planStatus（subscribed/grace/free/null）") }])} style={adminBtnStyle("ghost")}>{t("改套餐")}</button>}
-                  {isAdmin && <button onClick={() => open(u, t("删除"), "delete", [], true)} style={adminBtnStyle("danger")}>{t("删除")}</button>}
+              {adminTd(null, (isWrite || isAdmin) && (
+                <div style={{ position: "relative" }} onClick={(e) => e.stopPropagation()}>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setMenuUserId(menuUserId === u.id ? null : u.id); }}
+                    style={adminBtnStyle("ghost")}
+                    title={t("更多操作")}
+                  >⋯</button>
+                  {menuUserId === u.id && (
+                    <div style={{ position: "absolute", right: 0, top: "100%", marginTop: 4, background: "#fff", border: "1px solid #e5e7eb", borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,.1)", zIndex: 20, minWidth: 130, padding: 4 }} onClick={(e) => e.stopPropagation()}>
+                      {isWrite && u.accountStatus !== "banned" && <button style={menuItemStyle(true)} onClick={() => { setMenuUserId(null); open(u, t("封禁"), "ban", [], true); }}>{t("封禁")}</button>}
+                      {isWrite && u.accountStatus === "banned" && <button style={menuItemStyle()} onClick={() => { setMenuUserId(null); open(u, t("解封"), "unban"); }}>{t("解封")}</button>}
+                      {isWrite && <button style={menuItemStyle()} onClick={() => { setMenuUserId(null); open(u, t("重置密码"), "reset-password", [{ key: "password", label: t("新密码（≥8 位）") }]); }}>{t("重置密码")}</button>}
+                      {isWrite && <button style={menuItemStyle()} onClick={() => { setMenuUserId(null); open(u, t("重置2FA"), "reset-2fa", [], true); }}>{t("重置2FA")}</button>}
+                      {isWrite && <button style={menuItemStyle()} onClick={() => { setMenuUserId(null); open(u, t("改套餐"), "plan", [{ key: "planStatus", label: t("套餐状态"), options: [{ value: "subscribed", label: "subscribed" }, { value: "grace", label: "grace" }, { value: "free", label: "free" }, { value: "null", label: "null" }] }]); }}>{t("改套餐")}</button>}
+                      {isAdmin && <button style={menuItemStyle()} onClick={() => { setMenuUserId(null); open(u, t("改角色"), "set-role", [{ key: "role", label: t("角色"), value: u.role, options: [{ value: "user", label: t("普通用户") }, { value: "readonly", label: t("只读") }, { value: "operator", label: t("运营") }, { value: "admin", label: t("管理员", { en: "Admin" }) }] }]); }}>{t("改角色")}</button>}
+                      {isAdmin && <button style={menuItemStyle(true)} onClick={() => { setMenuUserId(null); open(u, t("删除"), "delete", [], true); }}>{t("删除")}</button>}
+                    </div>
+                  )}
                 </div>
               ))}
             </tr>
           ))}
         </tbody>
       </table>
+      <Pager page={page} total={total} pageSize={PAGE} onPage={setPage} />
       {dialog !== null && <ActionDialog spec={dialog} onClose={() => setDialog(null)} />}
     </div>
   );
@@ -2136,13 +2255,24 @@ function AdminUsers({ isWrite, isAdmin }: { isWrite: boolean; isAdmin: boolean }
 
 function AdminHosts({ isWrite }: { isWrite: boolean }): React.JSX.Element {
   const { t } = useT();
+  const PAGE = 50;
   const [hosts, setHosts] = useState<AdminHostRow[] | null>(null);
+  const [q, setQ] = useState("");
+  const [page, setPage] = useState(0);
+  const [total, setTotal] = useState(0);
   const [msg, setMsg] = useState("");
   const [dialog, setDialog] = useState<DialogSpec | null>(null);
-  const reload = (): void => {
-    adminApi.hosts().then((r) => setHosts(r.hosts)).catch(() => setHosts([]));
+  const fetch = (query: string, p: number): void => {
+    adminApi
+      .hosts({ q: query !== "" ? query : undefined, limit: PAGE, offset: p * PAGE })
+      .then((r) => { setHosts(r.hosts); setTotal(r.total); })
+      .catch(() => { setHosts([]); setTotal(0); });
   };
-  useEffect(reload, []);
+  const reload = (): void => fetch(q, page);
+  useEffect(() => {
+    const timer = setTimeout(() => fetch(q, page), 300);
+    return () => clearTimeout(timer);
+  }, [q, page]);
   const revoke = (h: AdminHostRow): void => {
     setDialog({
       title: `${t("吊销")} · ${h.name}`,
@@ -2154,6 +2284,7 @@ function AdminHosts({ isWrite }: { isWrite: boolean }): React.JSX.Element {
   };
   return (
     <div>
+      <input value={q} onChange={(e) => { setQ(e.target.value); setPage(0); }} placeholder={t("搜索 主机名/归属用户")} style={{ padding: "8px 10px", marginBottom: 10, width: "100%", maxWidth: 300, boxSizing: "border-box" }} />
       {msg !== "" && <p style={{ fontSize: 12, color: "#2563eb" }}>{msg}</p>}
       <table className="admintbl" style={adminTableStyle()}>
         <thead>
@@ -2163,7 +2294,7 @@ function AdminHosts({ isWrite }: { isWrite: boolean }): React.JSX.Element {
           {(hosts ?? []).map((h) => (
             <tr key={h.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
               {adminTd(t("主机名"), h.name)}
-              {adminTd(t("归属"), <span style={{ color: "#6b7280" }}>{h.ownerId}</span>)}
+              {adminTd(t("归属"), <span style={{ color: "#6b7280" }}>{h.ownerName}</span>)}
               {adminTd(t("在线"), h.online ? "●" : "○")}
               {adminTd(t("E2EE"), h.e2eePublicKey != null ? "🛡" : "—")}
               {adminTd(null, isWrite && <button onClick={() => revoke(h)} style={adminBtnStyle("danger")}>{t("吊销")}</button>)}
@@ -2171,6 +2302,7 @@ function AdminHosts({ isWrite }: { isWrite: boolean }): React.JSX.Element {
           ))}
         </tbody>
       </table>
+      <Pager page={page} total={total} pageSize={PAGE} onPage={setPage} />
       {dialog !== null && <ActionDialog spec={dialog} onClose={() => setDialog(null)} />}
     </div>
   );
@@ -2333,7 +2465,7 @@ function AdminConfigPage(): React.JSX.Element {
   return <pre style={{ fontSize: 12, background: "#f9fafb", padding: 16, borderRadius: 10, overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{JSON.stringify(c, null, 2)}</pre>;
 }
 
-function AdminAdmins({ isAdmin }: { isAdmin: boolean }): React.JSX.Element {
+function AdminAdmins({ isAdmin, meId }: { isAdmin: boolean; meId: number }): React.JSX.Element {
   const { t } = useT();
   const [admins, setAdmins] = useState<Array<{ id: number; name: string; email: string | null; role: string }> | null>(null);
   const [msg, setMsg] = useState("");
@@ -2342,10 +2474,22 @@ function AdminAdmins({ isAdmin }: { isAdmin: boolean }): React.JSX.Element {
     adminApi.admins().then((r) => setAdmins(r.admins)).catch(() => setAdmins([]));
   };
   useEffect(reload, []);
-  const setRole = (a: { id: number; name: string }): void => {
+  const setRole = (a: { id: number; name: string; role: string }): void => {
     setDialog({
       title: `${t("改角色")} · ${a.name}`,
-      fields: [{ key: "role", label: t("角色"), placeholder: "readonly / operator / admin" }],
+      fields: [
+        {
+          key: "role",
+          label: t("角色"),
+          value: a.role,
+          options: [
+            { value: "user", label: t("普通用户") },
+            { value: "readonly", label: t("只读") },
+            { value: "operator", label: t("运营") },
+            { value: "admin", label: t("管理员", { en: "Admin" }) },
+          ],
+        },
+      ],
       submit: (reason, values) =>
         adminApi.setRole(a.id, values.role ?? "", reason).then(() => { setMsg("ok"); setDialog(null); reload(); }).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed")),
     });
@@ -2374,8 +2518,18 @@ function AdminAdmins({ isAdmin }: { isAdmin: boolean }): React.JSX.Element {
               {adminTd(t("角色"), adminRoleLabel(t, a.role))}
               {adminTd(null, isAdmin && (
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  <button onClick={() => setRole(a)} style={adminBtnStyle("ghost")}>{t("改角色")}</button>
-                  <button onClick={() => remove(a)} style={adminBtnStyle("danger")}>{t("移除")}</button>
+                  <button
+                    onClick={() => setRole(a)}
+                    disabled={a.id === meId}
+                    title={a.id === meId ? t("不能操作自己的账号") : undefined}
+                    style={{ ...adminBtnStyle("ghost"), opacity: a.id === meId ? 0.4 : 1 }}
+                  >{t("改角色")}</button>
+                  <button
+                    onClick={() => remove(a)}
+                    disabled={a.id === meId}
+                    title={a.id === meId ? t("不能操作自己的账号") : undefined}
+                    style={{ ...adminBtnStyle("danger"), opacity: a.id === meId ? 0.4 : 1 }}
+                  >{t("移除")}</button>
                 </div>
               ))}
             </tr>

@@ -24,6 +24,8 @@ export interface JwtClaims {
   admin?: boolean;
   /** 可信设备标记（30 天免 TOTP 的 cookie token） */
   trusted?: boolean;
+  /** 最近一次 2FA 验证时间（毫秒；TOTP/可信设备登录签发 access 时打点） */
+  totpVerifiedAt?: number;
 }
 
 export class Jwt {

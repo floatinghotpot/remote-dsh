@@ -489,6 +489,18 @@ export class HubDb {
     return (this.db.prepare("SELECT * FROM users ORDER BY id").all() as unknown as Array<Record<string, unknown>>).map((r) => this.mapUser(r));
   }
 
+  /** 管理台用户分页 + 模糊搜索（name/email/phone）；返回 { rows, total }。 */
+  listUsersPage(opts: { q?: string; limit?: number; offset?: number }): { rows: UserRow[]; total: number } {
+    const q = opts.q !== undefined && opts.q !== "" ? opts.q : null;
+    const where = q !== null ? "WHERE name LIKE ? OR email LIKE ? OR phone LIKE ?" : "";
+    const like = q !== null ? [`%${q}%`, `%${q}%`, `%${q}%`] : [];
+    const total = Number((this.db.prepare(`SELECT COUNT(*) AS c FROM users ${where}`).get(...like) as { c: number }).c);
+    const limit = opts.limit !== undefined ? opts.limit : 50;
+    const offset = opts.offset !== undefined ? opts.offset : 0;
+    const rows = (this.db.prepare(`SELECT * FROM users ${where} ORDER BY id LIMIT ? OFFSET ?`).all(...like, limit, offset) as unknown as Array<Record<string, unknown>>).map((r) => this.mapUser(r));
+    return { rows, total };
+  }
+
   removeUser(id: number): void {
     this.db.exec("BEGIN");
     try {
@@ -553,6 +565,24 @@ export class HubDb {
   /** 管理员视图：全部 host（rdsh hub host ls）。 */
   listAllHosts(): HostRow[] {
     return (this.db.prepare("SELECT * FROM hosts ORDER BY created_at").all() as unknown as Array<Record<string, unknown>>).map((r) => this.mapHost(r));
+  }
+
+  /** 管理员视图：每个 owner 的主机数（GROUP BY owner_id，索引聚合，O(N)）。 */
+  countHostsByOwner(): Array<{ ownerId: number; count: number }> {
+    return this.db.prepare("SELECT owner_id AS ownerId, COUNT(*) AS count FROM hosts GROUP BY owner_id").all() as unknown as Array<{ ownerId: number; count: number }>;
+  }
+
+  /** 管理台主机分页 + 模糊搜索（主机名/归属用户名），JOIN 出 ownerName；返回 { rows, total }。 */
+  listHostsPage(opts: { q?: string; limit?: number; offset?: number }): { rows: Array<HostRow & { ownerName: string }>; total: number } {
+    const q = opts.q !== undefined && opts.q !== "" ? opts.q : null;
+    const where = q !== null ? "WHERE h.name LIKE ? OR u.name LIKE ?" : "";
+    const like = q !== null ? [`%${q}%`, `%${q}%`] : [];
+    const total = Number((this.db.prepare(`SELECT COUNT(*) AS c FROM hosts h LEFT JOIN users u ON h.owner_id = u.id ${where}`).get(...like) as { c: number }).c);
+    const limit = opts.limit !== undefined ? opts.limit : 50;
+    const offset = opts.offset !== undefined ? opts.offset : 0;
+    const rows = (this.db.prepare(`SELECT h.*, u.name AS owner_name FROM hosts h LEFT JOIN users u ON h.owner_id = u.id ${where} ORDER BY h.created_at LIMIT ? OFFSET ?`).all(...like, limit, offset) as unknown as Array<Record<string, unknown>>)
+      .map((r) => ({ ...this.mapHost(r), ownerName: r.owner_name === null || r.owner_name === undefined ? String(r.owner_id) : String(r.owner_name) }));
+    return { rows, total };
   }
 
   renameHost(id: string, name: string): boolean {

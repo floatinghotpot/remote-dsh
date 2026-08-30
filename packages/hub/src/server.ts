@@ -211,11 +211,10 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse, runtime: Hu
     return;
   }
 
-  // 管理后台：/admin 前缀 = portal SPA（清 host cookie，防有 host 上下文时误 relay）
+  // 管理后台已并入门户：旧 /admin 兼容重定向到 /portal/admin（管理台只走 /portal 前缀）
   if (pathname === "/admin" || pathname.startsWith("/admin/")) {
-    if (hostId !== undefined) res.setHeader("set-cookie", clearHostCookie());
-    const handled = await servePortal(req, res, portalDir);
-    if (!handled) writeError(res, 404, "NOT_FOUND", "not found");
+    res.writeHead(302, { location: `/portal${pathname}` });
+    res.end();
     return;
   }
 

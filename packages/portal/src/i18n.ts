@@ -26,7 +26,6 @@ const EN: Record<string, string> = {
   "遇到问题？联系在线客服": "Questions? Contact online support",
 
   // ---- 管理后台 ----
-  "rdsh 管理后台": "rdsh Admin",
   "进入管理后台": "Enter admin console",
   "管理后台需两步验证（TOTP）。未开启 2FA 的账号请先在「账户与安全」开启。": "The admin console requires two-factor auth (TOTP). Enable 2FA in Account & Security first.",
   "动态验证码": "TOTP code",
@@ -41,6 +40,8 @@ const EN: Record<string, string> = {
   "管理员": "Admins",
   "只读": "Read-only",
   "运营": "Operator",
+  "普通用户": "Regular user",
+  "套餐状态": "Plan status",
   "注册用户": "Users",
   "主机总数": "Total hosts",
   "在线主机": "Online hosts",
@@ -52,6 +53,7 @@ const EN: Record<string, string> = {
   "最近备份": "Last backup",
   "未配置": "Not configured",
   "搜索 用户名/邮箱/手机号": "Search name / email / phone",
+  "搜索 主机名/归属用户": "Search host name / owner",
   "角色": "Role",
   "状态": "Status",
   "操作": "Actions",
@@ -95,7 +97,6 @@ const EN: Record<string, string> = {
   "验证码已发送到邮箱，请查收（10 分钟内有效）": "Code sent to your email (valid 10 min)",
   "短信验证码已发送，请查收（10 分钟内有效）": "SMS code sent (valid 10 min)",
   "手机号（+86）": "Phone (+86)",
-  "← 返回主机列表": "← Back to hosts",
   "← 返回账户与安全": "← Back to account",
   "在线": "Online",
   "离线": "Offline",
@@ -103,6 +104,14 @@ const EN: Record<string, string> = {
   "进入": "Enter",
   "改名": "Rename",
   "更多操作": "More actions",
+  "管理后台": "Admin console",
+  "管理后台需要两步验证（TOTP）才能使用，请先开启 2FA。": "The admin console requires two-factor auth (TOTP). Please enable 2FA first.",
+  "去开启 2FA": "Enable 2FA",
+  "请填写操作原因": "Please fill in a reason",
+  "不能操作自己的账号": "You cannot manage your own account",
+  "上一页": "Prev",
+  "下一页": "Next",
+  "条": "rows",
   "共享主机": "Share host",
   "保存": "Save",
   "解绑": "Unbind",
@@ -173,7 +182,7 @@ const EN: Record<string, string> = {
 
   // ---- 主机列表 ----
   "我的主机": "My Hosts",
-  "添加主机 / 接入 token": "Add host / join token",
+  "添加主机接入": "Add host",
   "还没有接入主机 —— 用上面的「添加主机」接入你的第一台 DSH。":
     "No hosts yet — use “Add host” above to connect your first DSH.",
   "共享管理": "Sharing",
@@ -189,7 +198,7 @@ const EN: Record<string, string> = {
   "6 位验证码": "6-digit code",
 
   // ---- 添加主机 ----
-  "rdsh · 添加主机": "rdsh · Add Host",
+  "添加主机接入": "Add host",
   "令牌备注（可选）": "Token note (optional)",
   "有效期": "Validity",
   "1 天": "1 day",

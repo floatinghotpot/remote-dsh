@@ -11,7 +11,7 @@ import type { HubConfig, PlanSpec } from "./config.ts";
 import { BILLING_DEFAULTS } from "./config.ts";
 import type { HubDb, UserRow } from "./db.ts";
 import type { HubAuth } from "./auth.ts";
-import { createLoginLimiter, hashPassword, verifyPassword, ADMIN_TTL_MS } from "./auth.ts";
+import { createLoginLimiter, hashPassword, verifyPassword, ADMIN_TTL_MS, RECENT_TOTP_WINDOW_MS } from "./auth.ts";
 import type { TunnelRegistry } from "./tunnel.ts";
 import type { EventHub } from "./events.ts";
 import { randomToken, sha256 } from "./jwt.ts";
@@ -50,21 +50,22 @@ export interface HubRuntime {
 export interface AuthResult {
   userId: number;
   name: string;
+  /** 门户会话签发时的最近 2FA 验证时间（毫秒）；无 2FA 验证的会话为 undefined */
+  totpVerifiedAt?: number;
 }
 
 /** 认证：Authorization: Bearer 或 Cookie。 */
 export function authenticate(req: IncomingMessage, runtime: HubRuntime): AuthResult | null {
+  const read = (v: { user: { id: number; name: string }; claims: { totpVerifiedAt?: number } } | null): AuthResult | null =>
+    v === null ? null : { userId: v.user.id, name: v.user.name, ...(v.claims.totpVerifiedAt !== undefined ? { totpVerifiedAt: v.claims.totpVerifiedAt } : {}) };
   const header = req.headers.authorization;
   if (typeof header === "string" && header.startsWith("Bearer ")) {
-    const token = header.slice(7).trim();
-    const v = runtime.auth.verifyAccess(token);
-    return v === null ? null : { userId: v.user.id, name: v.user.name };
+    return read(runtime.auth.verifyAccess(header.slice(7).trim()));
   }
   const cookies = parseCookies(req.headers.cookie);
   const session = cookies[SESSION_COOKIE];
   if (typeof session === "string" && session.length > 0) {
-    const v = runtime.auth.verifyAccess(session);
-    return v === null ? null : { userId: v.user.id, name: v.user.name };
+    return read(runtime.auth.verifyAccess(session));
   }
   return null;
 }
@@ -111,8 +112,14 @@ function writeAdminError(res: ServerResponse, err: unknown): void {
 }
 
 /** 读必需 reason 字段（危险操作必填）。 */
-function requireReason(body: Record<string, unknown> | null): string | null {
-  return body !== null && typeof body.reason === "string" && body.reason.trim() !== "" ? body.reason.trim() : null;
+/** 分页 limit：默认 50，上限 200（防超大页拖垮序列化）。 */
+function clampLimit(raw: string | null): number {
+  const n = parseInt(raw ?? "", 10);
+  if (!Number.isFinite(n) || n < 1) return 50;
+  return Math.min(n, 200);
+}
+
+function requireReason(body: Record<string, unknown> | null): string | null {  return body !== null && typeof body.reason === "string" && body.reason.trim() !== "" ? body.reason.trim() : null;
 }
 
 function adminSessionCookie(token: string): string {
@@ -135,11 +142,12 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
     }
     const body = await readJsonBody(req);
     const totp = typeof body?.totp === "string" ? body.totp : "";
-    // 可信设备（30 天免 TOTP cookie）→ 免输动态码直接进管理台
+    // 免二次输入条件：可信设备（30 天 cookie）或门户会话 30 分钟内验证过 2FA
     const cookies = parseCookies(req.headers.cookie);
     const trusted = cookies[TRUSTED_COOKIE];
     const trustedUid = typeof trusted === "string" && trusted.length > 0 ? runtime.auth.verifyTrustedDevice(trusted) : null;
-    const token = runtime.auth.issueAdminSession(auth.userId, totp, trustedUid === auth.userId);
+    const recentTotp = auth.totpVerifiedAt !== undefined && Date.now() - auth.totpVerifiedAt < RECENT_TOTP_WINDOW_MS;
+    const token = runtime.auth.issueAdminSession(auth.userId, totp, trustedUid === auth.userId, recentTotp);
     if (token === null) {
       writeError(res, 403, "TOTP_REQUIRED", "admin console requires 2FA enabled and a valid TOTP code");
       return true;
@@ -193,12 +201,24 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
     return true;
   }
   if (path === "/api/admin/users" && method === "GET") {
-    res.end(JSON.stringify({ users: admin.listUsers(db) }));
+    const q = url.searchParams.get("q") ?? undefined;
+    const limit = clampLimit(url.searchParams.get("limit"));
+    const offset = Math.max(0, parseInt(url.searchParams.get("offset") ?? "0", 10) || 0);
+    const { rows, total } = db.listUsersPage({ q, limit, offset });
+    // 主机数仍一次 GROUP BY 聚合（索引），避免对每个用户子查询
+    const hostCounts = new Map<number, number>();
+    for (const row of db.countHostsByOwner()) hostCounts.set(row.ownerId, row.count);
+    const users = rows.map((u) => ({ ...u, hostCount: hostCounts.get(u.id) ?? 0 }));
+    res.end(JSON.stringify({ users, total }));
     return true;
   }
   if (path === "/api/admin/hosts" && method === "GET") {
-    const hosts = admin.listHosts(db).map((h) => ({ ...h, online: runtime.tunnels.isOnline(h.id) }));
-    res.end(JSON.stringify({ hosts }));
+    const q = url.searchParams.get("q") ?? undefined;
+    const limit = clampLimit(url.searchParams.get("limit"));
+    const offset = Math.max(0, parseInt(url.searchParams.get("offset") ?? "0", 10) || 0);
+    const { rows, total } = db.listHostsPage({ q, limit, offset });
+    const hosts = rows.map((h) => ({ ...h, online: runtime.tunnels.isOnline(h.id) }));
+    res.end(JSON.stringify({ hosts, total }));
     return true;
   }
   if (path === "/api/admin/orders" && method === "GET") {
@@ -291,7 +311,7 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
   }
 
   // ---- 写端点（服务层 RBAC + 审计） ----
-  const userAction = /^\/api\/admin\/users\/([^/]+)\/(ban|unban|reset-password|unlock|reset-2fa|plan|delete)$/.exec(path);
+  const userAction = /^\/api\/admin\/users\/([^/]+)\/(ban|unban|reset-password|unlock|reset-2fa|plan|set-role|delete)$/.exec(path);
   if (userAction !== null && method === "POST") {
     const id = Number(decodeURIComponent(userAction[1]!));
     const action = userAction[2]!;
@@ -315,6 +335,12 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
         }
         const expiresAtMs = typeof body.expiresAtMs === "number" ? body.expiresAtMs : null;
         admin.adjustPlan(db, ctx, id, body.planStatus, expiresAtMs, requireReason(body) ?? "no reason");
+      } else if (action === "set-role") {
+        if (body === null || typeof body.role !== "string") {
+          writeError(res, 400, "BAD_REQUEST", "role required");
+          return true;
+        }
+        admin.setUserRole(db, ctx, id, body.role, requireReason(body) ?? "no reason");
       }
       res.end(JSON.stringify({ ok: true }));
     } catch (err) {
@@ -660,7 +686,7 @@ async function handleLogin(req: IncomingMessage, res: ServerResponse, runtime: H
         const user = runtime.db.getUserByName(loginName);
         if (uid !== null && user !== null && uid === user.id) {
           limiter.clear(ip);
-          const tokens = runtime.auth.issueTokens(user);
+          const tokens = runtime.auth.issueTokens(user, true); // 可信设备 = 已验证过 2FA
           runtime.db.recordAudit(user.id, "login.ok", { name: user.name, trustedDevice: true }, ip);
           res.writeHead(200, {
             "content-type": "application/json",
@@ -1826,6 +1852,7 @@ async function handleAccountInfo(req: IncomingMessage, res: ServerResponse, runt
   res.end(
     JSON.stringify({
       name: user.name,
+      role: user.role,
       email: user.email,
       emailVerified: user.emailVerified === 1,
       phone: user.phone,

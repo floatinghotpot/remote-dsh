@@ -55,6 +55,7 @@ export const ACCESS_TTL_MS = 60 * 60 * 1000; // 1h
 export const REFRESH_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7d
 export const ADMIN_TTL_MS = 30 * 60 * 1000; // 30min（管理面独立短会话）
 export const TRUSTED_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30d（可信设备免 TOTP）
+export const RECENT_TOTP_WINDOW_MS = 30 * 60 * 1000; // 门户会话 30 分钟内验证过 2FA → 管理台免二次输入
 
 export interface TokenPair {
   accessToken: string;
@@ -119,7 +120,7 @@ export class HubAuth {
     const user = this.db.getUserById(claims.sub);
     if (user === null || user.ver !== claims.ver || user.totpSecret === null) return null;
     if (!verifyTotp(user.totpSecret, code)) return null;
-    return { tokens: this.issueTokens(user), mustChangePassword: user.mustChange === 1, userId: user.id };
+    return { tokens: this.issueTokens(user, true), mustChangePassword: user.mustChange === 1, userId: user.id };
   }
 
   /** 生成 2FA secret（不落库；activate 时由用户带回 secret+code 校验后才启用）。 */
@@ -163,16 +164,20 @@ export class HubAuth {
     const user = this.db.getUserByName(name);
     if (user === null || user.mustChange !== 1) return null;
     this.db.setPassword(user.id, await hashPassword(newPassword));
-    return { tokens: this.issueTokens(user), mustChangePassword: false };
+    // setPassword 已 ver+1：必须用新 ver 的用户行签发，否则会话立即失效
+    const fresh = this.db.getUserById(user.id);
+    if (fresh === null) return null;
+    return { tokens: this.issueTokens(fresh), mustChangePassword: false };
   }
 
   /** 签发完整会话对（access + 轮换 refresh）；改密后 ver+1 使旧 access 失效。 */
-  issueTokens(user: UserRow): TokenPair {
+  issueTokens(user: UserRow, totpVerified = false): TokenPair {
     const accessToken = this.jwt.sign({
       sub: user.id,
       name: user.name,
       ver: user.ver,
       exp: Date.now() + ACCESS_TTL_MS,
+      ...(totpVerified ? { totpVerifiedAt: Date.now() } : {}),
     });
     const refreshToken = randomToken();
     this.db.createRefreshToken(user.id, sha256(refreshToken), Date.now() + REFRESH_TTL_MS);
@@ -253,7 +258,7 @@ private hmac(payload: string): string {
 }
 
   /** 校验 access JWT：签名 + 过期 + ver 与 DB 一致（改密/吊销即时失效）。 */
-  verifyAccess(accessToken: string): { user: UserRow; claims: { sub: number; name: string; ver: number } } | null {
+  verifyAccess(accessToken: string): { user: UserRow; claims: { sub: number; name: string; ver: number; totpVerifiedAt?: number } } | null {
     const claims = this.jwt.verify(accessToken);
     if (claims === null) return null;
     if (claims.totpPending === true) return null; // pending token 不可作完整会话
@@ -272,13 +277,13 @@ private hmac(payload: string): string {
    * 签发管理面会话（独立短效 access token，30min）：需 role ∈ 三档 + 2FA 已启用 + TOTP 校验通过。
    * 返回 null = 无权限 / 未开 2FA / TOTP 错误 / 非 active。
    */
-  issueAdminSession(userId: number, totpCode: string, trustedDevice = false): string | null {
+  issueAdminSession(userId: number, totpCode: string, trustedDevice = false, recentTotp = false): string | null {
     const user = this.db.getUserById(userId);
     if (user === null || user.accountStatus !== "active") return null;
     if (!HubAuth.isAdminRole(user.role)) return null;
     if (user.totpSecret === null) return null; // 强制 2FA（req R2）
-    // 可信设备（30 天 cookie）可跳过本次 TOTP 输入，但仍要求账号已开启 2FA
-    if (!trustedDevice && !verifyTotp(user.totpSecret, totpCode)) return null;
+    // 可信设备（30 天 cookie）或门户会话 30 分钟内验证过 2FA → 跳过本次 TOTP 输入
+    if (!trustedDevice && !recentTotp && !verifyTotp(user.totpSecret, totpCode)) return null;
     return this.jwt.sign({ sub: user.id, name: user.name, ver: user.ver, exp: Date.now() + ADMIN_TTL_MS, admin: true });
   }
 

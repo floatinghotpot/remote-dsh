@@ -63,8 +63,8 @@
 ## 4. 账号信息与删除（S2，R7）
 
 ### GET /api/account —— 当前账号信息（绑定状态）
-认证：需要。响应：`{ "name", "email": string|null, "emailVerified": bool, "phone": string|null, "phoneVerified": bool, "totpEnabled": bool, "smsEnabled": bool, "planStatus": string|null, "planExpiresAt": number|null, "planId": string|null }`
-（email/phone 为完整值，客户端自行脱敏显示；`smsEnabled` = `config.sms` 是否配置，供前端隐藏手机号入口。）
+认证：需要。响应：`{ "name", "role", "email": string|null, "emailVerified": bool, "phone": string|null, "phoneVerified": bool, "totpEnabled": bool, "smsEnabled": bool, "planStatus": string|null, "planExpiresAt": number|null, "planId": string|null }`
+（email/phone 为完整值，客户端自行脱敏显示；`smsEnabled` = `config.sms` 是否配置，供前端隐藏手机号入口；`role` = `user | readonly | operator | admin`，见 §10。）
 
 ### DELETE /api/account —— 自助删除
 认证：需要。请求 `{ "password" }`（二次确认）。行为：立即断全部隧道 + 删个人数据（邮箱/手机号/hosts/隧道/refresh/join/共享/审计），`payments`+`orders` 保留脱敏账务字段（金额/时间/渠道单号）；审计留痕。
@@ -91,6 +91,7 @@
 
 - 注册 identifier 已存在：**已定（2026-08-26 用户拍板 A）**——返回 `409 ALREADY_EXISTS`（公开注册场景，用户需知晓"该邮箱/手机号已被占用"；不做防枚举的统一 ok）。
 - 短信真发依赖阿里云签名/模板审核；`config.sms` 缺省关闭（log provider 用于测试）。
+- **2026-08-30**：`POST /api/auth/totp` 新增可选 `trustDevice: bool`（true → 附带 30 天可信设备 cookie `rdsh_trusted`，30 天内该浏览器再登录免输 TOTP）；`POST /api/auth/login` 在可信设备有效时直接签发会话（跳过 requiresTotp）。可信设备 token 签名含 `ver`，改密即全体失效。
 
 ## 9. 微信 OAuth（JSAPI 前置，S3）
 
@@ -102,3 +103,50 @@ JSAPI 支付需用户 openid（公众号 OAuth2）。门户在微信内浏览器
 ### GET /api/wechat/oauth/callback —— 授权回调（code 换 openid）
 微信回调 `?code=&state=` → 后端以 `appid`/`appSecret` 调 `api.weixin.qq.com/sns/oauth2/access_token` 换 openid → 签**短期 HttpOnly Cookie**（openid 短期有效）→ 302 回 `state.redirect`。
 错误：`400 OAUTH_FAILED`；`config.billing.payment.wechatpay.appSecret` 未配置时 authorize 返回 `400 WECHAT_OAUTH_DISABLED`。
+
+## 10. 管理面（/api/admin/*，2026-08-30 新增）
+
+**认证模型**：
+- 独立管理会话 cookie `rdsh_admin_session`（30 分钟短会话，HttpOnly，JWT 含 `admin` 标记 + ver 绑定）。
+- 登录三步：有效门户会话（`rdsh_session`）→ 角色 ∈ `{readonly, operator, admin}`（`HubAuth.isAdminRole`）→ 2FA（账号必须已开启 TOTP）。
+- **免二次输入**：可信设备 cookie `rdsh_trusted`（30 天，ver 绑定）或门户 access token 的 `totpVerifiedAt` 距今 < 30 分钟 → 免输 TOTP 直接签发管理会话（仍要求账号已开 2FA）。
+- 所有写操作需请求体 `reason`（原因，必填）+ 写审计（`source='admin'`、actor、reason）。
+- 管理 UI 挂载在 `/portal/admin`（门户 SPA 内），旧 `/admin` 302 重定向。
+
+### POST /api/admin/login
+认证：门户会话。请求 `{ "totp": string, "trustDevice"?: bool }`；`totp` 在免二次输入窗口内可为空。
+响应：`200 { "ok": true }` + `set-cookie: rdsh_admin_session`。
+错误：`401 UNAUTHORIZED`（未登录门户）/ `403 TOTP_REQUIRED`（未开 2FA 或需 TOTP）。
+
+### POST /api/admin/logout —— 清 `rdsh_admin_session` cookie。
+
+### GET /api/admin/me —— `{ userId, name, role }`
+
+### GET /api/admin/dashboard —— 运营总览统计。
+
+### GET /api/admin/users?q=&limit=&offset=
+分页 + 模糊搜索（name/email/phone）。响应 `{ "users": [{ ...UserRow, hostCount }], "total" }`；`limit` 默认 50、上限 200。
+
+### POST /api/admin/users/{id}/{action}
+`action` ∈ `ban | unban | reset-password | unlock | reset-2fa | plan | set-role | delete`
+- 均需 `reason`；`reset-password` 另需 `password`（≥8 位）；`plan` 另需 `planStatus`（subscribed/grace/free/null）；`set-role` 另需 `role`（user/readonly/operator/admin）。
+- RBAC：`operator` 可 ban/unban/reset-password/unlock/reset-2fa/plan；`admin` 可 set-role/delete。
+- **自我保护**：不能删除自己 / 修改自己角色 / 移除自己（`403 FORBIDDEN`）。
+
+### GET /api/admin/hosts?q=&limit=&offset=
+分页 + 模糊搜索（主机名/归属用户名，JOIN users）。响应 `{ "hosts": [{ ...HostRow, ownerName, online }], "total" }`。
+
+### POST /api/admin/hosts/{id}/revoke —— 吊销主机（需 `reason`）。
+
+### GET /api/admin/orders / payments / audit / audit.csv
+订单/支付/审计列表；audit 支持 `?userId=&event=&since=&source=`；audit.csv 全量导出（90 天保留）。
+
+### POST /api/admin/orders/{id}/refund —— 人工退款（`operator`；仅 `paid` 订单；置 refunded + 取消订阅降免费档）。
+
+### POST /api/admin/credit —— 手动补单入账（`admin` only）：`{ userId, planId, amountCny, expiresAtMs }` + `reason`。
+
+### GET /api/admin/health —— `{ uptimeSeconds, tunnelCount, onlineHosts, dbSize, version, lastBackupAt }`
+
+### GET /api/admin/config —— 脱敏后的运行时配置。
+
+### GET /api/admin/admins；POST /api/admin/admins/{id}/role|remove —— 管理员管理（`admin` only；`role` 请求体 `{ role, reason }`；不能操作自己）。
