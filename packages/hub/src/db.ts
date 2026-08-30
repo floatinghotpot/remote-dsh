@@ -765,6 +765,12 @@ export class HubDb {
     this.db.prepare("DELETE FROM audit_events WHERE created_at < ?").run(beforeMs);
   }
 
+  /** 在线一致快照：VACUUM INTO 导出当前库到目标文件（运行中安全，不中断服务）。 */
+  backupTo(targetPath: string): void {
+    const escaped = targetPath.replace(/'/g, "''");
+    this.db.exec(`VACUUM INTO '${escaped}'`);
+  }
+
   // ---- 邮件验证码 / 重置码 ----
 
   createEmailCode(userId: number, email: string, purpose: string, codeHash: string, expiresAt: number, now = Date.now()): EmailCodeRow {

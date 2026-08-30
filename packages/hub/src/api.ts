@@ -27,6 +27,7 @@ import { clearHostCookie } from "./server.ts";
 import { AdminError } from "./admin.ts";
 import type { AdminCtx } from "./admin.ts";
 import * as admin from "./admin.ts";
+import { lastBackupAt } from "./backup.ts";
 
 export const SESSION_COOKIE = "rdsh_session";
 export const OPENID_COOKIE = "rdsh_openid";
@@ -235,6 +236,7 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
     } catch {
       /* 忽略 */
     }
+    const backupDir = runtime.config.backup?.dir;
     res.end(
       JSON.stringify({
         uptimeSeconds: Math.floor(process.uptime()),
@@ -242,6 +244,7 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
         onlineHosts: online,
         dbSize,
         version: HUB_VERSION,
+        lastBackupAt: backupDir !== undefined ? lastBackupAt(backupDir) : null,
       }),
     );
     return true;

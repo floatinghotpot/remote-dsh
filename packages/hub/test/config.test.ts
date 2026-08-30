@@ -48,6 +48,13 @@ test("site.customerServiceUrl：字符串规范化 + 非法报错", () => {
   assert.throws(() => normalizeHubConfig({ site: { customerServiceUrl: 123 } }), /"site.customerServiceUrl" must be a string/);
 });
 
+test("backup：dir/keepDays 规范化 + 非法报错", () => {
+  assert.deepEqual(normalizeHubConfig({ backup: { dir: "/b", keepDays: 30 } }).backup, { dir: "/b", keepDays: 30 });
+  assert.equal(normalizeHubConfig({}).backup, undefined);
+  assert.throws(() => normalizeHubConfig({ backup: { keepDays: 0 } }), /positive integer/);
+  assert.throws(() => normalizeHubConfig({ backup: { dir: "" } }), /non-empty string/);
+});
+
 test("behindProxy 字段（默认 false / 可配置 / 非法报错）", async () => {
   assert.equal(normalizeHubConfig({}).behindProxy, false);
   assert.equal(normalizeHubConfig({ behindProxy: true }).behindProxy, true);

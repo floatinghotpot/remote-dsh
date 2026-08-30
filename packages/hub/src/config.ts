@@ -65,6 +65,14 @@ export interface E2eeConfig {
   mode: "off" | "optional" | "required";
 }
 
+/** 每日 SQLite 快照备份（VACUUM INTO 在线一致快照）。 */
+export interface BackupConfig {
+  /** 备份目录（缺省 <hub.json 同目录>/backups） */
+  dir?: string;
+  /** 保留天数（缺省 7） */
+  keepDays?: number;
+}
+
 export interface BeianConfig {
   /** ICP 备案号，如 "蜀ICP备XXXXXXXX号" */
   icp?: string;
@@ -121,6 +129,8 @@ export interface HubConfig {
   billing?: BillingConfig;
   /** 端到端加密策略；缺省 → optional（按 host 能力协商） */
   e2ee?: E2eeConfig;
+  /** 每日快照备份；缺省 → 启用（<hub.json 同目录>/backups，保留 7 天） */
+  backup?: BackupConfig;
   /** 备案信息（portal 页脚展示） */
   beian?: BeianConfig;
   /** 站点信息（portal 页脚导航） */
@@ -200,6 +210,7 @@ export function normalizeHubConfig(raw: unknown, source = "config"): HubConfig {
   if (cfg.registration !== undefined) out.registration = normalizeRegistration(cfg.registration, source);
   if (cfg.billing !== undefined) out.billing = normalizeBilling(cfg.billing, source);
   if (cfg.e2ee !== undefined) out.e2ee = normalizeE2ee(cfg.e2ee, source);
+  if (cfg.backup !== undefined) out.backup = normalizeBackup(cfg.backup, source);
   if (cfg.beian !== undefined) out.beian = normalizeBeian(cfg.beian, source);
   if (cfg.site !== undefined) out.site = normalizeSite(cfg.site, source);
   out.security = normalizeSecurity(cfg.security, source);
@@ -367,6 +378,21 @@ function normalizeE2ee(raw: unknown, source: string): E2eeConfig {
     throw new Error(`${source}: "e2ee.mode" must be off|optional|required`);
   }
   return { mode: e.mode };
+}
+
+function normalizeBackup(raw: unknown, source: string): BackupConfig {
+  if (typeof raw !== "object" || raw === null) throw new Error(`${source}: "backup" must be an object`);
+  const b = raw as Record<string, unknown>;
+  const out: BackupConfig = {};
+  if (b.dir !== undefined) {
+    if (typeof b.dir !== "string" || b.dir === "") throw new Error(`${source}: "backup.dir" must be a non-empty string`);
+    out.dir = b.dir;
+  }
+  if (b.keepDays !== undefined) {
+    if (typeof b.keepDays !== "number" || !Number.isInteger(b.keepDays) || b.keepDays < 1) throw new Error(`${source}: "backup.keepDays" must be a positive integer`);
+    out.keepDays = b.keepDays;
+  }
+  return out;
 }
 
 function normalizeBeian(raw: unknown, source: string): BeianConfig {

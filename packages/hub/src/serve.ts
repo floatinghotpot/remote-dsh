@@ -3,7 +3,7 @@
  */
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { loadHubConfig, resolveHubConfigPath } from "./config.ts";
 import { HubDb } from "./db.ts";
 import { Jwt } from "./jwt.ts";
@@ -12,6 +12,7 @@ import { TunnelRegistry } from "./tunnel.ts";
 import { EventHub } from "./events.ts";
 import { startHubServer, loadHubTls } from "./server.ts";
 import { defaultPortalDir } from "./portal.ts";
+import { backupNow, pruneBackups } from "./backup.ts";
 
 export interface HubServeOptions {
   configPath?: string;
@@ -47,6 +48,18 @@ export async function serveHub(opts: HubServeOptions): Promise<void> {
   const pruneAudit = (): void => db.pruneAudit(Date.now() - auditRetentionMs);
   pruneAudit();
   setInterval(pruneAudit, 24 * 3600 * 1000).unref();
+  // 每日快照备份：VACUUM INTO（默认 <hub.json 同目录>/backups，保留 7 天）
+  const backupDir = config.backup?.dir ?? join(dirname(config.dbPath), "backups");
+  const backupKeepDays = config.backup?.keepDays ?? 7;
+  const runBackup = (): void => {
+    try {
+      backupNow(db, backupDir);
+      pruneBackups(backupDir, backupKeepDays);
+    } catch (err) {
+      console.error(`[hub] backup failed:`, err instanceof Error ? err.message : err);
+    }
+  };
+  setInterval(runBackup, 24 * 3600 * 1000).unref();
   const jwt = new Jwt(await loadJwtKey(config.jwtKeyPath));
   const auth = new HubAuth(db, jwt, config.security);
   const tunnels = new TunnelRegistry();
@@ -71,6 +84,8 @@ export async function serveHub(opts: HubServeOptions): Promise<void> {
     billing: config.billing,
     beian: config.beian,
     site: config.site,
+    e2ee: config.e2ee,
+    backup: { dir: backupDir, keepDays: backupKeepDays },
   });
 
   const scheme = tls ? "https" : "http";

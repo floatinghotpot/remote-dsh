@@ -25,7 +25,7 @@ import { authenticate, clientIp, handleApi, writeError, sweepBilling } from "./a
 import type { HubRuntime } from "./api.ts";
 import type { EmailConfig } from "./email/types.ts";
 import type { SmsConfig } from "./sms/types.ts";
-import type { CaptchaConfig, SecurityConfig, BillingConfig, BeianConfig, SiteConfig } from "./config.ts";
+import type { CaptchaConfig, SecurityConfig, BillingConfig, BeianConfig, SiteConfig, E2eeConfig, BackupConfig } from "./config.ts";
 import { TunnelConn, TunnelRegistry } from "./tunnel.ts";
 import { EventHub, createEventsServer } from "./events.ts";
 import { handleRelay, handleRelayUpgrade, handleRawUpgrade } from "./relay.ts";
@@ -54,6 +54,10 @@ export interface HubServerOptions {
   beian?: BeianConfig;
   /** 站点信息（portal 页脚导航，serve.ts 从 hub.json 传入）。 */
   site?: SiteConfig;
+  /** 端到端加密策略（serve.ts 从 hub.json 传入）。 */
+  e2ee?: E2eeConfig;
+  /** 每日快照备份（dir 已解析；serve.ts 从 hub.json 传入）。 */
+  backup?: BackupConfig;
 }
 
 export interface RunningHub {
@@ -107,6 +111,8 @@ export async function startHubServer(opts: HubServerOptions): Promise<RunningHub
       billing: opts.billing,
       beian: opts.beian,
       site: opts.site,
+      e2ee: opts.e2ee,
+      backup: opts.backup,
     },
     db: opts.db,
     auth: opts.auth,

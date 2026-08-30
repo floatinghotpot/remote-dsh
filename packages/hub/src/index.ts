@@ -3,7 +3,7 @@
  * package as `rdsh hub ...`). Production phase: Go single binary.
  */
 export { loadHubConfig, normalizeHubConfig, resolveHubConfigPath, DEFAULT_HUB_CONFIG_PATH, BILLING_DEFAULTS } from "./config.ts";
-export type { HubConfig, PlanSpec, BillingConfig, BeianConfig, SiteConfig } from "./config.ts";
+export type { HubConfig, PlanSpec, BillingConfig, BeianConfig, SiteConfig, E2eeConfig, BackupConfig } from "./config.ts";
 export { HubDb } from "./db.ts";
 export type { UserRow, HostRow, RefreshRow, HostShareRow, AuditEventRow, EmailCodeRow, SmsCodeRow, SubscriptionRow, OrderRow, PaymentRow } from "./db.ts";
 export { createEmailSender, percentEncode, rpcSignature } from "./email/index.ts";
@@ -31,3 +31,4 @@ export type { HubServerOptions, RunningHub } from "./server.ts";
 export { serveHub, loadJwtKey } from "./serve.ts";
 export type { HubServeOptions } from "./serve.ts";
 export { servePortal, defaultPortalDir } from "./portal.ts";
+export { backupNow, pruneBackups, lastBackupAt } from "./backup.ts";
