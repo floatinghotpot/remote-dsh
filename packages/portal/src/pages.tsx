@@ -423,6 +423,7 @@ function Login(): React.JSX.Element {
   const [password, setPassword] = useState("");
   const [totpPending, setTotpPending] = useState<string | null>(null);
   const [totpCode, setTotpCode] = useState("");
+  const [trustDevice, setTrustDevice] = useState(false);
   const [brand, setBrand] = useState("RDSH.CN");
   const { err, run } = useError();
 
@@ -437,7 +438,7 @@ function Login(): React.JSX.Element {
         sessionStorage.setItem(REFRESH_KEY, r.refreshToken);
         navigate("/hosts");
       } else if (totpPending !== null) {
-        const r = await api.totpLogin(totpPending, totpCode);
+        const r = await api.totpLogin(totpPending, totpCode, trustDevice);
         sessionStorage.setItem(REFRESH_KEY, r.refreshToken);
         navigate(r.mustChangePassword ? "/login?first=1" : "/hosts");
       } else {
@@ -452,6 +453,13 @@ function Login(): React.JSX.Element {
     });
   };
 
+  useEffect(() => {
+    // TOTP 输满 6 位自动提交（数字键盘连点 6 下即登录）
+    if (totpPending !== null && totpCode.length === 6) {
+      submit();
+    }
+  }, [totpCode]);
+
   return (
     <div style={{ maxWidth: 360, margin: "80px auto", padding: "0 16px", fontFamily: "system-ui, sans-serif" }}>
       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
@@ -463,7 +471,23 @@ function Login(): React.JSX.Element {
         {totpPending !== null ? t("输入你的两步验证码（TOTP）") : isFirst ? t("首次登录：设置你的密码") : t("远程指挥你的 DeepSeek Harness 智能体，仅需浏览器，任意设备、随时随地，端到端加密")}
       </p>
       {totpPending !== null ? (
-        field(t("验证码"), totpCode, setTotpCode)
+        <div>
+          <label style={{ display: "block", marginBottom: 4, fontSize: 13 }}>
+            <span style={{ display: "block", marginBottom: 4 }}>{t("验证码")}</span>
+            <input
+              value={totpCode}
+              onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              autoFocus
+              maxLength={6}
+              style={{ ...inputStyle(), fontSize: 20, letterSpacing: 6, textAlign: "center" }}
+            />
+          </label>
+          <label style={{ display: "block", marginBottom: 12, fontSize: 13 }}>
+            <input type="checkbox" checked={trustDevice} onChange={(e) => setTrustDevice(e.target.checked)} /> {t("记住此设备 30 天（下次登录免输动态码）")}
+          </label>
+        </div>
       ) : (
         <>
           {field(isFirst ? t("用户名（管理员创建）") : t("邮箱 / 手机号 / 用户名"), name, setName)}
@@ -928,6 +952,17 @@ function TwoFaSettingsPage(): React.JSX.Element {
               {qrDataUrl !== "" && <img src={qrDataUrl} alt="TOTP QR" style={{ width: 200, height: 200, borderRadius: 6, border: "1px solid #eee", marginBottom: 8 }} />}
               <p style={{ fontSize: 13 }}>{t("密钥（复制到 Google Authenticator / Microsoft Authenticator / 1Password 等）：")}</p>
               <code style={{ wordBreak: "break-all" }}>{twofa.secret}</code>
+              <div style={{ background: "#f8fafc", border: "1px solid #eee", borderRadius: 8, padding: 12, margin: "12px 0", fontSize: 12, color: "#444" }}>
+                <p style={{ margin: "0 0 4px", fontWeight: 600 }}>{t("设置步骤：")}</p>
+                <p style={{ margin: "2px 0" }}>1. {t("打开 Authenticator App（微软 / Google / 1Password 均可）")}</p>
+                <p style={{ margin: "2px 0" }}>2. {t("添加账号 → 扫码绑定；无法扫码时选「手动输入」，粘贴下方密钥")}</p>
+                <p style={{ margin: "2px 0" }}>3. {t("App 生成 6 位动态码（每 30 秒轮换）")}</p>
+                <p style={{ margin: "2px 0" }}>4. {t("把动态码填回本页输入框（输满 6 位自动提交）→ 点「确认开启」")}</p>
+                <p style={{ margin: "8px 0 4px", fontWeight: 600 }}>{t("提示：")}</p>
+                <p style={{ margin: "2px 0" }}>· {t("密钥仅在此展示，开启后不再显示 —— 请确保 App 已成功绑定；建议保存密钥截图作备份")}</p>
+                <p style={{ margin: "2px 0" }}>· {t("绑定后每次登录需输入动态码；可选「记住此设备 30 天」免重复输入")}</p>
+                <p style={{ margin: "2px 0" }}>· {t("若换机/丢失 Authenticator，需联系管理员重置 2FA")}</p>
+              </div>
               {field(t("当前 TOTP 验证码"), twofaCode, setTwofaCode)}
               <button
                 onClick={() => void run(async () => { await api.activate2fa(twofa.secret, twofaCode.trim()); setTwofa(null); setTwofaCode(""); show("ok", t("2FA 已开启 ✓")); await refresh(); })}
@@ -1964,19 +1999,35 @@ function AdminApp({ path }: { path: string }): React.JSX.Element {
 function AdminLogin({ onSuccess }: { onSuccess: () => void }): React.JSX.Element {
   const { t } = useT();
   const [totp, setTotp] = useState("");
+  const [trustDevice, setTrustDevice] = useState(false);
   const [err, setErr] = useState("");
   const submit = (): void => {
     setErr("");
     adminApi
-      .login(totp)
+      .login(totp, trustDevice)
       .then(onSuccess)
       .catch((e: unknown) => setErr(e instanceof ApiError ? e.message : "login failed"));
   };
+  useEffect(() => {
+    if (totp.length === 6) submit();
+  }, [totp]);
   return (
     <div style={{ maxWidth: 360, margin: "40px auto", padding: "24px", border: "1px solid #e5e7eb", borderRadius: 12, fontFamily: "system-ui, sans-serif" }}>
       <h2 style={{ fontSize: 18, margin: "0 0 8px" }}>{t("进入管理后台")}</h2>
       <p style={{ fontSize: 12, color: "#6b7280", margin: "0 0 16px" }}>{t("管理后台需两步验证（TOTP）。未开启 2FA 的账号请先在「账户与安全」开启。")}</p>
-      <input value={totp} onChange={(e) => setTotp(e.target.value)} placeholder={t("动态验证码")} style={{ width: "100%", padding: "10px", fontSize: 14, marginBottom: 12, boxSizing: "border-box" }} />
+      <input
+        value={totp}
+        onChange={(e) => setTotp(e.target.value.replace(/\D/g, "").slice(0, 6))}
+        inputMode="numeric"
+        autoComplete="one-time-code"
+        autoFocus
+        maxLength={6}
+        placeholder={t("动态验证码")}
+        style={{ width: "100%", padding: "10px", fontSize: 20, letterSpacing: 6, textAlign: "center", marginBottom: 8, boxSizing: "border-box", border: "1px solid #ccc", borderRadius: 6 }}
+      />
+      <label style={{ display: "block", fontSize: 13, marginBottom: 12 }}>
+        <input type="checkbox" checked={trustDevice} onChange={(e) => setTrustDevice(e.target.checked)} /> {t("记住此设备 30 天（下次登录免输动态码）")}
+      </label>
       {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
       <button onClick={submit} style={{ ...adminBtnStyle(), width: "100%", padding: "10px", fontSize: 15 }}>{t("进入")}</button>
     </div>

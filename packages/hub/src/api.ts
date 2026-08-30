@@ -30,6 +30,8 @@ import * as admin from "./admin.ts";
 import { lastBackupAt } from "./backup.ts";
 
 export const SESSION_COOKIE = "rdsh_session";
+/** 可信设备 cookie（30 天免 TOTP；签名含 ver，改密即失效）。 */
+export const TRUSTED_COOKIE = "rdsh_trusted";
 export const OPENID_COOKIE = "rdsh_openid";
 export const ADMIN_COOKIE = "rdsh_admin_session";
 const HUB_VERSION = "0.4.0";
@@ -124,7 +126,7 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
   const method = req.method ?? "GET";
   if (!path.startsWith("/api/admin/")) return false;
 
-  // 登录：正常会话 + TOTP → 签发 admin 短会话（强制 2FA，req R2）
+  // 登录：正常会话 + TOTP → 签发 admin 短会话（强制 2FA，req R2；可信设备可免输动态码）
   if (path === "/api/admin/login" && method === "POST") {
     const auth = authenticate(req, runtime);
     if (auth === null) {
@@ -133,7 +135,11 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
     }
     const body = await readJsonBody(req);
     const totp = typeof body?.totp === "string" ? body.totp : "";
-    const token = runtime.auth.issueAdminSession(auth.userId, totp);
+    // 可信设备（30 天免 TOTP cookie）→ 免输动态码直接进管理台
+    const cookies = parseCookies(req.headers.cookie);
+    const trusted = cookies[TRUSTED_COOKIE];
+    const trustedUid = typeof trusted === "string" && trusted.length > 0 ? runtime.auth.verifyTrustedDevice(trusted) : null;
+    const token = runtime.auth.issueAdminSession(auth.userId, totp, trustedUid === auth.userId);
     if (token === null) {
       writeError(res, 403, "TOTP_REQUIRED", "admin console requires 2FA enabled and a valid TOTP code");
       return true;
@@ -645,11 +651,36 @@ async function handleLogin(req: IncomingMessage, res: ServerResponse, runtime: H
       writeError(res, 401, "BAD_CREDENTIALS", "invalid username or password");
       return;
     }
-    case "requires-totp":
-      limiter.clear(ip);
+    case "requires-totp": {
+      // 可信设备（30 天免 TOTP cookie）：签名含 ver（改密即失效），同账号才放行
+      const cookies = parseCookies(req.headers.cookie);
+      const trusted = cookies[TRUSTED_COOKIE];
+      if (typeof trusted === "string" && trusted.length > 0) {
+        const uid = runtime.auth.verifyTrustedDevice(trusted);
+        const user = runtime.db.getUserByName(loginName);
+        if (uid !== null && user !== null && uid === user.id) {
+          limiter.clear(ip);
+          const tokens = runtime.auth.issueTokens(user);
+          runtime.db.recordAudit(user.id, "login.ok", { name: user.name, trustedDevice: true }, ip);
+          res.writeHead(200, {
+            "content-type": "application/json",
+            "set-cookie": [sessionCookie(tokens.accessToken), trustedDeviceCookie(runtime.auth.signTrustedDevice(user.id))],
+          });
+          res.end(
+            JSON.stringify({
+              accessToken: tokens.accessToken,
+              refreshToken: tokens.refreshToken,
+              mustChangePassword: user.mustChange === 1,
+              user: { id: user.id, name: user.name },
+            }),
+          );
+          return;
+        }
+      }
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ requiresTotp: true, pendingToken: result.pendingToken, name: result.name }));
       return;
+    }
     case "ok": {
       limiter.clear(ip);
       const user = runtime.db.getUserByName(loginName);
@@ -1131,6 +1162,10 @@ function sessionCookie(accessToken: string): string {
   return `${SESSION_COOKIE}=${accessToken}; HttpOnly; SameSite=Lax; Path=/; Max-Age=3600`;
 }
 
+function trustedDeviceCookie(token: string): string {
+  return `${TRUSTED_COOKIE}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${30 * 24 * 3600}`;
+}
+
 // ---- M5：邮件/验证码/2FA/共享 ----
 
 const PIN_TTL_MS = 10 * 60 * 1000;
@@ -1331,7 +1366,12 @@ async function handleTotpLogin(req: IncomingMessage, res: ServerResponse, runtim
     writeError(res, 401, "BAD_TOTP", "invalid or expired 2FA code");
     return;
   }
-  res.writeHead(200, { "content-type": "application/json", "set-cookie": sessionCookie(result.tokens.accessToken) });
+  const cookies = [sessionCookie(result.tokens.accessToken)];
+  if (body.trustDevice === true) {
+    // 用户勾选「记住此设备」→ 签发 30 天可信设备 cookie（同一次 TOTP 验证即信任）
+    cookies.push(trustedDeviceCookie(runtime.auth.signTrustedDevice(result.userId)));
+  }
+  res.writeHead(200, { "content-type": "application/json", "set-cookie": cookies });
   res.end(JSON.stringify({ accessToken: result.tokens.accessToken, refreshToken: result.tokens.refreshToken, mustChangePassword: result.mustChangePassword }));
 }
 

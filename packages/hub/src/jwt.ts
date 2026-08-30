@@ -22,6 +22,8 @@ export interface JwtClaims {
   openid?: string;
   /** 管理面会话标记（独立短效 token，不可作普通用户会话） */
   admin?: boolean;
+  /** 可信设备标记（30 天免 TOTP 的 cookie token） */
+  trusted?: boolean;
 }
 
 export class Jwt {

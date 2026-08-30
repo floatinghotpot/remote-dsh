@@ -203,8 +203,8 @@ export const api = {
   revokeJoinToken(id: string): Promise<{ ok: boolean }> {
     return jsonFetch(`/api/hosts/join-tokens/${id}`, { method: "DELETE" });
   },
-  totpLogin(pendingToken: string, code: string): Promise<{ accessToken: string; refreshToken: string; mustChangePassword: boolean }> {
-    return jsonFetch("/api/auth/totp", { method: "POST", body: JSON.stringify({ pendingToken, code }) });
+  totpLogin(pendingToken: string, code: string, trustDevice?: boolean): Promise<{ accessToken: string; refreshToken: string; mustChangePassword: boolean }> {
+    return jsonFetch("/api/auth/totp", { method: "POST", body: JSON.stringify({ pendingToken, code, trustDevice: trustDevice === true }) });
   },
   captchaChallenge(): Promise<{ token: string; question: string }> {
     return jsonFetch("/api/captcha/arithmetic", { method: "POST", body: "{}" });
@@ -384,8 +384,8 @@ async function adminJson<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const adminApi = {
-  login(totp: string): Promise<{ ok: boolean }> {
-    return adminJson("/api/admin/login", { method: "POST", body: JSON.stringify({ totp }) });
+  login(totp: string, trustDevice?: boolean): Promise<{ ok: boolean }> {
+    return adminJson("/api/admin/login", { method: "POST", body: JSON.stringify({ totp, trustDevice: trustDevice === true }) });
   },
   logout(): Promise<{ ok: boolean }> {
     return adminJson("/api/admin/logout", { method: "POST", body: "{}" });
