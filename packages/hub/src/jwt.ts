@@ -20,6 +20,8 @@ export interface JwtClaims {
   totpPending?: boolean;
   /** JSAPI 微信 openid（OAuth 换码后签发，独立 Cookie，非会话 token） */
   openid?: string;
+  /** 管理面会话标记（独立短效 token，不可作普通用户会话） */
+  admin?: boolean;
 }
 
 export class Jwt {

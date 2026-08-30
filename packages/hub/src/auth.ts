@@ -53,6 +53,7 @@ export async function verifyPassword(password: string, stored: string): Promise<
 
 export const ACCESS_TTL_MS = 60 * 60 * 1000; // 1h
 export const REFRESH_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7d
+export const ADMIN_TTL_MS = 30 * 60 * 1000; // 30min（管理面独立短会话）
 
 export interface TokenPair {
   accessToken: string;
@@ -258,6 +259,34 @@ private hmac(payload: string): string {
     if (user === null) return null;
     if (user.ver !== claims.ver) return null;
     return { user, claims };
+  }
+
+  /** 管理面角色集合（RBAC 三档，req R1）。 */
+  static isAdminRole(role: string): boolean {
+    return role === "readonly" || role === "operator" || role === "admin";
+  }
+
+  /**
+   * 签发管理面会话（独立短效 access token，30min）：需 role ∈ 三档 + 2FA 已启用 + TOTP 校验通过。
+   * 返回 null = 无权限 / 未开 2FA / TOTP 错误 / 非 active。
+   */
+  issueAdminSession(userId: number, totpCode: string): string | null {
+    const user = this.db.getUserById(userId);
+    if (user === null || user.accountStatus !== "active") return null;
+    if (!HubAuth.isAdminRole(user.role)) return null;
+    if (user.totpSecret === null) return null; // 强制 2FA（req R2）
+    if (!verifyTotp(user.totpSecret, totpCode)) return null;
+    return this.jwt.sign({ sub: user.id, name: user.name, ver: user.ver, exp: Date.now() + ADMIN_TTL_MS, admin: true });
+  }
+
+  /** 校验管理面会话 token：admin 标记 + 签名/过期/ver + 角色仍在三档。 */
+  verifyAdminAccess(adminToken: string): { user: UserRow } | null {
+    const claims = this.jwt.verify(adminToken);
+    if (claims === null || claims.admin !== true || claims.totpPending === true) return null;
+    const user = this.db.getUserById(claims.sub);
+    if (user === null || user.ver !== claims.ver) return null;
+    if (!HubAuth.isAdminRole(user.role)) return null;
+    return { user };
   }
 
   /** JSAPI 微信 openid 短期 token（OAuth 回调后签发；独立 Cookie，非会话 token）。 */

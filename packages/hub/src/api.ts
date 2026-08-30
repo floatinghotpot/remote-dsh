@@ -5,12 +5,13 @@
  * 无开放注册端点（账号由 `rdsh hub user add` 创建，防 bot/垃圾注入）。
  */
 import { randomInt, randomUUID } from "node:crypto";
+import { statSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { HubConfig, PlanSpec } from "./config.ts";
 import { BILLING_DEFAULTS } from "./config.ts";
 import type { HubDb, UserRow } from "./db.ts";
 import type { HubAuth } from "./auth.ts";
-import { createLoginLimiter, hashPassword, verifyPassword } from "./auth.ts";
+import { createLoginLimiter, hashPassword, verifyPassword, ADMIN_TTL_MS } from "./auth.ts";
 import type { TunnelRegistry } from "./tunnel.ts";
 import type { EventHub } from "./events.ts";
 import { randomToken, sha256 } from "./jwt.ts";
@@ -23,9 +24,14 @@ import { createChallenge, verifyChallenge } from "./captcha.ts";
 import { verifyCaptchaParam } from "./captcha/aliyun.ts";
 import { DailyWindowLimiter } from "./ratelimit.ts";
 import { clearHostCookie } from "./server.ts";
+import { AdminError } from "./admin.ts";
+import type { AdminCtx } from "./admin.ts";
+import * as admin from "./admin.ts";
 
 export const SESSION_COOKIE = "rdsh_session";
 export const OPENID_COOKIE = "rdsh_openid";
+export const ADMIN_COOKIE = "rdsh_admin_session";
+const HUB_VERSION = "0.4.0";
 const JOIN_TOKEN_DEFAULT_TTL = 30 * 24 * 3600; // join token 默认 30 天（秒）
 const JOIN_TOKEN_MAX_TTL = 365 * 24 * 3600; // join token 上限 1 年（秒）
 const REGISTER_RATE_LIMIT = { max: 10, windowMs: 60 * 1000 }; // register 未认证端点：10 次/分钟/IP
@@ -82,6 +88,301 @@ export function clientIp(req: IncomingMessage, runtime: HubRuntime): string {
   return remote;
 }
 
+/** 管理面会话认证：读 rdsh_admin_session cookie → verifyAdminAccess（独立短效会话）。 */
+export function authenticateAdmin(req: IncomingMessage, runtime: HubRuntime): { userId: number; name: string; role: string } | null {
+  const cookies = parseCookies(req.headers.cookie);
+  const token = cookies[ADMIN_COOKIE];
+  if (typeof token !== "string" || token.length === 0) return null;
+  const v = runtime.auth.verifyAdminAccess(token);
+  return v === null ? null : { userId: v.user.id, name: v.user.name, role: v.user.role };
+}
+
+/** admin 服务层错误 → HTTP 状态映射。 */
+function writeAdminError(res: ServerResponse, err: unknown): void {
+  if (err instanceof AdminError) {
+    const status = err.code === "FORBIDDEN" ? 403 : err.code === "NOT_FOUND" ? 404 : 400;
+    writeError(res, status, err.code, err.message);
+    return;
+  }
+  writeError(res, 500, "INTERNAL", "internal error");
+}
+
+/** 读必需 reason 字段（危险操作必填）。 */
+function requireReason(body: Record<string, unknown> | null): string | null {
+  return body !== null && typeof body.reason === "string" && body.reason.trim() !== "" ? body.reason.trim() : null;
+}
+
+function adminSessionCookie(token: string): string {
+  return `${ADMIN_COOKIE}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor(ADMIN_TTL_MS / 1000)}`;
+}
+
+/** 管理面 API：/api/admin/*（守卫链：admin 会话 → role → 服务层 RBAC + 审计）。 */
+export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<boolean> {
+  const url = new URL(req.url ?? "/", "http://rdsh.local");
+  const path = url.pathname;
+  const method = req.method ?? "GET";
+  if (!path.startsWith("/api/admin/")) return false;
+
+  // 登录：正常会话 + TOTP → 签发 admin 短会话（强制 2FA，req R2）
+  if (path === "/api/admin/login" && method === "POST") {
+    const auth = authenticate(req, runtime);
+    if (auth === null) {
+      writeError(res, 401, "UNAUTHORIZED", "sign in required");
+      return true;
+    }
+    const body = await readJsonBody(req);
+    const totp = typeof body?.totp === "string" ? body.totp : "";
+    const token = runtime.auth.issueAdminSession(auth.userId, totp);
+    if (token === null) {
+      writeError(res, 403, "TOTP_REQUIRED", "admin console requires 2FA enabled and a valid TOTP code");
+      return true;
+    }
+    res.writeHead(200, { "content-type": "application/json", "set-cookie": adminSessionCookie(token) });
+    res.end(JSON.stringify({ ok: true }));
+    return true;
+  }
+  if (path === "/api/admin/logout" && method === "POST") {
+    res.writeHead(200, { "content-type": "application/json", "set-cookie": `${ADMIN_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0` });
+    res.end(JSON.stringify({ ok: true }));
+    return true;
+  }
+
+  // 其余端点：admin 会话守卫
+  const auth = authenticateAdmin(req, runtime);
+  if (auth === null) {
+    writeError(res, 401, "UNAUTHORIZED", "admin session required");
+    return true;
+  }
+  const ctx: AdminCtx = { actorId: auth.userId, role: auth.role, ip: clientIp(req, runtime) };
+  const db = runtime.db;
+
+  // ---- 读端点（readonly 可读） ----
+  if (path === "/api/admin/me" && method === "GET") {
+    res.end(JSON.stringify({ userId: auth.userId, name: auth.name, role: auth.role }));
+    return true;
+  }
+  if (path === "/api/admin/dashboard" && method === "GET") {
+    const users = db.listUsers();
+    const hosts = db.listAllHosts();
+    const online = hosts.filter((h) => runtime.tunnels.isOnline(h.id)).length;
+    let dbSize = -1;
+    try {
+      if (db.path !== ":memory:") dbSize = statSync(db.path).size;
+    } catch {
+      /* 忽略 */
+    }
+    res.end(
+      JSON.stringify({
+        totalUsers: users.length,
+        totalHosts: hosts.length,
+        onlineHosts: online,
+        tunnelCount: runtime.tunnels.list().length,
+        subscribed: users.filter((u) => u.planStatus === "subscribed").length,
+        dbSize,
+        uptimeSeconds: Math.floor(process.uptime()),
+        version: HUB_VERSION,
+      }),
+    );
+    return true;
+  }
+  if (path === "/api/admin/users" && method === "GET") {
+    res.end(JSON.stringify({ users: admin.listUsers(db) }));
+    return true;
+  }
+  if (path === "/api/admin/hosts" && method === "GET") {
+    const hosts = admin.listHosts(db).map((h) => ({ ...h, online: runtime.tunnels.isOnline(h.id) }));
+    res.end(JSON.stringify({ hosts }));
+    return true;
+  }
+  if (path === "/api/admin/orders" && method === "GET") {
+    res.end(JSON.stringify({ orders: admin.listOrders(db) }));
+    return true;
+  }
+  if (path === "/api/admin/payments" && method === "GET") {
+    res.end(JSON.stringify({ payments: admin.listPayments(db) }));
+    return true;
+  }
+  if (path === "/api/admin/audit" && method === "GET") {
+    const userId = url.searchParams.get("userId");
+    const event = url.searchParams.get("event") ?? undefined;
+    const since = url.searchParams.get("since");
+    const source = url.searchParams.get("source") ?? undefined;
+    const rows = admin.listAudit(db, {
+      userId: userId !== null && userId !== "" ? Number(userId) : undefined,
+      event,
+      since: since !== null && since !== "" ? Number(since) : undefined,
+      source,
+    });
+    res.end(JSON.stringify({ events: rows }));
+    return true;
+  }
+  if (path === "/api/admin/audit.csv" && method === "GET") {
+    const rows = admin.listAudit(db);
+    const lines = ["id,created_at,user_id,event,source,detail"];
+    for (const r of rows) {
+      lines.push([r.id, r.createdAt, r.userId ?? "", r.event, r.source, r.detailJson.replace(/"/g, '""')].map((c) => `"${c}"`).join(","));
+    }
+    res.writeHead(200, { "content-type": "text/csv; charset=utf-8" });
+    res.end(lines.join("\n"));
+    return true;
+  }
+  if (path === "/api/admin/health" && method === "GET") {
+    const hosts = db.listAllHosts();
+    const online = hosts.filter((h) => runtime.tunnels.isOnline(h.id)).length;
+    let dbSize = -1;
+    try {
+      if (db.path !== ":memory:") dbSize = statSync(db.path).size;
+    } catch {
+      /* 忽略 */
+    }
+    res.end(
+      JSON.stringify({
+        uptimeSeconds: Math.floor(process.uptime()),
+        tunnelCount: runtime.tunnels.list().length,
+        onlineHosts: online,
+        dbSize,
+        version: HUB_VERSION,
+      }),
+    );
+    return true;
+  }
+  if (path === "/api/admin/config" && method === "GET") {
+    const c = runtime.config;
+    res.end(
+      JSON.stringify({
+        registration: c.registration ?? "closed",
+        emailEnabled: c.email !== undefined,
+        smsEnabled: c.sms !== undefined,
+        captchaProvider: c.captcha?.provider ?? "arithmetic",
+        e2eeMode: c.e2ee?.mode ?? "optional",
+        plans: c.billing?.plans ?? [],
+        site: c.site ?? {},
+      }),
+    );
+    return true;
+  }
+  if (path === "/api/admin/admins" && method === "GET") {
+    const admins = db.listUsers().filter((u) => u.role !== "user").map((u) => ({ id: u.id, name: u.name, email: u.email, role: u.role }));
+    res.end(JSON.stringify({ admins }));
+    return true;
+  }
+
+  // ---- 用户详情 ----
+  const userDetail = /^\/api\/admin\/users\/([^/]+)$/.exec(path);
+  if (userDetail !== null && method === "GET") {
+    const id = Number(decodeURIComponent(userDetail[1]!));
+    const user = admin.getUser(db, id);
+    if (user === null) {
+      writeError(res, 404, "NOT_FOUND", "user not found");
+      return true;
+    }
+    const events = db.listAudit({ userId: id });
+    res.end(JSON.stringify({ user, audit: events }));
+    return true;
+  }
+
+  // ---- 写端点（服务层 RBAC + 审计） ----
+  const userAction = /^\/api\/admin\/users\/([^/]+)\/(ban|unban|reset-password|unlock|reset-2fa|plan|delete)$/.exec(path);
+  if (userAction !== null && method === "POST") {
+    const id = Number(decodeURIComponent(userAction[1]!));
+    const action = userAction[2]!;
+    const body = await readJsonBody(req);
+    try {
+      if (action === "ban") admin.banUser(db, ctx, id, requireReason(body) ?? "no reason");
+      else if (action === "unban") admin.unbanUser(db, ctx, id, requireReason(body) ?? "no reason");
+      else if (action === "unlock") admin.unlockUser(db, ctx, id, requireReason(body) ?? "no reason");
+      else if (action === "reset-2fa") admin.resetUser2fa(db, ctx, id, requireReason(body) ?? "no reason");
+      else if (action === "delete") admin.deleteUser(db, ctx, id, requireReason(body) ?? "no reason");
+      else if (action === "reset-password") {
+        if (body === null || typeof body.password !== "string" || body.password.length < 8) {
+          writeError(res, 400, "BAD_REQUEST", "password must be >= 8 chars");
+          return true;
+        }
+        await admin.resetUserPassword(db, ctx, id, body.password, requireReason(body) ?? "no reason");
+      } else if (action === "plan") {
+        if (body === null || typeof body.planStatus !== "string") {
+          writeError(res, 400, "BAD_REQUEST", "planStatus required");
+          return true;
+        }
+        const expiresAtMs = typeof body.expiresAtMs === "number" ? body.expiresAtMs : null;
+        admin.adjustPlan(db, ctx, id, body.planStatus, expiresAtMs, requireReason(body) ?? "no reason");
+      }
+      res.end(JSON.stringify({ ok: true }));
+    } catch (err) {
+      writeAdminError(res, err);
+    }
+    return true;
+  }
+
+  const hostRevoke = /^\/api\/admin\/hosts\/([^/]+)\/revoke$/.exec(path);
+  if (hostRevoke !== null && method === "POST") {
+    const hostId = decodeURIComponent(hostRevoke[1]!);
+    const body = await readJsonBody(req);
+    try {
+      const conn = runtime.tunnels.get(hostId);
+      if (conn !== null) conn.terminate(); // 即时断隧道（req R6）
+      admin.revokeHost(db, ctx, hostId, requireReason(body) ?? "no reason");
+      res.end(JSON.stringify({ ok: true }));
+    } catch (err) {
+      writeAdminError(res, err);
+    }
+    return true;
+  }
+
+  const orderRefund = /^\/api\/admin\/orders\/([^/]+)\/refund$/.exec(path);
+  if (orderRefund !== null && method === "POST") {
+    const orderId = decodeURIComponent(orderRefund[1]!);
+    const body = await readJsonBody(req);
+    try {
+      admin.refundOrder(db, ctx, orderId, requireReason(body) ?? "no reason");
+      res.end(JSON.stringify({ ok: true }));
+    } catch (err) {
+      writeAdminError(res, err);
+    }
+    return true;
+  }
+
+  if (path === "/api/admin/credit" && method === "POST") {
+    const body = await readJsonBody(req);
+    try {
+      if (body === null || typeof body.userId !== "number" || typeof body.planId !== "string" || typeof body.amountCny !== "number" || typeof body.expiresAtMs !== "number") {
+        writeError(res, 400, "BAD_REQUEST", "userId/planId/amountCny/expiresAtMs required");
+        return true;
+      }
+      const orderId = admin.creditOrder(db, ctx, { userId: body.userId, planId: body.planId, amountCny: body.amountCny, expiresAtMs: body.expiresAtMs }, requireReason(body) ?? "no reason");
+      res.end(JSON.stringify({ ok: true, orderId }));
+    } catch (err) {
+      writeAdminError(res, err);
+    }
+    return true;
+  }
+
+  const adminAction = /^\/api\/admin\/admins\/([^/]+)\/(role|remove)$/.exec(path);
+  if (adminAction !== null && method === "POST") {
+    const id = Number(decodeURIComponent(adminAction[1]!));
+    const action = adminAction[2]!;
+    const body = await readJsonBody(req);
+    try {
+      if (action === "role") {
+        if (body === null || typeof body.role !== "string") {
+          writeError(res, 400, "BAD_REQUEST", "role required");
+          return true;
+        }
+        admin.setUserRole(db, ctx, id, body.role, requireReason(body) ?? "no reason");
+      } else {
+        admin.removeAdmin(db, ctx, id, requireReason(body) ?? "no reason");
+      }
+      res.end(JSON.stringify({ ok: true }));
+    } catch (err) {
+      writeAdminError(res, err);
+    }
+    return true;
+  }
+
+  writeError(res, 404, "NOT_FOUND", "unknown admin endpoint");
+  return true;
+}
+
 /** 主入口：处理 /api/*（含 /api/auth/*）；返回是否已处理。 */
 export async function handleApi(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<boolean> {
   const url = new URL(req.url ?? "/", "http://rdsh.local");
@@ -89,6 +390,12 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, runti
 
   const path = url.pathname;
   const method = req.method ?? "GET";
+
+  // ---- 管理面 API（/api/admin/*，独立守卫链） ----
+  if (path.startsWith("/api/admin/")) {
+    await handleAdminApi(req, res, runtime);
+    return true;
+  }
 
   // ---- 认证端点 ----
   if (path === "/api/capabilities" && method === "GET") {

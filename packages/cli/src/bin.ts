@@ -591,18 +591,18 @@ async function handleHubUser(args: string[], configPath?: string): Promise<void>
     switch (action) {
       case "add": {
         const name = args[1];
-        if (name === undefined) throw new Error("usage: rdsh hub user add <name> [--no-password]");
+        if (name === undefined) throw new Error("usage: rdsh hub user add <name> [--no-password] [--role <user|readonly|operator|admin>]");
         const noPassword = args.includes("--no-password");
+        const roleIdx = args.indexOf("--role");
+        const role = roleIdx >= 0 && args[roleIdx + 1] !== undefined ? args[roleIdx + 1]! : "user";
+        if (!["user", "readonly", "operator", "admin"].includes(role)) throw new Error(`invalid role '${role}' (user|readonly|operator|admin)`);
         const hubConfigPath = resolveHubConfigPath(configPath);
         if (db.getUserByName(name) !== null) throw new Error(`user '${name}' already exists`);
-        if (noPassword) {
-          db.createUser(name, "scrypt:disabled", new Date().toISOString(), true);
-          console.log(`rdsh: user '${name}' created — they must set a password on first sign-in (${hubConfigPath})`);
-        } else {
-          const password = await promptPasswordTwice(`password for ${name}: `);
-          db.createUser(name, await hashPassword(password));
-          console.log(`rdsh: user '${name}' created (hub db: ${db.path})`);
-        }
+        const user = noPassword
+          ? db.createUser(name, "scrypt:disabled", new Date().toISOString(), true)
+          : db.createUser(name, await hashPassword(await promptPasswordTwice(`password for ${name}: `)));
+        if (role !== "user") db.setRole(user.id, role);
+        console.log(`rdsh: user '${name}' created (role: ${role}${noPassword ? " — must set password on first sign-in" : ""})`);
         return;
       }
       case "passwd": {
@@ -617,7 +617,7 @@ async function handleHubUser(args: string[], configPath?: string): Promise<void>
       }
       case "ls": {
         const users = db.listUsers();
-        console.log(users.length > 0 ? users.map((u) => u.name).join("\n") : "(no users)");
+        console.log(users.length > 0 ? users.map((u) => `${u.name}\t${u.role}`).join("\n") : "(no users)");
         return;
       }
       case "rm": {

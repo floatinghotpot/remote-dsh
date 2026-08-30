@@ -33,6 +33,8 @@ export interface UserRow {
   phoneVerified: number;
   /** 账号状态：pending | active | banned | deleted */
   accountStatus: string;
+  /** 角色：user | readonly | operator | admin（管理面 RBAC） */
+  role: string;
   /** 计费状态：NULL（不受限）| trial | subscribed | grace | free */
   planStatus: string | null;
   /** 当前计费状态到期时间戳（ms）；NULL 不适用 */
@@ -84,6 +86,10 @@ export interface AuditEventRow {
   event: string;
   detailJson: string;
   ip: string;
+  /** 来源：user（自助）| admin（管理操作） */
+  source: string;
+  /** admin 操作者 id；用户自助为 null */
+  actorUserId: number | null;
   createdAt: number;
 }
 
@@ -125,7 +131,7 @@ export interface OrderRow {
   userId: number;
   planId: string;
   amountCny: number;
-  /** created | paid | closed */
+  /** created | paid | closed | refunded */
   status: string;
   channel: string | null;
   outId: string | null;
@@ -172,6 +178,7 @@ export class HubDb {
         phone TEXT,
         phone_verified INTEGER NOT NULL DEFAULT 0,
         account_status TEXT NOT NULL DEFAULT 'active',
+        role TEXT NOT NULL DEFAULT 'user',
         plan_status TEXT,
         plan_expires_at INTEGER,
         trial_started_at INTEGER,
@@ -215,6 +222,8 @@ export class HubDb {
         event TEXT NOT NULL,
         detail_json TEXT NOT NULL DEFAULT '{}',
         ip TEXT NOT NULL DEFAULT '',
+        source TEXT NOT NULL DEFAULT 'user',
+        actor_user_id INTEGER,
         created_at INTEGER NOT NULL
       );
       CREATE TABLE IF NOT EXISTS email_codes (
@@ -281,6 +290,7 @@ export class HubDb {
       ["phone", "phone TEXT"],
       ["phone_verified", "phone_verified INTEGER NOT NULL DEFAULT 0"],
       ["account_status", "account_status TEXT NOT NULL DEFAULT 'active'"],
+      ["role", "role TEXT NOT NULL DEFAULT 'user'"],
       ["plan_status", "plan_status TEXT"],
       ["plan_expires_at", "plan_expires_at INTEGER"],
       ["trial_started_at", "trial_started_at INTEGER"],
@@ -295,6 +305,11 @@ export class HubDb {
       (this.db.prepare("PRAGMA table_info(hosts)").all() as unknown as Array<{ name: string }>).map((c) => c.name),
     );
     if (!hostCols.has("e2ee_public_key")) this.db.exec(`ALTER TABLE hosts ADD COLUMN e2ee_public_key TEXT`);
+    const auditCols = new Set(
+      (this.db.prepare("PRAGMA table_info(audit_events)").all() as unknown as Array<{ name: string }>).map((c) => c.name),
+    );
+    if (!auditCols.has("source")) this.db.exec(`ALTER TABLE audit_events ADD COLUMN source TEXT NOT NULL DEFAULT 'user'`);
+    if (!auditCols.has("actor_user_id")) this.db.exec(`ALTER TABLE audit_events ADD COLUMN actor_user_id INTEGER`);
   }
 
 
@@ -316,6 +331,7 @@ export class HubDb {
       phone: row.phone === null || row.phone === undefined ? null : String(row.phone),
       phoneVerified: Number(row.phone_verified ?? 0),
       accountStatus: String(row.account_status ?? "active"),
+      role: String(row.role ?? "user"),
       planStatus: row.plan_status === null || row.plan_status === undefined ? null : String(row.plan_status),
       planExpiresAt: row.plan_expires_at === null || row.plan_expires_at === undefined ? null : Number(row.plan_expires_at),
       trialStartedAt: row.trial_started_at === null || row.trial_started_at === undefined ? null : Number(row.trial_started_at),
@@ -373,6 +389,8 @@ export class HubDb {
       event: String(row.event),
       detailJson: String(row.detail_json ?? "{}"),
       ip: String(row.ip ?? ""),
+      source: String(row.source ?? "user"),
+      actorUserId: row.actor_user_id === null || row.actor_user_id === undefined ? null : Number(row.actor_user_id),
       createdAt: Number(row.created_at),
     };
   }
@@ -706,17 +724,19 @@ export class HubDb {
 
   // ---- 审计 ----
 
-  recordAudit(userId: number | null, event: string, detail: unknown, ip: string, now = Date.now()): void {
-    this.db.prepare("INSERT INTO audit_events (user_id, event, detail_json, ip, created_at) VALUES (?, ?, ?, ?, ?)").run(
+  recordAudit(userId: number | null, event: string, detail: unknown, ip: string, now = Date.now(), opts?: { source?: string; actorUserId?: number | null }): void {
+    this.db.prepare("INSERT INTO audit_events (user_id, event, detail_json, ip, created_at, source, actor_user_id) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
       userId,
       event,
       JSON.stringify(detail ?? {}),
       ip,
       now,
+      opts?.source ?? "user",
+      opts?.actorUserId ?? null,
     );
   }
 
-  listAudit(filter: { userId?: number; event?: string; since?: number } = {}): AuditEventRow[] {
+  listAudit(filter: { userId?: number; event?: string; since?: number; source?: string } = {}): AuditEventRow[] {
     const clauses: string[] = [];
     const params: Array<number | string> = [];
     if (filter.userId !== undefined) {
@@ -730,6 +750,10 @@ export class HubDb {
     if (filter.since !== undefined) {
       clauses.push("created_at >= ?");
       params.push(filter.since);
+    }
+    if (filter.source !== undefined) {
+      clauses.push("source = ?");
+      params.push(filter.source);
     }
     const where = clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : "";
     return (this.db.prepare(`SELECT * FROM audit_events${where} ORDER BY id DESC LIMIT 1000`).all(...params) as unknown as Array<
@@ -787,6 +811,11 @@ export class HubDb {
 
   setAccountStatus(id: number, status: string): void {
     this.db.prepare("UPDATE users SET account_status = ? WHERE id = ?").run(status, id);
+  }
+
+  /** 设置角色（user | readonly | operator | admin）。 */
+  setRole(id: number, role: string): void {
+    this.db.prepare("UPDATE users SET role = ? WHERE id = ?").run(role, id);
   }
 
   /** 进入试用：plan_status=trial + 起止时间。 */
@@ -872,12 +901,29 @@ export class HubDb {
     return row === undefined ? null : this.mapOrder(row as unknown as Record<string, unknown>);
   }
 
-  markOrderPaid(id: string, channel: string, outId: string, paidAt = Date.now()): void {
+  markOrderPaid(id: string, channel: string, outId: string | null, paidAt = Date.now()): void {
     this.db.prepare("UPDATE orders SET status = 'paid', channel = ?, out_id = ?, paid_at = ? WHERE id = ?").run(channel, outId, paidAt, id);
   }
 
   closeOrder(id: string): void {
     this.db.prepare("UPDATE orders SET status = 'closed' WHERE id = ?").run(id);
+  }
+
+  /** 记录人工退款：订单置 refunded（不接渠道退款 API，见 req R7）。 */
+  markOrderRefunded(id: string): void {
+    this.db.prepare("UPDATE orders SET status = 'refunded' WHERE id = ?").run(id);
+  }
+
+  /** 全部订单（admin 账单运营，按创建时间倒序）。 */
+  listOrders(): OrderRow[] {
+    const rows = this.db.prepare("SELECT * FROM orders ORDER BY created_at DESC LIMIT 1000").all() as unknown as Array<Record<string, unknown>>;
+    return rows.map((r) => this.mapOrder(r));
+  }
+
+  /** 全部支付流水（admin 账单运营，按支付时间倒序）。 */
+  listPayments(): PaymentRow[] {
+    const rows = this.db.prepare("SELECT * FROM payments ORDER BY paid_at DESC LIMIT 1000").all() as unknown as Array<Record<string, unknown>>;
+    return rows.map((r) => this.mapPayment(r));
   }
 
   createPayment(id: string, orderId: string, userId: number, channel: string, channelOrderId: string, amountCny: number, paidAt: number, raw: string): PaymentRow {

@@ -205,6 +205,14 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse, runtime: Hu
     return;
   }
 
+  // 管理后台：/admin 前缀 = portal SPA（清 host cookie，防有 host 上下文时误 relay）
+  if (pathname === "/admin" || pathname.startsWith("/admin/")) {
+    if (hostId !== undefined) res.setHeader("set-cookie", clearHostCookie());
+    const handled = await servePortal(req, res, portalDir);
+    if (!handled) writeError(res, 404, "NOT_FOUND", "not found");
+    return;
+  }
+
   // 进入 host：/h/<hostId>/... → 校验归属 → Set-Cookie + 302 根路径
   const h = /^\/h\/([^/]+)(\/.*)?$/.exec(pathname);
   if (h !== null) {
