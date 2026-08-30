@@ -35,8 +35,9 @@ export interface RelayOptions {
   injectBackBar?: boolean;
 }
 
-/** 返回按钮：悬浮于 DSH 界面右上角（top:64px 位于 DSH 顶栏/Session Log 下方，避免遮挡）。 */
-export const BACK_BAR_HTML = `<a href="/portal" style="position:fixed;top:40px;right:30px;z-index:99999;background:rgba(30,30,30,.88);color:#e2e8f0;padding:6px 14px;border-radius:16px;border:1px solid rgba(255,255,255,.4);text-decoration:none;font:13px system-ui,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.3);">← rdsh · 返回</a>`;
+/** 返回按钮：悬浮于 DSH 界面右上角（top:64px 位于 DSH 顶栏/Session Log 下方，避免遮挡）。
+ * 目标为主机列表：已登录直达 /portal/hosts；未登录则由会话续期逻辑跳登录并带回跳。 */
+export const BACK_BAR_HTML = `<a href="/portal/hosts" style="position:fixed;top:40px;right:30px;z-index:99999;background:rgba(30,30,30,.88);color:#e2e8f0;padding:6px 14px;border-radius:16px;border:1px solid rgba(255,255,255,.4);text-decoration:none;font:13px system-ui,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.3);">← rdsh · 返回</a>`;
 
 /**
  * HTTP/SSE 透传。返回是否已处理（false = 路径不属于数据面）。
@@ -58,7 +59,7 @@ export async function handleRelay(req: IncomingMessage, res: ServerResponse, run
         `<!doctype html><meta charset="utf-8"><body style="font-family:system-ui,sans-serif;max-width:560px;margin:80px auto;padding:0 16px;color:#1f2937">` +
           `<h1 style="font-size:20px">主机离线</h1>` +
           `<p style="color:#6b7280">这台主机当前未接入（join 隧道未运行），或已重新绑定。请回到门户重新选择主机。</p>` +
-          `<a href="/portal" style="color:#2563eb">← 返回 rdsh 门户</a></body>`,
+          `<a href="/portal/hosts" style="color:#2563eb">← 返回主机列表</a></body>`,
       );
       return true;
     }
