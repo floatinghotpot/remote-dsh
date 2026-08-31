@@ -1,6 +1,6 @@
 {
   "name": "dsh-web-remote",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Remote access for DeepSeek Harness: join a rdsh hub from the DSH web UI (plugin, no CLI)",
   "license": "MIT",
   "type": "module",

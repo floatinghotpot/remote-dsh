@@ -1,6 +1,6 @@
 {
   "name": "rdsh-tunnel",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "rdsh wire protocol: framing, multiplexing, heartbeat, backpressure",
   "license": "MIT",
   "type": "module",

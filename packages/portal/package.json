@@ -1,6 +1,6 @@
 {
   "name": "rdsh-portal",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "rdsh web portal: login + host list (Vite + React 18, mirrors DSH frontend stack)",
   "license": "MIT",
   "type": "module",
