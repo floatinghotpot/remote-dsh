@@ -66,6 +66,8 @@ export function apply(ctx: Ctx): void {
   let currentHub: string | undefined;
   let currentName: string | undefined;
   let lastMessage: string | undefined;
+  let liveCompat: boolean | undefined; // 运行中切换的 dshUiCompat（覆盖 host.json）
+  let currentConfig: RdshConfig | null = null; // 最近一次读到的 host.json
 
   const hooks = {
     onState: (s: JoinState, detail?: { message?: string; delayMs?: number }): void => {
@@ -134,20 +136,51 @@ export function apply(ctx: Ctx): void {
       await saveConfig(DEFAULT_HOST_CONFIG_PATH, config);
 
       // 起隧道：转发到本进程 dsh
-      currentHub = hub;
-      currentName = joinedName;
-      lastMessage = undefined;
-      handle = startJoin({
-        hubUrl: hub,
-        token: hostToken,
-        insecure,
-        target: { host: "127.0.0.1", port: ctx.webServer.port },
-        role: "plugin",
-        hooks,
-      });
+      startTunnel(config, hub, hostToken, joinedName, insecure);
       return ok({ status: "connecting", hub, name });
     } catch (e) {
       return err("register-failed", e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  /** 起隧道并同步面板状态（connect / autoConnect 共用；转发到本进程 dsh）。 */
+  function startTunnel(config: RdshConfig, hub: string, token: string, name: string, insecure: boolean): void {
+    currentConfig = config;
+    liveCompat = config.dshUiCompat?.trustE2EEAsLoopback !== false;
+    currentHub = hub;
+    currentName = name;
+    lastMessage = undefined;
+    handle = startJoin({
+      hubUrl: hub,
+      token,
+      insecure,
+      target: { host: "127.0.0.1", port: ctx.webServer.port },
+      role: "plugin",
+      dshUiCompat: config.dshUiCompat,
+      hooks,
+    });
+  }
+
+  /**
+   * 启动时自动接入：host.json 已是 join 模式且有持久化 host token、隧道未被 CLI/他人持有 →
+   * 复用 token 自动建隧道（与 CLI `rdsh host serve` 行为一致，消除「需先点接入才有隧道」的鸡生蛋）。
+   * 任一前置条件不满足则静默跳过，面板保持 disconnected，由用户手动接入。
+   */
+  async function autoConnect(): Promise<void> {
+    try {
+      if (handle !== null) return;
+      const held = readJoinLock();
+      if (held !== null && held.role === "cli") return;
+      const config = await loadConfig(DEFAULT_HOST_CONFIG_PATH);
+      if (config.mode !== "join" || typeof config.hub !== "string" || config.hub === "") return;
+      if (readPersistedToken(config.hub) === null) return;
+      const { token: hostToken, insecure, name: joinedName } = await registerJoin({
+        hubUrl: config.hub,
+        name: config.name,
+      });
+      startTunnel(config, config.hub, hostToken, joinedName, insecure);
+    } catch {
+      // 自动接入失败不阻塞面板；用户可手动接入重试
     }
   }
 
@@ -192,12 +225,13 @@ export function apply(ctx: Ctx): void {
 
   async function state(): Promise<RpcResult> {
     try {
+      const compat = uiCompatEnabled();
       if (handle !== null && liveState !== null) {
-        return ok({ status: mapState(liveState), hub: currentHub, name: currentName, message: lastMessage, hasToken: true });
+        return ok({ status: mapState(liveState), hub: currentHub, name: currentName, message: lastMessage, hasToken: true, uiCompat: compat });
       }
       const held = readJoinLock();
       if (held !== null && held.role === "cli") {
-        return ok({ status: "external" });
+        return ok({ status: "external", uiCompat: compat });
       }
       const config = await loadConfig(DEFAULT_HOST_CONFIG_PATH);
       if (config.mode === "join" && config.hub !== undefined) {
@@ -207,9 +241,33 @@ export function apply(ctx: Ctx): void {
           name: config.name,
           message: lastMessage,
           hasToken: readPersistedToken(config.hub) !== null,
+          uiCompat: compat,
         });
       }
-      return ok({ status: "unconfigured" });
+      return ok({ status: "unconfigured", uiCompat: compat });
+    } catch (e) {
+      return err("internal", e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  /** 读当前 dshUiCompat 开关（内存覆盖 > host.json；缺省 true）。 */
+  function uiCompatEnabled(): boolean {
+    if (liveCompat !== undefined) return liveCompat;
+    return currentConfig?.dshUiCompat?.trustE2EEAsLoopback !== false;
+  }
+
+  async function setUiCompat(args: Record<string, unknown>): Promise<RpcResult> {
+    try {
+      if (typeof args.enabled !== "boolean") return err("bad-request", "enabled (boolean) required");
+      // ① 内存即时生效（运行中的隧道；缺省也写入供下次连接）
+      liveCompat = args.enabled;
+      handle?.setUiCompat(args.enabled);
+      // ② 持久化 host.json
+      const config = await loadConfig(DEFAULT_HOST_CONFIG_PATH);
+      config.dshUiCompat = { trustE2EEAsLoopback: args.enabled };
+      await saveConfig(DEFAULT_HOST_CONFIG_PATH, config);
+      currentConfig = config;
+      return ok({ enabled: args.enabled });
     } catch (e) {
       return err("internal", e instanceof Error ? e.message : String(e));
     }
@@ -228,12 +286,17 @@ export function apply(ctx: Ctx): void {
           return await revoke();
         case "state":
           return await state();
+        case "set-ui-compat":
+          return await setUiCompat(args);
         default:
           return err("bad-request", `unknown endpoint ${endpoint}`);
       }
     },
     { authority: "loopback" },
   );
+
+  // 启动自动接入（静默；CLI 托管时跳过，见 autoConnect 前置条件）
+  void autoConnect();
 
   ctx.on("dispose", () => {
     void handle?.stop();

@@ -46,6 +46,14 @@ export interface RdshConfig {
   hub?: string;
   name?: string;
   insecure?: boolean;
+  /** DSH UI 兼容开关（跟随 E2EE；trustE2EEAsLoopback 默认 true） */
+  dshUiCompat?: DshUiCompat;
+}
+
+/** DSH UI 兼容：把经隧道访问的前端 isLoopback 判定视为 loopback，使 Models/设置持久化可用。 */
+export interface DshUiCompat {
+  /** E2EE 激活（或宿主启用）时 patch JS；false = 保持 DSH 原样（共享 host/敏感场景） */
+  trustE2EEAsLoopback?: boolean;
 }
 
 export const DEFAULT_HOST_CONFIG_PATH = join(homedir(), ".rdsh", "host.json");
@@ -62,6 +70,7 @@ const DEFAULTS: RdshConfig = {
   behindProxy: false,
   allowFrom: [],
   auth: DEFAULT_AUTH,
+  dshUiCompat: { trustE2EEAsLoopback: true },
 };
 
 /** 解析配置文件路径（--config > $RDSH_CONFIG > 默认 host.json）。 */
@@ -211,6 +220,19 @@ export function normalizeConfig(raw: unknown, source = "config"): RdshConfig {
   if (cfg.dshPath !== undefined) {
     assertString(cfg.dshPath, "dshPath", source);
     out.dshPath = cfg.dshPath;
+  }
+  // ---- dshUiCompat（缺省 trustE2EEAsLoopback: true）----
+  if (cfg.dshUiCompat !== undefined) {
+    if (typeof cfg.dshUiCompat !== "object" || cfg.dshUiCompat === null) {
+      throw new Error(`${source}: "dshUiCompat" must be an object`);
+    }
+    const compat = cfg.dshUiCompat as Record<string, unknown>;
+    if (compat.trustE2EEAsLoopback !== undefined) {
+      if (typeof compat.trustE2EEAsLoopback !== "boolean") {
+        throw new Error(`${source}: "dshUiCompat.trustE2EEAsLoopback" must be boolean`);
+      }
+      out.dshUiCompat = { trustE2EEAsLoopback: compat.trustE2EEAsLoopback };
+    }
   }
   return out;
 }

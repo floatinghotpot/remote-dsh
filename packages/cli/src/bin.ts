@@ -324,7 +324,7 @@ async function handleHostServe(_args: string[], configPath?: string): Promise<vo
   const config = await loadConfig(target);
   if (config.mode === "join") {
     if (config.hub === undefined) throw new Error("host.json 缺 hub（join 模式）；先 `rdsh host join <hub>`");
-    await join({ hubUrl: config.hub, name: config.name, insecure: config.insecure, dshPath: config.dshPath });
+    await join({ hubUrl: config.hub, name: config.name, insecure: config.insecure, dshPath: config.dshPath, dshUiCompat: config.dshUiCompat });
     return;
   }
   await serve({ configPath: target });

@@ -42,6 +42,8 @@ window.__ModuleLoader__.load({
       tip_reconnecting: "隧道断开，正在自动重连，无需操作。",
       tip_disconnected: "已断开，配置与授权已保留，点击接入即可恢复。",
       tip_external: "该主机由 rdsh CLI / 服务托管，请用 rdsh 命令管理。",
+      uiCompatLabel: "端到端加密时，信任为本地访问（兼容模式）",
+      uiCompatDesc: "（默认开启；共享主机可关闭）",
     };
 
     const en = {
@@ -69,6 +71,8 @@ window.__ModuleLoader__.load({
       tip_reconnecting: "The tunnel dropped; it is reconnecting automatically — no action needed.",
       tip_disconnected: "Disconnected — config and auth are kept. Click Connect to resume.",
       tip_external: "This host is managed by the rdsh CLI/service; manage it with rdsh commands.",
+      uiCompatLabel: "Trust as local access when E2EE (compatibility)",
+      uiCompatDesc: "(on by default; disable for shared hosts)",
     };
 
     const CSS = `
@@ -133,6 +137,7 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = React.useState(false);
       const [confirmOverwrite, setConfirmOverwrite] = React.useState(false);
       const [savedToken, setSavedToken] = React.useState(false);
+      const [uiCompat, setUiCompat] = React.useState(true);
 
       React.useEffect(() => {
         let alive = true;
@@ -146,6 +151,7 @@ window.__ModuleLoader__.load({
             if (typeof v.name === "string") setName(v.name);
             if (typeof v.message === "string" && v.message !== "") setMessage(v.message);
             setSavedToken(v.hasToken === true);
+            if (typeof v.uiCompat === "boolean") setUiCompat(v.uiCompat);
           } catch {
             /* 瞬时错误忽略，下一轮重试 */
           }
@@ -293,6 +299,26 @@ window.__ModuleLoader__.load({
             )
           : React.createElement("p", { className: "dsh-web-remote-tip" }, t("tip_" + status));
 
+      const compatToggle = external
+        ? null
+        : React.createElement(
+            "label",
+            { className: "dsh-web-remote-compat" },
+            React.createElement("input", {
+              type: "checkbox",
+              checked: uiCompat,
+              disabled,
+              onChange: (e) => {
+                const v = e.target.checked;
+                setUiCompat(v);
+                void rpc.call("/remote-access", "set-ui-compat", { args: { enabled: v } });
+              },
+            }),
+            " ",
+            t("uiCompatLabel"),
+            React.createElement("span", { className: "dsh-web-remote-compat-desc" }, " ", t("uiCompatDesc")),
+          );
+
       return React.createElement(
         "div",
         { className: "dsh-web-remote" },
@@ -300,6 +326,7 @@ window.__ModuleLoader__.load({
         tip,
         message ? React.createElement("p", { className: "dsh-web-remote-msg" }, message) : null,
         form,
+        compatToggle,
         actions,
       );
     }

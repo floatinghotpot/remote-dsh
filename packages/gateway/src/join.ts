@@ -37,6 +37,8 @@ export interface JoinOptions {
   insecure?: boolean;
   /** 主机名（注册命名 / host.json） */
   name?: string;
+  /** DSH UI 兼容（透传 host.json dshUiCompat；缺省 true） */
+  dshUiCompat?: { trustE2EEAsLoopback?: boolean };
 }
 
 /** 注册/接入结果：解析出的 host token + 是否需 insecure + 生效的主机名（缺省=机器 hostname）。 */
@@ -68,11 +70,15 @@ export interface StartJoinOptions {
   /** 锁文件路径（缺省 ~/.rdsh/join.lock；测试可注入临时路径） */
   lockPath?: string;
   hooks?: JoinHooks;
+  /** DSH UI 兼容（缺省 trustE2EEAsLoopback=true；false 关闭 JS patch） */
+  dshUiCompat?: { trustE2EEAsLoopback?: boolean };
 }
 
 /** 可停止的 join 隧道句柄。 */
 export interface JoinHandle {
   stop(): Promise<void>;
+  /** 运行中切换 DSH UI 兼容（trustE2EEAsLoopback）；下一个请求即生效。 */
+  setUiCompat(trustE2EEAsLoopback: boolean): void;
 }
 
 /** 判断错误是否为 TLS 证书类错误（自签/过期/域名不匹配）。 */
@@ -202,6 +208,8 @@ async function register(
 export function startJoin(opts: StartJoinOptions): JoinHandle {
   const hubWsBase = opts.hubUrl.replace(/^https/, "wss").replace(/^http/, "ws");
   const hooks = opts.hooks ?? {};
+  // DSH UI 兼容开关：缺省 true（跟随 E2EE）；可变引用 → 运行中可切换（插件面板即时生效）
+  const uiCompat = { trustE2EEAsLoopback: opts.dshUiCompat?.trustE2EEAsLoopback !== false };
   const log = (level: "info" | "warn" | "error", message: string): void => {
     hooks.onLog?.(level, message);
   };
@@ -229,7 +237,26 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
   }
 
   /** 内层帧分发器（plain 与 raw 共用）：OPEN http/ws + DATA → DSH 转发，响应帧经 `send` 回传。 */
-  function makeInnerDispatcher(send: (frame: Buffer) => void) {
+/** JS 响应判定（content-type 含 javascript）。 */
+function isJsContentType(headers: IncomingHttpHeaders): boolean {
+  const ct = headers["content-type"];
+  const s = Array.isArray(ct) ? ct.join(";") : (ct ?? "");
+  return /javascript/i.test(s);
+}
+
+/**
+ * 最小 patch：把 DSH 客户端 bundle 里的前端 isLoopback 判定替换为 true
+ * （持久设置/API key 输入只对 loopback 开放；E2EE 流上信任基础等同 loopback）。
+ * fail-open：未命中目标串 → 返回 null，调用方原样透传（DSH 升级不炸）。
+ */
+function patchLoopbackJs(body: Buffer): Buffer | null {
+  const src = body.toString("utf8");
+  const target = "isLoopbackHostname(pageLocation.hostname)";
+  if (!src.includes(target)) return null;
+  return Buffer.from(src.split(target).join("true"), "utf8");
+}
+
+  function makeInnerDispatcher(send: (frame: Buffer) => void, dio?: { jsPatch?: () => boolean }) {
     const httpStreams = new Map<number, { up: ReturnType<typeof httpRequest> }>();
     const wsStreams = new Map<number, { upstream: WebSocket; queue: Buffer[] }>();
 
@@ -325,6 +352,25 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
               }),
             ),
           );
+          if (dio?.jsPatch?.() === true && isJsContentType(upRes.headers)) {
+            // 最小 patch：E2EE 流上的 JS 响应，把前端 isLoopback 判定替换为 true
+            // （fail-open：未命中 → 原样透传；DSH 升级不炸）
+            const chunks: Buffer[] = [];
+            upRes.on("data", (chunk: Buffer) => chunks.push(chunk));
+            upRes.on("end", () => {
+              const body = Buffer.concat(chunks);
+              const patched = patchLoopbackJs(body);
+              // fail-open：未命中也必须原样发 body（否则空响应白屏）
+              send(encodeFrame(FRAME_TYPE.DATA, streamId, patched !== null ? patched : body));
+              send(encodeFrame(FRAME_TYPE.CLOSE, streamId, jsonPayload({ code: 0 })));
+              httpStreams.delete(streamId);
+            });
+            upRes.on("error", () => {
+              send(encodeFrame(FRAME_TYPE.CLOSE, streamId, jsonPayload({ code: 502, message: "upstream error" })));
+              httpStreams.delete(streamId);
+            });
+            return;
+          }
           upRes.on("data", (chunk: Buffer) => {
             send(encodeFrame(FRAME_TYPE.DATA, streamId, chunk));
           });
@@ -394,7 +440,7 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
     return { handleFrame, cleanup };
   }
 
-  const plainDispatcher = makeInnerDispatcher(sendTunnelFrame);
+  const plainDispatcher = makeInnerDispatcher(sendTunnelFrame, { jsPatch: () => uiCompat.trustE2EEAsLoopback });
 
   // host 端 E2EE 静态密钥对（持久化 ~/.rdsh/e2ee-key.json；join 注册时上送指纹）
   const hostE2eeKeypair: KeyPair = loadOrCreateE2eeKeyPair();
@@ -411,13 +457,16 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
   const rawStreams = new Map<number, RawStreamState>();
 
   function startRawStream(streamId: number): void {
-    const inner = makeInnerDispatcher((frame) => {
-      const raw = rawStreams.get(streamId);
-      if (raw?.encryptor !== null && raw?.encryptor !== undefined) {
-        const ct = raw.encryptor.encrypt(frame, Buffer.alloc(0));
-        sendTunnelFrame(encodeFrame(FRAME_TYPE.DATA, streamId, ct, FLAG_E2E));
-      }
-    });
+    const inner = makeInnerDispatcher(
+      (frame) => {
+        const raw = rawStreams.get(streamId);
+        if (raw?.encryptor !== null && raw?.encryptor !== undefined) {
+          const ct = raw.encryptor.encrypt(frame, Buffer.alloc(0));
+          sendTunnelFrame(encodeFrame(FRAME_TYPE.DATA, streamId, ct, FLAG_E2E));
+        }
+      },
+      { jsPatch: () => uiCompat.trustE2EEAsLoopback },
+    );
     rawStreams.set(streamId, {
       handshakeBuf: Buffer.alloc(0),
       keys: null,
@@ -589,6 +638,10 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
   connect();
 
   return {
+    setUiCompat(trustE2EEAsLoopback: boolean): void {
+      uiCompat.trustE2EEAsLoopback = trustE2EEAsLoopback;
+      console.log(`rdsh join: dshUiCompat.trustE2EEAsLoopback = ${trustE2EEAsLoopback}（运行中生效）`);
+    },
     async stop(): Promise<void> {
       if (shuttingDown) return;
       shuttingDown = true;
@@ -626,6 +679,7 @@ export async function join(opts: JoinOptions): Promise<void> {
     insecure,
     target,
     role: "cli",
+    dshUiCompat: opts.dshUiCompat,
     hooks: {
       onLog: (level, message) => {
         (level === "error" ? console.error : console.log)(`rdsh join: ${message}`);

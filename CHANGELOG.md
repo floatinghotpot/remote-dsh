@@ -7,6 +7,12 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `dsh-web-remote` (0.2.0, unreleased): the Remote Access panel gains a **"Trust as local access when E2EE (compatibility)"** checkbox (`dshUiCompat.trustE2EEAsLoopback`, on by default) — with the patch, JS responses relayed through the tunnel treat the browser as loopback, so DSH's Models / API-key settings work remotely; and the plugin now **auto-connects at boot** when `host.json` is in join mode with a persisted token and no CLI owns the tunnel (same behavior as `rdsh host serve`), removing the "connect first to reach the panel" chicken-and-egg.
+
 ## [0.6.0] - 2026-08-24
 
 ### Added

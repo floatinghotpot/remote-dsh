@@ -7,6 +7,12 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### 新增
+
+- `dsh-web-remote`（0.2.0，未发布）：「远程访问」面板新增**「端到端加密时，信任为本地访问（兼容模式）」复选框**（`dshUiCompat.trustE2EEAsLoopback`，默认开启）——开启后经隧道转发的 JS 响应按 loopback 对待，DSH 的 Models / API key 设置可远程使用；并新增**启动自动接入**（host.json 为 join 模式且有持久化 token、隧道未被 CLI 持有时自动复用 token 建隧道，行为与 `rdsh host serve` 一致），消除「需先点接入才有隧道」的鸡生蛋。
+
 ## [0.6.0] - 2026-08-24
 
 ### 新增
