@@ -116,6 +116,8 @@ dsh plugin --profile default add dsh-web-remote
 | R7 | **断开 / 注销语义**：断开 = `stop()` 停隧道，**保留** host.json + token（态 F 可一键再接）；注销 = `stop()` + hub `self-revoke` + `clearPersistedToken` + 清 host.json join 字段（回默认 mode） | 断开后状态回「未接入」、可复用 token 再接；注销后 hub 侧 host 移除、本地 token/join 配置清除、面板回「未接入」空表单 |
 | R8 | **安全**：join token 一次性（不落 host.json / session / 日志）；host token 仅 session 文件 0600；hub 侧只存哈希（05 已有）；日志脱敏 | 代码审查 + 测试断言：host.json 无 token、日志无明文 token、session 文件 0600 |
 | R9 | **文档 / 发布纪律**：实现前 README/roadmap **只写 `dsh plugin add`，不写全名**；发布后补 CHANGELOG、博客（zh/en）、README 双语（`dsh plugin add dsh-web-remote` 流程） | 文档无提前泄名；发布说明含插件安装 + 面板操作指引 |
+| R10 | **兼容模式开关（2026-09-01 追加）**：面板新增复选框「端到端加密时，信任为本地访问（兼容模式）」，默认开启。勾选 = 写 `host.json` `dshUiCompat.trustE2EEAsLoopback` + 运行中隧道内存 flag 即时生效；用于 DSH 设置（API key / Models）经隧道按 loopback 开放，共享 host 场景可关闭 | 复选框存在（zh/en i18n）；勾选/取消即时生效（运行中隧道）；host.json 持久化；CLI 托管（external）态隐藏复选框 |
+| R11 | **启动自动接入（2026-09-01 追加）**：插件启动时，若 host.json 已是 join 模式且有持久化 host token、且隧道未被 CLI 持有 → 复用 token 自动建隧道（与 `rdsh host serve` 一致），消除「需先点接入才有隧道」的鸡生蛋 | dsh web 重启后自动回「已连接」，无需手动点接入；CLI 托管时跳过（保持 external 只读） |
 
 ### 3.2 前置依赖（Prerequisites）
 

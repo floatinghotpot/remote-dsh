@@ -31,4 +31,18 @@
 
 全部完成并发布（2026-08-24）：`rdsh-gateway@0.4.0` + `dsh-web-remote@0.1.0` 上线 npm；`dsh plugin --profile web add dsh-web-remote` 验证通过。[TODO.md](TODO.md) 为空。
 
+## 追加（2026-09-01：R10/R11，未发布）
+
+### gateway（`rdsh-gateway@0.5.0`，未发布）
+
+- **`config.ts`**：`DshUiCompat { trustE2EEAsLoopback?: boolean }`（默认 true）+ 校验；`RdshConfig.dshUiCompat`。
+- **`join.ts`**：`makeInnerDispatcher` 增 `jsPatch` 钩子 —— plain 流 JS 响应经 `patchLoopbackJs`（`isLoopbackHostname(pageLocation.hostname)` → `true`，fail-open）；`startJoin` 读 `dshUiCompat`；`JoinHandle.setUiCompat()` 运行中即时切换。**实现偏差**：patch 落 plain 流（JS bundle 明文）而非 E2EE raw 流（设计见内部 fix 文档 20260831 §5.4）。
+- **`cli/src/bin.ts`**：join 模式透传 `dshUiCompat`。
+
+### 插件包 `dsh-web-remote@0.2.0`（未发布）
+
+- **server 半**：`set-ui-compat` RPC（写 host.json + 内存 flag + 运行中隧道即时生效）；`state().uiCompat`；**启动自动接入** `autoConnect()`（join 模式 + 持久化 token + 无 CLI 锁 → 复用 token 自动建隧道）；`connect`/`autoConnect` 共用 `startTunnel`。
+- **client 半**：复选框「端到端加密时，信任为本地访问（兼容模式）」（默认开；external 态隐藏）；i18n zh/en。
+- **真实环境验证通过**（lmxie ↔ rdsh.cn，2026-09-01）：Models key 流程 + 自动接入开机即连。
+
 *关联文档：discussion.md | req.md | solution.md | plan.md | verification.md*

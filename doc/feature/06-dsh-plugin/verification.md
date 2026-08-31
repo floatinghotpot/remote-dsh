@@ -41,4 +41,27 @@
 - 核心（gateway `startJoin` + pid 锁）已实现、构建/单测全绿、CLI 零回归 —— **达标**。
 - 插件包（server + client 半）已实现、**真实 DSH 冒烟通过 + 发布**（2026-08-24，`rdsh-gateway@0.4.0` + `dsh-web-remote@0.1.0`）—— 无剩余 P1 差距。
 
+## 5. 追加验收（2026-09-01：R10 兼容模式开关 + R11 启动自动接入）
+
+### RTTM 复核（追加）
+
+| 需求 | 任务 | 状态 | 证据 |
+|---|---|---|---|
+| R10 兼容模式开关 | T13 | ✅ | `config.ts` `DshUiCompat`（默认 true）+ `join.ts` `patchLoopbackJs`/`isJsContentType`（fail-open）+ `bin.ts` 透传；`web-remote/src/index.ts` `set-ui-compat`/`state.uiCompat`/`uiCompatEnabled`；`client.js` 复选框（zh「端到端加密时，信任为本地访问（兼容模式）」/en） |
+| R11 启动自动接入 | T14 | ✅ | `web-remote/src/index.ts` `autoConnect()` + 共用 `startTunnel()`；启动日志 `reusing persisted host token` → `state()` 返回 `connected` |
+
+### 真实环境验证（lmxie 主机 ↔ hub rdsh.cn，2026-09-01）
+
+- **兼容模式**：经隧道访问 DSH 设置 → Models 页 key 输入框出现（patch 生效）→ 保存 key → 聊天回复正常（完整链路 A 通过）；复选框勾选/取消即时生效（`set-ui-compat` → host.json + 运行中隧道内存 flag）。
+- **自动接入**：停 CLI `rdsh host serve` → 直接 `dsh web --port 3180` → 日志 `rdsh join: reusing persisted host token` → RPC `state()` 返回 `{"status":"connected","name":"lmxie-dsh",...}`；dsh web 进程到 `rdsh.cn:443` ESTAB 连接确认；CLI 托管时（外部锁）自动接入跳过，面板保持 external 只读。
+- **依赖链修复（环境性）**：DSH profile 的 pnpm 无法解析 `workspace:*` → 插件 tgz 依赖改写为 `file:` 指向 gateway/tunnel 打包 tgz；服务器访问 npmjs 只解析 IPv6 导致 Node fetch 挂起 → `~/.npmrc` 指向 npmmirror + `NODE_OPTIONS=--dns-result-order=ipv4first`。
+
+### 新增差距
+
+| # | 差距 | 严重度 | 处置 |
+|---|---|---|---|
+| G6 | 插件托管模式下 dsh web 为裸进程（非 systemd 服务），重启后需手动拉起 | P2 | 后置：做成 `rdsh-host` 同款 user service |
+| G7 | `trustE2EEAsLoopback` 为 host 级开关（非按浏览器 E2EE 门控）——默认 true 时所有经隧道访问者获得 loopback 兼容 | P2 | 语义记录于内部 fix 文档（20260831-api-key-systemd-env）§5.4；共享 host 关闭该开关 |
+| G8 | `patchLoopbackJs` 无函数级单测（真实环境已验证） | P3 | 随发布批次补单测 |
+
 *关联文档：req.md | solution.md | plan.md*

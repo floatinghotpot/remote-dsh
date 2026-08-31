@@ -2,7 +2,7 @@
 
 > **日期**: 2026-08-24
 > **状态**: 已批准（用户「start plan and implement」）
-> **来源**: [solution.md](solution.md)（§5 Tasks）、[req.md](req.md)（R1–R9）
+> **来源**: [solution.md](solution.md)（§5 Tasks）、[req.md](req.md)（R1–R11）
 
 ---
 
@@ -22,6 +22,10 @@
 | T10 | verification.md + summary.md + TODO.md + RTTM 复核 | `doc/feature/06-dsh-plugin/` | ✅ |
 | T11 | 真实 DSH 冒烟：`dsh plugin add` → 面板出现 → 接入/断开/注销 | 用户本机 DSH 实测 | ✅（2026-08-24：面板出现 + 接入 hub.example.com「已连接」+ 断开/注销；i18n/DSH 主题/提示/遮罩令牌对齐） |
 | T12 | 发布 `rdsh-gateway@0.4.0` + `dsh-web-remote@0.1.0`（覆盖 0.0.0 占位） | npm（用户终端 + passkey） | ✅（2026-08-24 发布；`dsh plugin --profile web add dsh-web-remote` 验证通过） |
+| T13 | 兼容模式复选框：gateway `dshUiCompat` config + plain 流 `jsPatch`（fail-open）+ server `set-ui-compat`/`state.uiCompat` + client 复选框 i18n | `packages/gateway/src/{join,config}.ts`、`packages/cli/src/bin.ts`、`packages/web-remote/{src/index.ts,client.js}` | ✅（2026-09-01 真实环境验证） |
+| T14 | 插件启动自动接入：`autoConnect` + 共用 `startTunnel`（connect/autoConnect 同路径） | `packages/web-remote/src/index.ts` | ✅（2026-09-01 真实环境验证） |
+
+> **2026-09-01 追加**：T13/T14 由用户在实现期提出（对应 [req.md](req.md) R10/R11）；实现偏差（jsPatch 落 plain 流而非 E2EE raw 流、flag 为 host 级）记录于内部 fix 文档（20260831-api-key-systemd-env）§5.4。
 
 ## 2. RTTM（req → 任务追溯）
 
@@ -36,6 +40,8 @@
 | R7 断开/注销语义 | T6 |
 | R8 安全（token 只落 session 0600） | T1、T6、T8 |
 | R9 文档/发布纪律 | T9、T10 |
+| R10 兼容模式开关 | T13 |
+| R11 启动自动接入 | T14 |
 
 ## 3. 执行顺序
 

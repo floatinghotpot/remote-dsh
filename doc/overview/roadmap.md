@@ -98,7 +98,7 @@
 ### M4 dsh 插件（远程访问）✅（2026-08-23 新增，2026-08-24 实现 + 冒烟通过 + 发布）
 
 - **背景**：host 侧接入目前需 `npm i -g remote-dsh` + `rdsh serve/join`；DSH 插件生态（Cordis）允许把 gateway 能力做进插件 —— 用户 `dsh plugin add` 即获同能力，免装 CLI
-- **内容**：`dsh-*` 插件（npm 包）—— **内嵌 join 核心**（不 spawn，转发到本进程 dsh `127.0.0.1:<port>`）+ 复用 05 已验证的 join 隧道/转发内核；DSH 界面「远程访问」面板（接入/断开/注销 + 实时状态点 + 外部托管只读）；与 CLI 双通道分发
+- **内容**：`dsh-*` 插件（npm 包）—— **内嵌 join 核心**（不 spawn，转发到本进程 dsh `127.0.0.1:<port>`）+ 复用 05 已验证的 join 隧道/转发内核；DSH 界面「远程访问」面板（接入/断开/注销 + 实时状态点 + 外部托管只读 + **启动自动接入** + **兼容模式复选框** `trustE2EEAsLoopback`）；与 CLI 双通道分发
 - **验收**：在 dsh 里装插件 → 面板粘贴 hub URL + join token → 接入 → hub 在线；断开/注销可用；无需单独安装 rdsh CLI
 - **进度**：`doc/feature/06-dsh-plugin/` 全流程（discussion/req/solution/plan/verification/summary/TODO）；D1–D6 决议、P1–P5 查证、P6（npm org）推迟；**2026-08-24 真实 DSH 冒烟通过 + 发布**（`rdsh-gateway@0.4.0` + `dsh-web-remote@0.1.0`）
 - **相关决策**：插件与 CLI 双通道分发（CLI 保留）；单身份铁律（host.json 唯一 + pid 锁防双隧道）；MVP 面板四态 + 外部托管只读；RPC 走 `connection.rpc`（非 `/api` 内置契约）
