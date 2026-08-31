@@ -205,6 +205,25 @@ async function register(
  * 启动 join 隧道（no-spawn）：转发到外部 `opts.target`，不 spawn dsh、不 process.exit。
  * 获取 pid 锁（opts.role）；返回 `JoinHandle`，`stop()` 干净停止（关 WS/清 heartbeat/释放锁）。
  */
+/** JS 响应判定（content-type 含 javascript）。 */
+export function isJsContentType(headers: IncomingHttpHeaders): boolean {
+  const ct = headers["content-type"];
+  const s = Array.isArray(ct) ? ct.join(";") : (ct ?? "");
+  return /javascript/i.test(s);
+}
+
+/**
+ * 最小 patch：把 DSH 客户端 bundle 里的前端 isLoopback 判定替换为 true
+ * （持久设置/API key 输入只对 loopback 开放；E2EE 流上信任基础等同 loopback）。
+ * fail-open：未命中目标串 → 返回 null，调用方原样透传（DSH 升级不炸）。
+ */
+export function patchLoopbackJs(body: Buffer): Buffer | null {
+  const src = body.toString("utf8");
+  const target = "isLoopbackHostname(pageLocation.hostname)";
+  if (!src.includes(target)) return null;
+  return Buffer.from(src.split(target).join("true"), "utf8");
+}
+
 export function startJoin(opts: StartJoinOptions): JoinHandle {
   const hubWsBase = opts.hubUrl.replace(/^https/, "wss").replace(/^http/, "ws");
   const hooks = opts.hooks ?? {};
@@ -237,25 +256,6 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
   }
 
   /** 内层帧分发器（plain 与 raw 共用）：OPEN http/ws + DATA → DSH 转发，响应帧经 `send` 回传。 */
-/** JS 响应判定（content-type 含 javascript）。 */
-function isJsContentType(headers: IncomingHttpHeaders): boolean {
-  const ct = headers["content-type"];
-  const s = Array.isArray(ct) ? ct.join(";") : (ct ?? "");
-  return /javascript/i.test(s);
-}
-
-/**
- * 最小 patch：把 DSH 客户端 bundle 里的前端 isLoopback 判定替换为 true
- * （持久设置/API key 输入只对 loopback 开放；E2EE 流上信任基础等同 loopback）。
- * fail-open：未命中目标串 → 返回 null，调用方原样透传（DSH 升级不炸）。
- */
-function patchLoopbackJs(body: Buffer): Buffer | null {
-  const src = body.toString("utf8");
-  const target = "isLoopbackHostname(pageLocation.hostname)";
-  if (!src.includes(target)) return null;
-  return Buffer.from(src.split(target).join("true"), "utf8");
-}
-
   function makeInnerDispatcher(send: (frame: Buffer) => void, dio?: { jsPatch?: () => boolean }) {
     const httpStreams = new Map<number, { up: ReturnType<typeof httpRequest> }>();
     const wsStreams = new Map<number, { upstream: WebSocket; queue: Buffer[] }>();

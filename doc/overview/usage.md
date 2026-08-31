@@ -97,6 +97,19 @@ acme.sh --install-cert -d example.com \
 
 **原则**：持久配置一律进 host.json，CLI 只做操作（`host setup`、`host user`、`host service`）。
 
+**`dshUiCompat.trustE2EEAsLoopback`（DSH UI 兼容，默认 `true`）**：
+
+DSH 的持久设置（含 Models 页的 API Key 输入）默认只对 loopback 浏览器开放；开启本项后，经 rdsh 隧道访问的浏览器会被视同本机，**可直接在 DSH UI 的 Models 页填写 API Key**（rdsh 不介入 Key 管理，DSH 自存其数据文件）。
+
+```json
+{ "dshUiCompat": { "trustE2EEAsLoopback": true } }
+```
+
+> ⚠️ **共享 host 安全提示**：默认 `true` 是 **host 级**信任——所有能访问该 host 的人（含共享的 member）都可以改 DSH 设置（API Key、提供方、系统提示词）。**若把主机共享给不信任的人，请设 `false`**（或不要共享）；`false` 时隧道访问者保持 DSH 原样限制（设置不可改，Key 只能走环境变量）。
+
+- CLI（`rdsh host serve/join/service`）：启动读一次，改配置后重启生效；
+- DSH 插件（`dsh-web-remote`）：面板开关即时生效（写 host.json + 内存更新，无需重启）。
+
 ## 5. 用户管理（M2 现状）
 
 ```bash
