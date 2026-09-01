@@ -2,7 +2,7 @@
 
 > **日期**: 2026-09-01
 > **来源**: `proposal.md` §8 里程碑 + §10 决策记录（Q1–Q10）
-> **状态**: M1–M5 已完成并发布；**09-e2e-encryption 已完成**（真实环境验证）；**商业化 SaaS、移动端 / 小程序 / hub Go 化 / 云端 DSH 等**见**私有路线图**
+> **状态**: M1–M5 已完成并发布；**09-e2e-encryption 已完成**（真实环境验证）；商业化与内部方向见**私有路线图**
 
 ## 开源里程碑
 
@@ -97,7 +97,7 @@
 
 ### 09-e2e-encryption ✅（2026-08-29 完成并真实环境验证）
 
-- **内容**：端到端加密（浏览器 ↔ host，hub 中转但不可读内容）；社区 + SaaS 双版本通用
+- **内容**：端到端加密（浏览器 ↔ host，hub 中转但不可读内容）
 - **方案**：raw stream（`flags` bit0）+ 内层 Noise NK（X25519 + HKDF-SHA256 + AES-256-GCM）+ **data-plane-only**（HTML/JS 壳明文，API/WS 加密）+ portal TOFU pin（localStorage，绝不上 hub）；hub `e2ee.mode: off|optional|required`（默认 optional）
 - **进度**：代码完成 + 单测全绿（hub 64/64、gateway 81/81、`pnpm build` 全绿）+ 真实环境验证（新 host 端到端加密 / 老 host 明文降级 / 生产 portal 已部署 E2EE UI）
 - **来源**：`doc/feature/09-e2e-encryption/`（discussion/req/solution/plan/verification/summary/TODO）
@@ -110,7 +110,7 @@
 2. **09-e2e-encryption 已完成**（真实环境验证）
 3. **待办**：远程验证（阿里云 host 升级）、join 孤儿 dsh 兜底、npm org 锁 scope（P6，推迟）
 
-> 商业化 SaaS 与未来方向见**私有路线图**。
+> 商业化与未来方向见**私有路线图**。
 
 ## 变更记录
 
@@ -118,21 +118,17 @@
 |---|---|
 | 2026-08-23 | 创建；M1 状态更新（代码完成、polyfill/SIGHUP 修复、待双设备验收） |
 | 2026-08-23 | **M1 验收通过**：双设备实测 OK；新增 `--no-code`；四个运行时问题修复；单测 33/33、端到端 14/14 |
-| 2026-08-23 | **里程碑重排**：新增 M2 云服务器直连（TLS + headless + IP 白名单）；原 M2 起全部顺延（hub→M3，多租户→M4，App→M5，上线→M6，Go+E2E→M7，小程序→M8） |
+| 2026-08-23 | **里程碑重排**：新增 M2 云服务器直连（TLS + headless + IP 白名单）；hub→M3、多租户→M4 顺延 |
 | 2026-08-23 | **M2 验收通过**：单测 57/57 + M2 e2e 43/43 + M1 回归 14/14；修订去自动自签（无证书即 http，password 无证书非反代拒绝启动）；修复 CLI 管道输入/config watch/dsh 回收 |
 | 2026-08-23 | **M3 验收通过**：层 1/层 2 契约冻结 + join 隧道 + hub + portal；单测 92/92 + M3 e2e 23/23 + M1/M2 回归 57；修复 method 透传/流生命周期/限流计数 |
-| 2026-08-23 | **里程碑重排**：新增 M4 dsh-plugin-rdsh（DSH 插件形态的 gateway，免装 CLI，复用 M3 能力）；原 M4 起全部顺延（多租户→M5，App→M6，上线→M7，Go+E2E→M8，小程序→M9） |
-| 2026-08-23 | **里程碑重排**：移动端 App 移至 hub Go 化之后（M8）—— 纯 npm 包配合浏览器访问 hub URL 已够用，App 后置；序列：M6 SaaS 上线准备 → M7 hub Go 化 → M8 移动端 App → M9 小程序 |
+| 2026-08-23 | **里程碑重排**：新增 M4 dsh-plugin-rdsh（DSH 插件形态的 gateway，免装 CLI，复用 M3 能力）；多租户→M5 顺延 |
 | 2026-08-24 | **新增前置特性 04/05（M4 之前）**：04-cli-refactor 与 05-join-easy；discussion/req 已定（待批准）；发布收尾 |
 | 2026-08-24 | **04/05 完成并发布**：`rdsh-hub@0.3.0` / `rdsh-gateway@0.3.0` / `remote-dsh@0.5.0` / `rdsh-tunnel@0.1.0`；join token 取代 hub 侧配对码 bind；**M4（06-dsh-plugin）规划定稿** |
 | 2026-08-24 | **M4（06-dsh-plugin）实现 + 冒烟通过**：gateway `startJoin` + pid 锁；插件包 `dsh-web-remote`；真实 DSH 冒烟通过 |
 | 2026-08-24 | **M4 发布**：`rdsh-gateway@0.4.0` + `dsh-web-remote@0.1.0` 上线 npm |
 | 2026-08-24 | **M5 发布**：`rdsh-hub@0.4.0` 上线 npm（多租户：邮箱验证/2FA/共享/审计/锁定）；真机验证通过 |
-| 2026-08-26 | **SaaS 商业化定案**：支付选型、S1–S4 拆分、资质核验、云端 DSH / Token 转售 立项、M7 延后——细节见私有文档 |
-| 2026-08-26 | **里程碑优先级调整**：**M8 移动端 App 前置于 M7 hub Go 化**——品牌/营销渠道优先于非用户功能重构；编号不变 |
-| 2026-08-27 | **08-saas 实现推进**：S1/S2 完成，S3/S4 部分，portal 全套（i18n/落地页/法务文档）——细节见私有文档 |
-| 2026-08-28 | **公开路线图 SaaS 章节细化**：开源/商业化双轨定位 + S1–S4 进度公开化（隐私优先，敏感细节保留在私有文档） |
-| 2026-08-28 | **E2E 独立 feature + 里程碑重排**：09-e2e-encryption 立项（社区 + SaaS 通用）；M7 hub Go 化 / M8 App / M9 小程序移入 SaaS 里程碑轨 |
+| 2026-08-28 | **09-e2e-encryption 立项** |
 | 2026-08-29 | **09-e2e-encryption 完成并真实环境验证**：raw stream + Noise NK + data-plane-only + portal TOFU pin；hub 64/64、gateway 81/81；新 host 端到端加密 / 老 host 明文降级均实测通过；剩余 host 侧 `e2ee` 开关 defer |
+| 2026-09-01 | **公开范围收敛**：商业与内部里程碑移出公开路线图（见私有路线图）；`apps/` 移入私有仓库 |
 
 *关联文档：proposal.md | doc/overview/architecture.md | doc/feature/01-remote-access/**
