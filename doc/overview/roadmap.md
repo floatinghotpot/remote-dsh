@@ -129,6 +129,5 @@
 | 2026-08-24 | **M5 发布**：`rdsh-hub@0.4.0` 上线 npm（多租户：邮箱验证/2FA/共享/审计/锁定）；真机验证通过 |
 | 2026-08-28 | **09-e2e-encryption 立项** |
 | 2026-08-29 | **09-e2e-encryption 完成并真实环境验证**：raw stream + Noise NK + data-plane-only + portal TOFU pin；hub 64/64、gateway 81/81；新 host 端到端加密 / 老 host 明文降级均实测通过；剩余 host 侧 `e2ee` 开关 defer |
-| 2026-09-01 | **公开范围收敛**：商业与内部里程碑移出公开路线图（见私有路线图）；`apps/` 移入私有仓库 |
 
 *关联文档：proposal.md | doc/overview/architecture.md | doc/feature/01-remote-access/**
