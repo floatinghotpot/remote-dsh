@@ -4,7 +4,7 @@
 
 **remote-dsh turns your DeepSeek Harness (DSH) into an AI agent you can use from any browser — no public IP, no client install.**
 
-![rdsh logo](media/rdsh256.png)
+![rdsh logo](media/rdsh256bg.png)
 
 ## Why remote-dsh
 

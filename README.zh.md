@@ -4,7 +4,7 @@
 
 **remote-dsh 让您把 DeepSeek Harness（DSH）变成「任何地方浏览器即用」的 AI 智能体 —— 免公网 IP、免装客户端。**
 
-![rdsh logo](media/rdsh256.png)
+![rdsh logo](media/rdsh256bg.png)
 
 ## 为什么选择 remote-dsh
 
