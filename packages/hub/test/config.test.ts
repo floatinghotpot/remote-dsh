@@ -80,6 +80,8 @@ test("billing.payment.wechatpay：必填字段校验 + appSecret 可选", () => 
     certSerialNo: "SN1",
     privateKey: "-----BEGIN PRIVATE KEY-----\nX\n-----END PRIVATE KEY-----",
     apiV3Key: "0123456789abcdef0123456789abcdef",
+    platformCert: "-----BEGIN CERTIFICATE-----\nX\n-----END CERTIFICATE-----",
+    platformCertSerialNo: "PLATSN1",
     notifyUrl: "https://rdsh.cn/api/billing/callback",
   };
   assert.doesNotThrow(() => normalizeHubConfig({ billing: { payment: { provider: "wechatpay", wechatpay: base } } }));
@@ -87,6 +89,7 @@ test("billing.payment.wechatpay：必填字段校验 + appSecret 可选", () => 
   assert.throws(() => normalizeHubConfig({ billing: { payment: { provider: "wechatpay" } } }), /"billing.payment.wechatpay" is required/);
   assert.throws(() => normalizeHubConfig({ billing: { payment: { provider: "wechatpay", wechatpay: { ...base, mchid: "" } } } }), /"billing.payment.wechatpay.mchid"/);
   assert.throws(() => normalizeHubConfig({ billing: { payment: { provider: "wechatpay", wechatpay: { ...base, apiV3Key: "" } } } }), /"billing.payment.wechatpay.apiV3Key"/);
+  assert.throws(() => normalizeHubConfig({ billing: { payment: { provider: "wechatpay", wechatpay: { ...base, platformCert: "" } } } }), /"billing.payment.wechatpay.platformCert"/);
   assert.throws(() => normalizeHubConfig({ billing: { payment: { provider: "wechatpay", wechatpay: { ...base, appSecret: "" } } } }), /"billing.payment.wechatpay.appSecret"/);
 });
 

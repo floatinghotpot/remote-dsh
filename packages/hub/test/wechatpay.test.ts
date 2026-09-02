@@ -3,7 +3,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { generateKeyPairSync, createVerify, createHmac, createCipheriv } from "node:crypto";
+import { generateKeyPairSync, createVerify, createSign, createCipheriv } from "node:crypto";
 import { signWechatRequest, buildWechatAuthHeader, signWechatJsapi, verifyWechatCallback, decryptWechatResource, getWechatOpenid, createWechatPayProvider } from "../src/billing/wechatpay.ts";
 import type { WechatPayConfig } from "../src/billing/types.ts";
 
@@ -24,14 +24,16 @@ test("请求签名：RSA-SHA256 可被公钥验证，Authorization 头格式正�
   assert.ok(header.includes('serial_no="SN"'));
 });
 
-test("回调验签：正确签名通过、篡改失败", () => {
-  const key = "0123456789abcdef0123456789abcdef"; // 32 字节 APIv3 密钥
+test("回调验签（RSA + 平台证书公钥）：正确签名通过、篡改失败", () => {
+  const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const certPem = publicKey.export({ type: "spki", format: "pem" }).toString();
   const ts = "1700000000";
   const nonce = "n1";
   const body = '{"event_type":"TRANSACTION.SUCCESS"}';
-  const expected = createHmac("sha256", key).update(`${ts}\n${nonce}\n${body}\n`).digest("base64");
-  assert.equal(verifyWechatCallback(key, ts, nonce, expected, body), true);
-  assert.equal(verifyWechatCallback(key, ts, nonce, "ZmFrZQ==", body), false);
+  const canonical = `${ts}\n${nonce}\n${body}\n`;
+  const sig = createSign("RSA-SHA256").update(canonical).sign(privateKey, "base64");
+  assert.equal(verifyWechatCallback(certPem, ts, nonce, sig, body), true);
+  assert.equal(verifyWechatCallback(certPem, ts, nonce, "ZmFrZQ==", body), false);
 });
 
 test("resource AES-256-GCM 解密 roundtrip", () => {

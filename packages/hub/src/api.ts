@@ -1969,7 +1969,8 @@ async function handleSubscribe(req: IncomingMessage, res: ServerResponse, runtim
     }
     openid = oid;
   }
-  const orderId = randomUUID();
+  // 订单号同时作微信 out_trade_no：必须 6~32 字符（微信 v3 规则）→ UUID 去连字符 = 32 hex
+  const orderId = randomUUID().replaceAll("-", "");
   runtime.db.createOrder(orderId, auth.userId, plan.id, plan.priceCny);
   const result = await createPaymentProvider(runtime.config.billing?.payment).createPayment({
     orderId,
@@ -2044,7 +2045,12 @@ async function handleBillingCallback(req: IncomingMessage, res: ServerResponse, 
     const ts = req.headers["wechatpay-timestamp"];
     const nonce = req.headers["wechatpay-nonce"];
     const sig = req.headers["wechatpay-signature"];
-    if (typeof ts !== "string" || typeof nonce !== "string" || typeof sig !== "string" || !verifyWechatCallback(cfg.apiV3Key, ts, nonce, sig, rawBody)) {
+    const serial = req.headers["wechatpay-serial"];
+    if (
+      typeof ts !== "string" || typeof nonce !== "string" || typeof sig !== "string" ||
+      (typeof serial === "string" && serial !== cfg.platformCertSerialNo) ||
+      !verifyWechatCallback(cfg.platformCert, ts, nonce, sig, rawBody)
+    ) {
       writeError(res, 400, "BAD_SIGNATURE", "wechatpay signature verification failed");
       return;
     }

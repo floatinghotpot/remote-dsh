@@ -40,8 +40,12 @@ export interface WechatPayConfig {
   certSerialNo: string;
   /** 商户私钥 PEM（请求签名 RSA-SHA256） */
   privateKey: string;
-  /** APIv3 密钥（回调验签 HMAC-SHA256） */
+  /** APIv3 密钥（回调 resource AES-256-GCM 解密；非验签） */
   apiV3Key: string;
+  /** 微信支付平台证书 PEM（回调/响应验签 RSA-SHA256 用其公钥） */
+  platformCert: string;
+  /** 微信支付平台证书序列号（校验回调 Wechatpay-Serial 头） */
+  platformCertSerialNo: string;
   /** 支付回调通知地址（公网可达） */
   notifyUrl: string;
   /** 默认 https://api.mch.weixin.qq.com */

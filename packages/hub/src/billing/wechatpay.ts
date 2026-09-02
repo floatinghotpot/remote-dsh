@@ -3,9 +3,9 @@
  *
  * 手写签名/验签（node:crypto，零依赖）：
  * - 请求签名：商户私钥 RSA-SHA256 签 `METHOD\npath\ntimestamp\nnonce\nbody\n`；
- * - 回调验签：APIv3 密钥 HMAC-SHA256 签 `timestamp\nnonce\nbody\n`（Wechatpay-Signature）。
+ * - 回调验签：微信平台私钥 RSA-SHA256 签 `timestamp\nnonce\nbody\n`，用平台证书公钥验证（Wechatpay-Signature）。
  */
-import { createSign, createHmac, createDecipheriv, randomBytes, timingSafeEqual } from "node:crypto";
+import { createSign, createVerify, createDecipheriv, randomBytes } from "node:crypto";
 import type { PaymentProvider, PaymentRequest, PaymentResult, WechatPayConfig } from "./types.ts";
 
 /** 请求签名：RSA-SHA256 私钥签名 → base64。 */
@@ -25,12 +25,14 @@ export function signWechatJsapi(appId: string, timeStamp: string, nonceStr: stri
   return createSign("RSA-SHA256").update(canonical).sign(privateKey, "base64");
 }
 
-/** 回调验签：HMAC-SHA256(apiV3Key, timestamp\nnonce\nbody\n) 常量时间比较。 */
-export function verifyWechatCallback(apiV3Key: string, timestamp: string, nonce: string, signature: string, body: string): boolean {
-  const expected = createHmac("sha256", apiV3Key).update(`${timestamp}\n${nonce}\n${body}\n`).digest("base64");
-  const a = Buffer.from(expected);
-  const b = Buffer.from(signature);
-  return a.length === b.length && timingSafeEqual(a, b);
+/** 回调验签：RSA-SHA256（微信平台私钥签发）→ 用平台证书公钥验证 `timestamp\nnonce\nbody\n`。 */
+export function verifyWechatCallback(platformCert: string, timestamp: string, nonce: string, signature: string, body: string): boolean {
+  const canonical = `${timestamp}\n${nonce}\n${body}\n`;
+  try {
+    return createVerify("RSA-SHA256").update(canonical).verify(platformCert, signature, "base64");
+  } catch {
+    return false;
+  }
 }
 
 /** 解密回调 resource（AES-256-GCM，key=APIv3 密钥）→ 业务明文 JSON。ciphertext = base64(cipher||authTag)。 */

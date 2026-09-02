@@ -374,7 +374,7 @@ function normalizeBilling(raw: unknown, source: string): BillingConfig {
     if (p.provider === "wechatpay") {
       if (p.wechatpay === undefined) throw new Error(`${source}: "billing.payment.wechatpay" is required when provider=wechatpay`);
       const w = p.wechatpay as Record<string, unknown>;
-      for (const key of ["mchid", "appid", "certSerialNo", "privateKey", "apiV3Key", "notifyUrl"] as const) {
+      for (const key of ["mchid", "appid", "certSerialNo", "privateKey", "apiV3Key", "platformCert", "platformCertSerialNo", "notifyUrl"] as const) {
         if (typeof w[key] !== "string" || w[key] === "") throw new Error(`${source}: "billing.payment.wechatpay.${key}" must be a non-empty string`);
       }
       if (w.appSecret !== undefined && (typeof w.appSecret !== "string" || w.appSecret === "")) throw new Error(`${source}: "billing.payment.wechatpay.appSecret" must be a non-empty string`);
