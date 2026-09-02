@@ -7,7 +7,7 @@
 import { randomInt, randomUUID } from "node:crypto";
 import { statSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { HubConfig, PlanSpec } from "./config.ts";
+import type { HubConfig, PlanSpec, WechatLoginConfig } from "./config.ts";
 import { BILLING_DEFAULTS } from "./config.ts";
 import type { HubDb, UserRow } from "./db.ts";
 import type { HubAuth } from "./auth.ts";
@@ -20,6 +20,7 @@ import type { EmailSender } from "./email/index.ts";
 import { createSmsSender } from "./sms/index.ts";
 import type { SmsSender } from "./sms/index.ts";
 import { createPaymentProvider, verifyWechatCallback, decryptWechatResource, getWechatOpenid } from "./billing/index.ts";
+import { exchangeWechatLoginCode, wechatLoginUrl } from "./wechat-login.ts";
 import { createChallenge, verifyChallenge } from "./captcha.ts";
 import { verifyCaptchaParam } from "./captcha/aliyun.ts";
 import { DailyWindowLimiter } from "./ratelimit.ts";
@@ -38,6 +39,9 @@ const HUB_VERSION = "0.4.0";
 const JOIN_TOKEN_DEFAULT_TTL = 30 * 24 * 3600; // join token 默认 30 天（秒）
 const JOIN_TOKEN_MAX_TTL = 365 * 24 * 3600; // join token 上限 1 年（秒）
 const REGISTER_RATE_LIMIT = { max: 10, windowMs: 60 * 1000 }; // register 未认证端点：10 次/分钟/IP
+const WECHAT_STATE_TTL_MS = 10 * 60 * 1000; // 微信登录 state：一次性、10 分钟
+const WECHAT_TRIAL_LIMIT = { max: 3, windowMs: 24 * 3600 * 1000 }; // 同 IP 自动建号上限（R8）
+const WECHAT_REFRESH_COOKIE = "rdsh_wechat_refresh"; // 302 登录后 refresh 交接（非 HttpOnly、短效）
 
 export interface HubRuntime {
   config: HubConfig;
@@ -492,6 +496,27 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, runti
     await handleAccountVerify(req, res, runtime);
     return true;
   }
+  // ---- 微信登录（网站应用 qrconnect/snsapi_login；仅登录，与支付无关） ----
+  if (path === "/api/wechat/login/authorize" && method === "GET") {
+    await handleWechatLoginAuthorize(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/wechat/login/callback" && method === "GET") {
+    await handleWechatLoginCallback(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/wechat/confirm" && method === "POST") {
+    await handleWechatConfirm(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/wechat/bind/authorize" && method === "GET") {
+    await handleWechatBindAuthorize(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/wechat/bind/callback" && method === "GET") {
+    await handleWechatBindCallback(req, res, runtime);
+    return true;
+  }
   // ---- M5：2FA / 验证码 / 找回密码 / 邮箱 ----
   if (path === "/api/auth/totp" && method === "POST") {
     await handleTotpLogin(req, res, runtime);
@@ -660,8 +685,217 @@ async function handleCapabilities(_req: IncomingMessage, res: ServerResponse, ru
       captchaProvider: runtime.config.captcha?.provider ?? "arithmetic",
       beian: runtime.config.beian ?? {},
       site: runtime.config.site ?? {},
+      wechatLoginEnabled: runtime.config.wechatLogin !== undefined,
     }),
   );
+}
+
+// ---- 微信登录（网站应用 OAuth；仅登录，与支付无关） ----
+
+function wechatLoginConfig(runtime: HubRuntime): WechatLoginConfig | null {
+  return runtime.config.wechatLogin ?? null;
+}
+
+function wechatLoginError(res: ServerResponse): void {
+  writeError(res, 404, "WECHAT_LOGIN_DISABLED", "wechat login is not configured (hub.json wechatLogin)");
+}
+
+/** 未认证用户登录：生成一次性 state（含回跳 next）→ 302 到 qrconnect（PC 扫码 / 微信内一键）。 */
+async function handleWechatLoginAuthorize(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const wl = wechatLoginConfig(runtime);
+  if (wl === null) {
+    wechatLoginError(res);
+    return;
+  }
+  const url = new URL(req.url ?? "/", "http://rdsh.local");
+  const next = safeRedirect(url.searchParams.get("next")) ?? "/hosts";
+  const ip = clientIp(req, runtime);
+  const state = randomToken(24);
+  wechatLoginStates.set(state, { kind: "login", ip, next, expiresAt: Date.now() + WECHAT_STATE_TTL_MS });
+  // 惰性清理过期 state
+  for (const [s, v] of wechatLoginStates) {
+    if (v.expiresAt < Date.now()) wechatLoginStates.delete(s);
+  }
+  res.writeHead(302, { location: wechatLoginUrl(wl.appid, wl.redirectUri, state) });
+  res.end();
+}
+
+/** 登录回调：校验 state → code→openid/unionid → 找号/建号 → 发会话 → 302 回首页。 */
+async function handleWechatLoginCallback(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const wl = wechatLoginConfig(runtime);
+  if (wl === null) {
+    wechatLoginError(res);
+    return;
+  }
+  const url = new URL(req.url ?? "/", "http://rdsh.local");
+  const code = url.searchParams.get("code");
+  const state = url.searchParams.get("state");
+  if (typeof code !== "string" || code === "" || typeof state !== "string" || state === "") {
+    writeError(res, 400, "BAD_REQUEST", "missing code or state");
+    return;
+  }
+  const ip = clientIp(req, runtime);
+  const st = wechatLoginStates.get(state);
+  if (st === undefined || st.kind !== "login" || st.expiresAt < Date.now() || st.ip !== ip) {
+    writeError(res, 400, "BAD_STATE", "invalid or expired state");
+    return;
+  }
+  wechatLoginStates.delete(state); // 一次性
+
+  const id = await exchangeWechatLoginCode(wl.appid, wl.appSecret, code);
+  if (id === null) {
+    writeError(res, 400, "OAUTH_FAILED", "failed to exchange code for openid");
+    return;
+  }
+
+  // 找号：unionid 优先（跨应用账号身份），wxweb_openid 兜底（unionid 缺失时）
+  let user = id.unionid !== null ? runtime.db.getUserByWechatUnionid(id.unionid) : null;
+  if (user === null) user = runtime.db.getUserByWxwebOpenid(id.openid);
+  if (user !== null) {
+    // unionid 命中但本网站 openid 未记（同用户未来另一 AppID 建号后首次网页登录）→ 补绑 openid
+    if (user.wxwebOpenid === null) runtime.db.bindWechat(user.id, id.openid, id.unionid, id.nickname, id.avatar);
+    runtime.db.recordAudit(user.id, "wechat.login.ok", {}, ip);
+    const tokens = runtime.auth.issueSession(user.id);
+    if (tokens === null) {
+      writeError(res, 403, "FORBIDDEN", "account not active");
+      return;
+    }
+    res.writeHead(302, {
+      location: st.next ?? "/hosts",
+      "set-cookie": [
+        sessionCookie(tokens.accessToken),
+        `${WECHAT_REFRESH_COOKIE}=${encodeURIComponent(tokens.refreshToken)}; SameSite=Lax; Path=/; Max-Age=60`,
+      ],
+    });
+    res.end();
+    return;
+  }
+
+  // 未找到已绑定账号 → 暂存微信身份，跳登录页让用户确认是否新建（不静默建号）
+  const pendingToken = randomToken(24);
+  wechatPending.set(pendingToken, { openid: id.openid, unionid: id.unionid, nickname: id.nickname, avatar: id.avatar, ip, expiresAt: Date.now() + WECHAT_STATE_TTL_MS });
+  res.writeHead(302, { location: `/login?wechat-new=${encodeURIComponent(pendingToken)}&next=${encodeURIComponent(st.next ?? "/hosts")}` });
+  res.end();
+}
+
+/** 确认新建账号：校验待确认 token → 建号 + 试用（同 IP 上限）→ 发会话（JSON，前端导航）。 */
+async function handleWechatConfirm(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  if (wechatLoginConfig(runtime) === null) {
+    wechatLoginError(res);
+    return;
+  }
+  const body = await readJsonBody(req);
+  const token = typeof body?.token === "string" ? body.token : "";
+  if (token === "") {
+    writeError(res, 400, "BAD_REQUEST", "missing token");
+    return;
+  }
+  const ip = clientIp(req, runtime);
+  const pending = wechatPending.get(token);
+  if (pending === undefined || pending.expiresAt < Date.now() || pending.ip !== ip) {
+    writeError(res, 400, "BAD_STATE", "invalid or expired token");
+    return;
+  }
+  wechatPending.delete(token); // 一次性
+
+  // 竞态兜底：确认前该微信已被绑（如另一窗口已建号）→ 直接登录
+  const existing = (pending.unionid !== null ? runtime.db.getUserByWechatUnionid(pending.unionid) : null) ?? runtime.db.getUserByWxwebOpenid(pending.openid);
+  let user = existing;
+  if (user === null) {
+    // 同 IP 试用上限（R8）
+    let lim = wechatTrialRate.get(ip);
+    if (lim === undefined || Date.now() - lim.windowStart > WECHAT_TRIAL_LIMIT.windowMs) {
+      lim = { count: 0, windowStart: Date.now() };
+    }
+    if (lim.count >= WECHAT_TRIAL_LIMIT.max) {
+      wechatTrialRate.set(ip, lim);
+      writeError(res, 429, "RATE_LIMITED", "too many trial accounts from this IP");
+      return;
+    }
+    lim.count += 1;
+    wechatTrialRate.set(ip, lim);
+
+    let name = `wx_${pending.unionid ?? pending.openid}`;
+    let n = 1;
+    while (runtime.db.getUserByName(name) !== null) {
+      name = `wx_${pending.unionid ?? pending.openid}_${n++}`;
+    }
+    user = runtime.db.createWechatUser(name, pending.openid, pending.unionid, pending.nickname, pending.avatar);
+    const trialDays = runtime.config.billing?.trialDays ?? BILLING_DEFAULTS.trialDays;
+    const now = Date.now();
+    runtime.db.startTrial(user.id, now, now + trialDays * 24 * 3600 * 1000);
+    runtime.db.recordAudit(user.id, "wechat.login.created", { openid: pending.openid }, ip);
+  }
+  if (user.accountStatus !== "active") {
+    writeError(res, 403, "FORBIDDEN", "account not active");
+    return;
+  }
+  const tokens = runtime.auth.issueSession(user.id);
+  if (tokens === null) {
+    writeError(res, 403, "FORBIDDEN", "account not active");
+    return;
+  }
+  res.writeHead(200, { "content-type": "application/json", "set-cookie": sessionCookie(tokens.accessToken) });
+  res.end(JSON.stringify({ accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, user: { id: user.id, name: user.name } }));
+}
+
+/** 已登录用户绑定微信：state 绑定 userId → 302 到 qrconnect。 */
+async function handleWechatBindAuthorize(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const wl = wechatLoginConfig(runtime);
+  if (wl === null) {
+    wechatLoginError(res);
+    return;
+  }
+  const auth = authenticate(req, runtime);
+  if (auth === null) {
+    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
+    return;
+  }
+  const state = randomToken(24);
+  wechatLoginStates.set(state, { kind: "bind", ip: clientIp(req, runtime), userId: auth.userId, expiresAt: Date.now() + WECHAT_STATE_TTL_MS });
+  res.writeHead(302, { location: wechatLoginUrl(wl.appid, wl.redirectUri, state) });
+  res.end();
+}
+
+/** 绑定回调：校验 state（含 userId）→ code→openid → 校验未被占用 → 绑定当前用户 → 302 回设置页。 */
+async function handleWechatBindCallback(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const wl = wechatLoginConfig(runtime);
+  if (wl === null) {
+    wechatLoginError(res);
+    return;
+  }
+  const url = new URL(req.url ?? "/", "http://rdsh.local");
+  const code = url.searchParams.get("code");
+  const state = url.searchParams.get("state");
+  if (typeof code !== "string" || code === "" || typeof state !== "string" || state === "") {
+    writeError(res, 400, "BAD_REQUEST", "missing code or state");
+    return;
+  }
+  const st = wechatLoginStates.get(state);
+  if (st === undefined || st.kind !== "bind" || st.expiresAt < Date.now() || st.ip !== clientIp(req, runtime)) {
+    writeError(res, 400, "BAD_STATE", "invalid or expired state");
+    return;
+  }
+  wechatLoginStates.delete(state);
+  const userId = st.userId;
+  if (userId === undefined || !Number.isInteger(userId) || userId <= 0) {
+    writeError(res, 400, "BAD_STATE", "invalid state");
+    return;
+  }
+  const id = await exchangeWechatLoginCode(wl.appid, wl.appSecret, code);
+  if (id === null) {
+    writeError(res, 400, "OAUTH_FAILED", "failed to exchange code for openid");
+    return;
+  }
+  const holder = (id.unionid !== null ? runtime.db.getUserByWechatUnionid(id.unionid) : null) ?? runtime.db.getUserByWxwebOpenid(id.openid);
+  if (holder !== null && holder.id !== userId) {
+    writeError(res, 409, "WECHAT_ALREADY_BOUND", "this wechat is already bound to another account");
+    return;
+  }
+  runtime.db.bindWechat(userId, id.openid, id.unionid, id.nickname, id.avatar);
+  runtime.db.recordAudit(userId, "wechat.bind.ok", {}, clientIp(req, runtime));
+  res.writeHead(302, { location: "/settings" });
+  res.end();
 }
 
 async function handleLogin(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
@@ -1019,6 +1253,9 @@ const SELF_REVOKE_RATE_LIMIT = { max: 10, windowMs: 60 * 1000 }; // 未认证端
 const selfRevokeRate = new Map<string, { count: number; windowStart: number }>();
 const registerRate = new Map<string, { count: number; windowStart: number }>();
 const accountRegisterRate = new Map<string, { count: number; windowStart: number }>();
+const wechatLoginStates = new Map<string, { kind: "login" | "bind"; ip: string; userId?: number; next?: string; expiresAt: number }>();
+const wechatTrialRate = new Map<string, { count: number; windowStart: number }>();
+const wechatPending = new Map<string, { openid: string; unionid: string | null; nickname: string | null; avatar: string | null; ip: string; expiresAt: number }>();
 
 async function handleRenameHost(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime, hostId: string): Promise<void> {
   const auth = authenticate(req, runtime);

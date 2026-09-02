@@ -104,6 +104,16 @@ export interface SiteConfig {
   footer?: Array<{ text: string; href?: string }>;
 }
 
+/** 微信登录配置（网站应用 AppID，独立于支付；仅登录）。 */
+export interface WechatLoginConfig {
+  /** 微信开放平台网站应用 AppID */
+  appid: string;
+  /** 网站应用 AppSecret（仅服务端） */
+  appSecret: string;
+  /** 登录回调完整 URL（须在开放平台「授权回调域」内） */
+  redirectUri: string;
+}
+
 export interface HubConfig {
   host: string;
   port: number;
@@ -135,6 +145,8 @@ export interface HubConfig {
   beian?: BeianConfig;
   /** 站点信息（portal 页脚导航） */
   site?: SiteConfig;
+  /** 微信登录（网站应用 AppID；缺省 → 微信登录禁用） */
+  wechatLogin?: WechatLoginConfig;
 }
 
 export const DEFAULT_HUB_CONFIG_PATH = join(homedir(), ".rdsh", "hub.json");
@@ -213,6 +225,7 @@ export function normalizeHubConfig(raw: unknown, source = "config"): HubConfig {
   if (cfg.backup !== undefined) out.backup = normalizeBackup(cfg.backup, source);
   if (cfg.beian !== undefined) out.beian = normalizeBeian(cfg.beian, source);
   if (cfg.site !== undefined) out.site = normalizeSite(cfg.site, source);
+  if (cfg.wechatLogin !== undefined) out.wechatLogin = normalizeWechatLogin(cfg.wechatLogin, source);
   out.security = normalizeSecurity(cfg.security, source);
   return out;
 }
@@ -433,4 +446,19 @@ function normalizeSite(raw: unknown, source: string): SiteConfig {
     });
   }
   return out;
+}
+
+function normalizeWechatLogin(raw: unknown, source: string): WechatLoginConfig {
+  if (typeof raw !== "object" || raw === null) throw new Error(`${source}: "wechatLogin" must be an object`);
+  const w = raw as Record<string, unknown>;
+  for (const key of ["appid", "appSecret", "redirectUri"] as const) {
+    if (typeof w[key] !== "string" || w[key] === "") throw new Error(`${source}: "wechatLogin.${key}" must be a non-empty string`);
+  }
+  try {
+    const u = new URL(w.redirectUri as string);
+    if (u.protocol !== "https:" && u.protocol !== "http:") throw new Error("scheme");
+  } catch {
+    throw new Error(`${source}: "wechatLogin.redirectUri" must be a valid absolute URL`);
+  }
+  return { appid: w.appid as string, appSecret: w.appSecret as string, redirectUri: w.redirectUri as string };
 }

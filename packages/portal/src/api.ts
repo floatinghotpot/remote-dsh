@@ -90,6 +90,7 @@ export interface Capabilities {
   emailEnabled: boolean;
   smsEnabled: boolean;
   captchaProvider: "arithmetic" | "none" | "aliyun";
+  wechatLoginEnabled?: boolean;
   beian?: { icp?: string; icpUrl?: string; gongan?: string; gonganUrl?: string };
   site?: { brand?: string; name?: string; url?: string; productUrl?: string; termsUrl?: string; privacyUrl?: string; customerServiceUrl?: string; footer?: Array<{ text: string; href?: string }> };
 }
@@ -173,6 +174,9 @@ export class ApiError extends Error {
 export const api = {
   login(name: string, password: string): Promise<LoginResponse> {
     return jsonFetch("/api/auth/login", { method: "POST", body: JSON.stringify({ name, password }) });
+  },
+  wechatConfirm(token: string): Promise<{ accessToken: string; refreshToken: string; user: { id: number; name: string } }> {
+    return jsonFetch("/api/wechat/confirm", { method: "POST", body: JSON.stringify({ token }) });
   },
   logout(refreshToken: string): Promise<void> {
     return jsonFetch("/api/auth/logout", { method: "POST", body: JSON.stringify({ refreshToken }) });

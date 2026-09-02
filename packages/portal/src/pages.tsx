@@ -466,17 +466,64 @@ function Login(): React.JSX.Element {
   const isFirst = new URLSearchParams(window.location.search).get("first") === "1";
   const next = new URLSearchParams(window.location.search).get("next");
   const home = next !== null && next.startsWith("/") && !next.startsWith("//") ? next : "/hosts";
+  const wechatNew = new URLSearchParams(window.location.search).get("wechat-new");
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [totpPending, setTotpPending] = useState<string | null>(null);
   const [totpCode, setTotpCode] = useState("");
   const [trustDevice, setTrustDevice] = useState(false);
   const [brand, setBrand] = useState("RDSH.CN");
+  const [wechatEnabled, setWechatEnabled] = useState(false);
+  const [wechatGuide, setWechatGuide] = useState(false);
+  const [copied, setCopied] = useState(false);
   const { err, run } = useError();
 
   useEffect(() => {
-    void api.capabilities().then((c) => { if (c.site?.brand !== undefined && c.site.brand !== "") setBrand(c.site.brand); }).catch(() => undefined);
+    void api.capabilities().then((c) => { if (c.site?.brand !== undefined && c.site.brand !== "") setBrand(c.site.brand); if (c.wechatLoginEnabled === true) setWechatEnabled(true); }).catch(() => undefined);
   }, []);
+
+  const wechatLogin = (): void => {
+    if (isWechatWebview() || !isMobileBrowser()) {
+      // 微信内（一键确认）或 PC（扫码）→ 同页跳 qrconnect（保留回跳 next）
+      window.location.href = `/api/wechat/login/authorize?next=${encodeURIComponent(home)}`;
+    } else {
+      // 移动非微信：引导「在微信中打开」+ 保留账号密码登录
+      setWechatGuide(true);
+    }
+  };
+
+  const copyLoginLink = (): void => {
+    void navigator.clipboard.writeText(window.location.href).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }).catch(() => undefined);
+  };
+
+  const confirmWechatCreate = (): void => {
+    void run(async () => {
+      if (wechatNew === null || wechatNew === "") return;
+      const r = await api.wechatConfirm(wechatNew);
+      sessionStorage.setItem(REFRESH_KEY, r.refreshToken);
+      navigate(home);
+    });
+  };
+
+  // 微信登录但未找到已绑定账号 → 确认是否新建（不静默建号）
+  if (wechatNew !== null && wechatNew !== "") {
+    return (
+      <div style={{ maxWidth: 360, margin: "80px auto", padding: "0 16px", fontFamily: "system-ui, sans-serif" }}>
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}><LangToggle /></div>
+        <p style={{ fontSize: 22, fontWeight: 700, color: "#111", letterSpacing: 0.5, margin: "0 0 8px" }}>{brand}</p>
+        <h1 style={{ fontSize: 20, marginBottom: 4 }}>{t("微信登录")}</h1>
+        <p style={{ color: "#666", fontSize: 13, marginBottom: 20 }}>{t("未找到已绑定的账号，是否创建新账号？")}</p>
+        {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
+        <button onClick={confirmWechatCreate} style={{ ...btnStyle(), width: "100%" }}>{t("创建新账号")}</button>
+        <button onClick={() => navigate("/login")} style={{ ...btnStyle("ghost"), width: "100%", marginTop: 8 }}>{t("已有账号，去登录")}</button>
+        <p style={{ marginTop: 12, fontSize: 12, color: "#6b7280" }}>{t("已有邮箱/手机号账号？先用账号密码登录，再在设置里绑定微信")}</p>
+        <SiteFooter />
+      </div>
+    );
+  }
 
   const submit = (): void => {
     void run(async () => {
@@ -545,6 +592,33 @@ function Login(): React.JSX.Element {
       <button onClick={submit} style={{ ...btnStyle(), width: "100%", marginTop: 8 }}>
         {totpPending !== null ? t("验证并登录") : isFirst ? t("设置密码并登录") : t("登录")}
       </button>
+      {wechatEnabled && totpPending === null && !isFirst && (
+        <>
+          <p style={{ margin: "14px 0 0", textAlign: "center", color: "#9ca3af", fontSize: 12 }}>{t("或")}</p>
+          <button
+            onClick={wechatLogin}
+            style={{ ...btnStyle(), width: "100%", marginTop: 8, background: "#07C160", borderColor: "#07C160", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
+          >
+            <WechatIcon size={18} />
+            {t("微信登录")}
+          </button>
+          <p style={{ marginTop: 6, fontSize: 12, color: "#9ca3af", textAlign: "center" }}>{t("已有邮箱/手机号账号？先用账号密码登录，再在设置里绑定微信")}</p>
+          {wechatGuide && (
+            <div style={{ marginTop: 8, fontSize: 12, color: "#6b7280" }}>
+              <p style={{ margin: 0 }}>{t("在微信中打开以一键登录")}</p>
+              <div style={{ display: "flex", gap: 6, marginTop: 6, alignItems: "center" }}>
+                <input
+                  readOnly
+                  value={window.location.href}
+                  onFocus={(e) => e.currentTarget.select()}
+                  style={{ flex: 1, fontSize: 12, padding: "6px 8px", border: "1px solid #d1d5db", borderRadius: 6, color: "#374151", minWidth: 0 }}
+                />
+                <button onClick={copyLoginLink} style={{ ...btnStyle("ghost"), whiteSpace: "nowrap" }}>{copied ? t("已复制") : t("复制链接")}</button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
       {totpPending === null && !isFirst && (
         <p style={{ marginTop: 12, textAlign: "center" }}>
           <a href="#" onClick={(e) => { e.preventDefault(); navigate("/reset-password"); }} style={{ color: "#2563eb", fontSize: 13 }}>{t("忘记密码？")}</a>
@@ -819,6 +893,7 @@ function AccountPage(): React.JSX.Element {
   const [info, setInfo] = useState<AccountInfo | null>(null);
   const [sub, setSub] = useState<SubInfo | null>(null);
   const [customerServiceUrl, setCustomerServiceUrl] = useState<string | undefined>(undefined);
+  const [wechatEnabled, setWechatEnabled] = useState(false);
   const { err, run } = useError();
   useEffect(() => {
     void run(async () => {
@@ -828,7 +903,7 @@ function AccountPage(): React.JSX.Element {
     });
   }, []);
   useEffect(() => {
-    void api.capabilities().then((c) => setCustomerServiceUrl(c.site?.customerServiceUrl)).catch(() => undefined);
+    void api.capabilities().then((c) => { setCustomerServiceUrl(c.site?.customerServiceUrl); if (c.wechatLoginEnabled === true) setWechatEnabled(true); }).catch(() => undefined);
   }, []);
   return (
     <Shell title={t("账户与安全")}>
@@ -859,6 +934,13 @@ function AccountPage(): React.JSX.Element {
         badge={<Badge ok={info?.totpEnabled === true} text={info?.totpEnabled ? t("已开启") : t("未开启")} />}
         onClick={() => navigate("/settings/2fa")}
       />
+      {wechatEnabled ? (
+        <SettingRow
+          label={t("绑定微信")}
+          desc={t("绑定微信后，该微信可免密登录本账号")}
+          onClick={() => { window.location.href = "/api/wechat/bind/authorize"; }}
+        />
+      ) : null}
       {customerServiceUrl !== undefined && customerServiceUrl !== "" ? (
         <SettingLink label={t("微信客服")} desc={t("遇到问题？联系在线客服")} href={customerServiceUrl} />
       ) : null}
@@ -1693,6 +1775,19 @@ function isWechatWebview(): boolean {
 /** 是否移动端浏览器（非微信）。 */
 function isMobileBrowser(): boolean {
   return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+}
+
+/** 微信官方 logo（白色版，用于绿底「微信登录」按钮；商标 © Tencent）。 */
+function WechatIcon({ size = 18 }: { size?: number }): React.JSX.Element {
+  return (
+    <svg width={size} height={Math.round((size * 310) / 384)} viewBox="0 0 384 310" aria-hidden="true">
+      <path
+        d="M343.37 275.112c24.333-17.635 39.886-43.726 39.886-72.71 0-53.132-51.685-96.198-115.439-96.198-63.754 0-115.435 43.066-115.435 96.198 0 53.129 51.681 96.194 115.435 96.194 13.174 0 25.89-1.88 37.68-5.272a11.59 11.59 0 0 1 3.397-.505c2.212 0 4.23.673 6.126 1.774l25.272 14.587c.706.408 1.387.719 2.224.719a3.847 3.847 0 0 0 3.847-3.852c0-.946-.378-1.9-.618-2.808-.147-.543-3.263-12.157-5.201-19.406-.223-.811-.404-1.598-.404-2.451a7.687 7.687 0 0 1 3.23-6.27m-114.036-88.1c-8.493 0-15.385-6.89-15.385-15.393 0-8.502 6.892-15.394 15.385-15.394 8.507 0 15.394 6.892 15.394 15.394 0 8.502-6.887 15.394-15.394 15.394m76.961 0c-8.498 0-15.39-6.892-15.39-15.394 0-8.502 6.892-15.394 15.39-15.394 8.503 0 15.39 6.892 15.39 15.394 0 8.502-6.887 15.394-15.39 15.394zM138.524 0c69.11 0 126.385 42.174 136.817 97.32a153.735 153.735 0 0 0-7.523-.201c-69.775 0-126.338 47.14-126.338 105.28 0 9.806 1.644 19.292 4.655 28.295-2.523.113-5.055.18-7.611.18-15.806 0-31.065-2.262-45.215-6.328a13.889 13.889 0 0 0-4.074-.61c-2.658 0-5.071.812-7.354 2.128l-30.326 17.51c-.845.487-1.669.861-2.67.861a4.614 4.614 0 0 1-4.617-4.617c0-1.143.455-2.283.745-3.376l6.24-23.282c.265-.98.487-1.922.487-2.944a9.23 9.23 0 0 0-3.876-7.526C18.657 181.53 0 150.222 0 115.44 0 51.685 62.017 0 138.524 0zM92.346 96.968c10.206 0 18.472-8.267 18.472-18.472 0-10.201-8.266-18.468-18.472-18.468-10.196 0-18.467 8.267-18.467 18.468 0 10.205 8.27 18.472 18.467 18.472zm92.355 0c10.201 0 18.472-8.267 18.472-18.472 0-10.201-8.27-18.468-18.472-18.468-10.205 0-18.471 8.267-18.471 18.468 0 10.205 8.266 18.472 18.471 18.472z"
+        fill="#FFF"
+        fillRule="evenodd"
+      />
+    </svg>
+  );
 }
 
 /** 支付形态按运行环境探测：微信内 → jsapi；移动非微信 → h5；桌面 → native。 */
