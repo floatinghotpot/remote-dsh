@@ -2024,6 +2024,13 @@ async function handleBillingCallback(req: IncomingMessage, res: ServerResponse, 
       writeError(res, 400, "BAD_SIGNATURE", "wechatpay signature verification failed");
       return;
     }
+    // F10：只处理交易成功事件；退款等其他事件 ACK 忽略（退款后置 T6）
+    const eventType = typeof body.event_type === "string" ? body.event_type : "";
+    if (eventType !== "" && eventType !== "TRANSACTION.SUCCESS") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, ignored: eventType }));
+      return;
+    }
     const resource = body.resource as { ciphertext?: string; nonce?: string; associated_data?: string } | undefined;
     if (resource === undefined || typeof resource.ciphertext !== "string" || typeof resource.nonce !== "string") {
       writeError(res, 400, "BAD_REQUEST", "invalid wechatpay resource");
@@ -2062,11 +2069,24 @@ async function handleBillingCallback(req: IncomingMessage, res: ServerResponse, 
     writeError(res, 400, "BAD_REQUEST", "unknown or already-closed order");
     return;
   }
+  // F9：实付金额必须等于订单金额（防短款/配置漂移）
+  if (amountCny !== null && Math.abs(amountCny - order.amountCny) > 0.009) {
+    writeError(res, 400, "AMOUNT_MISMATCH", "paid amount does not match order");
+    return;
+  }
   const amount = amountCny ?? order.amountCny;
-  runtime.db.markOrderPaid(orderId, channel, channelOrderId);
-  runtime.db.createPayment(randomUUID(), orderId, order.userId, channel, channelOrderId, amount, Date.now(), rawBody);
   const plan = (runtime.config.billing?.plans ?? []).find((p) => p.id === order.planId);
-  if (plan !== undefined) activateSubscription(runtime, order.userId, plan);
+  // F11：入账 + 订阅激活原子化（订单置 paid + payment 记录 + 订阅同事务），任一步失败整体回滚 → 重试可完整重放
+  runtime.db.db.exec("BEGIN");
+  try {
+    runtime.db.markOrderPaid(orderId, channel, channelOrderId);
+    runtime.db.createPayment(randomUUID(), orderId, order.userId, channel, channelOrderId, amount, Date.now(), rawBody);
+    if (plan !== undefined) activateSubscription(runtime, order.userId, plan);
+    runtime.db.db.exec("COMMIT");
+  } catch (err) {
+    runtime.db.db.exec("ROLLBACK");
+    throw err;
+  }
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({ ok: true }));
 }
