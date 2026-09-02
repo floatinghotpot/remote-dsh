@@ -26,7 +26,10 @@ function authorizeHost(req: IncomingMessage, runtime: HubRuntime): { hostId: str
   const v = runtime.auth.verifyHostCookie(raw);
   if (v === null) return null;
   const host = runtime.db.getHostById(v.hostId);
-  if (host === null || host.ownerId !== v.userId) return null;
+  if (host === null) return null;
+  // 归属或共享成员均可访问（与 handleEnterHost 一致）；getShare 为实时查询 → 撤销共享即时生效
+  const isMember = host.ownerId === v.userId || runtime.db.getShare(v.hostId, v.userId) !== null;
+  if (!isMember) return null;
   return { hostId: v.hostId, userId: v.userId };
 }
 
