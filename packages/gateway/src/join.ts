@@ -561,8 +561,9 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
 
   function connect(): void {
     if (shuttingDown) return;
-    const url = `${hubWsBase}/tunnel?token=${encodeURIComponent(opts.token)}`;
-    const client = new WebSocket(url, { rejectUnauthorized: !opts.insecure });
+    // 认证走 Authorization 头（不入 URL，避免 token 进日志）
+    const url = `${hubWsBase}/tunnel`;
+    const client = new WebSocket(url, { headers: { authorization: `Bearer ${opts.token}` }, rejectUnauthorized: !opts.insecure });
     currentClient = client;
     setState("connecting", { message: `connecting to ${opts.hubUrl}` });
 

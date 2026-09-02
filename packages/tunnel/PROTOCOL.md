@@ -10,7 +10,7 @@
 
 - 载体：WebSocket（WSS，TLS 1.3）
 - 方向：gateway **出站**连接 hub；一个 host 一条隧道长连接
-- 隧道认证：WSS URL query `?token=<hostToken>`（WSS 已加密；hub 日志不得记录 query）
+- 隧道认证：WSS 握手头 `Authorization: Bearer <hostToken>`（首选，不入 URL 避免日志泄露）；旧版 query `?token=` 向后兼容保留（WSS 已加密）
 - 帧即 WS message（binary），一条 WS message 恰为一帧（长度由帧头 length 字段约束）
 
 ## 帧格式

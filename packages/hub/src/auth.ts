@@ -185,7 +185,7 @@ export class HubAuth {
     const row = this.db.findRefreshByHash(sha256(refreshToken));
     if (row === null || row.revoked === 1 || row.expiresAt <= Date.now()) return null;
     const user = this.db.getUserById(row.userId);
-    if (user === null) return null;
+    if (user === null || user.accountStatus !== "active") return null;
     this.db.revokeRefresh(row.id);
     return this.issueTokens(user);
   }
@@ -251,6 +251,7 @@ private hmac(payload: string): string {
     const user = this.db.getUserById(claims.sub);
     if (user === null) return null;
     if (user.ver !== claims.ver) return null;
+    if (user.accountStatus !== "active") return null; // banned/deleted/pending 即时失效
     return { user, claims };
   }
 

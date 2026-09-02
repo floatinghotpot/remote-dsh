@@ -277,7 +277,12 @@ async function handleEnterHost(
 }
 
 function handleTunnelUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer, runtime: HubRuntime, url: URL): void {
-  const token = url.searchParams.get("token");
+  const authHeader = req.headers["authorization"];
+  // 首选 Authorization: Bearer（不入 URL/日志）；向后兼容旧 gateway 的 query ?token=
+  const token =
+    typeof authHeader === "string" && authHeader.startsWith("Bearer ")
+      ? authHeader.slice(7).trim()
+      : url.searchParams.get("token");
   if (token === null || token.length < 16) {
     socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
     socket.destroy();
