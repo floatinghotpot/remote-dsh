@@ -736,7 +736,9 @@ async function handleWechatLoginCallback(req: IncomingMessage, res: ServerRespon
   }
   const ip = clientIp(req, runtime);
   const st = wechatLoginStates.get(state);
-  if (st === undefined || st.kind !== "login" || st.expiresAt < Date.now() || st.ip !== ip) {
+  // state = 随机 24 字符 + 一次性 + 10 分钟 TTL（标准 OAuth CSRF 防护）；
+  // 不做 IP 绑定——国内宽带/移动 CGNAT 或 IP 轮换下回调 IP 会变，误伤正常登录
+  if (st === undefined || st.kind !== "login" || st.expiresAt < Date.now()) {
     writeError(res, 400, "BAD_STATE", "invalid or expired state");
     return;
   }
@@ -792,7 +794,7 @@ async function handleWechatConfirm(req: IncomingMessage, res: ServerResponse, ru
   }
   const ip = clientIp(req, runtime);
   const pending = wechatPending.get(token);
-  if (pending === undefined || pending.expiresAt < Date.now() || pending.ip !== ip) {
+  if (pending === undefined || pending.expiresAt < Date.now()) {
     writeError(res, 400, "BAD_STATE", "invalid or expired token");
     return;
   }
@@ -853,7 +855,10 @@ async function handleWechatBindAuthorize(req: IncomingMessage, res: ServerRespon
   }
   const state = randomToken(24);
   wechatLoginStates.set(state, { kind: "bind", ip: clientIp(req, runtime), userId: auth.userId, expiresAt: Date.now() + WECHAT_STATE_TTL_MS });
-  res.writeHead(302, { location: wechatLoginUrl(wl.appid, wl.redirectUri, state) });
+  // 绑定流程回调到 bind/callback（同域名换路径，微信校验的是授权回调域名而非路径）
+  const bindUri = new URL(wl.redirectUri);
+  bindUri.pathname = "/api/wechat/bind/callback";
+  res.writeHead(302, { location: wechatLoginUrl(wl.appid, bindUri.toString(), state) });
   res.end();
 }
 
@@ -872,7 +877,8 @@ async function handleWechatBindCallback(req: IncomingMessage, res: ServerRespons
     return;
   }
   const st = wechatLoginStates.get(state);
-  if (st === undefined || st.kind !== "bind" || st.expiresAt < Date.now() || st.ip !== clientIp(req, runtime)) {
+  // 不做 IP 绑定（同登录流程：CGNAT/IP 轮换下会误伤）
+  if (st === undefined || st.kind !== "bind" || st.expiresAt < Date.now()) {
     writeError(res, 400, "BAD_STATE", "invalid or expired state");
     return;
   }
@@ -2124,6 +2130,8 @@ async function handleAccountInfo(req: IncomingMessage, res: ServerResponse, runt
       phone: user.phone,
       phoneVerified: user.phoneVerified === 1,
       totpEnabled: user.totpSecret !== null,
+      wechatBound: user.wxwebOpenid !== null,
+      wechatNickname: user.wechatNickname,
       smsEnabled: runtime.config.sms !== undefined,
       planStatus: user.planStatus,
       planExpiresAt: user.planExpiresAt,

@@ -79,6 +79,8 @@ export interface AccountInfo {
   phone: string | null;
   phoneVerified: boolean;
   totpEnabled: boolean;
+  wechatBound: boolean;
+  wechatNickname: string | null;
   smsEnabled: boolean;
   planStatus: string | null;
   planExpiresAt: number | null;

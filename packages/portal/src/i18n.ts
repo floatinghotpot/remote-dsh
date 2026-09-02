@@ -135,6 +135,8 @@ const EN: Record<string, string> = {
   "保存": "Save",
   "解绑": "Unbind",
   "未绑定": "Not bound",
+  "已绑定": "Bound",
+  "该微信可免密登录本账号：{x}": "This WeChat can sign in without a password: {x}",
   "已验证": "Verified",
   "发送验证码": "Send code",
   "验证码": "Code",

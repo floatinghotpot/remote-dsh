@@ -937,8 +937,9 @@ function AccountPage(): React.JSX.Element {
       {wechatEnabled ? (
         <SettingRow
           label={t("绑定微信")}
-          desc={t("绑定微信后，该微信可免密登录本账号")}
-          onClick={() => { window.location.href = "/api/wechat/bind/authorize"; }}
+          desc={info?.wechatBound === true ? t("该微信可免密登录本账号：{x}", { params: { x: info.wechatNickname ?? "" } }) : t("绑定微信后，该微信可免密登录本账号")}
+          badge={<Badge ok={info?.wechatBound === true} text={info?.wechatBound ? t("已绑定") : t("未绑定")} />}
+          onClick={() => { if (info?.wechatBound !== true) window.location.href = "/api/wechat/bind/authorize"; }}
         />
       ) : null}
       {customerServiceUrl !== undefined && customerServiceUrl !== "" ? (
