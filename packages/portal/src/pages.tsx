@@ -463,7 +463,6 @@ function LandingPage(): React.JSX.Element {
 
 function Login(): React.JSX.Element {
   const { t } = useT();
-  const isFirst = new URLSearchParams(window.location.search).get("first") === "1";
   const next = new URLSearchParams(window.location.search).get("next");
   const home = next !== null && next.startsWith("/") && !next.startsWith("//") ? next : "/hosts";
   const wechatNew = new URLSearchParams(window.location.search).get("wechat-new");
@@ -527,21 +526,17 @@ function Login(): React.JSX.Element {
 
   const submit = (): void => {
     void run(async () => {
-      if (isFirst) {
-        const r = await api.firstPassword(name, password);
-        sessionStorage.setItem(REFRESH_KEY, r.refreshToken);
-        navigate(home);
-      } else if (totpPending !== null) {
+      if (totpPending !== null) {
         const r = await api.totpLogin(totpPending, totpCode, trustDevice);
         sessionStorage.setItem(REFRESH_KEY, r.refreshToken);
-        navigate(r.mustChangePassword ? "/login?first=1" : home);
+        navigate(home);
       } else {
         const r = await api.login(name, password);
         if (r.requiresTotp === true && r.pendingToken !== undefined) {
           setTotpPending(r.pendingToken);
         } else {
           sessionStorage.setItem(REFRESH_KEY, r.refreshToken ?? "");
-          navigate(r.mustChangePassword ? "/login?first=1" : home);
+          navigate(home);
         }
       }
     });
@@ -562,7 +557,7 @@ function Login(): React.JSX.Element {
       <p style={{ fontSize: 22, fontWeight: 700, color: "#111", letterSpacing: 0.5, margin: "0 0 8px" }}>{brand}</p>
       <h1 style={{ fontSize: 20, marginBottom: 4 }}>{t("你的 AI 智能体，随处安全可达")}</h1>
       <p style={{ color: "#666", fontSize: 13, marginBottom: 24 }}>
-        {totpPending !== null ? t("输入你的两步验证码（TOTP）") : isFirst ? t("首次登录：设置你的密码") : t("远程指挥你的 DeepSeek Harness 智能体，仅需浏览器，任意设备、随时随地，端到端加密")}
+        {totpPending !== null ? t("输入你的两步验证码（TOTP）") : t("远程指挥你的 DeepSeek Harness 智能体，仅需浏览器，任意设备、随时随地，端到端加密")}
       </p>
       {totpPending !== null ? (
         <div>
@@ -584,15 +579,15 @@ function Login(): React.JSX.Element {
         </div>
       ) : (
         <>
-          {field(isFirst ? t("用户名（管理员创建）") : t("邮箱 / 手机号 / 用户名"), name, setName)}
-          {field(isFirst ? t("新密码（至少 8 位）") : t("密码"), password, setPassword, "password")}
+          {field(t("邮箱 / 手机号 / 用户名"), name, setName)}
+          {field(t("密码"), password, setPassword, "password")}
         </>
       )}
       {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
       <button onClick={submit} style={{ ...btnStyle(), width: "100%", marginTop: 8 }}>
-        {totpPending !== null ? t("验证并登录") : isFirst ? t("设置密码并登录") : t("登录")}
+        {totpPending !== null ? t("验证并登录") : t("登录")}
       </button>
-      {wechatEnabled && totpPending === null && !isFirst && (
+      {wechatEnabled && totpPending === null && (
         <>
           <p style={{ margin: "14px 0 0", textAlign: "center", color: "#9ca3af", fontSize: 12 }}>{t("或")}</p>
           <button
@@ -619,7 +614,7 @@ function Login(): React.JSX.Element {
           )}
         </>
       )}
-      {totpPending === null && !isFirst && (
+      {totpPending === null && (
         <p style={{ marginTop: 12, textAlign: "center" }}>
           <a href="#" onClick={(e) => { e.preventDefault(); navigate("/reset-password"); }} style={{ color: "#2563eb", fontSize: 13 }}>{t("忘记密码？")}</a>
           {" · "}

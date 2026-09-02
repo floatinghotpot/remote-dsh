@@ -156,20 +156,6 @@ export class HubAuth {
     return this.jwt.sign({ sub: user.id, name: user.name, ver: user.ver, exp: Date.now() + 5 * 60 * 1000, totpPending: true });
   }
 
-  /**
-   * 首次设密码（--no-password 建号的激活流程）：仅 must_change=1 的用户可用。
-   * 成功后签发完整会话。返回 null = 用户名不存在或已设过密码。
-   */
-  async firstPassword(name: string, newPassword: string): Promise<LoginResult | null> {
-    const user = this.db.getUserByName(name);
-    if (user === null || user.mustChange !== 1) return null;
-    this.db.setPassword(user.id, await hashPassword(newPassword));
-    // setPassword 已 ver+1：必须用新 ver 的用户行签发，否则会话立即失效
-    const fresh = this.db.getUserById(user.id);
-    if (fresh === null) return null;
-    return { tokens: this.issueTokens(fresh), mustChangePassword: false };
-  }
-
   /** 签发完整会话对（access + 轮换 refresh）；改密后 ver+1 使旧 access 失效。 */
   issueTokens(user: UserRow, totpVerified = false): TokenPair {
     const accessToken = this.jwt.sign({

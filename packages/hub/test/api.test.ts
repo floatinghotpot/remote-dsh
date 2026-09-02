@@ -247,25 +247,6 @@ test("改密：旧 cookie 立即失效", async () => {
   assert.equal(relogin.status, 200);
 });
 
-test("首次设密码（--no-password 建号激活）", async () => {
-  // 未激活用户：must_change=1
-  db.createUser("newbie", "scrypt:disabled", new Date().toISOString(), true);
-  // 未激活无法正常登录
-  const pre = await post("/api/auth/login", { name: "newbie", password: "whatever" });
-  assert.equal(pre.status, 401);
-  // 激活：设置密码
-  const act = await post("/api/auth/first-password", { name: "newbie", newPassword: "activat3d" });
-  assert.equal(act.status, 200);
-  assert.equal(typeof act.json.accessToken, "string");
-  // 已激活用户再次 first-password → 400
-  const again = await post("/api/auth/first-password", { name: "newbie", newPassword: "anotherpw1" });
-  assert.equal(again.status, 400);
-  // 新密码可登录
-  const login = await post("/api/auth/login", { name: "newbie", password: "activat3d" });
-  assert.equal(login.status, 200);
-  assert.equal(login.json.mustChangePassword, false);
-});
-
 test("登录限流：连续失败 5 次 → 429", async () => {
   // 复用 login：5 次失败（前面已 1 次失败 → 再 4 次到阈值）
   let status = 0;

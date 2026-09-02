@@ -468,10 +468,6 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, runti
     await handleLogin(req, res, runtime);
     return true;
   }
-  if (path === "/api/auth/first-password" && method === "POST") {
-    await handleFirstPassword(req, res, runtime);
-    return true;
-  }
   if (path === "/api/auth/refresh" && method === "POST") {
     await handleRefresh(req, res, runtime);
     return true;
@@ -989,38 +985,6 @@ async function handleLogin(req: IncomingMessage, res: ServerResponse, runtime: H
       return;
     }
   }
-}
-
-async function handleFirstPassword(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
-  // 激活流程：--no-password 建号的用户首次设密码（仅 must_change=1 可用一次）
-  const ip = clientIp(req, runtime);
-  let limiter = loginLimiters.get(ip);
-  if (limiter === undefined) {
-    limiter = createLoginLimiter(5, 10 * 60 * 1000);
-    loginLimiters.set(ip, limiter);
-  }
-  const lockedMs = limiter.allow(ip);
-  if (lockedMs > 0) {
-    writeError(res, 429, "RATE_LIMITED", "too many attempts", lockedMs);
-    return;
-  }
-  const body = await readJsonBody(req);
-  if (body === null || typeof body.name !== "string" || typeof body.newPassword !== "string" || body.newPassword.length < 8) {
-    writeError(res, 400, "BAD_REQUEST", "invalid body (newPassword must be >= 8 chars)");
-    return;
-  }
-  const result = await runtime.auth.firstPassword(body.name, body.newPassword);
-  if (result === null) {
-    limiter.fail(ip);
-    writeError(res, 400, "NOT_ELIGIBLE", "user not found or already activated");
-    return;
-  }
-  limiter.clear(ip);
-  res.writeHead(200, {
-    "content-type": "application/json",
-    "set-cookie": sessionCookie(result.tokens.accessToken),
-  });
-  res.end(JSON.stringify(result.tokens));
 }
 
 /** register：双通道注册（email/+86 phone）→ 建 pending 用户 → 发验证码。 */

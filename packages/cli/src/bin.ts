@@ -591,18 +591,16 @@ async function handleHubUser(args: string[], configPath?: string): Promise<void>
     switch (action) {
       case "add": {
         const name = args[1];
-        if (name === undefined) throw new Error("usage: rdsh hub user add <name> [--no-password] [--role <user|readonly|operator|admin>]");
-        const noPassword = args.includes("--no-password");
+        if (name === undefined) throw new Error("usage: rdsh hub user add <name> [--role <user|readonly|operator|admin>]");
         const roleIdx = args.indexOf("--role");
         const role = roleIdx >= 0 && args[roleIdx + 1] !== undefined ? args[roleIdx + 1]! : "user";
         if (!["user", "readonly", "operator", "admin"].includes(role)) throw new Error(`invalid role '${role}' (user|readonly|operator|admin)`);
         const hubConfigPath = resolveHubConfigPath(configPath);
         if (db.getUserByName(name) !== null) throw new Error(`user '${name}' already exists`);
-        const user = noPassword
-          ? db.createUser(name, "scrypt:disabled", new Date().toISOString(), true)
-          : db.createUser(name, await hashPassword(await promptPasswordTwice(`password for ${name}: `)));
+        // 建号即设初始密码（安全修复 F1：不再提供 --no-password 公开首密码激活路径，防账号抢占）
+        const user = db.createUser(name, await hashPassword(await promptPasswordTwice(`password for ${name}: `)));
         if (role !== "user") db.setRole(user.id, role);
-        console.log(`rdsh: user '${name}' created (role: ${role}${noPassword ? " — must set password on first sign-in" : ""})`);
+        console.log(`rdsh: user '${name}' created (role: ${role})`);
         return;
       }
       case "passwd": {

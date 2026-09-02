@@ -189,9 +189,6 @@ export const api = {
   changePassword(currentPassword: string, newPassword: string): Promise<{ ok: boolean }> {
     return jsonFetch("/api/auth/password", { method: "POST", body: JSON.stringify({ currentPassword, newPassword }) });
   },
-  firstPassword(name: string, newPassword: string): Promise<LoginResponse> {
-    return jsonFetch("/api/auth/first-password", { method: "POST", body: JSON.stringify({ name, newPassword }) });
-  },
   listHosts(): Promise<{ hosts: HostInfo[] }> {
     return jsonFetch("/api/hosts");
   },
