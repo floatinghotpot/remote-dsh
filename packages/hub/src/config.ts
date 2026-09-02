@@ -135,6 +135,10 @@ export interface HubConfig {
   sms?: SmsConfig;
   /** 开放注册开关；缺省 → closed（自托管默认关闭，防 bot） */
   registration?: "open" | "closed";
+  /** 注册每日上限（滚动 24h 计数；缺省不限） */
+  registrationDailyLimit?: number;
+  /** 注册总量上限（全库用户数硬顶；缺省不限） */
+  registrationMaxUsers?: number;
   /** 计费/套餐配置；缺省 → 无套餐（订阅功能禁用） */
   billing?: BillingConfig;
   /** 端到端加密策略；缺省 → optional（按 host 能力协商） */
@@ -220,6 +224,14 @@ export function normalizeHubConfig(raw: unknown, source = "config"): HubConfig {
   if (cfg.captcha !== undefined) out.captcha = normalizeCaptcha(cfg.captcha, source);
   if (cfg.sms !== undefined) out.sms = normalizeSms(cfg.sms, source);
   if (cfg.registration !== undefined) out.registration = normalizeRegistration(cfg.registration, source);
+  if (cfg.registrationDailyLimit !== undefined) {
+    if (!Number.isInteger(cfg.registrationDailyLimit) || (cfg.registrationDailyLimit as number) < 1) throw new Error(`${source}: "registrationDailyLimit" must be a positive integer`);
+    out.registrationDailyLimit = cfg.registrationDailyLimit as number;
+  }
+  if (cfg.registrationMaxUsers !== undefined) {
+    if (!Number.isInteger(cfg.registrationMaxUsers) || (cfg.registrationMaxUsers as number) < 1) throw new Error(`${source}: "registrationMaxUsers" must be a positive integer`);
+    out.registrationMaxUsers = cfg.registrationMaxUsers as number;
+  }
   if (cfg.billing !== undefined) out.billing = normalizeBilling(cfg.billing, source);
   if (cfg.e2ee !== undefined) out.e2ee = normalizeE2ee(cfg.e2ee, source);
   if (cfg.backup !== undefined) out.backup = normalizeBackup(cfg.backup, source);

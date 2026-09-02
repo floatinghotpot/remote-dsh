@@ -530,6 +530,17 @@ export class HubDb {
     return (this.db.prepare("SELECT * FROM users ORDER BY id").all() as unknown as Array<Record<string, unknown>>).map((r) => this.mapUser(r));
   }
 
+  /** 全库用户总数（含 pending；注册总量上限用）。 */
+  countUsers(): number {
+    return Number((this.db.prepare("SELECT COUNT(*) AS c FROM users").get() as { c: number }).c);
+  }
+
+  /** 自指定时间点（ms）以来创建的用户数（created_at 为 ISO 字符串，字典序 = 时间序）。 */
+  countUsersCreatedSince(sinceMs: number): number {
+    const iso = new Date(sinceMs).toISOString();
+    return Number((this.db.prepare("SELECT COUNT(*) AS c FROM users WHERE created_at >= ?").get(iso) as { c: number }).c);
+  }
+
   /** 管理台用户分页 + 模糊搜索（name/email/phone）；返回 { rows, total }。 */
   listUsersPage(opts: { q?: string; limit?: number; offset?: number }): { rows: UserRow[]; total: number } {
     const q = opts.q !== undefined && opts.q !== "" ? opts.q : null;

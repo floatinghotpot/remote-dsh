@@ -1005,6 +1005,15 @@ async function handleAccountRegister(req: IncomingMessage, res: ServerResponse, 
   } else {
     accountRegisterRate.set(ip, { count: 1, windowStart: now });
   }
+  // 全局总量闸（资源保护，MVP/试用服务器）：总量硬顶 + 每日滚动 24h 上限
+  if (runtime.config.registrationMaxUsers !== undefined && runtime.db.countUsers() >= runtime.config.registrationMaxUsers) {
+    writeError(res, 429, "REGISTRATION_LIMIT_REACHED", "registration capacity reached");
+    return;
+  }
+  if (runtime.config.registrationDailyLimit !== undefined && runtime.db.countUsersCreatedSince(now - 24 * 3600 * 1000) >= runtime.config.registrationDailyLimit) {
+    writeError(res, 429, "REGISTRATION_DAILY_LIMIT", "daily registration limit reached");
+    return;
+  }
   const body = await readJsonBody(req);
   if (!(await verifyCaptchaBody(runtime, body))) {
     writeError(res, 400, "BAD_CAPTCHA", "captcha failed");

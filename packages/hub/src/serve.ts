@@ -81,6 +81,8 @@ export async function serveHub(opts: HubServeOptions): Promise<void> {
     security: config.security,
     sms: config.sms,
     registration: config.registration,
+    registrationDailyLimit: config.registrationDailyLimit,
+    registrationMaxUsers: config.registrationMaxUsers,
     billing: config.billing,
     beian: config.beian,
     site: config.site,

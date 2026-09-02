@@ -102,3 +102,12 @@ test("e2ee：mode 枚举校验 + 缺省", () => {
   assert.equal(normalizeHubConfig({}).e2ee, undefined); // 缺省 → undefined（消费方按 optional）
   assert.equal(normalizeHubConfig({ e2ee: { mode: "required" } }).e2ee?.mode, "required");
 });
+
+test("注册限流：registrationDailyLimit / registrationMaxUsers 校验", () => {
+  assert.equal(normalizeHubConfig({}).registrationMaxUsers, undefined); // 缺省不限
+  assert.equal(normalizeHubConfig({ registrationMaxUsers: 1000 }).registrationMaxUsers, 1000);
+  assert.equal(normalizeHubConfig({ registrationDailyLimit: 50 }).registrationDailyLimit, 50);
+  assert.throws(() => normalizeHubConfig({ registrationMaxUsers: 0 }), /"registrationMaxUsers" must be a positive integer/);
+  assert.throws(() => normalizeHubConfig({ registrationDailyLimit: -1 }), /"registrationDailyLimit" must be a positive integer/);
+  assert.throws(() => normalizeHubConfig({ registrationMaxUsers: 1.5 }), /"registrationMaxUsers" must be a positive integer/);
+});

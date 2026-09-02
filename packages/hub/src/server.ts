@@ -49,6 +49,10 @@ export interface HubServerOptions {
   /** 短信/注册/计费（08-saas，serve.ts 从 hub.json 传入）。 */
   sms?: SmsConfig;
   registration?: "open" | "closed";
+  /** 注册每日上限（滚动 24h；缺省不限） */
+  registrationDailyLimit?: number;
+  /** 注册总量上限（全库用户数；缺省不限） */
+  registrationMaxUsers?: number;
   billing?: BillingConfig;
   /** 备案信息（portal 页脚，serve.ts 从 hub.json 传入）。 */
   beian?: BeianConfig;
@@ -110,6 +114,8 @@ export async function startHubServer(opts: HubServerOptions): Promise<RunningHub
       security: opts.security,
       sms: opts.sms,
       registration: opts.registration,
+      registrationDailyLimit: opts.registrationDailyLimit,
+      registrationMaxUsers: opts.registrationMaxUsers,
       billing: opts.billing,
       beian: opts.beian,
       site: opts.site,

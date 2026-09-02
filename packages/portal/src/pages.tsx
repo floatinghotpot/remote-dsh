@@ -226,6 +226,8 @@ const ERROR_ZH: Record<string, string> = {
   ACCOUNT_LOCKED: "登录失败次数过多，账户已临时锁定",
   NOT_FOUND: "请求的资源不存在",
   REGISTRATION_DISABLED: "注册未开放",
+  REGISTRATION_LIMIT_REACHED: "注册名额已满，暂不接受新用户",
+  REGISTRATION_DAILY_LIMIT: "今日注册名额已满，请明天再试",
   ALREADY_EXISTS: "该邮箱/手机号已被注册",
   EMAIL_DISABLED: "邮件服务未配置，邮箱通道不可用",
   SMS_DISABLED: "短信服务未配置，手机号通道不可用",
