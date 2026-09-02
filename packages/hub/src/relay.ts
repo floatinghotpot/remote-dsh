@@ -146,7 +146,7 @@ function normalizeHeaders(headers: IncomingMessage["headers"]): Record<string, s
   const out: Record<string, string | string[]> = {};
   for (const [k, v] of Object.entries(headers)) {
     if (v === undefined) continue;
-    if (k === "connection" || k === "upgrade" || k === "host") continue; // hop-by-hop / Host 由 gateway 重写
+    if (k === "connection" || k === "upgrade" || k === "host" || k === "cookie" || k === "authorization") continue; // hop-by-hop / Host 由 gateway 重写 / 会话凭证不下发 host
     out[k] = Array.isArray(v) ? v : String(v);
   }
   return out;
