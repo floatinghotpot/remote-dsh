@@ -48,6 +48,13 @@ export interface RdshConfig {
   insecure?: boolean;
   /** DSH UI 兼容开关（跟随 E2EE；trustE2EEAsLoopback 默认 true） */
   dshUiCompat?: DshUiCompat;
+  /** 网关访问口令（host 侧独立于 hub 的访问保护） */
+  gateway?: GatewayConfig;
+}
+
+/** 网关访问口令：accessCode 缺失/null/"" → null（gate off）；非空 ≥4 位（gate on）。 */
+export interface GatewayConfig {
+  accessCode: string | null;
 }
 
 /** DSH UI 兼容：把经隧道访问的前端 isLoopback 判定视为 loopback，使 Models/设置持久化可用。 */
@@ -71,6 +78,7 @@ const DEFAULTS: RdshConfig = {
   allowFrom: [],
   auth: DEFAULT_AUTH,
   dshUiCompat: { trustE2EEAsLoopback: true },
+  gateway: { accessCode: null },
 };
 
 /** 解析配置文件路径（--config > $RDSH_CONFIG > 默认 host.json）。 */
@@ -232,6 +240,17 @@ export function normalizeConfig(raw: unknown, source = "config"): RdshConfig {
         throw new Error(`${source}: "dshUiCompat.trustE2EEAsLoopback" must be boolean`);
       }
       out.dshUiCompat = { trustE2EEAsLoopback: compat.trustE2EEAsLoopback };
+    }
+  }
+  // ---- gateway（访问口令；缺省 accessCode null = gate off）----
+  if (cfg.gateway !== undefined) {
+    if (typeof cfg.gateway !== "object" || cfg.gateway === null) throw new Error(`${source}: "gateway" must be an object`);
+    const g = cfg.gateway as Record<string, unknown>;
+    // 折叠语义：缺失 / null / "" → null（gate off）；非空字符串 → ≥4 位（gate on）
+    if (g.accessCode !== undefined && g.accessCode !== null && g.accessCode !== "") {
+      if (typeof g.accessCode !== "string") throw new Error(`${source}: "gateway.accessCode" must be a string`);
+      if (g.accessCode.length < 4) throw new Error(`${source}: "gateway.accessCode" must be at least 4 chars`);
+      out.gateway = { accessCode: g.accessCode };
     }
   }
   return out;

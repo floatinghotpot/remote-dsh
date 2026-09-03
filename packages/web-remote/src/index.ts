@@ -67,6 +67,7 @@ export function apply(ctx: Ctx): void {
   let currentName: string | undefined;
   let lastMessage: string | undefined;
   let liveCompat: boolean | undefined; // 运行中切换的 dshUiCompat（覆盖 host.json）
+  let liveAccessCode: string | null | undefined; // 运行中切换的访问密码（undefined=未初始化；null=关闭）
   let currentConfig: RdshConfig | null = null; // 最近一次读到的 host.json
 
   const hooks = {
@@ -147,6 +148,7 @@ export function apply(ctx: Ctx): void {
   function startTunnel(config: RdshConfig, hub: string, token: string, name: string, insecure: boolean): void {
     currentConfig = config;
     liveCompat = config.dshUiCompat?.trustE2EEAsLoopback !== false;
+    liveAccessCode = config.gateway?.accessCode ?? null;
     currentHub = hub;
     currentName = name;
     lastMessage = undefined;
@@ -157,6 +159,8 @@ export function apply(ctx: Ctx): void {
       target: { host: "127.0.0.1", port: ctx.webServer.port },
       role: "plugin",
       dshUiCompat: config.dshUiCompat,
+      gateway: config.gateway,
+      name,
       hooks,
     });
   }
@@ -227,13 +231,22 @@ export function apply(ctx: Ctx): void {
     try {
       const compat = uiCompatEnabled();
       if (handle !== null && liveState !== null) {
-        return ok({ status: mapState(liveState), hub: currentHub, name: currentName, message: lastMessage, hasToken: true, uiCompat: compat });
+        return ok({
+          status: mapState(liveState),
+          hub: currentHub,
+          name: currentName,
+          message: lastMessage,
+          hasToken: true,
+          uiCompat: compat,
+          hasAccessCode: accessCodeEnabled(),
+        });
       }
       const held = readJoinLock();
       if (held !== null && held.role === "cli") {
-        return ok({ status: "external", uiCompat: compat });
+        return ok({ status: "external", uiCompat: compat, hasAccessCode: accessCodeEnabled() });
       }
       const config = await loadConfig(DEFAULT_HOST_CONFIG_PATH);
+      const hasAccessCode = config.gateway?.accessCode != null;
       if (config.mode === "join" && config.hub !== undefined) {
         return ok({
           status: "disconnected",
@@ -242,9 +255,10 @@ export function apply(ctx: Ctx): void {
           message: lastMessage,
           hasToken: readPersistedToken(config.hub) !== null,
           uiCompat: compat,
+          hasAccessCode,
         });
       }
-      return ok({ status: "unconfigured", uiCompat: compat });
+      return ok({ status: "unconfigured", uiCompat: compat, hasAccessCode });
     } catch (e) {
       return err("internal", e instanceof Error ? e.message : String(e));
     }
@@ -254,6 +268,38 @@ export function apply(ctx: Ctx): void {
   function uiCompatEnabled(): boolean {
     if (liveCompat !== undefined) return liveCompat;
     return currentConfig?.dshUiCompat?.trustE2EEAsLoopback !== false;
+  }
+
+  /** 当前访问密码是否启用（运行中 live 优先；否则读最近 host.json；缺省 false）。 */
+  function accessCodeEnabled(): boolean {
+    if (liveAccessCode !== undefined) return liveAccessCode !== null;
+    return currentConfig?.gateway?.accessCode != null;
+  }
+
+  async function setAccessCode(args: Record<string, unknown>): Promise<RpcResult> {
+    try {
+      const raw = args.code;
+      // null/undefined = 清除；否则必须是 ≥4 的非空字符串
+      let code: string | null;
+      if (raw === null || raw === undefined) {
+        code = null;
+      } else if (typeof raw === "string" && raw.length >= 4) {
+        code = raw;
+      } else {
+        return err("bad-request", "code must be null or a string of at least 4 chars");
+      }
+      // ① 内存即时生效（运行中的隧道；缺省也写入供下次连接）
+      liveAccessCode = code;
+      handle?.setAccessCode(code);
+      // ② 持久化 host.json
+      const config = await loadConfig(DEFAULT_HOST_CONFIG_PATH);
+      config.gateway = { accessCode: code };
+      await saveConfig(DEFAULT_HOST_CONFIG_PATH, config);
+      currentConfig = config;
+      return ok({ hasAccessCode: code !== null });
+    } catch (e) {
+      return err("internal", e instanceof Error ? e.message : String(e));
+    }
   }
 
   async function setUiCompat(args: Record<string, unknown>): Promise<RpcResult> {
@@ -288,6 +334,8 @@ export function apply(ctx: Ctx): void {
           return await state();
         case "set-ui-compat":
           return await setUiCompat(args);
+        case "set-access-code":
+          return await setAccessCode(args);
         default:
           return err("bad-request", `unknown endpoint ${endpoint}`);
       }

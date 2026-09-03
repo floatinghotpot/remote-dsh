@@ -71,3 +71,18 @@ test("resolveConfigPath 优先级（默认 host.json）", () => {
   assert.ok(resolveConfigPath(undefined, {}).endsWith(".rdsh/host.json"));
   assert.equal(resolveConfigPath("/a.json", { RDSH_CONFIG: "/b.json" }), "/a.json"); // CLI 优先
 });
+
+test("gateway.accessCode 折叠语义 + ≥4 校验", () => {
+  // 缺失 / null / "" → null（gate off）
+  assert.equal(normalizeConfig({}).gateway?.accessCode, null);
+  assert.equal(normalizeConfig({ gateway: {} }).gateway?.accessCode, null);
+  assert.equal(normalizeConfig({ gateway: { accessCode: null } }).gateway?.accessCode, null);
+  assert.equal(normalizeConfig({ gateway: { accessCode: "" } }).gateway?.accessCode, null);
+  // 非空 ≥4 → 保留（gate on）
+  assert.equal(normalizeConfig({ gateway: { accessCode: "abcd" } }).gateway?.accessCode, "abcd");
+  assert.equal(normalizeConfig({ gateway: { accessCode: "长密码123" } }).gateway?.accessCode, "长密码123");
+  // <4 / 非字符串 → 报错
+  assert.throws(() => normalizeConfig({ gateway: { accessCode: "abc" } }), /at least 4/);
+  assert.throws(() => normalizeConfig({ gateway: { accessCode: 1234 } }), /must be a string/);
+  assert.throws(() => normalizeConfig({ gateway: "x" }), /"gateway" must be an object/);
+});

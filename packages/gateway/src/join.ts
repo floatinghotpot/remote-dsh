@@ -25,6 +25,7 @@ import type { JoinLockRole } from "./lock.ts";
 import { responderHandshake, Aead } from "./e2ee.ts";
 import type { KeyPair, E2eeKeys } from "./e2ee.ts";
 import { loadOrCreateE2eeKeyPair } from "./e2ee-key-store.ts";
+import { GATE_COOKIE, signGateCookie, verifyGateCookie, verifyGateCode } from "./access-gate.ts";
 
 export interface JoinOptions {
   hubUrl: string;
@@ -39,6 +40,8 @@ export interface JoinOptions {
   name?: string;
   /** DSH UI 兼容（透传 host.json dshUiCompat；缺省 true） */
   dshUiCompat?: { trustE2EEAsLoopback?: boolean };
+  /** 网关访问口令（feature 15；accessCode null = 关闭） */
+  gateway?: { accessCode?: string | null };
 }
 
 /** 注册/接入结果：解析出的 host token + 是否需 insecure + 生效的主机名（缺省=机器 hostname）。 */
@@ -72,6 +75,10 @@ export interface StartJoinOptions {
   hooks?: JoinHooks;
   /** DSH UI 兼容（缺省 trustE2EEAsLoopback=true；false 关闭 JS patch） */
   dshUiCompat?: { trustE2EEAsLoopback?: boolean };
+  /** 网关访问口令（feature 15；accessCode null = 关闭） */
+  gateway?: { accessCode?: string | null };
+  /** 主机名（challenge 页展示；缺省「本主机」） */
+  name?: string;
 }
 
 /** 可停止的 join 隧道句柄。 */
@@ -79,6 +86,8 @@ export interface JoinHandle {
   stop(): Promise<void>;
   /** 运行中切换 DSH UI 兼容（trustE2EEAsLoopback）；下一个请求即生效。 */
   setUiCompat(trustE2EEAsLoopback: boolean): void;
+  /** 运行中设置/清除访问口令（null = 关闭 gate）；下一个请求即生效。 */
+  setAccessCode(code: string | null): void;
 }
 
 /** 判断错误是否为 TLS 证书类错误（自签/过期/域名不匹配）。 */
@@ -224,11 +233,64 @@ export function patchLoopbackJs(body: Buffer): Buffer | null {
   return Buffer.from(src.split(target).join("true"), "utf8");
 }
 
+/** gate challenge 错误态（语言中立 key，gateChallengeHtml 内本地化）。 */
+type GateError = "wrong" | "locked" | null;
+
+/** 从转发头里取 Accept-Language（数组取首个，缺失 undefined）。 */
+function headerAcceptLanguage(headers: Record<string, string | string[]>): string | undefined {
+  const al = headers["accept-language"];
+  return Array.isArray(al) ? al.join(",") : typeof al === "string" ? al : undefined;
+}
+
+/** HTML 转义（challenge 页内插 hostName/actionPath 防注入；actionPath 经 hub URL 解析已 percent-encoded，此处为纵深防御）。 */
+function escapeHtml(s: string): string {
+  return s
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+/** 访问口令 challenge 页（内联，零外部依赖；经隧道在 hub 域名下展示；Accept-Language 含 zh → 中文，否则英文兜底）。 */
+function gateChallengeHtml(hostName: string, actionPath: string, error: GateError, acceptLanguage?: string): string {
+  const safeHost = escapeHtml(hostName);
+  const safePath = escapeHtml(actionPath);
+  const zh = typeof acceptLanguage === "string" && /zh/i.test(acceptLanguage);
+  const t = zh
+    ? { title: "访问密码", heading: `主机「${safeHost}」受访问密码保护`, note: "此密码由主机所有者设置，hub 无法绕过。", placeholder: "请输入访问密码", submit: "进入", wrong: "访问密码错误", locked: "尝试次数过多，请稍后再试" }
+    : { title: "Access code", heading: `Host "${safeHost}" is protected by an access code`, note: "This code is set by the host owner; the hub cannot bypass it.", placeholder: "Enter access code", submit: "Enter", wrong: "Incorrect access code", locked: "Too many attempts — please try again later" };
+  const errHtml = error === null ? "" : `<p style="color:#dc2626;font-size:13px;margin:10px 0 0">${error === "wrong" ? t.wrong : t.locked}</p>`;
+  return (
+    `<!doctype html><html lang="${zh ? "zh-CN" : "en"}"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">` +
+    `<title>${t.title}</title>` +
+    `<body style="font-family:system-ui,sans-serif;background:#f6f7f9;margin:0">` +
+    `<div style="max-width:360px;margin:64px auto;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:24px">` +
+    `<h1 style="font-size:18px;margin:0 0 8px">${t.heading}</h1>` +
+    `<p style="font-size:13px;color:#6b7280;margin:0 0 16px">${t.note}</p>` +
+    `<form method="POST" action="${safePath}">` +
+    `<input name="gate_code" type="password" autocomplete="off" autofocus placeholder="${t.placeholder}" style="width:100%;box-sizing:border-box;height:38px;border:1px solid #d1d5db;border-radius:8px;padding:0 12px;font-size:14px">` +
+    `<button type="submit" style="width:100%;margin-top:12px;height:38px;border:none;border-radius:8px;background:#2563eb;color:#fff;font-size:14px;cursor:pointer">${t.submit}</button>` +
+    `</form>${errHtml}</div></body></html>`
+  );
+}
+
+/** 发送合成的 HTTP 响应帧（gateway 不触达 dsh）。 */
+function sendSyntheticHttp(send: (frame: Buffer) => void, streamId: number, status: number, headers: Record<string, string>, body: Buffer): void {
+  send(encodeFrame(FRAME_TYPE.OPEN, streamId, jsonPayload({ kind: "http", status, reason: undefined, headers })));
+  send(encodeFrame(FRAME_TYPE.DATA, streamId, body));
+  send(encodeFrame(FRAME_TYPE.CLOSE, streamId, jsonPayload({ code: 0 })));
+}
+
 export function startJoin(opts: StartJoinOptions): JoinHandle {
   const hubWsBase = opts.hubUrl.replace(/^https/, "wss").replace(/^http/, "ws");
   const hooks = opts.hooks ?? {};
   // DSH UI 兼容开关：缺省 true（跟随 E2EE）；可变引用 → 运行中可切换（插件面板即时生效）
   const uiCompat = { trustE2EEAsLoopback: opts.dshUiCompat?.trustE2EEAsLoopback !== false };
+  // 访问口令（feature 15）：可变引用 → setAccessCode 运行中切换；null = gate off
+  const gate = { accessCode: opts.gateway?.accessCode ?? null };
+  const hostName = opts.name ?? "本主机";
+  const gateFailures = { count: 0, lockedUntil: 0 };
   const log = (level: "info" | "warn" | "error", message: string): void => {
     hooks.onLog?.(level, message);
   };
@@ -256,9 +318,66 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
   }
 
   /** 内层帧分发器（plain 与 raw 共用）：OPEN http/ws + DATA → DSH 转发，响应帧经 `send` 回传。 */
-  function makeInnerDispatcher(send: (frame: Buffer) => void, dio?: { jsPatch?: () => boolean }) {
+  function makeInnerDispatcher(send: (frame: Buffer) => void, dio?: { jsPatch?: () => boolean; gate?: boolean }) {
     const httpStreams = new Map<number, { up: ReturnType<typeof httpRequest> }>();
     const wsStreams = new Map<number, { upstream: WebSocket; queue: Buffer[] }>();
+    // gate 未过、等待 code 提交的 http 流（OPEN 后缓冲 DATA，CLOSE 时校验）
+    const gatedHttp = new Map<number, { method: string; path: string; body: Buffer[]; size: number; acceptLanguage?: string }>();
+
+    /** 从转发头里取 rdsh_gate cookie（hub D12 白名单透传）。 */
+    function gateCookie(headers: Record<string, string | string[]>): string | null {
+      const ck = headers["cookie"];
+      const s = Array.isArray(ck) ? ck.join(";") : typeof ck === "string" ? ck : "";
+      for (const part of s.split(";")) {
+        const idx = part.indexOf("=");
+        if (idx <= 0) continue;
+        if (part.slice(0, idx).trim() === GATE_COOKIE) return part.slice(idx + 1).trim();
+      }
+      return null;
+    }
+
+    /** gate 开启时的失败计数：全局封顶，达限短时锁定（隧道流量无真实客户端 IP）。 */
+    function gateBlocked(): boolean {
+      if (gateFailures.lockedUntil > Date.now()) return true;
+      if (gateFailures.lockedUntil !== 0) gateFailures.lockedUntil = 0;
+      return false;
+    }
+
+    /** 发送 challenge 页（或带错误）响应。 */
+    function sendChallenge(streamId: number, path: string, error: GateError, acceptLanguage?: string): void {
+      const html = gateChallengeHtml(hostName, path, error, acceptLanguage);
+      sendSyntheticHttp(send, streamId, 200, { "content-type": "text/html; charset=utf-8" }, Buffer.from(html));
+    }
+
+    /** 校验 code 提交（POST gate_code）→ 302 回跳 + 发 cookie，或回 challenge 错误。 */
+    function handleGateSubmit(streamId: number, state: { method: string; path: string; body: Buffer[]; acceptLanguage?: string }): void {
+      const code = gate.accessCode;
+      if (code === null) {
+        sendSyntheticHttp(send, streamId, 302, { location: state.path }, Buffer.alloc(0));
+        return;
+      }
+      if (gateBlocked()) {
+        sendChallenge(streamId, state.path, "locked", state.acceptLanguage);
+        return;
+      }
+      const raw = Buffer.concat(state.body).toString("utf8");
+      let input: string | null = null;
+      try {
+        const params = new URLSearchParams(raw);
+        input = params.get("gate_code");
+      } catch {
+        input = null;
+      }
+      if (input !== null && verifyGateCode(input, code)) {
+        gateFailures.count = 0;
+        const { value } = signGateCookie(code);
+        sendSyntheticHttp(send, streamId, 302, { location: state.path, "set-cookie": `${GATE_COOKIE}=${value}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${7 * 24 * 3600}` }, Buffer.alloc(0));
+      } else {
+        gateFailures.count += 1;
+        if (gateFailures.count >= 10) gateFailures.lockedUntil = Date.now() + 60_000;
+        sendChallenge(streamId, state.path, "wrong", state.acceptLanguage);
+      }
+    }
 
     function closeStream(streamId: number): void {
       const ws = wsStreams.get(streamId);
@@ -319,6 +438,29 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
       } catch {
         send(encodeFrame(FRAME_TYPE.ERROR, frame.streamId, jsonPayload({ code: "BAD_OPEN", message: "malformed open" })));
         return;
+      }
+
+      // ---- 访问口令 gate（仅 plain dispatcher：dio.gate=true 且已设 accessCode）----
+      if (dio?.gate === true && gate.accessCode !== null) {
+        const code = gate.accessCode;
+        const authed = verifyGateCookie(code, gateCookie(headers) ?? "");
+        if (kind === "ws") {
+          if (!authed) {
+            send(encodeFrame(FRAME_TYPE.CLOSE, frame.streamId, jsonPayload({ code: 403, message: "access code required" })));
+            return;
+          }
+          openWsStream(frame.streamId, path, headers);
+          return;
+        }
+        if (!authed) {
+          if (method === "POST") {
+            // 可能是 code 提交：缓冲 body，CLOSE 时校验（见 handleFrame）
+            gatedHttp.set(frame.streamId, { method, path, body: [], size: 0, acceptLanguage: headerAcceptLanguage(headers) });
+            return;
+          }
+          sendChallenge(frame.streamId, path, null, headerAcceptLanguage(headers));
+          return;
+        }
       }
 
       if (kind === "ws") {
@@ -398,6 +540,16 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
           return;
         }
         case FRAME_TYPE.DATA: {
+          const gated = gatedHttp.get(frame.streamId);
+          if (gated !== undefined) {
+            gated.body.push(frame.payload);
+            gated.size += frame.payload.length;
+            if (gated.size > 64 * 1024) {
+              gatedHttp.delete(frame.streamId);
+              send(encodeFrame(FRAME_TYPE.CLOSE, frame.streamId, jsonPayload({ code: 413, message: "body too large" })));
+            }
+            return;
+          }
           const ws = wsStreams.get(frame.streamId);
           if (ws !== undefined) {
             if (ws.upstream.readyState === ws.upstream.OPEN) ws.upstream.send(frame.payload, { binary: false }); // DSH WS 为 text(JSON)
@@ -410,6 +562,12 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
         }
         case FRAME_TYPE.CLOSE:
         case FRAME_TYPE.ERROR: {
+          const gated = gatedHttp.get(frame.streamId);
+          if (gated !== undefined) {
+            gatedHttp.delete(frame.streamId);
+            if (frame.type === FRAME_TYPE.CLOSE) handleGateSubmit(frame.streamId, gated);
+            return;
+          }
           closeStream(frame.streamId);
           return;
         }
@@ -435,12 +593,13 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
         }
       }
       wsStreams.clear();
+      gatedHttp.clear();
     }
 
     return { handleFrame, cleanup };
   }
 
-  const plainDispatcher = makeInnerDispatcher(sendTunnelFrame, { jsPatch: () => uiCompat.trustE2EEAsLoopback });
+  const plainDispatcher = makeInnerDispatcher(sendTunnelFrame, { jsPatch: () => uiCompat.trustE2EEAsLoopback, gate: true });
 
   // host 端 E2EE 静态密钥对（持久化 ~/.rdsh/e2ee-key.json；join 注册时上送指纹）
   const hostE2eeKeypair: KeyPair = loadOrCreateE2eeKeyPair();
@@ -643,6 +802,12 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
       uiCompat.trustE2EEAsLoopback = trustE2EEAsLoopback;
       console.log(`rdsh join: dshUiCompat.trustE2EEAsLoopback = ${trustE2EEAsLoopback}（运行中生效）`);
     },
+    setAccessCode(code: string | null): void {
+      gate.accessCode = code;
+      gateFailures.count = 0;
+      gateFailures.lockedUntil = 0;
+      console.log(`rdsh join: accessCode = ${code === null ? "(off)" : "***"}（运行中生效）`);
+    },
     async stop(): Promise<void> {
       if (shuttingDown) return;
       shuttingDown = true;
@@ -669,7 +834,7 @@ export async function join(opts: JoinOptions): Promise<void> {
   const dsh = await spawnDsh(foundDsh);
   const target: ProxyTarget = { host: "127.0.0.1", port: dsh.port };
   // 解析 host token（含证书自动检测 + 持久化）；进程重启后复用，避免重复配对。
-  const { token, insecure } = await registerJoin(opts);
+  const { token, insecure, name } = await registerJoin(opts);
 
   console.log(`rdsh join: dsh web on 127.0.0.1:${dsh.port}`);
   console.log(`rdsh join: connecting to ${opts.hubUrl}...`);
@@ -681,6 +846,8 @@ export async function join(opts: JoinOptions): Promise<void> {
     target,
     role: "cli",
     dshUiCompat: opts.dshUiCompat,
+    gateway: opts.gateway,
+    name,
     hooks: {
       onLog: (level, message) => {
         (level === "error" ? console.error : console.log)(`rdsh join: ${message}`);

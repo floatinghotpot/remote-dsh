@@ -44,6 +44,12 @@ window.__ModuleLoader__.load({
       tip_external: "该主机由 rdsh CLI / 服务托管，请用 rdsh 命令管理。",
       uiCompatLabel: "端到端加密时，信任为本地访问（兼容模式）",
       uiCompatDesc: "（默认开启；共享主机可关闭）",
+      accessCodeLabel: "访问密码",
+      accessCodeBadgeSet: "已设置",
+      accessCodeBadgeUnset: "未设置",
+      accessCodePlaceholder: "输入新密码（至少 4 位）",
+      accessCodeSet: "设置",
+      accessCodeClear: "清除",
     };
 
     const en = {
@@ -73,6 +79,12 @@ window.__ModuleLoader__.load({
       tip_external: "This host is managed by the rdsh CLI/service; manage it with rdsh commands.",
       uiCompatLabel: "Trust as local access when E2EE (compatibility)",
       uiCompatDesc: "(on by default; disable for shared hosts)",
+      accessCodeLabel: "Access code",
+      accessCodeBadgeSet: "Set",
+      accessCodeBadgeUnset: "Not set",
+      accessCodePlaceholder: "New code (min 4 chars)",
+      accessCodeSet: "Set",
+      accessCodeClear: "Clear",
     };
 
     const CSS = `
@@ -101,6 +113,10 @@ window.__ModuleLoader__.load({
       .dsh-web-remote-btn-primary:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover)}
       .dsh-web-remote-btn-danger{color:var(--dsw-alias-state-error-primary);box-shadow:inset 0 0 0 1px var(--dsw-alias-state-error-primary)}
       .dsh-web-remote-btn-danger:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-danger)}
+      .dsh-web-remote-accesscode{display:flex;align-items:center;gap:8px}
+      .dsh-web-remote-accesscode input{flex:1;min-width:0}
+      .dsh-web-remote-accesscode-badge{flex:0 0 auto;font-size:12px;line-height:22px;padding:0 10px;border-radius:11px;box-shadow:inset 0 0 0 1px var(--dsw-alias-border-l2);color:var(--dsw-alias-label-tertiary)}
+      .dsh-web-remote-accesscode-badge.set{box-shadow:inset 0 0 0 1px var(--dsw-alias-state-success-primary);color:var(--dsw-alias-state-success-primary)}
     `;
 
     let styleInjected = false;
@@ -138,6 +154,9 @@ window.__ModuleLoader__.load({
       const [confirmOverwrite, setConfirmOverwrite] = React.useState(false);
       const [savedToken, setSavedToken] = React.useState(false);
       const [uiCompat, setUiCompat] = React.useState(true);
+      const [hasAccessCode, setHasAccessCode] = React.useState(false);
+      const [codeInput, setCodeInput] = React.useState("");
+      const [codeBusy, setCodeBusy] = React.useState(false);
 
       React.useEffect(() => {
         let alive = true;
@@ -152,6 +171,7 @@ window.__ModuleLoader__.load({
             if (typeof v.message === "string" && v.message !== "") setMessage(v.message);
             setSavedToken(v.hasToken === true);
             if (typeof v.uiCompat === "boolean") setUiCompat(v.uiCompat);
+            if (typeof v.hasAccessCode === "boolean") setHasAccessCode(v.hasAccessCode);
           } catch {
             /* 瞬时错误忽略，下一轮重试 */
           }
@@ -209,6 +229,38 @@ window.__ModuleLoader__.load({
           setName("");
         } finally {
           setBusy(false);
+        }
+      };
+
+      const setCode = async () => {
+        setCodeBusy(true);
+        try {
+          const res = await rpc.call("/remote-access", "set-access-code", { args: { code: codeInput } });
+          if (!res.ok) {
+            setMessage(res.error ? res.error.message : "set-access-code failed");
+          } else {
+            setCodeInput("");
+            setHasAccessCode(res.value?.hasAccessCode === true);
+            setMessage(undefined);
+          }
+        } finally {
+          setCodeBusy(false);
+        }
+      };
+
+      const clearCode = async () => {
+        setCodeBusy(true);
+        try {
+          const res = await rpc.call("/remote-access", "set-access-code", { args: { code: null } });
+          if (!res.ok) {
+            setMessage(res.error ? res.error.message : "clear-access-code failed");
+          } else {
+            setCodeInput("");
+            setHasAccessCode(false);
+            setMessage(undefined);
+          }
+        } finally {
+          setCodeBusy(false);
         }
       };
 
@@ -319,6 +371,46 @@ window.__ModuleLoader__.load({
             React.createElement("span", { className: "dsh-web-remote-compat-desc" }, " ", t("uiCompatDesc")),
           );
 
+      const accessCodeRow = external
+        ? null
+        : React.createElement(
+            "div",
+            { className: "dsh-web-remote-field" },
+            React.createElement("label", null, t("accessCodeLabel")),
+            React.createElement(
+              "div",
+              { className: "dsh-web-remote-accesscode" },
+              React.createElement(
+                "span",
+                { className: "dsh-web-remote-accesscode-badge" + (hasAccessCode ? " set" : "") },
+                hasAccessCode ? t("accessCodeBadgeSet") : t("accessCodeBadgeUnset"),
+              ),
+              React.createElement("input", {
+                type: "password",
+                value: codeInput,
+                disabled: disabled || codeBusy,
+                placeholder: t("accessCodePlaceholder"),
+                onChange: (e) => setCodeInput(e.target.value),
+              }),
+              React.createElement(
+                "button",
+                {
+                  className: "dsh-web-remote-btn dsh-web-remote-btn-primary",
+                  disabled: disabled || codeBusy || codeInput.length < 4,
+                  onClick: setCode,
+                },
+                t("accessCodeSet"),
+              ),
+              hasAccessCode
+                ? React.createElement(
+                    "button",
+                    { className: "dsh-web-remote-btn dsh-web-remote-btn-danger", disabled: disabled || codeBusy, onClick: clearCode },
+                    t("accessCodeClear"),
+                  )
+                : null,
+            ),
+          );
+
       return React.createElement(
         "div",
         { className: "dsh-web-remote" },
@@ -327,6 +419,7 @@ window.__ModuleLoader__.load({
         message ? React.createElement("p", { className: "dsh-web-remote-msg" }, message) : null,
         form,
         compatToggle,
+        accessCodeRow,
         actions,
       );
     }

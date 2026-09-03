@@ -142,11 +142,31 @@ export async function handleRelay(req: IncomingMessage, res: ServerResponse, run
   return true;
 }
 
-function normalizeHeaders(headers: IncomingMessage["headers"]): Record<string, string | string[]> {
+/** 网关访问 cookie 名（feature 15；gateway 侧同名常量见 packages/gateway/src/access-gate.ts GATE_COOKIE，注释互指）。 */
+const GATE_COOKIE = "rdsh_gate";
+
+/** 从 cookie 头提取 rdsh_gate 值（D12 白名单；无则 null）。 */
+function extractGateCookie(v: string | string[] | undefined): string | null {
+  const s = Array.isArray(v) ? v.join(";") : typeof v === "string" ? v : "";
+  for (const part of s.split(";")) {
+    const idx = part.indexOf("=");
+    if (idx <= 0) continue;
+    if (part.slice(0, idx).trim() === GATE_COOKIE) return part.slice(idx + 1).trim();
+  }
+  return null;
+}
+
+export function normalizeHeaders(headers: IncomingMessage["headers"]): Record<string, string | string[]> {
   const out: Record<string, string | string[]> = {};
   for (const [k, v] of Object.entries(headers)) {
     if (v === undefined) continue;
-    if (k === "connection" || k === "upgrade" || k === "host" || k === "cookie" || k === "authorization") continue; // hop-by-hop / Host 由 gateway 重写 / 会话凭证不下发 host
+    if (k === "connection" || k === "upgrade" || k === "host" || k === "authorization") continue; // hop-by-hop / Host 由 gateway 重写 / 会话凭证不下发 host
+    if (k === "cookie") {
+      // D12：仅放行网关专用 rdsh_gate（F7 剥离会话 cookie 不变；gateway 访问口令标记）
+      const gate = extractGateCookie(v);
+      if (gate !== null) out["cookie"] = `${GATE_COOKIE}=${gate}`;
+      continue;
+    }
     out[k] = Array.isArray(v) ? v : String(v);
   }
   return out;
