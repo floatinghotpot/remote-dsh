@@ -10,7 +10,7 @@
 
 - **Browser-first**: no public IP, no client install — open a browser and drive your agent;
 - **Two access paths**: the DSH plugin (`dsh-web-remote`) for one-click setup, or the CLI (`remote-dsh`) for full control;
-- **Open & auditable**: MIT-licensed, frozen protocol (the gateway never needs changes) — self-host it or embed it.
+- **Open & auditable**: MIT-licensed, frozen protocol — self-host it, embed it, and audit the code; security you can verify.
 
 ## Use cases
 
@@ -94,7 +94,7 @@ for the full feature list; [roadmap](doc/overview/roadmap.md) for milestones.
 **Core capabilities**:
 - **Three access modes**: LAN direct / cloud-server direct (TLS + password) / public hub relay (outbound tunnel)
 - **End-to-end encryption**: the hub relays your DSH traffic but cannot read the content (prompts / code / files / API keys stay encrypted) — Noise NK handshake (X25519 + AES-256-GCM), fresh session keys per connection, browser TOFU fingerprint trust, pin stored locally only
-- **Multi-tenant & security**: email verification + 2FA, host sharing (owner/member), audit log, login rate-limiting (lockout + throttling), IP allow-list
+- **Multi-tenant & security**: email verification + 2FA, host sharing (owner/member), audit log, login rate-limiting (lockout + throttling), IP allow-list, optional host access code (a second lock on the host — even a hub admin cannot get in)
 - **Two access paths**: the `dsh-web-remote` plugin (no CLI) or the `remote-dsh` CLI; `rdsh hub` runs with built-in TLS or behind a reverse proxy
 
 **Planned**: SaaS managed hub, mobile apps (Android/iOS), WeChat mini program.

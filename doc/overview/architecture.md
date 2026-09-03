@@ -199,6 +199,7 @@
 | 传输 | TLS 1.3（公网）；LAN http + SameSite + Origin 校验兜底（威胁模型低） |
 | 认证 | 配对码（物理锚点，LAN）/ 密码认证（cloud，改密失效会话）/ 账号 JWT + 2FA + 邮箱验证（hub，M5）/ host token 可吊销 |
 | 授权 | 用户↔host 多对多；owner/member 共享（M5）；整实例授权（Q4 决策） |
+| Host 访问口令 | 网关侧独立于 hub 的 access code（host.json 0600，hub 不持有）；`rdsh_gate` cookie（HMAC key=sha256(code)，7d，改 code 全失效）+ challenge + 恒定时间比对 + 全局失败锁定；本机 127.0.0.1 永远放行（feature 15） |
 | 数据面 | **E2EE（09）**：raw stream + 内层 Noise NK + TOFU pin；hub `e2ee.mode: off\|optional\|required`（默认 optional，老 host 明文降级） |
 | 边界 | DSH Host 围栏由网关/隧道**配合**：转发统一 Host 重写为 loopback（否则 `/api` 403） |
 | 数据 | 密钥文件 0600；令牌只存哈希；日志脱敏 |

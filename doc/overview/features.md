@@ -51,6 +51,13 @@
 - [x] Trust the host fingerprint on first use (TOFU), alert on fingerprint change; pin stored locally only, never on the hub
 - [x] Hub switch `e2ee.mode: off|optional|required` (default optional), legacy hosts fall back to plaintext
 
+**Host access code — host-side gate (implemented)**
+- [x] Optionally protect a host with a code set on the host itself — independent of the hub account
+- [x] Visitors pass a challenge page; the code is verified on the gateway (constant-time), never sent to the hub
+- [x] 7-day signed cookie (HMAC-SHA256, key derived from the code); changing the code revokes all cookies
+- [x] Global rate-limit on wrong codes; local 127.0.0.1 access always allowed (recovery)
+- [x] Set from the CLI (host.json `gateway.accessCode`) or the DSH plugin panel (instant apply)
+
 **M6+ — Planned**
 - [ ] Managed hub (SaaS: open sign-up, subscription billing, WeChat/Alipay payments)
 - [ ] Mobile apps (Android / iOS)

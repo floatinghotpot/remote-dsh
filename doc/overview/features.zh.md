@@ -51,6 +51,13 @@
 - [x] 浏览器首次信任 host 指纹（TOFU），指纹变更告警；pin 仅存本地、绝不上 hub
 - [x] hub 三档开关 `e2ee.mode: off|optional|required`（默认 optional），老 host 明文降级兼容
 
+**主机访问密码 — host 侧独立关口（已实现）**
+- [x] 可选为主机设一道访问密码，独立于 hub 账号（hub 只中继、不持有）
+- [x] 访问者过 challenge 页；密码在 gateway 侧校验（恒定时间），绝不上 hub
+- [x] 7 天签名 cookie（HMAC-SHA256，key 由密码派生）；改密码 → 旧 cookie 全部失效
+- [x] 错误密码全局限流锁定；本机 127.0.0.1 永远放行（恢复通道）
+- [x] CLI（host.json `gateway.accessCode`）或 DSH 插件面板双通道设置（面板即时生效）
+
 **M6+ — 规划中**
 - [ ] 商业化托管 hub（SaaS：开放注册、订阅计费、微信/支付宝支付）
 - [ ] 手机 App（Android / iOS）

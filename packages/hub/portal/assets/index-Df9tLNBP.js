@@ -97,8 +97,11 @@ Minimum version required to store current data is: `+Z+`.
   <li><strong>浏览器即用</strong>：免公网 IP、免装客户端，开浏览器就能指挥智能体，不限设备（PC、平板、手机），不限系统（Mac、Windows、Linux、iOS、安卓、鸿蒙）；</li>
   <li><strong>持续在线</strong>：会话保持连续，跨设备（PC、平板、手机）无缝接力，工作流不中断；</li>
   <li><strong>双通道接入</strong>：DSH 插件（<code>dsh-web-remote</code>）一键接入，或 CLI（<code>remote-dsh</code>）灵活自控；</li>
-  <li><strong>安全加密</strong>：端到端加密（E2EE）隧道，Hub 仅转发密文，数据安全、隐私保护；</li>
-  <li><strong>开源可信</strong>：MIT 开源、协议冻结（gateway 永不需改动），可自托管、可被集成。</li>
+  <li><strong>全程加密</strong>：TLS 链路加密 + 端到端加密（E2EE），Hub 只转发密文，看不到你的操作与数据；</li>
+  <li><strong>账号防护</strong>：登录密码 + 双重认证（2FA），连续输错自动锁定，防撞库、防盗号；</li>
+  <li><strong>主机访问密码</strong>：主机可再设置一道独立密码，与账号互为双保险，即使 Hub 管理员，也无法进入；</li>
+  <li><strong>访问隔离</strong>：你的主机只有你和你授权的人可见，其他人一律不可见；</li>
+  <li><strong>开源可信</strong>：MIT 开源、协议冻结，可自托管、可被集成、可代码审计，安全无忧。</li>
 </ul>
 <h2>使用场景</h2>
 <h3>① 快速上手（rdsh Hub 云转发）</h3>

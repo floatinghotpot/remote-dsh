@@ -110,6 +110,19 @@ DSH 的持久设置（含 Models 页的 API Key 输入）默认只对 loopback �
 - CLI（`rdsh host serve/join/service`）：启动读一次，改配置后重启生效；
 - DSH 插件（`dsh-web-remote`）：面板开关即时生效（写 host.json + 内存更新，无需重启）。
 
+**`gateway.accessCode`（主机访问密码，默认关闭）**：
+
+经 hub 隧道访问本主机时，gateway 在转发到本机 DSH **之前**要求输入访问密码——**独立于 hub 账号的第二道防线**（hub 只中继、不持有该密码，校验全在网关侧）。不设置 = 无密码 = 与之前行为一致；本机 `127.0.0.1` 直连永远放行（忘记密码时的恢复通道）。
+
+```json
+{ "gateway": { "accessCode": "my-secret" } }
+```
+
+- 密码最小 4 位，只存本机 `host.json`（0600），hub 全程不接触；
+- 访问者验证通过后浏览器保存 7 天 `rdsh_gate` cookie（改密码 → 旧 cookie 全部失效，需重输）；
+- CLI（`rdsh host serve/join`）：启动读一次，改配置后重启生效；
+- DSH 插件（`dsh-web-remote`）：面板「访问密码」设置/清除即时生效（写 host.json + 内存更新，无需重启）。
+
 ## 5. 用户管理（M2 现状）
 
 ```bash
