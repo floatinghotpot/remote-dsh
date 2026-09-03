@@ -176,6 +176,9 @@ const EN: Record<string, string> = {
   "绑定微信": "Bind WeChat",
   "绑定微信后，该微信可免密登录本账号": "After binding, this WeChat can sign in to this account without a password",
   "在微信中打开以一键登录": "Open in WeChat for one-tap sign-in",
+  "用微信扫一扫登录": "Scan the QR with WeChat to sign in",
+  "长按二维码保存到相册 → 打开微信「扫一扫」→ 右下角「相册」选择该图":
+    "Long-press the QR to save it, then in WeChat open Scan → pick it from the album (bottom-right)",
   "复制链接": "Copy link",
   "已复制": "Copied",
   "微信登录需在服务端配置 hub.json wechatLogin": "WeChat sign-in requires hub.json wechatLogin",

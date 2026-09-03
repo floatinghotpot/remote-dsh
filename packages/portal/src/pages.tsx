@@ -476,6 +476,7 @@ function Login(): React.JSX.Element {
   const [brand, setBrand] = useState("RDSH.CN");
   const [wechatEnabled, setWechatEnabled] = useState(false);
   const [wechatGuide, setWechatGuide] = useState(false);
+  const [wechatQrUrl, setWechatQrUrl] = useState("");
   const [copied, setCopied] = useState(false);
   const { err, run } = useError();
 
@@ -488,8 +489,11 @@ function Login(): React.JSX.Element {
       // 微信内（一键确认）或 PC（扫码）→ 同页跳 qrconnect（保留回跳 next）
       window.location.href = `/api/wechat/login/authorize?next=${encodeURIComponent(home)}`;
     } else {
-      // 移动非微信：引导「在微信中打开」+ 保留账号密码登录
+      // 移动非微信：展示「微信扫一扫（长按存图→微信相册扫）」+ 复制链接兜底
       setWechatGuide(true);
+      void QRCode.toDataURL(window.location.href, { width: 200, margin: 1 })
+        .then((u) => setWechatQrUrl(u))
+        .catch(() => undefined);
     }
   };
 
@@ -601,8 +605,18 @@ function Login(): React.JSX.Element {
           </button>
           <p style={{ marginTop: 6, fontSize: 12, color: "#9ca3af", textAlign: "center" }}>{t("已有邮箱/手机号账号？先用账号密码登录，再在设置里绑定微信")}</p>
           {wechatGuide && (
-            <div style={{ marginTop: 8, fontSize: 12, color: "#6b7280" }}>
-              <p style={{ margin: 0 }}>{t("在微信中打开以一键登录")}</p>
+            <div style={{ marginTop: 12 }}>
+              <p style={{ margin: 0, fontSize: 12, color: "#6b7280" }}>{t("用微信扫一扫登录")}</p>
+              <div style={{ textAlign: "center", margin: "8px 0" }}>
+                {wechatQrUrl !== "" ? (
+                  <img src={wechatQrUrl} alt="wechat login qr" style={{ width: 200, height: 200, border: "1px solid #e5e7eb", borderRadius: 8 }} />
+                ) : null}
+              </div>
+              <p style={{ margin: 0, fontSize: 12, color: "#6b7280" }}>
+                {t("长按二维码保存到相册 → 打开微信「扫一扫」→ 右下角「相册」选择该图")}
+              </p>
+              <p style={{ margin: "12px 0 0", textAlign: "center", color: "#9ca3af", fontSize: 12 }}>{t("或")}</p>
+              <p style={{ margin: "4px 0 0", fontSize: 12, color: "#6b7280" }}>{t("在微信中打开以一键登录")}</p>
               <div style={{ display: "flex", gap: 6, marginTop: 6, alignItems: "center" }}>
                 <input
                   readOnly
