@@ -475,9 +475,6 @@ function Login(): React.JSX.Element {
   const [trustDevice, setTrustDevice] = useState(false);
   const [brand, setBrand] = useState("RDSH.CN");
   const [wechatEnabled, setWechatEnabled] = useState(false);
-  const [wechatGuide, setWechatGuide] = useState(false);
-  const [wechatQrUrl, setWechatQrUrl] = useState("");
-  const [copied, setCopied] = useState(false);
   const { err, run } = useError();
 
   useEffect(() => {
@@ -485,23 +482,11 @@ function Login(): React.JSX.Element {
   }, []);
 
   const wechatLogin = (): void => {
-    if (isWechatWebview() || !isMobileBrowser()) {
-      // 微信内（一键确认）或 PC（扫码）→ 同页跳 qrconnect（保留回跳 next）
-      window.location.href = `/api/wechat/login/authorize?next=${encodeURIComponent(home)}`;
-    } else {
-      // 移动非微信：展示「微信扫一扫（长按存图→微信相册扫）」+ 复制链接兜底
-      setWechatGuide(true);
-      void QRCode.toDataURL(window.location.href, { width: 200, margin: 1 })
-        .then((u) => setWechatQrUrl(u))
-        .catch(() => undefined);
-    }
-  };
-
-  const copyLoginLink = (): void => {
-    void navigator.clipboard.writeText(window.location.href).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }).catch(() => undefined);
+    // 微信登录统一跳 qrconnect authorize（全端一致，不做自制二维码）：
+    // open.weixin.qq.com 页面始终渲染它自己的登录二维码并轮询 —— PC 用户手机微信扫 → 登录落在本页面；
+    // 手机用户可把该二维码转发到电脑/另一台设备显示后扫码确认（本页面轮询 → 本设备登录）。
+    // 注：微信网站应用无「微信内免扫码一键」形态；自制 URL 二维码被扫只会套娃出 qrconnect 页。
+    window.location.href = `/api/wechat/login/authorize?next=${encodeURIComponent(home)}`;
   };
 
   const confirmWechatCreate = (): void => {
@@ -604,30 +589,6 @@ function Login(): React.JSX.Element {
             {t("微信登录")}
           </button>
           <p style={{ marginTop: 6, fontSize: 12, color: "#9ca3af", textAlign: "center" }}>{t("已有邮箱/手机号账号？先用账号密码登录，再在设置里绑定微信")}</p>
-          {wechatGuide && (
-            <div style={{ marginTop: 12 }}>
-              <p style={{ margin: 0, fontSize: 12, color: "#6b7280" }}>{t("用微信扫一扫登录")}</p>
-              <div style={{ textAlign: "center", margin: "8px 0" }}>
-                {wechatQrUrl !== "" ? (
-                  <img src={wechatQrUrl} alt="wechat login qr" style={{ width: 200, height: 200, border: "1px solid #e5e7eb", borderRadius: 8 }} />
-                ) : null}
-              </div>
-              <p style={{ margin: 0, fontSize: 12, color: "#6b7280" }}>
-                {t("长按二维码保存到相册 → 打开微信「扫一扫」→ 右下角「相册」选择该图")}
-              </p>
-              <p style={{ margin: "12px 0 0", textAlign: "center", color: "#9ca3af", fontSize: 12 }}>{t("或")}</p>
-              <p style={{ margin: "4px 0 0", fontSize: 12, color: "#6b7280" }}>{t("在微信中打开以一键登录")}</p>
-              <div style={{ display: "flex", gap: 6, marginTop: 6, alignItems: "center" }}>
-                <input
-                  readOnly
-                  value={window.location.href}
-                  onFocus={(e) => e.currentTarget.select()}
-                  style={{ flex: 1, fontSize: 12, padding: "6px 8px", border: "1px solid #d1d5db", borderRadius: 6, color: "#374151", minWidth: 0 }}
-                />
-                <button onClick={copyLoginLink} style={{ ...btnStyle("ghost"), whiteSpace: "nowrap" }}>{copied ? t("已复制") : t("复制链接")}</button>
-              </div>
-            </div>
-          )}
         </>
       )}
       {totpPending === null && (
