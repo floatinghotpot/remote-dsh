@@ -1698,7 +1698,7 @@ function RegisterPage(): React.JSX.Element {
         <LangToggle />
       </div>
       <h1 style={{ fontSize: 20, marginBottom: 4 }}>{t("注册 rdsh")}</h1>
-      <p style={{ color: "#666", fontSize: 13, marginBottom: 24 }}>{t("注册即享 3 天试用（1 台主机），随时随地浏览器访问你的 DSH。")}</p>
+      <p style={{ color: "#666", fontSize: 13, marginBottom: 24 }}>{t("注册即享 7 天试用（1 台主机），随时随地浏览器访问你的 DSH。")}</p>
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
         <button onClick={() => setChannel("email")} style={channel === "email" ? btnStyle() : btnStyle("ghost")}>{t("邮箱")}</button>
         {cap?.smsEnabled !== false && (

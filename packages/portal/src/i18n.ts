@@ -188,8 +188,8 @@ const EN: Record<string, string> = {
 
   // ---- 注册 ----
   "注册 rdsh": "Register rdsh",
-  "注册即享 3 天试用（1 台主机），随时随地浏览器访问你的 DSH。":
-    "Register for a 3-day trial (1 host) — access your DSH from any browser, anytime.",
+  "注册即享 7 天试用（1 台主机），随时随地浏览器访问你的 DSH。":
+    "Register for a 7-day trial (1 host) — access your DSH from any browser, anytime.",
   "邮箱地址": "Email",
   "手机号（+86，11 位）": "Phone (+86, 11 digits)",
   "密码（至少 8 位）": "Password (min 8 characters)",
