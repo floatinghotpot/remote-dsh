@@ -70,6 +70,7 @@ export function App(): React.JSX.Element {
   if (path === "/product") return <ProductPage />;
   if (path === "/verify") return <VerifyPage />;
   if (path === "/reset-password") return <ResetPasswordPage />;
+  if (path === "/change-password") return <PasswordPage />;
   if (path === "/") return <LandingPage />;
   const page =
     path === "/billing" ? (
@@ -520,14 +521,14 @@ function Login(): React.JSX.Element {
       if (totpPending !== null) {
         const r = await api.totpLogin(totpPending, totpCode, trustDevice);
         sessionStorage.setItem(REFRESH_KEY, r.refreshToken);
-        navigate(home);
+        navigate(r.mustChangePassword === true ? "/change-password" : home);
       } else {
         const r = await api.login(name, password);
         if (r.requiresTotp === true && r.pendingToken !== undefined) {
           setTotpPending(r.pendingToken);
         } else {
           sessionStorage.setItem(REFRESH_KEY, r.refreshToken ?? "");
-          navigate(home);
+          navigate(r.mustChangePassword === true ? "/change-password" : home);
         }
       }
     });
@@ -1624,17 +1625,19 @@ function PasswordPage(): React.JSX.Element {
 
   return (
     <Shell title={t("修改密码")}>
-      {done && <p style={{ color: "#16a34a", fontSize: 14 }}>{t("密码已修改，全部会话已失效 —— 即将跳转登录…")}</p>}
-      {!done && (
-        <>
-          {field(t("当前密码"), current, setCurrent, "password")}
-          {field(t("新密码（至少 8 位）"), next, setNext, "password")}
-          {field(t("确认新密码"), again, setAgain, "password")}
-          {next !== again && next !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{t("两次输入不一致")}</p>}
-          {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
-          <button onClick={submit} style={btnStyle()}>{t("保存")}</button>
-        </>
-      )}
+      <div style={{ maxWidth: 420 }}>
+        {done && <p style={{ color: "#16a34a", fontSize: 14 }}>{t("密码已修改，全部会话已失效 —— 即将跳转登录…")}</p>}
+        {!done && (
+          <>
+            {field(t("当前密码"), current, setCurrent, "password")}
+            {field(t("新密码（至少 8 位）"), next, setNext, "password")}
+            {field(t("确认新密码"), again, setAgain, "password")}
+            {next !== again && next !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{t("两次输入不一致")}</p>}
+            {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
+            <button onClick={submit} style={btnStyle()}>{t("保存")}</button>
+          </>
+        )}
+      </div>
     </Shell>
   );
 }
@@ -1919,7 +1922,7 @@ function BillingPage(): React.JSX.Element {
             {t("订阅/试用到期后进入 3 天宽限期（隧道保留），之后降级免费档（0 台在线，host 数据保留 30 天）。")}
           </p>
           <p style={{ fontSize: 13, color: "#6b7280", margin: "8px 0 0" }}>
-            {t("支付：微信支付（上线后支持）· MVP 暂不提供发票。")}
+            {t("支付：微信支付（扫码 / H5 / 微信内）· 暂不提供发票。")}
           </p>
         </Card>
       </Shell>
@@ -2000,26 +2003,36 @@ interface ActionField {
   options?: Array<{ value: string; label: string }>;
   /** 下拉初始值（预选当前值）。 */
   value?: string;
+  /** 输入类型（缺省 text；password 隐藏；date 选日期，提交由调用方转 ms）。 */
+  type?: "text" | "password" | "date";
 }
 interface DialogSpec {
   title: string;
   fields: ActionField[];
   danger?: boolean;
+  /** 二次确认（feature 16 E5）：输入须等于此值才可提交（如删除时输入用户名）。 */
+  confirmText?: string;
   submit: (reason: string, values: Record<string, string>) => void | Promise<void>;
 }
 
-/** 危险操作模态框：字段 + 必填原因 + 确认/取消（req R10）。 */
+/** 危险操作模态框：字段 + 必填原因 + 确认/取消（req R10）；type/confirmText 为 feature 16 扩展。 */
 function ActionDialog({ spec, onClose }: { spec: DialogSpec; onClose: () => void }): React.JSX.Element {
   const { t } = useT();
   const [values, setValues] = useState<Record<string, string>>(() =>
     Object.fromEntries(spec.fields.filter((f) => f.value !== undefined).map((f) => [f.key, f.value as string])),
   );
   const [reason, setReason] = useState("");
+  const [confirmInput, setConfirmInput] = useState("");
   const [reasonErr, setReasonErr] = useState("");
   const [busy, setBusy] = useState(false);
+  const confirmable = spec.confirmText === undefined || confirmInput === spec.confirmText;
   const confirm = (): void => {
     if (reason.trim() === "") {
       setReasonErr(t("请填写操作原因"));
+      return;
+    }
+    if (!confirmable) {
+      setReasonErr(spec.confirmText !== undefined ? t("请输入 {name} 以确认", { params: { name: spec.confirmText } }) : "");
       return;
     }
     setReasonErr("");
@@ -2045,6 +2058,7 @@ function ActionDialog({ spec, onClose }: { spec: DialogSpec; onClose: () => void
               </select>
             ) : (
               <input
+                type={f.type ?? "text"}
                 placeholder={f.placeholder}
                 value={values[f.key] ?? ""}
                 onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
@@ -2053,6 +2067,17 @@ function ActionDialog({ spec, onClose }: { spec: DialogSpec; onClose: () => void
             )}
           </div>
         ))}
+        {spec.confirmText !== undefined && (
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ display: "block", fontSize: 12, color: "#6b7280", marginBottom: 4 }}>{t("输入 {name} 以确认", { params: { name: spec.confirmText } })}</label>
+            <input
+              value={confirmInput}
+              onChange={(e) => setConfirmInput(e.target.value)}
+              placeholder={spec.confirmText}
+              style={{ width: "100%", padding: "8px 10px", boxSizing: "border-box", fontSize: 14 }}
+            />
+          </div>
+        )}
         <div style={{ marginBottom: 12 }}>
           <label style={{ display: "block", fontSize: 12, color: "#6b7280", marginBottom: 4 }}>{t("原因（必填）")}</label>
           <textarea value={reason} onChange={(e) => { setReason(e.target.value); if (reasonErr !== "") setReasonErr(""); }} rows={2} placeholder={t("请填写操作原因")} style={{ width: "100%", padding: "8px 10px", boxSizing: "border-box", fontSize: 14 }} />
@@ -2060,7 +2085,7 @@ function ActionDialog({ spec, onClose }: { spec: DialogSpec; onClose: () => void
         </div>
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
           <button onClick={onClose} disabled={busy} style={{ ...adminBtnStyle("ghost"), opacity: busy ? 0.5 : 1 }}>{t("取消")}</button>
-          <button disabled={busy} onClick={confirm} style={{ ...adminBtnStyle(spec.danger === true ? "danger" : "primary"), opacity: busy ? 0.5 : 1 }}>{t("确认")}</button>
+          <button disabled={busy || !confirmable} onClick={confirm} style={{ ...adminBtnStyle(spec.danger === true ? "danger" : "primary"), opacity: busy || !confirmable ? 0.5 : 1 }}>{t("确认")}</button>
         </div>
       </div>
     </div>
@@ -2089,9 +2114,19 @@ function AdminUserDetail({ userId }: { userId: number }): React.JSX.Element {
       {section(t("账号信息"))}
       <table className="admintbl" style={adminTableStyle()}>
         <tbody>
-          <tr>{adminTd(t("邮箱"), u.email ?? "—")}{adminTd(t("手机号"), u.phone ?? "—")}</tr>
-          <tr>{adminTd(t("状态"), u.accountStatus)}{adminTd(t("套餐"), u.planStatus ?? "—")}</tr>
-          <tr>{adminTd(t("主机"), d.quota !== null ? `${d.hostCount} / ${d.quota}` : String(d.hostCount))}{adminTd(t("注册时间"), ts(u.createdAt === "" ? null : Date.parse(u.createdAt)))}</tr>
+          <tr>
+            {adminTd(t("邮箱"), u.email === null ? "—" : `${u.email}${u.emailVerified ? ` (${t("邮✓")})` : ` (${t("邮未验证")})`}`)}
+            {adminTd(t("手机号"), u.phone === null ? "—" : `${u.phone}${u.phoneVerified ? ` (${t("手✓")})` : ` (${t("手未验证")})`}`)}
+          </tr>
+          <tr>
+            {adminTd(t("状态"), u.locked ? `${u.accountStatus} · ${t("锁定至 {time}", { params: { time: new Date((u.lockedUntil as number)).toLocaleString() } })}` : u.accountStatus)}
+            {adminTd(t("套餐"), `${u.planStatus ?? "—"}${u.planExpiresAt !== null ? ` · ${t("到期 {date}", { params: { date: ts(u.planExpiresAt) } })}` : ""}`)}
+          </tr>
+          <tr>
+            {adminTd(t("主机"), d.quota !== null ? `${d.hostCount} / ${d.quota}` : String(d.hostCount))}
+            {adminTd(t("注册时间"), ts(u.createdAt === "" ? null : Date.parse(u.createdAt)))}
+          </tr>
+          <tr>{adminTd(t("最后登录"), u.lastLoginAt !== null ? ts(u.lastLoginAt) : t("从未登录"))}{adminTd(null, "")}</tr>
         </tbody>
       </table>
 
@@ -2321,6 +2356,7 @@ function AdminUsers({ isWrite, isAdmin }: { isWrite: boolean; isAdmin: boolean }
   const [msg, setMsg] = useState("");
   const [dialog, setDialog] = useState<DialogSpec | null>(null);
   const [menuUserId, setMenuUserId] = useState<number | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
   const fetch = (query: string, p: number): void => {
     adminApi
       .users({ q: query !== "" ? query : undefined, limit: PAGE, offset: p * PAGE })
@@ -2338,14 +2374,15 @@ function AdminUsers({ isWrite, isAdmin }: { isWrite: boolean; isAdmin: boolean }
     document.addEventListener("click", close);
     return () => document.removeEventListener("click", close);
   }, [menuUserId]);
-  const open = (u: AdminUserRow, title: string, action: string, fields: ActionField[] = [], danger = false): void => {
+  const open = (u: AdminUserRow, title: string, action: string, fields: ActionField[] = [], danger = false, confirmText?: string): void => {
     setDialog({
       title,
       fields,
       danger,
+      confirmText,
       submit: (reason, values) =>
         adminApi
-          .userAction(u.id, action, { reason, ...(action === "reset-password" ? { password: values.password ?? "" } : {}), ...(action === "plan" ? { planStatus: values.planStatus ?? "" } : {}), ...(action === "set-role" ? { role: values.role ?? "" } : {}) })
+          .userAction(u.id, action, { reason, ...(action === "reset-password" ? { password: values.password ?? "" } : {}), ...(action === "set-role" ? { role: values.role ?? "" } : {}) })
           .then(() => {
             setMsg("ok");
             setDialog(null);
@@ -2354,23 +2391,80 @@ function AdminUsers({ isWrite, isAdmin }: { isWrite: boolean; isAdmin: boolean }
           .catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed")),
     });
   };
+  /** 日期字段 "YYYY-MM-DD" → 当日 23:59:59.999 本地 ms（E4）；空 → null。 */
+  const dateToMs = (date?: string): number | null => {
+    if (typeof date !== "string" || date.trim() === "") return null;
+    const [y, m, d] = date.split("-").map(Number);
+    if (![y, m, d].every((n) => Number.isFinite(n))) return null;
+    return new Date(y as number, (m as number) - 1, d as number, 23, 59, 59, 999).getTime();
+  };
+  const openPlan = (u: AdminUserRow): void => {
+    setDialog({
+      title: `${t("改套餐")} · ${u.name}`,
+      fields: [
+        {
+          key: "planStatus",
+          label: t("套餐状态"),
+          value: u.planStatus ?? "null",
+          options: [
+            { value: "null", label: t("无期限（null）") },
+            { value: "trial", label: "trial" },
+            { value: "subscribed", label: "subscribed" },
+            { value: "grace", label: "grace" },
+            { value: "free", label: "free" },
+          ],
+        },
+        { key: "expiresAt", label: t("到期时间（留空 = 无期限）"), type: "date", value: u.planExpiresAt !== null ? new Date(u.planExpiresAt).toISOString().slice(0, 10) : "" },
+      ],
+      submit: (reason, values) =>
+        adminApi
+          .userAction(u.id, "plan", { reason, planStatus: values.planStatus === "null" ? null : values.planStatus, expiresAtMs: dateToMs(values.expiresAt) })
+          .then(() => {
+            setMsg("ok");
+            setDialog(null);
+            reload();
+          })
+          .catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed")),
+    });
+  };
+  const fmtLogin = (ms: number | null): string => (ms === null ? t("从未登录") : new Date(ms).toLocaleString());
+  /** 状态列：临时锁定 / 账号状态 + 邮箱/手机验证徽标（R4/R5）。 */
+  const statusCell = (u: AdminUserRow): React.JSX.Element => {
+    const stateParts: string[] = [];
+    if (u.locked) stateParts.push(t("锁定至 {time}", { params: { time: new Date((u.lockedUntil as number)).toLocaleTimeString() } }));
+    if (u.accountStatus !== "active") stateParts.push(u.accountStatus);
+    if (stateParts.length === 0) stateParts.push(t("正常"));
+    const badges: string[] = [];
+    if (u.email !== null && u.email !== "") badges.push(u.emailVerified ? t("邮✓") : t("邮未验证"));
+    if (u.phone !== null && u.phone !== "") badges.push(u.phoneVerified ? t("手✓") : t("手未验证"));
+    return (
+      <span>
+        {stateParts.join(" · ")}
+        {badges.length > 0 ? <span style={{ color: "#9ca3af", fontSize: 11 }}>{` (${badges.join(" / ")})`}</span> : null}
+      </span>
+    );
+  };
   const list = users ?? [];
   return (
     <div>
-      <input value={q} onChange={(e) => { setQ(e.target.value); setPage(0); }} placeholder={t("搜索 用户名/邮箱/手机号")} style={{ padding: "8px 10px", marginBottom: 10, width: "100%", maxWidth: 300, boxSizing: "border-box" }} />
+      <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10 }}>
+        <input value={q} onChange={(e) => { setQ(e.target.value); setPage(0); }} placeholder={t("搜索 用户名/邮箱/手机号")} style={{ padding: "8px 10px", width: "100%", maxWidth: 300, boxSizing: "border-box" }} />
+        {isWrite && <button onClick={() => setShowCreate(true)} style={adminBtnStyle("primary")}>{t("+ 新建用户")}</button>}
+      </div>
       {msg !== "" && <p style={{ fontSize: 12, color: "#2563eb" }}>{msg}</p>}
       <table className="admintbl" style={adminTableStyle()}>
         <thead>
-          <tr style={{ borderBottom: "1px solid #e5e7eb" }}>{[t("用户"), t("角色"), t("状态"), t("主机"), t("套餐"), t("操作")].map(adminTh)}</tr>
+          <tr style={{ borderBottom: "1px solid #e5e7eb" }}>{[t("用户"), t("角色"), t("状态"), t("主机"), t("套餐"), t("最后登录"), t("操作")].map(adminTh)}</tr>
         </thead>
         <tbody>
           {list.map((u) => (
             <tr key={u.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
               {adminTd(t("用户"), u.name)}
               {adminTd(t("角色"), <span style={{ color: "#6b7280" }}>{adminRoleLabel(t, u.role)}</span>)}
-              {adminTd(t("状态"), u.accountStatus)}
+              {adminTd(t("状态"), statusCell(u))}
               {adminTd(t("主机"), u.hostCount)}
               {adminTd(t("套餐"), u.planStatus ?? "—")}
+              {adminTd(t("最后登录"), fmtLogin(u.lastLoginAt))}
               {adminTd(null, (isWrite || isAdmin) && (
                 <div style={{ position: "relative" }} onClick={(e) => e.stopPropagation()}>
                   <button
@@ -2383,11 +2477,11 @@ function AdminUsers({ isWrite, isAdmin }: { isWrite: boolean; isAdmin: boolean }
                       <button style={menuItemStyle()} onClick={() => { setMenuUserId(null); navigate(`/admin/users/${u.id}`); }}>{t("详情")}</button>
                       {isWrite && u.accountStatus !== "banned" && <button style={menuItemStyle(true)} onClick={() => { setMenuUserId(null); open(u, t("封禁"), "ban", [], true); }}>{t("封禁")}</button>}
                       {isWrite && u.accountStatus === "banned" && <button style={menuItemStyle()} onClick={() => { setMenuUserId(null); open(u, t("解封"), "unban"); }}>{t("解封")}</button>}
-                      {isWrite && <button style={menuItemStyle()} onClick={() => { setMenuUserId(null); open(u, t("重置密码"), "reset-password", [{ key: "password", label: t("新密码（≥8 位）") }]); }}>{t("重置密码")}</button>}
+                      {isWrite && <button style={menuItemStyle()} onClick={() => { setMenuUserId(null); open(u, t("重置密码"), "reset-password", [{ key: "password", label: t("新密码（≥8 位）"), type: "password" }]); }}>{t("重置密码")}</button>}
                       {isWrite && <button style={menuItemStyle()} onClick={() => { setMenuUserId(null); open(u, t("重置2FA"), "reset-2fa", [], true); }}>{t("重置2FA")}</button>}
-                      {isWrite && <button style={menuItemStyle()} onClick={() => { setMenuUserId(null); open(u, t("改套餐"), "plan", [{ key: "planStatus", label: t("套餐状态"), options: [{ value: "subscribed", label: "subscribed" }, { value: "grace", label: "grace" }, { value: "free", label: "free" }, { value: "null", label: "null" }] }]); }}>{t("改套餐")}</button>}
+                      {isWrite && <button style={menuItemStyle()} onClick={() => { setMenuUserId(null); openPlan(u); }}>{t("改套餐")}</button>}
                       {isAdmin && <button style={menuItemStyle()} onClick={() => { setMenuUserId(null); open(u, t("改角色"), "set-role", [{ key: "role", label: t("角色"), value: u.role, options: [{ value: "user", label: t("普通用户") }, { value: "readonly", label: t("只读") }, { value: "operator", label: t("运营") }, { value: "admin", label: t("管理员", { en: "Admin" }) }] }]); }}>{t("改角色")}</button>}
-                      {isAdmin && <button style={menuItemStyle(true)} onClick={() => { setMenuUserId(null); open(u, t("删除"), "delete", [], true); }}>{t("删除")}</button>}
+                      {isAdmin && <button style={menuItemStyle(true)} onClick={() => { setMenuUserId(null); open(u, t("删除"), "delete", [], true, u.name); }}>{t("删除")}</button>}
                     </div>
                   )}
                 </div>
@@ -2398,6 +2492,71 @@ function AdminUsers({ isWrite, isAdmin }: { isWrite: boolean; isAdmin: boolean }
       </table>
       <Pager page={page} total={total} pageSize={PAGE} onPage={setPage} />
       {dialog !== null && <ActionDialog spec={dialog} onClose={() => setDialog(null)} />}
+      {showCreate && <CreateUserDialog isAdmin={isAdmin} onClose={() => setShowCreate(false)} onCreated={() => { setShowCreate(false); setMsg("ok"); reload(); }} />}
+    </div>
+  );
+}
+
+/** 新建用户对话框（feature 16 R1/R2）：标识 + 角色 + 初始密码（默认强制首登改密）+ 可选到期 + 原因。 */
+function CreateUserDialog({ isAdmin, onClose, onCreated }: { isAdmin: boolean; onClose: () => void; onCreated: () => void }): React.JSX.Element {
+  const { t } = useT();
+  const [identifier, setIdentifier] = useState("");
+  const [role, setRole] = useState("user");
+  const [password, setPassword] = useState("");
+  const [password2, setPassword2] = useState("");
+  const [mustChange, setMustChange] = useState(true);
+  const [expiresAt, setExpiresAt] = useState("");
+  const [reason, setReason] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const roleOptions = isAdmin
+    ? [{ value: "user", label: t("普通用户") }, { value: "readonly", label: t("只读") }, { value: "operator", label: t("运营") }, { value: "admin", label: t("管理员", { en: "Admin" }) }]
+    : [{ value: "user", label: t("普通用户") }, { value: "readonly", label: t("只读") }];
+  const create = (): void => {
+    setErr("");
+    if (identifier.trim() === "") { setErr(t("请输入登录标识")); return; }
+    if (password.length < 8) { setErr(t("密码至少 8 位")); return; }
+    if (password !== password2) { setErr(t("两次输入的密码不一致")); return; }
+    if (reason.trim() === "") { setErr(t("请填写操作原因")); return; }
+    setBusy(true);
+    const [y, m, d] = expiresAt.trim() === "" ? [] : expiresAt.split("-").map(Number);
+    const expiresAtMs = y !== undefined && m !== undefined && d !== undefined ? new Date(y, m - 1, d, 23, 59, 59, 999).getTime() : null;
+    adminApi
+      .createUser({ identifier: identifier.trim(), password, role: role as "user" | "readonly" | "operator" | "admin", mustChange, expiresAtMs, reason: reason.trim() })
+      .then(onCreated)
+      .catch((e: unknown) => { setErr(e instanceof Error ? e.message : "create failed"); setBusy(false); });
+  };
+  const field = (label: React.ReactNode, node: React.ReactNode): React.JSX.Element => (
+    <div style={{ marginBottom: 10 }}>
+      <label style={{ display: "block", fontSize: 12, color: "#6b7280", marginBottom: 4 }}>{label}</label>
+      {node}
+    </div>
+  );
+  const inputStyle: React.CSSProperties = { width: "100%", padding: "8px 10px", boxSizing: "border-box", fontSize: 14 };
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 16, boxSizing: "border-box" }}>
+      <div style={{ background: "#fff", borderRadius: 12, padding: 20, width: 440, maxWidth: "100%", fontFamily: "system-ui, sans-serif" }}>
+        <h3 style={{ margin: "0 0 12px", fontSize: 16 }}>{t("新建用户")}</h3>
+        {field(t("登录标识（用户名 / 邮箱 / +86 手机）"), <input value={identifier} onChange={(e) => setIdentifier(e.target.value)} placeholder="zhangsan@corp.com" style={inputStyle} />)}
+        {field(t("角色"), (
+          <select value={role} onChange={(e) => setRole(e.target.value)} style={{ ...inputStyle, background: "#fff" }}>
+            {roleOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        ))}
+        {field(t("初始密码（≥8 位）"), <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} style={inputStyle} />)}
+        {field(t("确认密码"), <input type="password" value={password2} onChange={(e) => setPassword2(e.target.value)} style={inputStyle} />)}
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, marginBottom: 10, color: "#374151" }}>
+          <input type="checkbox" checked={mustChange} onChange={(e) => setMustChange(e.target.checked)} />
+          {t("强制首次登录修改密码")}
+        </label>
+        {field(t("到期时间（留空 = 无期限）"), <input type="date" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} style={inputStyle} />)}
+        {field(t("原因（必填）"), <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} placeholder={t("请填写操作原因")} style={{ ...inputStyle, fontFamily: "inherit" }} />)}
+        {err !== "" && <p style={{ color: "#dc2626", fontSize: 12, margin: "0 0 8px" }}>{err}</p>}
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <button onClick={onClose} disabled={busy} style={{ ...adminBtnStyle("ghost"), opacity: busy ? 0.5 : 1 }}>{t("取消")}</button>
+          <button onClick={create} disabled={busy} style={{ ...adminBtnStyle("primary"), opacity: busy ? 0.5 : 1 }}>{t("创建")}</button>
+        </div>
+      </div>
     </div>
   );
 }

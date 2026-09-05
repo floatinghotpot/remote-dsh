@@ -20,8 +20,8 @@ export interface AdminCtx {
 }
 
 export class AdminError extends Error {
-  readonly code: "FORBIDDEN" | "NOT_FOUND" | "BAD_REQUEST";
-  constructor(code: "FORBIDDEN" | "NOT_FOUND" | "BAD_REQUEST", message: string) {
+  readonly code: "FORBIDDEN" | "NOT_FOUND" | "BAD_REQUEST" | "CONFLICT";
+  constructor(code: "FORBIDDEN" | "NOT_FOUND" | "BAD_REQUEST" | "CONFLICT", message: string) {
     super(message);
     this.code = code;
   }
@@ -97,6 +97,60 @@ export async function resetUserPassword(db: HubDb, ctx: AdminCtx, userId: number
   db.setPassword(userId, await hashPassword(newPassword));
   db.revokeAllRefreshForUser(userId);
   audit(db, ctx, userId, "admin.reset-password", { name: user.name }, reason);
+}
+
+/** email 规范化（宽松）：小写含 @；非邮箱返回 null。 */
+function adminEmail(s: string): string | null {
+  const e = s.trim().toLowerCase();
+  return e.length === 0 || e.length > 254 || !e.includes("@") ? null : e;
+}
+
+/** +86 手机号规范化：11 位 → E.164；否则 null。 */
+function adminCnPhone(s: string): string | null {
+  const p = s.trim();
+  return /^1[3-9]\d{9}$/.test(p) ? `+86${p}` : null;
+}
+
+export interface AdminCreateUserInput {
+  identifier: string;
+  password: string;
+  role: "user" | "readonly" | "operator" | "admin";
+  /** 初始密码是否强制首登改密（默认 true，见 req D2）。 */
+  mustChange: boolean;
+  /** 到期时间戳 ms；null = 无期限（默认，req D4）。E1：plan 保持 null + 设 plan_expires_at → 到期由计费状态机降 free。 */
+  expiresAtMs: number | null;
+}
+
+/** 管理台建号（feature 16）：identifier = name / 邮箱 / +86 手机（邮箱/手机自动绑定列，未验证）。
+ * operator 可建 user/readonly；建 operator/admin 仅 admin（D3）；默认 mustChange=true（D2）；默认无期限（D4）。 */
+export async function createUser(db: HubDb, ctx: AdminCtx, input: AdminCreateUserInput, reason: string): Promise<UserRow> {
+  assertRole(ctx, "operator");
+  const role = input.role;
+  if (role !== "user" && !(ADMIN_ROLES as readonly string[]).includes(role)) {
+    throw new AdminError("BAD_REQUEST", `invalid role '${role}'`);
+  }
+  if ((role === "operator" || role === "admin") && (ROLE_RANK[ctx.role] ?? 0) < 3) {
+    throw new AdminError("FORBIDDEN", `role "${ctx.role}" cannot create ${role}`);
+  }
+  if (input.password.length < 8) throw new AdminError("BAD_REQUEST", "password must be >= 8 chars");
+  const identifier = input.identifier.trim();
+  if (identifier === "" || identifier.length > 128) throw new AdminError("BAD_REQUEST", "invalid identifier");
+  const email = adminEmail(identifier);
+  const phone = email === null ? adminCnPhone(identifier) : null;
+  // 邮箱形态 → name 用规范化邮箱；手机/裸名 → 原始标识（与登录 resolveLoginName 语义一致）
+  const name = email ?? identifier;
+  if (db.getUserByName(name) !== null) throw new AdminError("CONFLICT", "identifier already in use");
+  if (email !== null && db.getUserByEmail(email) !== null) throw new AdminError("CONFLICT", "email already in use");
+  if (phone !== null && db.getUserByPhone(phone) !== null) throw new AdminError("CONFLICT", "phone already in use");
+  const hash = await hashPassword(input.password);
+  const user = db.createUser(name, hash, new Date().toISOString(), input.mustChange);
+  if (email !== null) db.setEmail(user.id, email);
+  if (phone !== null) db.setPhone(user.id, phone);
+  if (input.expiresAtMs !== null) db.setPlan(user.id, null, input.expiresAtMs); // E1：plan null + 到期
+  audit(db, ctx, user.id, "admin.user.create", { name, role, email, phone, expiresAtMs: input.expiresAtMs }, reason);
+  const created = db.getUserById(user.id);
+  if (created === null) throw new AdminError("BAD_REQUEST", "create failed");
+  return created;
 }
 
 export function unlockUser(db: HubDb, ctx: AdminCtx, userId: number, reason: string): void {

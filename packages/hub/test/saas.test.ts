@@ -239,3 +239,42 @@ test("找回密码：email 通道接受 identifier（双通道回归）", async 
   const conf = await post("/api/auth/password/reset/confirm", { channel: "email", identifier: "reset@test.com", code: "654321", newPassword: "newpw123456" });
   assert.equal(conf.status, 200);
 });
+
+test("feature16 E1：plan-null 账号被管理台设到期 → sweepBilling 到期硬降 free", () => {
+  const u = db.createUser("manual-expire-user", "hash");
+  // 模拟 admin 建号时带到期（E1：plan_status 保持 null + 只设 plan_expires_at）
+  db.setPlan(u.id, null, Date.now() - 1000);
+  sweepBilling(runtime, Date.now());
+  const after = db.getUserById(u.id)!;
+  assert.equal(after.planStatus, "free");
+  assert.equal(after.planExpiresAt, null);
+  // 未到期的不降
+  const keep = db.createUser("manual-expire-future", "hash");
+  db.setPlan(keep.id, null, Date.now() + 86_400_000);
+  sweepBilling(runtime, Date.now());
+  assert.equal(db.getUserById(keep.id)!.planStatus, null);
+});
+
+test("feature16 last_login：建号不算；touchLastLogin 更新；密码登录成功更新", async () => {
+  // db 级
+  const u = db.createUser("last-login-db-user", "hash");
+  assert.equal(db.getUserById(u.id)!.lastLoginAt, null);
+  db.touchLastLogin(u.id, 12345);
+  assert.equal(db.getUserById(u.id)!.lastLoginAt, 12345);
+  // 真实注册 + 验证（verify 自动登录但不算 last_login）→ 密码登录成功才更新
+  const r = await post("/api/auth/register", { channel: "email", identifier: "login-touch@test.com", password: "pw123456" });
+  assert.equal(r.status, 200);
+  const user = db.getUserByEmail("login-touch@test.com")!;
+  db.createEmailCode(user.id, "login-touch@test.com", "verify", sha256("123456"), Date.now() + 60_000);
+  await post("/api/auth/verify", { channel: "email", identifier: "login-touch@test.com", code: "123456" });
+  const afterVerify = db.getUserByEmail("login-touch@test.com")!;
+  assert.equal(afterVerify.lastLoginAt, null); // 注册验证不计（只统计成功登录）
+  const lr = await fetch(base + "/api/auth/login", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ identifier: "login-touch@test.com", password: "pw123456" }),
+  });
+  assert.equal(lr.status, 200);
+  const afterLogin = db.getUserByEmail("login-touch@test.com")!;
+  assert.ok(afterLogin.lastLoginAt !== null && afterLogin.lastLoginAt > 0);
+});

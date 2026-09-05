@@ -309,6 +309,19 @@ export interface AdminUserRow {
   planExpiresAt: number | null;
   createdAt: string;
   hostCount: number;
+  emailVerified: boolean;
+  phoneVerified: boolean;
+  lastLoginAt: number | null;
+  locked: boolean;
+  lockedUntil: number | null;
+}
+/** 管理台建号入参（feature 16）。 */
+export interface AdminCreateUserInput {
+  identifier: string;
+  password: string;
+  role: "user" | "readonly" | "operator" | "admin";
+  mustChange: boolean;
+  expiresAtMs: number | null;
 }
 export interface AdminHostRow {
   id: string;
@@ -430,6 +443,9 @@ export const adminApi = {
   },
   userAction(id: number, action: string, body: Record<string, unknown>): Promise<{ ok: boolean }> {
     return adminJson(`/api/admin/users/${id}/${action}`, { method: "POST", body: JSON.stringify(body) });
+  },
+  createUser(input: AdminCreateUserInput & { reason?: string }): Promise<{ ok: boolean; user: AdminUserRow }> {
+    return adminJson("/api/admin/users", { method: "POST", body: JSON.stringify(input) });
   },
   userDetail(id: number): Promise<AdminUserDetail> {
     return adminJson(`/api/admin/users/${id}`);

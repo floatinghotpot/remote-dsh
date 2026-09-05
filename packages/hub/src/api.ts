@@ -26,7 +26,7 @@ import { verifyCaptchaParam } from "./captcha/aliyun.ts";
 import { DailyWindowLimiter } from "./ratelimit.ts";
 import { clearHostCookie } from "./server.ts";
 import { AdminError } from "./admin.ts";
-import type { AdminCtx } from "./admin.ts";
+import type { AdminCtx, AdminCreateUserInput } from "./admin.ts";
 import * as admin from "./admin.ts";
 import { lastBackupAt } from "./backup.ts";
 
@@ -108,7 +108,7 @@ export function authenticateAdmin(req: IncomingMessage, runtime: HubRuntime): { 
 /** admin 服务层错误 → HTTP 状态映射。 */
 function writeAdminError(res: ServerResponse, err: unknown): void {
   if (err instanceof AdminError) {
-    const status = err.code === "FORBIDDEN" ? 403 : err.code === "NOT_FOUND" ? 404 : 400;
+    const status = err.code === "FORBIDDEN" ? 403 : err.code === "NOT_FOUND" ? 404 : err.code === "CONFLICT" ? 409 : 400;
     writeError(res, status, err.code, err.message);
     return;
   }
@@ -123,7 +123,8 @@ function clampLimit(raw: string | null): number {
   return Math.min(n, 200);
 }
 
-/** admin 面用户视图：仅暴露展示/运营所需字段，绝不外泄 passwordHash / totpSecret / ver / failedAttempts / lockedUntil。 */
+/** admin 面用户视图：仅暴露展示/运营所需字段，绝不外泄 passwordHash / totpSecret / ver / failedAttempts。
+ * lockedUntil 可暴露（feature 16：admin 需知锁定状态与到期；失败次数不可见，防爆破反馈）。 */
 function adminUserView(u: UserRow): Record<string, unknown> {
   return {
     id: u.id,
@@ -135,6 +136,11 @@ function adminUserView(u: UserRow): Record<string, unknown> {
     planStatus: u.planStatus,
     planExpiresAt: u.planExpiresAt,
     createdAt: u.createdAt,
+    emailVerified: u.emailVerified === 1,
+    phoneVerified: u.phoneVerified === 1,
+    lastLoginAt: u.lastLoginAt,
+    locked: u.lockedUntil !== null && u.lockedUntil > Date.now(),
+    lockedUntil: u.lockedUntil,
   };
 }
 
@@ -229,6 +235,35 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
     for (const row of db.countHostsByOwner()) hostCounts.set(row.ownerId, row.count);
     const users = rows.map((u) => ({ ...adminUserView(u), hostCount: hostCounts.get(u.id) ?? 0 }));
     res.end(JSON.stringify({ users, total }));
+    return true;
+  }
+  // 建号（feature 16）：identifier = name / 邮箱 / +86 手机；角色按 D3；mustChange 默认 true；到期可空（E1）
+  if (path === "/api/admin/users" && method === "POST") {
+    const body = await readJsonBody(req);
+    try {
+      if (body === null || typeof body.identifier !== "string" || typeof body.password !== "string") {
+        writeError(res, 400, "BAD_REQUEST", "identifier/password required");
+        return true;
+      }
+      const roleRaw = body.role;
+      if (roleRaw !== undefined && (typeof roleRaw !== "string" || !["user", "readonly", "operator", "admin"].includes(roleRaw))) {
+        writeError(res, 400, "BAD_REQUEST", "invalid role");
+        return true;
+      }
+      const role = typeof roleRaw === "string" ? roleRaw : "user";
+      const expiresAtMs = typeof body.expiresAtMs === "number" ? body.expiresAtMs : null;
+      const input: AdminCreateUserInput = {
+        identifier: body.identifier,
+        password: body.password,
+        role: role as AdminCreateUserInput["role"],
+        mustChange: body.mustChange !== false,
+        expiresAtMs,
+      };
+      const created = await admin.createUser(db, ctx, input, requireReason(body) ?? "no reason");
+      res.end(JSON.stringify({ ok: true, user: adminUserView(created) }));
+    } catch (err) {
+      writeAdminError(res, err);
+    }
     return true;
   }
   if (path === "/api/admin/hosts" && method === "GET") {
@@ -356,12 +391,19 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
         }
         await admin.resetUserPassword(db, ctx, id, body.password, requireReason(body) ?? "no reason");
       } else if (action === "plan") {
-        if (body === null || typeof body.planStatus !== "string") {
+        // "null"/null → 真正 NULL（无期限）；否则限 planStatus 枚举（修复此前「null 字符串错存字面量」）
+        const raw = body === null ? undefined : body.planStatus;
+        if (raw !== null && raw !== undefined && typeof raw !== "string") {
           writeError(res, 400, "BAD_REQUEST", "planStatus required");
           return true;
         }
-        const expiresAtMs = typeof body.expiresAtMs === "number" ? body.expiresAtMs : null;
-        admin.adjustPlan(db, ctx, id, body.planStatus, expiresAtMs, requireReason(body) ?? "no reason");
+        if (typeof raw === "string" && raw !== "null" && !["trial", "subscribed", "grace", "free"].includes(raw)) {
+          writeError(res, 400, "BAD_REQUEST", `invalid planStatus '${raw}'`);
+          return true;
+        }
+        const planStatus = raw === null || raw === undefined || raw === "null" ? null : raw;
+        const expiresAtMs = body === null ? null : typeof body.expiresAtMs === "number" ? body.expiresAtMs : null;
+        admin.adjustPlan(db, ctx, id, planStatus, expiresAtMs, requireReason(body) ?? "no reason");
       } else if (action === "set-role") {
         if (body === null || typeof body.role !== "string") {
           writeError(res, 400, "BAD_REQUEST", "role required");
@@ -752,6 +794,7 @@ async function handleWechatLoginCallback(req: IncomingMessage, res: ServerRespon
   if (user !== null) {
     // unionid 命中但本网站 openid 未记（同用户未来另一 AppID 建号后首次网页登录）→ 补绑 openid
     if (user.wxwebOpenid === null) runtime.db.bindWechat(user.id, id.openid, id.unionid, id.nickname, id.avatar);
+    runtime.db.touchLastLogin(user.id); // feature 16
     runtime.db.recordAudit(user.id, "wechat.login.ok", {}, ip);
     const tokens = runtime.auth.issueSession(user.id);
     if (tokens === null) {
@@ -828,6 +871,7 @@ async function handleWechatConfirm(req: IncomingMessage, res: ServerResponse, ru
     writeError(res, 403, "FORBIDDEN", "account not active");
     return;
   }
+  runtime.db.touchLastLogin(user.id); // feature 16
   const tokens = runtime.auth.issueSession(user.id);
   if (tokens === null) {
     writeError(res, 403, "FORBIDDEN", "account not active");
@@ -946,6 +990,7 @@ async function handleLogin(req: IncomingMessage, res: ServerResponse, runtime: H
         if (uid !== null && user !== null && uid === user.id) {
           limiter.clear(ip);
           const tokens = runtime.auth.issueTokens(user, true); // 可信设备 = 已验证过 2FA
+          runtime.db.touchLastLogin(user.id); // feature 16
           runtime.db.recordAudit(user.id, "login.ok", { name: user.name, trustedDevice: true }, ip);
           res.writeHead(200, {
             "content-type": "application/json",
@@ -2157,14 +2202,31 @@ async function handleDeleteAccount(req: IncomingMessage, res: ServerResponse, ru
   res.end(JSON.stringify({ ok: true }));
 }
 
-/** 计费状态机定时扫描：trial/subscribed 到期 → grace → free（0 台离线）。 */
+/** 计费状态机定时扫描：trial/subscribed 到期 → grace → free（0 台离线）；
+ * 管理台手工给 plan-null 账号设的到期（feature 16 E1）→ 到期硬降 free（无 grace）。 */
 export function sweepBilling(runtime: HubRuntime, now = Date.now()): void {
   const billing = runtime.config.billing;
   const graceDays = billing?.graceDays ?? BILLING_DEFAULTS.graceDays;
   const retentionDays = billing?.retentionDays ?? BILLING_DEFAULTS.retentionDays;
   const day = 24 * 3600 * 1000;
+  const dropHosts = (userId: number): void => {
+    for (const host of runtime.db.listHostsByOwner(userId)) {
+      const conn = runtime.tunnels.get(host.id);
+      if (conn !== null) conn.terminate();
+      runtime.tunnels.unregister(host.id);
+    }
+  };
   for (const user of runtime.db.listUsers()) {
-    if (user.accountStatus !== "active" || user.planStatus === null || user.planExpiresAt === null) continue;
+    if (user.accountStatus !== "active") continue;
+    // E1：plan-null 账号被手工设了到期（billing 路径总带 planStatus，不会走到这）→ 到期硬降 free
+    if (user.planStatus === null && user.planExpiresAt !== null && user.planExpiresAt <= now) {
+      runtime.db.setPlan(user.id, "free", null);
+      runtime.db.setFreeSince(user.id, now);
+      dropHosts(user.id);
+      runtime.db.recordAudit(user.id, "billing.expired", { from: "manual-expiry" }, "");
+      continue;
+    }
+    if (user.planStatus === null || user.planExpiresAt === null) continue;
     if (user.planStatus === "trial" || user.planStatus === "subscribed") {
       if (user.planExpiresAt <= now) {
         runtime.db.setPlan(user.id, "grace", now + graceDays * day);
@@ -2175,11 +2237,7 @@ export function sweepBilling(runtime: HubRuntime, now = Date.now()): void {
       runtime.db.setFreeSince(user.id, now);
       const sub = runtime.db.getActiveSubscription(user.id);
       if (sub !== null) runtime.db.setSubscriptionStatus(sub.id, "expired");
-      for (const host of runtime.db.listHostsByOwner(user.id)) {
-        const conn = runtime.tunnels.get(host.id);
-        if (conn !== null) conn.terminate();
-        runtime.tunnels.unregister(host.id);
-      }
+      dropHosts(user.id);
       runtime.db.recordAudit(user.id, "billing.downgraded", { to: "free" }, "");
     }
   }

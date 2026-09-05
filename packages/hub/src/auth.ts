@@ -110,6 +110,7 @@ export class HubAuth {
     if (user.totpSecret !== null) {
       return { kind: "requires-totp", pendingToken: this.issuePendingToken(user), name: user.name };
     }
+    this.db.touchLastLogin(user.id); // feature 16：最近成功登录
     return { kind: "ok", tokens: this.issueTokens(user), mustChangePassword: user.mustChange === 1 };
   }
 
@@ -120,6 +121,7 @@ export class HubAuth {
     const user = this.db.getUserById(claims.sub);
     if (user === null || user.ver !== claims.ver || user.totpSecret === null) return null;
     if (!verifyTotp(user.totpSecret, code)) return null;
+    this.db.touchLastLogin(user.id); // feature 16：最近成功登录（TOTP 完成）
     return { tokens: this.issueTokens(user, true), mustChangePassword: user.mustChange === 1, userId: user.id };
   }
 

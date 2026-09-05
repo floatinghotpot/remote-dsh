@@ -7,7 +7,7 @@ import { HubDb } from "../src/db.ts";
 import { HubAuth } from "../src/auth.ts";
 import { Jwt } from "../src/jwt.ts";
 import { generateSecret, totp } from "../src/totp.ts";
-import { banUser, unbanUser, resetUser2fa, refundOrder, deleteUser, setUserRole, removeAdmin, listAudit, AdminError } from "../src/admin.ts";
+import { banUser, unbanUser, resetUser2fa, refundOrder, deleteUser, setUserRole, removeAdmin, createUser, listAudit, AdminError } from "../src/admin.ts";
 import type { AdminCtx } from "../src/admin.ts";
 
 function makeDb(): HubDb {
@@ -120,4 +120,69 @@ test("unbanUser：解封 + 审计", () => {
   unbanUser(db, ctx(adminId, "admin"), target, "申诉通过");
   assert.equal(db.getUserById(target)!.accountStatus, "active");
   assert.equal(listAudit(db, { source: "admin" })[0]!.event, "admin.unban");
+});
+
+test("createUser：name 标识建号 → active/user/plan null/mustChange=1 + 审计（feature 16）", async () => {
+  const db = makeDb();
+  const boss = makeUser(db, "boss", "admin");
+  const u = await createUser(db, ctx(boss, "admin"), { identifier: "zhangsan", password: "pw12345678", role: "user", mustChange: true, expiresAtMs: null }, "开内部号");
+  assert.equal(u.name, "zhangsan");
+  assert.equal(u.accountStatus, "active");
+  assert.equal(u.role, "user");
+  assert.equal(u.planStatus, null); // D4：无期限
+  assert.equal(u.mustChange, 1); // D2：强制首登改密
+  assert.equal(db.getUserByEmail("zhangsan"), null); // 非邮箱不绑 email
+  const ev = listAudit(db, { source: "admin" })[0]!;
+  assert.equal(ev.event, "admin.user.create");
+  assert.equal(ev.actorUserId, boss);
+  assert.ok(ev.detailJson.includes("zhangsan"));
+});
+
+test("createUser：email/phone 标识自动绑定列（未验证）；重复 → CONFLICT", async () => {
+  const db = makeDb();
+  const boss = makeUser(db, "boss", "admin");
+  const e = await createUser(db, ctx(boss, "admin"), { identifier: "Zhao@Corp.com", password: "pw12345678", role: "user", mustChange: false, expiresAtMs: null }, "x");
+  assert.equal(e.name, "zhao@corp.com"); // 邮箱规范化小写作 name → 登录页输邮箱可登
+  assert.equal(e.email, "zhao@corp.com");
+  assert.equal(e.emailVerified, 0); // admin 背书，未验证
+  const p = await createUser(db, ctx(boss, "admin"), { identifier: "13800138000", password: "pw12345678", role: "user", mustChange: true, expiresAtMs: null }, "x");
+  assert.equal(p.phone, "+8613800138000");
+  assert.equal(p.phoneVerified, 0);
+  // 重复 email / name / phone → CONFLICT
+  await assert.rejects(
+    createUser(db, ctx(boss, "admin"), { identifier: "zhao@corp.com", password: "pw12345678", role: "user", mustChange: true, expiresAtMs: null }, "x"),
+    (x: unknown) => x instanceof AdminError && x.code === "CONFLICT",
+  );
+  await assert.rejects(
+    createUser(db, ctx(boss, "admin"), { identifier: "13800138000", password: "pw12345678", role: "user", mustChange: true, expiresAtMs: null }, "x"),
+    (x: unknown) => x instanceof AdminError && x.code === "CONFLICT",
+  );
+});
+
+test("createUser：RBAC（operator 建 user 可 / 建 admin 拒绝 / admin 可）；密码 <8 拒绝", async () => {
+  const db = makeDb();
+  const op = makeUser(db, "op", "operator");
+  const boss = makeUser(db, "boss", "admin");
+  const input = (identifier: string, role: string, password = "pw12345678") => ({ identifier, password, role, mustChange: true, expiresAtMs: null });
+  await createUser(db, ctx(op, "operator"), input("u1", "user"), "x"); // operator 建 user 可
+  await createUser(db, ctx(op, "operator"), input("u2", "readonly"), "x"); // operator 建 readonly 可
+  await assert.rejects(
+    createUser(db, ctx(op, "operator"), input("u3", "admin"), "x"),
+    (x: unknown) => x instanceof AdminError && x.code === "FORBIDDEN",
+  );
+  await createUser(db, ctx(boss, "admin"), input("u4", "admin"), "x"); // admin 建 admin 可
+  await assert.rejects(
+    createUser(db, ctx(boss, "admin"), input("shortpw", "user", "pw12"), "x"),
+    (x: unknown) => x instanceof AdminError && x.code === "BAD_REQUEST",
+  );
+});
+
+test("createUser：到期（E1）→ plan null + planExpiresAt 落库", async () => {
+  const db = makeDb();
+  const boss = makeUser(db, "boss", "admin");
+  const exp = Date.now() + 30 * 24 * 3600 * 1000;
+  const u = await createUser(db, ctx(boss, "admin"), { identifier: "term-user", password: "pw12345678", role: "user", mustChange: true, expiresAtMs: exp }, "临时人员 3 个月");
+  assert.equal(u.planStatus, null);
+  assert.equal(u.planExpiresAt, exp);
+  assert.equal(db.getUserById(u.id)!.lastLoginAt, null); // 建号不算登录
 });

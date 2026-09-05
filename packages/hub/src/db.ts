@@ -43,6 +43,8 @@ export interface UserRow {
   trialStartedAt: number | null;
   /** 降级到免费档的时间戳（ms）；重新订阅时清空 */
   freeSinceAt: number | null;
+  /** 最近一次成功登录时间戳（ms，feature 16；null = 从未登录） */
+  lastLoginAt: number | null;
   /** 微信 openid（**网站应用** AppID 下唯一；null = 未绑定） */
   wxwebOpenid: string | null;
   /** 微信 unionid（开放平台账号内跨 AppID 共享 = 账号身份；null = 未返回/未绑定） */
@@ -194,7 +196,8 @@ export class HubDb {
         wxweb_openid TEXT,
         wechat_unionid TEXT,
         wechat_nickname TEXT,
-        wechat_avatar TEXT
+        wechat_avatar TEXT,
+        last_login_at INTEGER
       );
       CREATE TABLE IF NOT EXISTS hosts (
         id TEXT PRIMARY KEY,
@@ -311,6 +314,7 @@ export class HubDb {
       ["wechat_unionid", "wechat_unionid TEXT"],
       ["wechat_nickname", "wechat_nickname TEXT"],
       ["wechat_avatar", "wechat_avatar TEXT"],
+      ["last_login_at", "last_login_at INTEGER"],
     ];
     for (const [name, ddl] of addCols) {
       if (!userCols.has(name)) this.db.exec(`ALTER TABLE users ADD COLUMN ${ddl}`);
@@ -354,6 +358,7 @@ export class HubDb {
       planExpiresAt: row.plan_expires_at === null || row.plan_expires_at === undefined ? null : Number(row.plan_expires_at),
       trialStartedAt: row.trial_started_at === null || row.trial_started_at === undefined ? null : Number(row.trial_started_at),
       freeSinceAt: row.free_since_at === null || row.free_since_at === undefined ? null : Number(row.free_since_at),
+      lastLoginAt: row.last_login_at === null || row.last_login_at === undefined ? null : Number(row.last_login_at),
       wxwebOpenid: row.wxweb_openid === null || row.wxweb_openid === undefined ? null : String(row.wxweb_openid),
       wechatUnionid: row.wechat_unionid === null || row.wechat_unionid === undefined ? null : String(row.wechat_unionid),
       wechatNickname: row.wechat_nickname === null || row.wechat_nickname === undefined ? null : String(row.wechat_nickname),
@@ -765,6 +770,11 @@ export class HubDb {
   /** 登录成功：清失败计数。 */
   clearFailedAttempts(id: number): void {
     this.db.prepare("UPDATE users SET failed_attempts = 0 WHERE id = ?").run(id);
+  }
+
+  /** 记录最近一次成功登录时间（feature 16；登录成功各通道调用）。 */
+  touchLastLogin(id: number, now = Date.now()): void {
+    this.db.prepare("UPDATE users SET last_login_at = ? WHERE id = ?").run(now, id);
   }
 
   /** admin 解锁：清失败计数 + 清锁定。 */
