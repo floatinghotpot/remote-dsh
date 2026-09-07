@@ -106,6 +106,10 @@ rdsh hub serve                  # 自建 hub（内置 TLS 或反代部署）
 - [不想装 CLI？给 DSH 装插件，界面里点一下就远程访问](doc/blog/zh/03-05-plugin.md)
 - [搭建你自己的 hub 转发服务：hub + apache2（443 + 证书自动续期）](doc/blog/zh/03-02-hub-behind-apache-https.md)
 
+## 版本兼容
+
+remote-dsh 跟随最新 DeepSeek Harness（dsh）。**一个 rdsh 版本实测兼容多个 dsh 版本**；若运行时不兼容，命令行会直接打印升级命令——你无需查任何版本表。当前覆盖：dsh `0.1.1-rc.2` ✅ 与 `0.1.2-rc.1` ✅（逐版本历史见 [CHANGELOG](CHANGELOG.zh.md)）。
+
 ## 开发
 
 - Node.js ≥ 22（见 `.nvmrc`）、pnpm ≥ 9

@@ -109,6 +109,14 @@ Scenario guides, from simple to complex — full index: [English](doc/blog/READM
 - [No CLI? Install a DSH plugin and get remote access right in the UI](doc/blog/en/03-05-plugin.md)
 - [Run your own hub relay: hub + Apache2 (443 + auto-renewed certs)](doc/blog/en/03-02-hub-behind-apache-https.md)
 
+## Version compatibility
+
+remote-dsh follows the latest DeepSeek Harness (dsh). **A single rdsh release is
+smoke-tested against multiple dsh versions**; if a mismatch is detected at
+runtime, the CLI prints an upgrade command — you never need to consult a
+version matrix. Current coverage: dsh `0.1.1-rc.2` ✅ and `0.1.2-rc.1` ✅
+(per-release history in [CHANGELOG](CHANGELOG.md)).
+
 ## Development
 
 - Node.js ≥ 22 (see `.nvmrc`), pnpm ≥ 9
