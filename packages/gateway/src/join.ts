@@ -16,7 +16,7 @@ import type { IncomingHttpHeaders } from "node:http";
 import { WebSocket } from "ws";
 import { FrameParser, FRAME_TYPE, encodeFrame, jsonPayload, parseJsonPayload, FLAG_E2E } from "rdsh-tunnel";
 import type { Frame } from "rdsh-tunnel";
-import { findDsh, spawnDsh } from "./spawn-dsh.ts";
+import { findDsh, spawnDsh, exchangeDshSessionCookie, detectDshVersion, dshVersionWarning } from "./spawn-dsh.ts";
 import { rewriteHeadersForDsh } from "./proxy.ts";
 import type { ProxyTarget } from "./proxy.ts";
 import { clearPersistedToken, persistToken, readPersistedToken } from "./token-store.ts";
@@ -79,6 +79,8 @@ export interface StartJoinOptions {
   gateway?: { accessCode?: string | null };
   /** 主机名（challenge 页展示；缺省「本主机」） */
   name?: string;
+  /** 宿主代持的 dsh 浏览器会话 cookie（`dsh-auth-*`，0.1.2+）；有值时注入隧道→本地转发 */
+  dshAuthCookieHeader?: string | null;
 }
 
 /** 可停止的 join 隧道句柄。 */
@@ -285,6 +287,8 @@ function sendSyntheticHttp(send: (frame: Buffer) => void, streamId: number, stat
 export function startJoin(opts: StartJoinOptions): JoinHandle {
   const hubWsBase = opts.hubUrl.replace(/^https/, "wss").replace(/^http/, "ws");
   const hooks = opts.hooks ?? {};
+  // 宿主代持的 dsh 会话 cookie（0.1.2+）；null = 无认证（0.1.1）或换发失败
+  const dshAuthCookie = opts.dshAuthCookieHeader ?? null;
   // DSH UI 兼容开关：缺省 true（跟随 E2EE）；可变引用 → 运行中可切换（插件面板即时生效）
   const uiCompat = { trustE2EEAsLoopback: opts.dshUiCompat?.trustE2EEAsLoopback !== false };
   // 访问口令（feature 15）：可变引用 → setAccessCode 运行中切换；null = gate off
@@ -399,7 +403,7 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
 
     function openWsStream(streamId: number, path: string, headers: Record<string, string | string[]>): void {
       const upstream = new WebSocket(`ws://${opts.target.host}:${opts.target.port}${path}`, {
-        headers: rewriteHeadersForDsh(headers, opts.target),
+        headers: rewriteHeadersForDsh(headers, opts.target, dshAuthCookie),
       });
       const queue: Buffer[] = [];
       wsStreams.set(streamId, { upstream, queue });
@@ -479,7 +483,7 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
           port: opts.target.port,
           path,
           method,
-          headers: rewriteHeadersForDsh(headers, opts.target),
+          headers: rewriteHeadersForDsh(headers, opts.target, dshAuthCookie),
         },
         (upRes) => {
           send(
@@ -831,8 +835,24 @@ export async function join(opts: JoinOptions): Promise<void> {
   if (foundDsh === null) {
     throw new Error("cannot find 'dsh' in PATH. Install DeepSeek Harness first, or pass --dsh <path>.");
   }
+
+  // 版本窗口外 → warn（不硬拒）
+  const dshVersion = await detectDshVersion(foundDsh);
+  const versionWarn = dshVersionWarning(dshVersion);
+  if (versionWarn !== null) console.warn(`\n⚠  ${versionWarn}\n`);
+
   const dsh = await spawnDsh(foundDsh);
   const target: ProxyTarget = { host: "127.0.0.1", port: dsh.port };
+
+  // 0.1.2+：换发浏览器会话 cookie 并代持注入隧道→本地转发
+  let dshAuthCookieHeader: string | null = null;
+  if (dsh.authToken !== undefined) {
+    dshAuthCookieHeader = await exchangeDshSessionCookie(dsh.port, dsh.authToken);
+    if (dshAuthCookieHeader === null) {
+      console.warn("rdsh join: dsh 0.1.2+ 会话 cookie 换发失败——远程访问将返回 401。");
+    }
+  }
+
   // 解析 host token（含证书自动检测 + 持久化）；进程重启后复用，避免重复配对。
   const { token, insecure, name } = await registerJoin(opts);
 
@@ -847,6 +867,7 @@ export async function join(opts: JoinOptions): Promise<void> {
     role: "cli",
     dshUiCompat: opts.dshUiCompat,
     gateway: opts.gateway,
+    dshAuthCookieHeader,
     name,
     hooks: {
       onLog: (level, message) => {

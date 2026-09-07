@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { WebSocketServer, WebSocket } from "ws";
-import { forwardHttp, createUpgradeProxy } from "../src/proxy.ts";
+import { forwardHttp, createUpgradeProxy, rewriteHeadersForDsh } from "../src/proxy.ts";
 
 /** 起一个 mock 上游（模拟 dsh）：断言 Host 重写、回显路径与体。 */
 async function startUpstream() {
@@ -199,4 +199,75 @@ test("WS 双向桥接：客户端 → 上游 → 回环返回", async () => {
   } finally {
     closeServer(upstream.server);
   }
+});
+
+test("forwardHttp 注入 dsh 会话 cookie（合并既有 cookie，不覆盖）", async () => {
+  const seen = { cookie: "" as string };
+  const upstream = createServer((req, res) => {
+    seen.cookie = req.headers.cookie ?? "";
+    res.writeHead(200, { "content-type": "text/plain" });
+    res.end("ok");
+  });
+  await new Promise<void>((r) => upstream.listen(0, "127.0.0.1", r));
+  const { port } = upstream.address() as AddressInfo;
+  const authCookie = "dsh-auth-abc=v1.payload.sig";
+  try {
+    await new Promise<void>((resolve, reject) => {
+      // 1) 客户端带既有 rdsh_gate cookie → 上游应同时保留 rdsh_gate 与追加 dsh-auth
+      const client = createServer((req, res) => forwardHttp(req, res, { host: "127.0.0.1", port }, { authCookie }));
+      client.listen(0, "127.0.0.1", async () => {
+        const cport = (client.address() as AddressInfo).port;
+        await fetch(`http://127.0.0.1:${cport}/api/x`, { headers: { cookie: "rdsh_gate=secret" } });
+        assert.equal(seen.cookie, `rdsh_gate=secret; ${authCookie}`);
+        // 2) 客户端无 cookie → 上游只有 dsh-auth
+        await fetch(`http://127.0.0.1:${cport}/api/y`);
+        assert.equal(seen.cookie, authCookie);
+        closeServer(client);
+        resolve();
+      });
+      client.on("error", reject);
+    });
+  } finally {
+    closeServer(upstream);
+  }
+});
+
+test("forwardHttp 无 authCookie 时不注入 cookie（现状行为不变）", async () => {
+  const seen = { hasCookie: false as boolean };
+  const upstream = createServer((req, res) => {
+    seen.hasCookie = req.headers.cookie !== undefined;
+    res.writeHead(200, { "content-type": "text/plain" });
+    res.end("ok");
+  });
+  await new Promise<void>((r) => upstream.listen(0, "127.0.0.1", r));
+  const { port } = upstream.address() as AddressInfo;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const client = createServer((req, res) => forwardHttp(req, res, { host: "127.0.0.1", port }));
+      client.listen(0, "127.0.0.1", async () => {
+        const cport = (client.address() as AddressInfo).port;
+        await fetch(`http://127.0.0.1:${cport}/api/z`);
+        assert.equal(seen.hasCookie, false);
+        closeServer(client);
+        resolve();
+      });
+      client.on("error", reject);
+    });
+  } finally {
+    closeServer(upstream);
+  }
+});
+
+test("rewriteHeadersForDsh：文档请求剥离 accept-encoding，非文档保留", () => {
+  const target = { host: "127.0.0.1", port: 8080 };
+  // 文档导航（地址栏/链接）：Accept 含 text/html → 剥离 accept-encoding（0.1.2 dsh 对 HTML 默认 gzip）
+  const doc = rewriteHeadersForDsh(
+    { accept: "text/html,application/xhtml+xml", "accept-encoding": "gzip, deflate, br" },
+    target,
+  );
+  assert.equal(doc["accept-encoding"], undefined);
+  assert.equal(doc.host, "127.0.0.1:8080");
+  // 静态资源 fetch：Accept 不含 text/html → 保留 gzip（隧道/E2EE 下压缩仍有效）
+  const asset = rewriteHeadersForDsh({ accept: "*/*", "accept-encoding": "gzip, deflate" }, target);
+  assert.equal(asset["accept-encoding"], "gzip, deflate");
 });

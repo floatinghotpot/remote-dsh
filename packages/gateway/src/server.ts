@@ -35,6 +35,8 @@ export interface GatewayOptions {
   pairCode?: string;
   sessionTtlSeconds: number;
   dshPort: number;
+  /** 宿主代持的 dsh 浏览器会话 cookie（`dsh-auth-*`，0.1.2+）；有值时注入转发 */
+  dshAuthCookieHeader?: string | null;
   /** true = 启动时重置会话密钥（全部会话失效） */
   reset?: boolean;
   /** 会话密钥目录（默认 ~/.rdsh；测试可注入临时目录） */
@@ -74,6 +76,7 @@ interface HttpContext {
   sessionTtlSeconds: number;
   authMode: AuthMode;
   behindProxy: boolean;
+  dshAuthCookieHeader: string | null;
   getVersion(): number;
   isAllowed(ip: string): boolean;
   userManager?: UserManager;
@@ -128,6 +131,7 @@ export async function startGateway(opts: GatewayOptions): Promise<RunningGateway
     sessionTtlSeconds: opts.sessionTtlSeconds,
     authMode,
     behindProxy,
+    dshAuthCookieHeader: opts.dshAuthCookieHeader ?? null,
     getVersion: () => currentVersion,
     isAllowed: (ip) => currentAllowFrom.length === 0 || ipInCidrs(ip, currentAllowFrom),
     userManager: opts.userManager,
@@ -160,7 +164,7 @@ export async function startGateway(opts: GatewayOptions): Promise<RunningGateway
   });
   const address = server.address();
   const actualPort = typeof address === "object" && address !== null ? address.port : opts.port;
-  const upgradeProxy = createUpgradeProxy(target);
+  const upgradeProxy = createUpgradeProxy(target, { authCookie: ctx.dshAuthCookieHeader });
 
   return {
     server,
@@ -225,7 +229,7 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse, ctx: HttpCo
   }
 
   if (ctx.authMode === "none") {
-    forwardHttp(req, res, ctx.target, { htmlInject: SECURE_CONTEXT_POLYFILL });
+    forwardHttp(req, res, ctx.target, { htmlInject: SECURE_CONTEXT_POLYFILL, authCookie: ctx.dshAuthCookieHeader });
     return;
   }
   if (!hasValidSession(req, ctx)) {
@@ -233,7 +237,7 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse, ctx: HttpCo
     res.end();
     return;
   }
-  forwardHttp(req, res, ctx.target, { htmlInject: SECURE_CONTEXT_POLYFILL });
+  forwardHttp(req, res, ctx.target, { htmlInject: SECURE_CONTEXT_POLYFILL, authCookie: ctx.dshAuthCookieHeader });
 }
 
 async function handlePairPost(req: IncomingMessage, res: ServerResponse, ctx: HttpContext): Promise<void> {

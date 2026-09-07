@@ -218,3 +218,30 @@ test("reset=true 时旧会话全部失效", async () => {
   closeServer(gw2.server);
   closeServer(upstream.server);
 });
+
+test("dshAuthCookieHeader 透传到上游转发请求（auth none）", async () => {
+  const seen = { cookie: "" as string };
+  const upstream = createServer((req, res) => {
+    seen.cookie = req.headers.cookie ?? "";
+    res.writeHead(200, { "content-type": "text/plain" });
+    res.end("ok");
+  });
+  await new Promise<void>((r) => upstream.listen(0, "127.0.0.1", r));
+  const keyDir = await mkdtemp(join(tmpdir(), "rdsh-gw-"));
+  const gw = await startGateway({
+    host: "127.0.0.1",
+    port: 0,
+    sessionTtlSeconds: 3600,
+    dshPort: (upstream.address() as AddressInfo).port,
+    keyDir,
+    noCode: true,
+    dshAuthCookieHeader: "dsh-auth-x=v1.y.z",
+  });
+  try {
+    await fetch(`http://127.0.0.1:${gw.actualPort}/api/test`);
+    assert.equal(seen.cookie, "dsh-auth-x=v1.y.z");
+  } finally {
+    closeServer(gw.server);
+    closeServer(upstream);
+  }
+});

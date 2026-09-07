@@ -10,7 +10,7 @@ export type { SessionPayload } from "./session.ts";
 export { PairManager } from "./pair.ts";
 export { startGateway } from "./server.ts";
 export type { GatewayOptions, RunningGateway } from "./server.ts";
-export { findDsh, spawnDsh } from "./spawn-dsh.ts";
+export { findDsh, spawnDsh, exchangeDshSessionCookie, detectDshVersion, compareDshVersions, dshVersionWarning, DSH_COMPAT_MIN, DSH_COMPAT_MAX } from "./spawn-dsh.ts";
 export type { SpawnedDsh } from "./spawn-dsh.ts";
 export { forwardHttp, createUpgradeProxy, rewriteHeadersForDsh } from "./proxy.ts";
 export type { ProxyTarget } from "./proxy.ts";
@@ -25,7 +25,7 @@ export { installService, uninstallService, serviceStatus, systemdUnit, launchdPl
 export type { ServiceSpec } from "./service.ts";
 
 export const NAME = "rdsh-gateway";
-export { join, startJoin, registerJoin, detectInsecure, selfRevoke } from "./join.ts";
+export { join, startJoin, registerJoin, detectInsecure, selfRevoke, patchLoopbackJs } from "./join.ts";
 export type { JoinOptions, RegisterOutcome, JoinState, JoinHooks, StartJoinOptions, JoinHandle } from "./join.ts";
 export { readPersistedToken, clearPersistedToken } from "./token-store.ts";
 export { acquireJoinLock, releaseJoinLock, readJoinLock, JOIN_LOCK_PATH } from "./lock.ts";

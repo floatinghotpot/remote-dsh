@@ -21,24 +21,49 @@ export interface ForwardOptions {
    * （DSH 浏览器侧 RPC 依赖它），用非 secure context 也可用的 getRandomValues polyfill。
    */
   htmlInject?: string;
+  /**
+   * 宿主代持的 dsh 浏览器会话 cookie（`dsh-auth-<sha256(authority)>`，0.1.2+）。
+   * 提供时合并进每个转发/升级请求的 cookie 头，穿透 dsh 0.1.2 认证层。
+   */
+  authCookie?: string | null;
 }
 
 /**
  * 重写转发头以通过 DSH 围栏（isTrustedApiRequest 要求 Host/Origin 一致且为 loopback）。
  * - Host → 127.0.0.1:<port>（M1 事实：DSH 只信任 loopback/trusted Host）
  * - Origin 同步改写为 http://127.0.0.1:<port>（浏览器视角仍同源，不影响 CORS）
+ * - 文档导航请求剥离 accept-encoding：0.1.2 起 dsh 对 HTML 默认 gzip，会使下游
+ *   HTML 注入（hub 返回条/E2EE shim、serve polyfill）因 content-encoding 跳过；
+ *   剥离后 dsh 返回明文 HTML，压缩交给 hub 的 TLS + E2EE 层。静态 JS/CSS 仍 gzip。
+ * - 可选注入宿主 dsh 会话 cookie（合并进既有 cookie 头，保留 rdsh_gate 等，不覆盖）
  * 供 forwardHttp / createUpgradeProxy / join.ts（隧道→本地转发）复用。
  */
 export function rewriteHeadersForDsh(
   headers: Record<string, string | string[] | undefined>,
   target: ProxyTarget,
+  dshAuthCookie?: string | null,
 ): Record<string, string | string[] | undefined> {
   const out = { ...headers };
   out.host = `${target.host}:${target.port}`;
   if (out.origin !== undefined) {
     out.origin = `http://${target.host}:${target.port}`;
   }
+  if (acceptsHtml(headers)) {
+    delete out["accept-encoding"];
+  }
+  if (dshAuthCookie !== undefined && dshAuthCookie !== null && dshAuthCookie !== "") {
+    const existing = out.cookie;
+    const current = Array.isArray(existing) ? existing.join("; ") : typeof existing === "string" ? existing : "";
+    out.cookie = current === "" ? dshAuthCookie : `${current}; ${dshAuthCookie}`;
+  }
   return out;
+}
+
+/** 请求是否期望 text/html（文档导航：地址栏/链接）；浏览器 fetch/script 的 Accept 不含它。 */
+function acceptsHtml(headers: Record<string, string | string[] | undefined>): boolean {
+  const accept = headers["accept"];
+  const s = Array.isArray(accept) ? accept.join(",") : typeof accept === "string" ? accept : "";
+  return s.toLowerCase().includes("text/html");
 }
 
 /** 转发一个 HTTP 请求（含 SSE：响应流式写回，零缓冲）。 */
@@ -48,7 +73,7 @@ export function forwardHttp(
   target: ProxyTarget,
   opts?: ForwardOptions,
 ): void {
-  const headers = rewriteHeadersForDsh(req.headers, target);
+  const headers = rewriteHeadersForDsh(req.headers, target, opts?.authCookie);
   const upstream = request(
     {
       host: target.host,
@@ -111,10 +136,10 @@ interface QueuedMessage {
  * - handleUpgrade 成功后 ws 库会自动 emit 'connection'，这里不再手动 emit；
  * - 客户端消息立即入队，upstream open 后按序发送（避免握手竞态丢消息）。
  */
-export function createUpgradeProxy(target: ProxyTarget) {
+export function createUpgradeProxy(target: ProxyTarget, opts?: ForwardOptions) {
   const wss = new WebSocketServer({ noServer: true });
   wss.on("connection", (clientWs, req) => {
-    const headers = rewriteHeadersForDsh(req.headers, target);
+    const headers = rewriteHeadersForDsh(req.headers, target, opts?.authCookie);
     const upstreamUrl = `ws://${target.host}:${target.port}${req.url ?? "/"}`;
     const upstream = new WebSocket(upstreamUrl, { headers });
 

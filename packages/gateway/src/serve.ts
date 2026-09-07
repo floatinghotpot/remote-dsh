@@ -5,7 +5,7 @@ import { networkInterfaces } from "node:os";
 import type { NetworkInterfaceInfo } from "node:os";
 import { startGateway } from "./server.ts";
 import type { RunningGateway } from "./server.ts";
-import { findDsh, spawnDsh } from "./spawn-dsh.ts";
+import { findDsh, spawnDsh, exchangeDshSessionCookie, detectDshVersion, dshVersionWarning } from "./spawn-dsh.ts";
 import { loadConfig, resolveConfigPath } from "./config.ts";
 import type { RdshConfig } from "./config.ts";
 import { UserManager } from "./auth.ts";
@@ -44,7 +44,21 @@ export async function serve(opts: ServeOptions): Promise<void> {
     throw new Error("cannot find 'dsh' in PATH. Install DeepSeek Harness first, or set dshPath in config / pass --dsh <path>.");
   }
 
+  // 版本窗口外 → warn（不硬拒）：dsh 太新建议升 rdsh / 太旧建议升 dsh
+  const dshVersion = await detectDshVersion(foundDsh);
+  const versionWarn = dshVersionWarning(dshVersion);
+  if (versionWarn !== null) console.warn(`\n⚠  ${versionWarn}\n`);
+
   const dsh = await spawnDsh(foundDsh);
+
+  // 0.1.2+：就绪行带 launch token → 换发浏览器会话 cookie 并代持注入转发
+  let dshAuthCookieHeader: string | null = null;
+  if (dsh.authToken !== undefined) {
+    dshAuthCookieHeader = await exchangeDshSessionCookie(dsh.port, dsh.authToken);
+    if (dshAuthCookieHeader === null) {
+      console.warn("rdsh: dsh 0.1.2+ 会话 cookie 换发失败——远程访问将返回 401（请确认 dsh web 已就绪或暂用 dsh@0.1.1-rc.2）。");
+    }
+  }
 
   // TLS 决策：有 tls.cert/key → https；无 → http（behindProxy 或 pair/none）。
   // password + http + 非反代 → server.ts 安全约束拒绝启动（需自行提供证书）。
@@ -66,6 +80,7 @@ export async function serve(opts: ServeOptions): Promise<void> {
       pairCode,
       sessionTtlSeconds,
       dshPort: dsh.port,
+      dshAuthCookieHeader,
       reset: opts.reset,
       noCode: opts.noCode,
       authMode,

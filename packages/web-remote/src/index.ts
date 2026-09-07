@@ -18,6 +18,7 @@ import {
   readJoinLock,
   loadConfig,
   saveConfig,
+  exchangeDshSessionCookie,
   DEFAULT_HOST_CONFIG_PATH,
 } from "rdsh-gateway";
 import type { JoinHandle, JoinState, RdshConfig } from "rdsh-gateway";
@@ -36,7 +37,7 @@ interface RpcHandler {
 }
 
 interface Ctx {
-  connection: { rpc: RpcHandler };
+  connection: { rpc: RpcHandler; authenticatedUrl?: (baseUrl: string) => string };
   webServer: { port: number };
   on(event: string, cb: () => void): void;
 }
@@ -69,6 +70,26 @@ export function apply(ctx: Ctx): void {
   let liveCompat: boolean | undefined; // 运行中切换的 dshUiCompat（覆盖 host.json）
   let liveAccessCode: string | null | undefined; // 运行中切换的访问密码（undefined=未初始化；null=关闭）
   let currentConfig: RdshConfig | null = null; // 最近一次读到的 host.json
+  let dshAuthCookieHeader: string | null = null; // 0.1.2+ 进程内换发的 dsh 会话 cookie
+
+  // 0.1.2+ 进程内换发：能力探测 authenticatedUrl → 换发浏览器会话 cookie（0.1.1 无此方法 → 跳过）
+  const authConn = ctx.connection as { authenticatedUrl?: (baseUrl: string) => string };
+  if (typeof authConn.authenticatedUrl === "function") {
+    void (async () => {
+      try {
+        const url = authConn.authenticatedUrl!(`http://127.0.0.1:${ctx.webServer.port}`);
+        const token = new URL(url).searchParams.get("token");
+        if (token !== null) {
+          dshAuthCookieHeader = await exchangeDshSessionCookie(ctx.webServer.port, token);
+          if (dshAuthCookieHeader === null) {
+            lastMessage = "dsh 0.1.2 认证换发失败，远程访问将不可用";
+          }
+        }
+      } catch {
+        /* 能力探测失败静默：0.1.1 无认证，无需 cookie */
+      }
+    })();
+  }
 
   const hooks = {
     onState: (s: JoinState, detail?: { message?: string; delayMs?: number }): void => {
@@ -160,6 +181,7 @@ export function apply(ctx: Ctx): void {
       role: "plugin",
       dshUiCompat: config.dshUiCompat,
       gateway: config.gateway,
+      dshAuthCookieHeader,
       name,
       hooks,
     });

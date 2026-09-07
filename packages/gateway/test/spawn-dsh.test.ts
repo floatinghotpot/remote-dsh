@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { mkdtemp, writeFile, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { findDsh, spawnDsh } from "../src/spawn-dsh.ts";
+import { createServer } from "node:http";
+import { findDsh, spawnDsh, exchangeDshSessionCookie, detectDshVersion, compareDshVersions } from "../src/spawn-dsh.ts";
 
 test("findDsh 找不到时返回 null", () => {
   const oldPath = process.env.PATH;
@@ -38,4 +39,88 @@ test("spawnDsh 解析 dsh 输出的实际端口并可停止", async () => {
 
 test("spawnDsh 对不存在的可执行文件报错", async () => {
   await assert.rejects(() => spawnDsh("/nonexistent/dsh-bin"), /failed to launch dsh/);
+});
+
+test("spawnDsh 解析 0.1.2 就绪行并捕获 launch token", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "rdsh-spawn-"));
+  const fake = join(dir, "dsh");
+  await writeFile(fake, `#!/bin/sh\nprintf 'dsh web: http://127.0.0.1:38992/?token=abc123_-xyz\\n'\nsleep 30\n`);
+  await chmod(fake, 0o755);
+  const dsh = await spawnDsh(fake);
+  assert.equal(dsh.port, 38992);
+  assert.equal(dsh.authToken, "abc123_-xyz");
+  await dsh.stop();
+});
+
+test("spawnDsh 解析 0.1.1 无 token 就绪行（authToken=undefined）", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "rdsh-spawn-"));
+  const fake = join(dir, "dsh");
+  await writeFile(fake, `#!/bin/sh\nprintf 'dsh web: http://127.0.0.1:38993\\n'\nsleep 30\n`);
+  await chmod(fake, 0o755);
+  const dsh = await spawnDsh(fake);
+  assert.equal(dsh.port, 38993);
+  assert.equal(dsh.authToken, undefined);
+  await dsh.stop();
+});
+
+test("exchangeDshSessionCookie：换发成功返回 dsh-auth cookie 段", async () => {
+  const server = createServer((req, res) => {
+    res.writeHead(303, { location: "/", "set-cookie": "dsh-auth-abc=v1.payload.sig; Max-Age=2592000; Path=/; HttpOnly; SameSite=Strict" });
+    res.end();
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as { port: number }).port;
+  try {
+    assert.equal(await exchangeDshSessionCookie(port, "tok"), "dsh-auth-abc=v1.payload.sig");
+  } finally {
+    server.close();
+  }
+});
+
+test("exchangeDshSessionCookie：无 dsh-auth cookie → null", async () => {
+  const server = createServer((_req, res) => {
+    res.writeHead(401);
+    res.end("unauthorized");
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as { port: number }).port;
+  try {
+    assert.equal(await exchangeDshSessionCookie(port, "tok"), null);
+  } finally {
+    server.close();
+  }
+});
+
+test("exchangeDshSessionCookie：连接失败 → null", async () => {
+  assert.equal(await exchangeDshSessionCookie(1, "tok", 500), null);
+});
+
+test("detectDshVersion：解析标准版本输出", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "rdsh-ver-"));
+  const fake = join(dir, "dsh");
+  await writeFile(fake, "#!/bin/sh\nprintf '0.1.2-rc.1\\n'\n");
+  await chmod(fake, 0o755);
+  assert.equal(await detectDshVersion(fake), "0.1.2-rc.1");
+});
+
+test("detectDshVersion：不可解析/失败 → null", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "rdsh-ver-"));
+  const fake = join(dir, "dsh");
+  await writeFile(fake, "#!/bin/sh\nprintf 'not-a-version\\n'\n");
+  await chmod(fake, 0o755);
+  assert.equal(await detectDshVersion(fake), null);
+  assert.equal(await detectDshVersion("/nonexistent/dsh-bin"), null);
+});
+
+test("compareDshVersions：核心版本与 rc 后缀比较", () => {
+  assert.ok(compareDshVersions("0.1.2-rc.1", "0.1.1-rc.2") > 0);
+  assert.ok(compareDshVersions("0.1.1-rc.2", "0.1.2-rc.1") < 0);
+  assert.equal(compareDshVersions("0.1.2-rc.1", "0.1.2-rc.1"), 0);
+  assert.ok(compareDshVersions("0.1.2-rc.2", "0.1.2-rc.1") > 0);
+  // release 大于同 core 的任何 prerelease
+  assert.ok(compareDshVersions("0.1.2", "0.1.2-rc.9") > 0);
+  assert.ok(compareDshVersions("0.1.2-rc.1", "0.1.2") < 0);
+  // 不可解析排序为更旧
+  assert.ok(compareDshVersions("garbage", "0.1.2-rc.1") < 0);
+  assert.equal(compareDshVersions("a", "b"), 0);
 });
