@@ -12,14 +12,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `dsh-web-remote` (0.2.0, unreleased): the Remote Access panel gains a **"Trust as local access when E2EE (compatibility)"** checkbox (`dshUiCompat.trustE2EEAsLoopback`, on by default) — with the patch, JS responses relayed through the tunnel treat the browser as loopback, so DSH's Models / API-key settings work remotely; and the plugin now **auto-connects at boot** when `host.json` is in join mode with a persisted token and no CLI owns the tunnel (same behavior as `rdsh host serve`), removing the "connect first to reach the panel" chicken-and-egg.
+## [rdsh-gateway 0.8.0 · dsh-web-remote 0.5.0 · remote-dsh 0.10.0] - 2026-09-08
+
+### Added
+
 - dsh `0.1.2-rc.1` compatibility: rdsh now exchanges and holds dsh's browser-session cookie (introduced in 0.1.2) and injects it into every relayed request (HTTP + WebSocket) across all three access paths (LAN serve / hub join / `dsh-web-remote` plugin), so remote access works again on the latest dsh; the `0.1.1` line still works unchanged via ready-line behavior detection (adaptive, no version fork). A runtime version check warns (without blocking) outside the tested window and prints an upgrade command.
+- Fix: dsh 0.1.2 serves the index document gzip-compressed, which made the hub-injected back bar and E2EE shim silently skip; rdsh now strips `accept-encoding` on document-navigation requests so dsh returns plain HTML and the injected UI (back-to-host-list, E2EE data plane) works again.
 
 ### dsh compatibility matrix
 
 | remote-dsh component | version | compatible dsh (smoke-tested) | mechanism |
 |---|---|---|---|
-| remote-dsh CLI (`host serve`/`join`) | unreleased | dsh `0.1.1-rc.2` ✅<br>dsh `0.1.2-rc.1` ✅ | ready-line behavior detection, adaptive |
-| `dsh-web-remote` plugin | unreleased | dsh `0.1.2-rc.1` ✅<br>(`0.1.1` line pending) | same host API shape across both, no version gate |
+| remote-dsh CLI (`host serve`/`join`) | 0.10.0 | dsh `0.1.1-rc.2` ✅<br>dsh `0.1.2-rc.1` ✅ | ready-line behavior detection, adaptive |
+| `dsh-web-remote` plugin | 0.5.0 | dsh `0.1.2-rc.1` ✅<br>(`0.1.1` line pending) | same host API shape across both, no version gate |
 | rdsh-hub | any | dsh-version agnostic | pure relay, never parses traffic |
 
 ## [0.6.0] - 2026-08-24

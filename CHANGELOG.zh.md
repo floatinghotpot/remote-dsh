@@ -12,14 +12,19 @@
 ### 新增
 
 - `dsh-web-remote`（0.2.0，未发布）：「远程访问」面板新增**「端到端加密时，信任为本地访问（兼容模式）」复选框**（`dshUiCompat.trustE2EEAsLoopback`，默认开启）——开启后经隧道转发的 JS 响应按 loopback 对待，DSH 的 Models / API key 设置可远程使用；并新增**启动自动接入**（host.json 为 join 模式且有持久化 token、隧道未被 CLI 持有时自动复用 token 建隧道，行为与 `rdsh host serve` 一致），消除「需先点接入才有隧道」的鸡生蛋。
+## [rdsh-gateway 0.8.0 · dsh-web-remote 0.5.0 · remote-dsh 0.10.0] - 2026-09-08
+
+### 新增
+
 - 适配 dsh `0.1.2-rc.1`：rdsh 现在会换发并代持 dsh 的浏览器会话 cookie（0.1.2 引入），注入所有转发请求（HTTP + WebSocket），覆盖三条访问路径（局域网 serve / hub join / `dsh-web-remote` 插件），在最新 dsh 上远程访问恢复正常；`0.1.1` 线经就绪行行为探测仍照常工作（自适应、无版本分叉）。运行时版本检查在实测窗口外 warn（不阻断）并打印升级命令。
+- 修复：dsh 0.1.2 对 index 文档默认 gzip 压缩，导致 hub 注入的返回条与 E2EE shim 静默跳过；rdsh 现在对文档导航请求剥离 `accept-encoding`，使 dsh 返回明文 HTML，注入的 UI（返回主机列表、E2EE 数据面）恢复。
 
 ### dsh 兼容矩阵
 
 | remote-dsh 组件 | 版本 | 兼容 dsh（逐个实测） | 机制 |
 |---|---|---|---|
-| remote-dsh CLI（`host serve`/`join`） | 未发布 | dsh `0.1.1-rc.2` ✅<br>dsh `0.1.2-rc.1` ✅ | 就绪行行为探测，自适应 |
-| `dsh-web-remote` 插件 | 未发布 | dsh `0.1.2-rc.1` ✅<br>（`0.1.1` 线待实证） | 宿主 API shape 两版相同，无版本门 |
+| remote-dsh CLI（`host serve`/`join`） | 0.10.0 | dsh `0.1.1-rc.2` ✅<br>dsh `0.1.2-rc.1` ✅ | 就绪行行为探测，自适应 |
+| `dsh-web-remote` 插件 | 0.5.0 | dsh `0.1.2-rc.1` ✅<br>（`0.1.1` 线待实证） | 宿主 API shape 两版相同，无版本门 |
 | rdsh-hub | 任意 | 与 dsh 版本无关 | 纯中继不解析业务流量 |
 
 ## [0.6.0] - 2026-08-24
