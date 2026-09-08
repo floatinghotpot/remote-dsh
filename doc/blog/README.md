@@ -18,7 +18,7 @@ First try the direct routes on your own network; no public IP? relay through the
   - Then run the machine in one of three modes (pick one per machine):
     - **Plugin mode**: a "Remote Access" panel inside DSH — no CLI, no service — [install dsh-web-remote](en/01-05-plugin-mode.md);
     - **CLI mode**: `rdsh host join` + `rdsh host serve` in the foreground — [CLI mode](en/01-06-cli-mode.md);
-    - **System-service mode**: one command installs an always-on, boot-starting service, by platform: [Linux (systemd, verified)](en/01-07-host-service-mode-linux.md) · [macOS (launchd: starts after login + crash recovery; fully unattended needs a LaunchDaemon, not yet — also needs the upcoming release ≥ 0.10.1)](en/01-07-host-service-mode-mac.md) · [Windows (limited today: WSL2 route)](en/01-07-host-service-mode-windows.md).
+    - **System-service mode**: one command installs an always-on, boot-starting service, by platform: [Linux (systemd, verified)](en/01-07-host-service-mode-linux.md) · [macOS (launchd: starts after login + crash recovery; needs remote-dsh ≥ 0.10.1; fully unattended needs a LaunchDaemon, not yet)](en/01-07-host-service-mode-mac.md) · [Windows (limited today: WSL2 route)](en/01-07-host-service-mode-windows.md).
 - **Team & security**: 2FA, password recovery, host sharing, audit log — [account security & team sharing](en/01-08-account-security.md).
 
 ## 2. Move DSH to a cloud server: HTTPS + password sign-in (bring your own cert)

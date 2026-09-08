@@ -12,6 +12,14 @@
 ### 新增
 
 - `dsh-web-remote`（0.2.0，未发布）：「远程访问」面板新增**「端到端加密时，信任为本地访问（兼容模式）」复选框**（`dshUiCompat.trustE2EEAsLoopback`，默认开启）——开启后经隧道转发的 JS 响应按 loopback 对待，DSH 的 Models / API key 设置可远程使用；并新增**启动自动接入**（host.json 为 join 模式且有持久化 token、隧道未被 CLI 持有时自动复用 token 建隧道，行为与 `rdsh host serve` 一致），消除「需先点接入才有隧道」的鸡生蛋。
+
+## [rdsh-gateway 0.8.1 · remote-dsh 0.10.1] - 2026-09-08
+
+### 修复
+
+- macOS（launchd）上的 `rdsh host service install`：`ProgramArguments` 现在把 node / 脚本 / 参数拆成独立 `<string>` argv 元素（launchd 不做空格切分——旧的单字符串形式导致服务无法 exec）；重装幂等（先 unload 再 load）；`KeepAlive` 仅失败退出时重启（与 Linux `Restart=on-failure` 对齐）；`rdsh host service status` 经 `launchctl print` 的 state 区分 `active` 与 `loaded (not running)`。详见 `doc/fix/20260908-host-service-launchd/`。
+- 注：macOS 修复尚未在真实 Intel / Apple Silicon 机器上回归（Linux systemd 路径未变，已实测）。
+
 ## [rdsh-gateway 0.8.0 · dsh-web-remote 0.5.0 · remote-dsh 0.10.0] - 2026-09-08
 
 ### 新增

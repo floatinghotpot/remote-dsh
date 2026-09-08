@@ -1,7 +1,7 @@
 # Background service · macOS: auto-start after login — reach your DSH securely from anywhere
 
 > 2026-09-08 · rdsh.cn cloud service
-> rdsh.cn onboarding series: ③ access mode 3: background service — **macOS (launchd) post (this post, pending new-release verification)** (separate posts for Linux / Windows)
+> rdsh.cn onboarding series: ③ access mode 3: background service — **macOS (launchd) post (this post, needs remote-dsh ≥ 0.10.1)** (separate posts for Linux / Windows)
 
 ---
 
@@ -27,7 +27,7 @@ macOS runs this as a **user-level LaunchAgent**: it loads only **after you sign 
 - A Mac (Intel or Apple Silicon) with `dsh` installed (the service starts the DSH web UI for you);
 - An rdsh.cn account (generate the token on the spot when needed).
 
-> ⚠️ **Version prerequisite**: macOS background-service support (launchd) depends on a **release that isn't published yet** — it requires remote-dsh ≥ 0.10.1 / rdsh-gateway ≥ 0.8.1 (npm currently has 0.10.0 / 0.8.0, without the fix). Confirm before you start:
+> ⚠️ **Version prerequisite**: macOS background-service support (launchd) requires **remote-dsh ≥ 0.10.1 / rdsh-gateway ≥ 0.8.1** (the release with the launchd fix). Confirm you have the new version before you start:
 
 ```bash
 npm view remote-dsh version    # should show 0.10.1 or higher

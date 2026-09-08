@@ -12,6 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `dsh-web-remote` (0.2.0, unreleased): the Remote Access panel gains a **"Trust as local access when E2EE (compatibility)"** checkbox (`dshUiCompat.trustE2EEAsLoopback`, on by default) — with the patch, JS responses relayed through the tunnel treat the browser as loopback, so DSH's Models / API-key settings work remotely; and the plugin now **auto-connects at boot** when `host.json` is in join mode with a persisted token and no CLI owns the tunnel (same behavior as `rdsh host serve`), removing the "connect first to reach the panel" chicken-and-egg.
+
+## [rdsh-gateway 0.8.1 · remote-dsh 0.10.1] - 2026-09-08
+
+### Fixed
+
+- `rdsh host service install` on macOS (launchd): `ProgramArguments` now splits node / script / args into separate `<string>` argv elements (launchd does not split on spaces — the old single-string form made the service fail to exec); reinstalling is idempotent (unload before load); `KeepAlive` restarts only on failed exit (aligned with Linux `Restart=on-failure`); `rdsh host service status` distinguishes `active` from `loaded (not running)` via `launchctl print` state. See `doc/fix/20260908-host-service-launchd/`.
+- Note: macOS fix is not yet regression-tested on real Intel / Apple Silicon hardware (Linux systemd path unchanged, verified).
+
 ## [rdsh-gateway 0.8.0 · dsh-web-remote 0.5.0 · remote-dsh 0.10.0] - 2026-09-08
 
 ### Added

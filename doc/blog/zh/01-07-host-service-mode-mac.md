@@ -1,7 +1,7 @@
 # 后台服务 · macOS：登录后自启，在哪都能安全连回你的 DSH
 
 > 2026-09-08 · rdsh.cn 云服务
-> rdsh.cn 上手系列：③ 接入方式三：后台服务 —— **macOS（launchd）篇（本文，待新版验证）**（Linux / Windows 另有分篇）
+> rdsh.cn 上手系列：③ 接入方式三：后台服务 —— **macOS（launchd）篇（本文，需 remote-dsh ≥ 0.10.1）**（Linux / Windows 另有分篇）
 
 ---
 
@@ -27,7 +27,7 @@ macOS 的后台服务是**用户级 LaunchAgent**：它在你**用图形界面�
 - 一台 macOS 电脑（Intel 或 Apple Silicon），装好了 `dsh`（服务会自动拉起 DSH 网页版）；
 - 一个 rdsh.cn 账号（令牌用的时候现生成即可）。
 
-> ⚠️ **版本前提**：macOS 的后台服务（launchd）支持依赖**尚未发布的新版本**——需要 remote-dsh ≥ 0.10.1 / rdsh-gateway ≥ 0.8.1（当前 npm 上为 0.10.0 / 0.8.0，尚未包含该修复）。开始前先确认：
+> ⚠️ **版本前提**：macOS 的后台服务（launchd）支持需要 **remote-dsh ≥ 0.10.1 / rdsh-gateway ≥ 0.8.1**（launchd 修复所在版本）。开始前先确认装的是新版本：
 
 ```bash
 npm view remote-dsh version    # 应显示 0.10.1 或更高

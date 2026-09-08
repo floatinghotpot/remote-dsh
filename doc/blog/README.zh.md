@@ -18,7 +18,7 @@
   - 然后每台机器三选一接入方式：
     - **插件模式**：DSH 界面内「远程访问」面板——免 CLI、免服务 —— [装 dsh-web-remote 插件](zh/01-05-plugin-mode.md)；
     - **CLI 模式**：`rdsh host join` + `rdsh host serve` 前台运行 —— [CLI 模式接入](zh/01-06-cli-mode.md)；
-    - **系统服务模式**：一条命令装好常驻、开机自启的服务，按平台分篇：[Linux（systemd，已实测）](zh/01-07-host-service-mode-linux.md) · [macOS（launchd：登录后自启 + 崩溃自愈；完全无人值守需系统级 LaunchDaemon，尚未提供——另需待新版 ≥ 0.10.1）](zh/01-07-host-service-mode-mac.md) · [Windows（当前受限：走 WSL2 路线）](zh/01-07-host-service-mode-windows.md)。
+    - **系统服务模式**：一条命令装好常驻、开机自启的服务，按平台分篇：[Linux（systemd，已实测）](zh/01-07-host-service-mode-linux.md) · [macOS（launchd：登录后自启 + 崩溃自愈；需 remote-dsh ≥ 0.10.1；完全无人值守需系统级 LaunchDaemon，尚未提供）](zh/01-07-host-service-mode-mac.md) · [Windows（当前受限：走 WSL2 路线）](zh/01-07-host-service-mode-windows.md)。
 - **团队与安全**：两步验证（2FA）、找回密码、主机共享、审计日志 —— [账号安全与团队共享](zh/01-08-account-security.md)。
 
 ## 2. 把 DSH 搬上云服务器：HTTPS + 密码直连（证书自备）
