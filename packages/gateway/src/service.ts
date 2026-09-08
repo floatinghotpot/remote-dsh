@@ -82,9 +82,10 @@ WantedBy=default.target
 `;
 }
 
-/** launchd plist 模板。 */
-export function launchdPlist(execStart: string, spec: ServiceSpec): string {
-  const args = commandArgs(spec).map((a) => `    <string>${a}</string>`).join("\n");
+/** launchd plist 模板。program 为启动前缀 argv（[node, 脚本]），命令参数由 spec 提供——
+ * launchd 不做空格切分，每个 <string> 是一个 argv 元素，故 node 与脚本必须分开。 */
+export function launchdPlist(program: string[], spec: ServiceSpec): string {
+  const argLines = [...program, ...commandArgs(spec)].map((a) => `    <string>${a}</string>`).join("\n");
   const envBlock =
     spec.pathEnv !== undefined
       ? `  <key>EnvironmentVariables</key>
@@ -102,13 +103,15 @@ export function launchdPlist(execStart: string, spec: ServiceSpec): string {
   <string>com.${spec.name}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>${execStart}</string>
-${args}
+${argLines}
   </array>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
-  <true/>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
 ${envBlock}  <key>StandardOutPath</key>
   <string>${serviceLogPath(spec.name)}</string>
   <key>StandardErrorPath</key>
@@ -129,18 +132,25 @@ async function run(cmd: string, args: string[]): Promise<string> {
 
 /** 安装并启动服务（用户级）。 */
 export async function installService(spec: ServiceSpec): Promise<string> {
-  const execStart = `${process.execPath} ${process.argv[1]}`;
+  const bin = process.argv[1];
+  if (bin === undefined) {
+    throw new Error("cannot install a service: the running entry script (process.argv[1]) is unknown");
+  }
   if (isLinux()) {
+    const execStart = `${process.execPath} ${bin}`;
     await mkdir(SYSTEMD_DIR, { recursive: true });
     await writeFile(systemdUnitPath(spec.name), systemdUnit(execStart, spec), { mode: 0o600 });
     await run("systemctl", ["--user", "daemon-reload"]);
     await run("systemctl", ["--user", "enable", "--now", spec.name]);
     return `installed systemd user unit: ${systemdUnitPath(spec.name)}`;
   }
+  // macOS（launchd）：ProgramArguments 不做空格切分 —— node 与脚本必须作为独立 argv 元素
+  const plistPath = launchdPlistPath(spec.name);
   await mkdir(LAUNCHD_DIR, { recursive: true });
-  await writeFile(launchdPlistPath(spec.name), launchdPlist(execStart, spec), { mode: 0o600 });
-  await run("launchctl", ["load", launchdPlistPath(spec.name)]);
-  return `installed launchd plist: ${launchdPlistPath(spec.name)}`;
+  await writeFile(plistPath, launchdPlist([process.execPath, bin], spec), { mode: 0o600 });
+  await run("launchctl", ["unload", plistPath]).catch(() => undefined); // 重装幂等：先卸旧 job（不存在时忽略）
+  await run("launchctl", ["load", plistPath]);
+  return `installed launchd plist: ${plistPath}`;
 }
 
 /** 服务状态。 */
@@ -154,8 +164,9 @@ export async function serviceStatus(name: string = SERVICE_NAME): Promise<string
     }
   }
   try {
-    await run("launchctl", ["print", `com.${name}`]);
-    return "active";
+    const out = await run("launchctl", ["print", `com.${name}`]);
+    // loaded 但进程已退出的 job（如 exec 失败）print 仍成功 —— 按 state 细分
+    return out.includes("state = running") ? "active" : "loaded (not running)";
   } catch {
     return "unloaded";
   }
