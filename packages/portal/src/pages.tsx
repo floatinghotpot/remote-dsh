@@ -1045,7 +1045,7 @@ function TwoFaSettingsPage(): React.JSX.Element {
               <p style={{ margin: "2px 0" }}>· {t("Microsoft Authenticator —— 推荐首选：安卓与 iPhone 均可在应用商店/官网获取，不依赖 Google Play")}</p>
               <p style={{ margin: "2px 0" }}>· {t("Google Authenticator —— 安卓需 Google Play；iPhone 在 App Store")}</p>
             </div>
-          twofa === null ? (
+          {twofa === null ? (
             <button
               onClick={() => void run(async () => {
                 const r = await api.enable2fa();
@@ -1077,7 +1077,7 @@ function TwoFaSettingsPage(): React.JSX.Element {
                 style={btnStyle()}
               >{t("确认开启")}</button>
             </div>
-          )
+          )}
           </>
         ) : (
           <div>
