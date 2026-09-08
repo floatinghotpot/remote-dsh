@@ -568,6 +568,7 @@ function Login(): React.JSX.Element {
           <label style={{ display: "block", marginBottom: 12, fontSize: 13 }}>
             <input type="checkbox" checked={trustDevice} onChange={(e) => setTrustDevice(e.target.checked)} /> {t("记住此设备 30 天（下次登录免输动态码）")}
           </label>
+          <p style={{ margin: "-6px 0 12px", fontSize: 12, color: "#9ca3af" }}>{t("（自己的常用设备可勾选；公用或他人的设备请勿勾选）")}</p>
         </div>
       ) : (
         <>
@@ -1037,6 +1038,13 @@ function TwoFaSettingsPage(): React.JSX.Element {
       {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
       <Card title={t("两步验证（TOTP）")} badge={<Badge ok={enabled} text={enabled ? t("已开启") : t("未开启")} />}>
         {!enabled ? (
+          <>
+            <p style={{ fontSize: 13, lineHeight: 1.7, marginTop: 0, color: "#444" }}>{t("两步验证（2FA）：登录时除了密码，还要输入手机验证器 App 生成的 6 位动态码（每 30 秒变化一次）——登录要同时通过“你知道的密码”和“你手机上的验证码”两道关，建议开启。")}</p>
+            <div style={{ background: "#f8fafc", border: "1px solid #eee", borderRadius: 8, padding: 12, margin: "0 0 12px", fontSize: 12, color: "#444" }}>
+              <p style={{ margin: "0 0 4px", fontWeight: 600 }}>{t("选择验证器 App（任意 TOTP 应用均可）：")}</p>
+              <p style={{ margin: "2px 0" }}>· {t("Microsoft Authenticator —— 推荐首选：安卓与 iPhone 均可在应用商店/官网获取，不依赖 Google Play")}</p>
+              <p style={{ margin: "2px 0" }}>· {t("Google Authenticator —— 安卓需 Google Play；iPhone 在 App Store")}</p>
+            </div>
           twofa === null ? (
             <button
               onClick={() => void run(async () => {
@@ -1050,18 +1058,18 @@ function TwoFaSettingsPage(): React.JSX.Element {
             <div>
               <p style={{ fontSize: 13, marginTop: 0 }}>{t("用 Authenticator App 扫描二维码，或手动输入密钥：")}</p>
               {qrDataUrl !== "" && <img src={qrDataUrl} alt="TOTP QR" style={{ width: 200, height: 200, borderRadius: 6, border: "1px solid #eee", marginBottom: 8 }} />}
-              <p style={{ fontSize: 13 }}>{t("密钥（复制到 Google Authenticator / Microsoft Authenticator / 1Password 等）：")}</p>
+              <p style={{ fontSize: 13 }}>{t("密钥（手动添加账号时粘贴）：")}</p>
               <code style={{ wordBreak: "break-all" }}>{twofa.secret}</code>
               <div style={{ background: "#f8fafc", border: "1px solid #eee", borderRadius: 8, padding: 12, margin: "12px 0", fontSize: 12, color: "#444" }}>
                 <p style={{ margin: "0 0 4px", fontWeight: 600 }}>{t("设置步骤：")}</p>
-                <p style={{ margin: "2px 0" }}>1. {t("打开 Authenticator App（微软 / Google / 1Password 均可）")}</p>
+                <p style={{ margin: "2px 0" }}>1. {t("任选一款验证器 App 并打开（见上方清单）")}</p>
                 <p style={{ margin: "2px 0" }}>2. {t("添加账号 → 扫码绑定；无法扫码时选「手动输入」，粘贴下方密钥")}</p>
                 <p style={{ margin: "2px 0" }}>3. {t("App 生成 6 位动态码（每 30 秒轮换）")}</p>
                 <p style={{ margin: "2px 0" }}>4. {t("把动态码填回本页输入框（输满 6 位自动提交）→ 点「确认开启」")}</p>
                 <p style={{ margin: "8px 0 4px", fontWeight: 600 }}>{t("提示：")}</p>
                 <p style={{ margin: "2px 0" }}>· {t("密钥仅在此展示，开启后不再显示 —— 请确保 App 已成功绑定；建议保存密钥截图作备份")}</p>
-                <p style={{ margin: "2px 0" }}>· {t("绑定后每次登录需输入动态码；可选「记住此设备 30 天」免重复输入")}</p>
-                <p style={{ margin: "2px 0" }}>· {t("若换机/丢失 Authenticator，需联系管理员重置 2FA")}</p>
+                <p style={{ margin: "2px 0" }}>· {t("登录时可勾选「记住此设备 30 天」：自己的常用设备勾上，30 天内免输动态码；公用/他人设备请勿勾选；同一浏览器会话内也不会反复要求验证码")}</p>
+                <p style={{ margin: "2px 0" }}>· {t("若换机或丢失验证器，需联系平台支持重置 2FA")}</p>
               </div>
               {field(t("当前 TOTP 验证码"), twofaCode, setTwofaCode, "text", { numeric: true })}
               <button
@@ -1070,6 +1078,7 @@ function TwoFaSettingsPage(): React.JSX.Element {
               >{t("确认开启")}</button>
             </div>
           )
+          </>
         ) : (
           <div>
             <p style={{ fontSize: 13, color: "#6b7280", marginTop: 0 }}>{t("已开启两步验证，登录时需输入 TOTP 动态验证码。")}</p>
@@ -2309,6 +2318,7 @@ function AdminLogin({ onSuccess }: { onSuccess: () => void }): React.JSX.Element
       <label style={{ display: "block", fontSize: 13, marginBottom: 12 }}>
         <input type="checkbox" checked={trustDevice} onChange={(e) => setTrustDevice(e.target.checked)} /> {t("记住此设备 30 天（下次登录免输动态码）")}
       </label>
+      <p style={{ margin: "-4px 0 12px", fontSize: 12, color: "#9ca3af" }}>{t("（自己的常用设备可勾选；公用或他人的设备请勿勾选）")}</p>
       {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
       <button onClick={submit} style={{ ...adminBtnStyle(), width: "100%", padding: "10px", fontSize: 15 }}>{t("进入")}</button>
     </div>
