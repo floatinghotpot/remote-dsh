@@ -8,22 +8,37 @@
 
 ## 为什么选择 remote-dsh
 
-- **浏览器即用**：免公网 IP、免装客户端，开浏览器就能指挥智能体；
+- **浏览器即用**：免公网 IP、免装客户端，开浏览器就能指挥智能体，不限设备（PC、平板、手机），不限系统（Mac、Windows、Linux、iOS、安卓、鸿蒙）；
+- **持续在线**：会话保持连续，跨设备（PC、平板、手机）无缝接力，工作流不中断；
 - **双通道接入**：DSH 插件（`dsh-web-remote`）一键接入，或 CLI（`remote-dsh`）灵活自控；
+- **全程加密**：TLS 链路加密 + 端到端加密（E2EE），Hub 只转发密文，看不到你的操作与数据；
+- **账号防护**：登录密码 + 双重认证（2FA），连续输错自动锁定，防撞库、防盗号；
+- **主机访问密码**：主机可再设置一道独立密码，与账号互为双保险，即使 Hub 管理员，也无法进入；
+- **访问隔离**：你的主机只有你和你授权的人可见，其他人一律不可见；
 - **开源可信**：MIT 开源、协议冻结，可自托管、可被集成、可代码审计，安全无忧。
 
 ## 使用场景
 
 ### ① 快速上手（rdsh Hub 云转发）
 - **适合**：大多数用户，想最快用上 —— 不用自己搭 Hub、不用公网 IP，在自己机器上装个 DSH 插件即可；
-- **需要**：一个 rdsh 账号 + DSH 插件 `dsh-web-remote`；
+- **需要**：一个 rdsh 账号（到 [rdsh.cn](https://rdsh.cn) 注册）+ DSH 插件 `dsh-web-remote`；
 - **效果**：任何地方（电脑 / 手机 / 微信内浏览器）登录即用。
 
 ```bash
-dsh plugin add dsh-web-remote   # 在 DSH 里装插件，面板粘贴 hub 地址 + join token
-# 或走 CLI：
+# 方式一：DSH 插件（免装 CLI）：
+dsh plugin --profile web add dsh-web-remote   # 在 DSH 里装插件，面板粘贴 hub 地址 + join token
+```
+
+```bash
+# 方式二：CLI（前台运行）：
 npm install -g remote-dsh
-rdsh host join <hub-url>        # 出站隧道接入 hub
+rdsh host join <hub-url>        # 一次性：向 hub 注册并保存会话
+rdsh host serve                 # 前台运行（自动拉起 dsh web 并建立隧道）
+```
+
+```bash
+# 方式三：系统服务（后台常驻，开机自启）：
+rdsh host service install       # join 过即可装服务；或一步到位：rdsh host service install <hub-url> --token <t>
 ```
 
 ### ② 专业直连（免 Hub）
@@ -53,7 +68,7 @@ rdsh hub serve                  # 自建 hub（内置 TLS 或反代部署）
 ![remote-dsh 架构图](media/rdsh-arch.jpg)
 
 ```
-        客户端（浏览器 / App / 小程序）
+        客户端（浏览器）
                     │
                     │  HTTPS/WSS —— 层1：hub 对外 API
                     ▼
@@ -81,8 +96,6 @@ rdsh hub serve                  # 自建 hub（内置 TLS 或反代部署）
 | 隧道协议 | rdsh-tunnel | 线协议：帧复用、心跳、背压 |
 | 门户 | rdsh-portal | 网页登录 + host 列表（Vite + React） |
 | DSH 插件 | dsh-web-remote | DSH 界面内的远程访问面板（免装 CLI） |
-| 手机 App | rdsh-app | Flutter（Android/iOS） |
-| 微信小程序 | rdsh-weapp | 轻量客户端 |
 
 ## 能力与状态
 
@@ -94,17 +107,23 @@ rdsh hub serve                  # 自建 hub（内置 TLS 或反代部署）
 - **多租户与安全**：邮箱验证 + 2FA、共享授权（owner/member）、审计日志、登录风控（锁定 + 限流）、IP 白名单、可选主机访问密码（与账号互为双保险，Hub 管理员也无法进入）
 - **双通道分发**：`dsh-web-remote` 插件（免装 CLI）或 `remote-dsh` CLI；`rdsh hub` 支持内置 TLS 或反代部署
 
-**规划中**：SaaS 商业化托管 hub、手机 App（Android/iOS）、微信小程序。
+**规划中**：SaaS 商业化托管 hub。
 
 ## 博客
 
 场景化教程，从简单到复杂 — 完整索引：[中文](doc/blog/README.zh.md) · [English](doc/blog/README.md)
 
-- [在家/办公室用任意设备遥控开发机的 DSH（局域网配对码）](doc/blog/zh/01-01-lan-access.md)
+**现在就能用（推荐路线）**：
+- [注册 rdsh.cn 账号：3 分钟，迈出远程访问 DSH 的第一步](doc/blog/zh/01-03-rdsh-account.md)
+- [获取接入令牌：把电脑绑定到你的账号](doc/blog/zh/01-04-join-token.md)
+- [装个插件，在哪都能安全连回你的 DSH](doc/blog/zh/01-05-plugin-mode.md)——电脑上已在跑 DSH 网页版，这就是最省事的接入方式
+
+**可选：其他接入方式与进阶**：
+- [一条命令，在哪都能安全连回你的 DSH](doc/blog/zh/01-06-cli-mode.md)——命令行版，能力相同
+- [局域网配对码直连：同一网络内遥控 DSH](doc/blog/zh/01-01-lan-access.md)
+- [账号安全：平台给你的保护，和你自己可以再加的几道锁](doc/blog/zh/01-08-account-security.md)
 - [把 DSH 搬上云服务器：HTTPS + 密码直连（证书自备）](doc/blog/zh/02-01-cloud-single-tls.md)
-- [无法 IP 直连？通过 hub 服务转发、一个账号管理多个主机（推荐）](doc/blog/zh/03-04-join-token.md)
-- [不想装 CLI？给 DSH 装插件，界面里点一下就远程访问](doc/blog/zh/03-05-plugin.md)
-- [搭建你自己的 hub 转发服务：hub + apache2（443 + 证书自动续期）](doc/blog/zh/03-02-hub-behind-apache-https.md)
+- [自建 hub 转发服务：ECS 内置 TLS 部署（最快）](doc/blog/zh/03-01-hub-public.md)
 
 ## 版本兼容
 
@@ -113,7 +132,7 @@ remote-dsh 跟随最新 DeepSeek Harness（dsh）。**一个 rdsh 版本实测�
 ## 开发
 
 - Node.js ≥ 22（见 `.nvmrc`）、pnpm ≥ 9
-- TypeScript monorepo（`packages/*`）、Flutter App（`apps/app`）、微信小程序（`apps/weapp`）、未来 Go hub（`go/`）
+- TypeScript monorepo（`packages/*`）、未来 Go hub（`go/`）
 - 贡献指南见 [CONTRIBUTING.md](CONTRIBUTING.md)，内部文档见 `doc/`
 
 ## 许可证
