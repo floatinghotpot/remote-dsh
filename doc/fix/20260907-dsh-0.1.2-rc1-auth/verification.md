@@ -5,7 +5,7 @@
 
 ## 1. 结论
 
-核心修复（cookie 换发 + 注入，T1–T6）**已实现、已编译、已真机冒烟通过**；版本提示（warn）、兼容记录、CI 冒烟与失败 issue 就位。三模式中 serve 模式端到端真机验证通过，join 与插件模式靠单测 + 共享内核覆盖（真机待 hub 环境，见 §5 gap）。
+核心修复（cookie 换发 + 注入，T1–T6）**已实现、已编译、已真机冒烟通过**；版本提示（warn）、兼容记录、CI 冒烟与失败 issue 就位。三模式中 serve、join 端到端真机验证通过，插件模式远端端到端于 2026-09-08 由真实用户补齐（见 §4 / §5 G1）。
 
 ## 2. RTTM 复查
 
@@ -38,12 +38,13 @@
 - **破坏面 D 修复真机（2026-09-07）**：0.1.2 index 默认 gzip 曾使 hub 返回条 + E2EE shim 注入失效（`relay.ts` canInject 因 `content-encoding` 跳过）。修复（`rewriteHeadersForDsh` 对文档请求剥离 `accept-encoding`）后：dsh 返回明文（无 content-encoding）、body 含 `</head>`；重启 join，**远端浏览器确认返回按钮恢复** ✅；
 - **0.1.1-rc.2 真机冒烟（2026-09-07）**：`pnpm add` 隔离安装 0.1.1-rc.2，冒烟脚本 **S1–S7 全 PASS**（S2 token=absent → 不换发分支正确；S3 GET / 200 无认证层；S5 WS upgrade `/api/events.mux` 101；S7 patch 命中，pnpm 布局支持）。新 rdsh 代码对 0.1.1 线完全兼容 ✅；
 - **插件模式本地装载验证（2026-09-07）**：symlink 注入 profile + `cordis.patch.yml`（不发布 npm），新版 `dsh-web-remote`（含 T6 换发）在真实 dsh 0.1.2-rc.1 宿主装载成功——`autoConnect` 跑起（`reusing persisted host token`）、`startJoin` 隧道核心 `acquireJoinLock`（role=plugin）成功。插件装载/宿主 API/进程内换发链已本地验证 ✅（远端浏览器端到端见 G1）。
+- **插件模式远端浏览器端到端（2026-09-08，真实用户）**：dsh `0.1.2-rc.1` + npm 安装的 `dsh-web-remote@0.5.0`/`rdsh-gateway@0.8.0`（profile `~/.dsh/profiles/web`），插件 autoConnect 建隧道后**真实 hub 远端浏览器访问 DSH 正常**——G1 关闭 ✅（附注：此前误装 0.4.0 的根因与排查见 `doc/review/20260908-pnpm-12-minimum-release-age-plugin-install.md`）。
 
 ## 5. Gap 清单
 
 | # | 缺口 | 严重度 | 建议 |
 |---|---|---|---|
-| G1 | 插件模式**远端浏览器端到端**未验（本地装载/隧道启动/换发链已验） | P1 | 发布前在真实 hub 用浏览器经插件隧道访问一次（与 join 模式同构，join 已验 200） |
+| G1 | ~~插件模式**远端浏览器端到端**未验~~（本地装载/隧道启动/换发链已验） | P1 → ✅ | **已解决**（2026-09-08 真实用户经 hub 远端浏览器访问正常，见 §4） |
 | G2 | CI `dsh-compat.yml` 尚未在 GitHub 实跑（本地脚本已验） | P1 | push 后由 PR/每日 schedule 首次运行验证 |
 
 *关联文档：discussion.md · solution.md · plan.md*

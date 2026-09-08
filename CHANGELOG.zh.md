@@ -18,6 +18,7 @@
 
 - 适配 dsh `0.1.2-rc.1`：rdsh 现在会换发并代持 dsh 的浏览器会话 cookie（0.1.2 引入），注入所有转发请求（HTTP + WebSocket），覆盖三条访问路径（局域网 serve / hub join / `dsh-web-remote` 插件），在最新 dsh 上远程访问恢复正常；`0.1.1` 线经就绪行行为探测仍照常工作（自适应、无版本分叉）。运行时版本检查在实测窗口外 warn（不阻断）并打印升级命令。
 - 修复：dsh 0.1.2 对 index 文档默认 gzip 压缩，导致 hub 注入的返回条与 E2EE shim 静默跳过；rdsh 现在对文档导航请求剥离 `accept-encoding`，使 dsh 返回明文 HTML，注入的 UI（返回主机列表、E2EE 数据面）恢复。
+- 安装注意（pnpm ≥ 12）：`dsh plugin add`（裸名或 `@latest`）在版本发布 24 小时内会因 pnpm 默认 `minimumReleaseAge` 策略**静默装上一版本**——装完请以 `dsh plugin ls` 核对实际版本；版本敏感时用 `dsh plugin add <pkg>@<精确版本>` 钉版（详见 `doc/review/20260908-pnpm-12-minimum-release-age-plugin-install.md`）。
 
 ### dsh 兼容矩阵
 
