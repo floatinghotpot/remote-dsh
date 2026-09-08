@@ -117,11 +117,9 @@ nginx -t && systemctl reload nginx
 
 ## 三篇选哪个？
 
-| 方案 | hub 证书 | 端口 | 适用 |
-|---|---|---|---|
-| [③ hub 内置 TLS](../zh/03-01-hub-public.md) | hub 自己持 | 8443 | 单服务、快速起步 |
-| [④ apache2 反代](../zh/03-02-hub-behind-apache-https.md) | apache2（acme.sh） | 443 | 已在用 apache2 |
-| **⑤ nginx 反代（本文）** | nginx（certbot/acme.sh） | 443 | 已在用 nginx / 偏好 nginx |
+- **[③ hub 内置 TLS](../zh/03-01-hub-public.md)**：hub 自己持，8443，单服务、快速起步
+- **[④ apache2 反代](../zh/03-02-hub-behind-apache-https.md)**：apache2（acme.sh），443，已在用 apache2
+- **⑤ nginx 反代（本文）**：nginx（certbot/acme.sh），443，已在用 nginx / 偏好 nginx
 
 ## 注意事项
 

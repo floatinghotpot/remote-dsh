@@ -17,11 +17,9 @@ No public hub to set up, no ports exposed — **the VPN handles the link, rdsh h
 
 ## Prerequisites
 
-| Item | Notes |
-|---|---|
-| Home/office | A DSH host (Windows/Mac/Linux) with `remote-dsh` installed |
-| VPN | WireGuard / OpenVPN / corporate VPN, reachable from outside |
-| On the road | Laptop/phone with the VPN client |
+- **Home/office**: A DSH host (Windows/Mac/Linux) with `remote-dsh` installed
+- **VPN**: WireGuard / OpenVPN / corporate VPN, reachable from outside
+- **On the road**: Laptop/phone with the VPN client
 
 ## Three steps
 
@@ -58,10 +56,8 @@ The pairing code is **only shown in the home host's terminal** — a physical tr
 
 ## VPN backhaul vs the public hub
 
-| Option | Use case | Notes |
-|---|---|---|
-| **VPN backhaul (this post)** | Already have a VPN at work/home | Reuse existing infra, zero extra deployment; `rdsh host serve` pairing works as-is |
-| [Public hub (`rdsh host join`)](../en/03-01-hub-public.md) | No VPN | Outbound tunnel, no network config at all, one URL for all machines |
+- **VPN backhaul (this post)**: Already have a VPN at work/home; Reuse existing infra, zero extra deployment; `rdsh host serve` pairing works as-is
+- **[rdsh cloud hub (`rdsh host join`)](01-03-rdsh-account.md)**: No VPN; Outbound tunnel, no network config at all, one URL for all machines
 
 ## Notes
 

@@ -28,12 +28,10 @@ Your browser ──https──► cloud server:8443 (rdsh) ──auth──► 1
 
 ## Prerequisites
 
-| Item | Requirement |
-|---|---|
-| Cloud server | Alibaba Cloud ECS etc., Ubuntu 22.04+ (headless is fine) |
-| Node.js | ≥ 22 (`node -v`) |
-| dsh | Installed with `dsh` in PATH |
-| Domain | **Optional**: with a domain you can get a trusted cert automatically (acme.sh / Let's Encrypt); without one, self-sign manually (browser trusts once) |
+- **Cloud server**: Alibaba Cloud ECS etc., Ubuntu 22.04+ (headless is fine)
+- **Node.js**: ≥ 22 (`node -v`)
+- **dsh**: Installed with `dsh` in PATH
+- **Domain**: **Optional**: with a domain you can get a trusted cert automatically (acme.sh / Let's Encrypt); without one, self-sign manually (browser trusts once)
 
 ## Deploy in six steps
 
@@ -138,11 +136,9 @@ rdsh host service uninstall    # remove service (stop + disable auto-start)
 
 ## When to switch to a reverse proxy (next posts)
 
-| Need | Use |
-|---|---|
-| Single port, quick start | **This post: standalone + built-in TLS** |
-| Have a domain; standard 443; fully automatic cert renewal | [③ Apache2 reverse proxy](../en/02-02-cloud-apache-acme.md) |
-| Already running nginx for other sites; share port 443 | [④ nginx reverse proxy](../en/02-03-cloud-nginx.md) |
+- **Single port, quick start**: **This post: standalone + built-in TLS**
+- **Have a domain; standard 443; fully automatic cert renewal**: [③ Apache2 reverse proxy](../en/02-02-cloud-apache-acme.md)
+- **Already running nginx for other sites; share port 443**: [④ nginx reverse proxy](../en/02-03-cloud-nginx.md)
 
 When multiple services share 443 and the reverse proxy manages certs, rdsh just needs `behindProxy: true` listening on 127.0.0.1 — see you there.
 

@@ -21,11 +21,9 @@ You want: **from anywhere, open one URL in the browser, sign in once, and switch
 
 ## How it relates to the earlier posts
 
-| Option | Use case | Notes |
-|---|---|---|
-| [① LAN control](../en/01-01-lan-access.md) | Single machine, same Wi-Fi | `rdsh host serve` pairing code |
-| [②③④ Cloud-server direct](../en/02-01-cloud-single-tls.md) | Single machine with a public IP | `rdsh host serve` + HTTPS / reverse proxy |
-| **⑤ Public hub (this post)** | **Multiple machines, no public IP** | `rdsh host join` outbound tunnel + hub portal |
+- **[① LAN control](../en/01-01-lan-access.md)**: Single machine, same Wi-Fi; `rdsh host serve` pairing code
+- **[②③④ Cloud-server direct](../en/02-01-cloud-single-tls.md)**: Single machine with a public IP; `rdsh host serve` + HTTPS / reverse proxy
+- **⑤ Public hub (this post)**: **Multiple machines, no public IP**; `rdsh host join` outbound tunnel + hub portal
 
 ## Architecture
 
@@ -85,7 +83,7 @@ Where does the join token come from? Sign in to the hub portal → "**Add host**
 2. Paste and run it on the machine (the command contains the one-time join token) → it registers and establishes its tunnel, appearing in your list;
 3. To run it as a background service (auto-start + crash-restart): `rdsh host service install https://hub.example.com --token <t> --name my-mac`.
 
-Full details (restart reuse, one token for several machines, revocation semantics) in [join token access](03-04-join-token.md). Repeat on all three machines — your list now shows them all with live online status.
+Full details (restart reuse, one token for several machines, revocation semantics) in [get a join token](01-04-join-token.md). Repeat on all three machines — your list now shows them all with live online status.
 
 ### ③ Use it from anywhere
 
@@ -98,20 +96,18 @@ Open `https://hub.example.com` → sign in → see your machines (●online / �
 
 ## Real-world experience (0.4.0, tested)
 
-| Item | Experience |
-|---|---|
-| Binding | Paste the join token once; the host token persists on the machine |
-| Switching machines | In and out of the list, anytime |
-| Remote access | Public https, same as being at home |
-| Live stream | WebSocket relayed through the tunnel, execution visible in real time |
-| Disconnects | Auto-reconnect; the list flips back to online |
-| Revocation | Tunnel drops immediately, reconnects rejected (token void) |
+- **Binding**: Paste the join token once; the host token persists on the machine
+- **Switching machines**: In and out of the list, anytime
+- **Remote access**: Public https, same as being at home
+- **Live stream**: WebSocket relayed through the tunnel, execution visible in real time
+- **Disconnects**: Auto-reconnect; the list flips back to online
+- **Revocation**: Tunnel drops immediately, reconnects rejected (token void)
 
 ## Security notes (important)
 
 - **Registration is closed**: hub accounts are created only by the admin (`rdsh hub user add`) — bots/spam accounts can't sign up
 - **Login rate limiting**: 5 failed attempts per IP → 10-minute lockout; counted by real IP
-- **Password change**: self-service in the portal (verify current password) → **all logged-in devices drop instantly**; if forgotten, reset it yourself after binding an email (see [account security](03-06-account-security.md)), or the admin resets it
+- **Password change**: self-service in the portal (verify current password) → **all logged-in devices drop instantly**; if forgotten, reset it yourself after binding an email (see [account security & team sharing](01-08-account-security.md)), or the admin resets it
 - **Host ownership**: a machine belongs to the account that bound it; others can't see it or access it (403)
 - **Tokens**: JWT sessions (instant invalidation on password change / revoke); machine tokens stored only as SHA-256 hashes
 - **Pure passthrough**: the hub never inspects business traffic; any dsh version per machine
@@ -130,7 +126,7 @@ rdsh hub service status             # hub status
 
 ## Next steps
 
-- **Share with your team**: grant a colleague access to a machine (M5 multi-tenant hardening, implemented: email verification, TOTP 2FA, host sharing, audit log, account lockout — see [usage.md §8.3](../overview/usage.md))
+- **Share with your team**: grant a colleague access to a machine (M5 multi-tenant hardening, implemented: email verification, TOTP 2FA, host sharing, audit log, account lockout — see [usage.md §8.3](../../overview/usage.md))
 - **Mobile**: phone app / WeChat mini program connecting straight to the hub (later milestones)
 - Curious about the protocol? Layer 1 (hub API) and layer 2 (tunnel protocol) are frozen contracts — see `packages/tunnel/PROTOCOL.md`
 

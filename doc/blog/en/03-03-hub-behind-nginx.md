@@ -117,11 +117,9 @@ nginx -t && systemctl reload nginx
 
 ## Which of the three?
 
-| Option | Hub cert | Port | Use case |
-|---|---|---|---|
-| [③ hub built-in TLS](../en/03-01-hub-public.md) | hub holds it | 8443 | Single service, quick start |
-| [④ Apache2 front](../en/03-02-hub-behind-apache-https.md) | Apache2 (acme.sh) | 443 | Already on Apache2 |
-| **⑤ nginx front (this post)** | nginx (certbot/acme.sh) | 443 | Already on nginx / prefer nginx |
+- **[③ hub built-in TLS](../en/03-01-hub-public.md)**: hub holds it · 8443 · Single service, quick start
+- **[④ Apache2 front](../en/03-02-hub-behind-apache-https.md)**: Apache2 (acme.sh) · 443 · Already on Apache2
+- **⑤ nginx front (this post)**: nginx (certbot/acme.sh) · 443 · Already on nginx / prefer nginx
 
 ## Notes
 

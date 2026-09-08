@@ -28,12 +28,10 @@
 
 ## 前置条件
 
-| 项 | 要求 |
-|---|---|
-| 云服务器 | 阿里云 ECS 等，Ubuntu 22.04+（headless 即可） |
-| Node.js | ≥ 22（`node -v` 确认） |
-| dsh | 已安装且 `dsh` 在 PATH 中 |
-| 域名 | **可选**：有域名可自动签发可信证书（acme.sh/Let's Encrypt）；没有域名可手动自签（浏览器需信任一次） |
+- **云服务器**：阿里云 ECS 等，Ubuntu 22.04+（headless 即可）
+- **Node.js**：≥ 22（`node -v` 确认）
+- **dsh**：已安装且 `dsh` 在 PATH 中
+- **域名**：**可选**：有域名可自动签发可信证书（acme.sh/Let's Encrypt）；没有域名可手动自签（浏览器需信任一次）
 
 ## 六步部署
 
@@ -138,11 +136,9 @@ rdsh host service uninstall    # 卸载服务（停止 + 移除自启）
 
 ## 什么时候改用反向代理（下一篇）
 
-| 需求 | 用哪种 |
-|---|---|
-| 就想单端口快速用 | **本文：单独 + 内置 TLS** |
-| 已有域名，想 443 标准端口、证书全自动续期 | [③ apache2 反代](../zh/02-02-cloud-apache-acme.md) |
-| 已在用 nginx 管别的站点，想共端口 443 | [④ nginx 反代](../zh/02-03-cloud-nginx.md) |
+- **就想单端口快速用**：**本文：单独 + 内置 TLS**
+- **已有域名，想 443 标准端口、证书全自动续期**：[③ apache2 反代](../zh/02-02-cloud-apache-acme.md)
+- **已在用 nginx 管别的站点，想共端口 443**：[④ nginx 反代](../zh/02-03-cloud-nginx.md)
 
 多服务共 443、证书由反代统一管理时，rdsh 只需 `behindProxy: true` 监听 127.0.0.1 —— 下一站见。
 

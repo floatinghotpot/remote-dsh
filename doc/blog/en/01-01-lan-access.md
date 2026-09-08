@@ -68,13 +68,11 @@ The pairing code is **only shown in the agent machine's terminal** — it's a "p
 
 ## Real-world experience (0.2.0, tested)
 
-| Item | Experience |
-|---|---|
-| Pairing | Enter once; no re-pairing for 12 hours |
-| Phone control | Full DSH UI (responsive) — chat / tools / files / live stream all work |
-| Folder picker | Works (0.2.0 fixed the secure-context compatibility) |
-| Large files / long tasks | Streamed transparently |
-| Ctrl+C exit | Clean — no leftover dsh processes |
+- **Pairing**: Enter once; no re-pairing for 12 hours.
+- **Phone control**: Full DSH UI (responsive) — chat / tools / files / live stream all work.
+- **Folder picker**: Works (0.2.0 fixed the secure-context compatibility).
+- **Large files / long tasks**: Streamed transparently.
+- **Ctrl+C exit**: Clean — no leftover dsh processes.
 
 ## Tips
 
@@ -85,12 +83,10 @@ rdsh host setup lan --pair-code 123456   # preset pairing code (e.g. put it in t
 
 ## Troubleshooting
 
-| Problem | Fix |
-|---|---|
-| Where's the pairing code? | Terminal line `pair code:`; a restart generates a new one |
-| Phone can't connect | Same Wi-Fi; allow incoming connections in macOS firewall; no AP isolation on router |
-| Port in use | Pick another with `rdsh host setup lan --port` |
-| Do I re-pair on a new device? | No — the code works for multiple devices; each has its own 12h session |
+- **Where's the pairing code?**: Terminal line `pair code:`; a restart generates a new one.
+- **Phone can't connect**: Same Wi-Fi; allow incoming connections in macOS firewall; no AP isolation on router.
+- **Port in use**: Pick another with `rdsh host setup lan --port`.
+- **Do I re-pair on a new device?**: No — the code works for multiple devices; each has its own 12h session.
 
 ## Security notes (important)
 
@@ -102,10 +98,8 @@ rdsh host setup lan --pair-code 123456   # preset pairing code (e.g. put it in t
 
 Two scenarios, two paths:
 
-| Scenario | Solution | Notes |
-|---|---|---|
-| Agent **deployed on a cloud server** (Alibaba Cloud ECS, etc.) | **M2 cloud-server direct access** | HTTPS + username/password + systemd service; direct public access ([cloud-server series ②/③/④](../en/02-01-cloud-single-tls.md)) |
-| Agent **on a home machine** (no public IP), accessing it remotely while traveling | **M3 hub tunnel** | The agent connects **outbound** to the hub only — no ports exposed ([⑤ public hub post](../en/03-01-hub-public.md)) |
+- **Agent deployed on a cloud server (Alibaba Cloud ECS, etc.)**: **M2 cloud-server direct access**: HTTPS + username/password + systemd service; direct public access ([cloud-server series ②/③/④](../en/02-01-cloud-single-tls.md)).
+- **Agent on a home machine (no public IP), accessing it remotely while traveling**: **rdsh cloud hub tunnel**: The agent connects **outbound** to the hub only — no ports exposed. Start with [create an rdsh.cn account](01-03-rdsh-account.md) → [get a join token](01-04-join-token.md).
 
 M2 (cloud-server direct access) and the M3 hub tunnel are both implemented — see the links above.
 

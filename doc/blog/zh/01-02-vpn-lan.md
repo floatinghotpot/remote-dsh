@@ -17,11 +17,9 @@ VPN 连上后，你的设备**就像在局域网里一样**（拿到一个内网
 
 ## 前提
 
-| 项 | 说明 |
-|---|---|
-| 家里/办公室 | 一台跑 DSH 的主机（Windows/Mac/Linux），已装 `remote-dsh` |
-| VPN | WireGuard / OpenVPN / 公司 VPN，能从外网连入 |
-| 在外设备 | 笔记本/手机，装了 VPN 客户端 |
+- **家里/办公室**：一台跑 DSH 的主机（Windows/Mac/Linux），已装 `remote-dsh`
+- **VPN**：WireGuard / OpenVPN / 公司 VPN，能从外网连入
+- **在外设备**：笔记本/手机，装了 VPN 客户端
 
 ## 三步
 
@@ -58,10 +56,8 @@ http://<家里主机IP>:8443
 
 ## 和公网 hub 方案怎么选
 
-| 方案 | 适用 | 说明 |
-|---|---|---|
-| **VPN 回连（本文）** | 已有 VPN 的公司/家庭网络 | 复用现有设施，零额外部署；`rdsh host serve` 配对码照用 |
-| [公网 hub（rdsh host join）](../zh/03-01-hub-public.md) | 没有 VPN | 出站隧道，无需任何网络配置，一个网址管所有机器 |
+- **VPN 回连（本文）**：已有 VPN 的公司/家庭网络；复用现有设施，零额外部署；`rdsh host serve` 配对码照用
+- **[rdsh 云 hub（rdsh host join）](01-03-rdsh-account.md)**：没有 VPN；出站隧道，无需任何网络配置，一个网址管所有机器
 
 ## 注意事项
 

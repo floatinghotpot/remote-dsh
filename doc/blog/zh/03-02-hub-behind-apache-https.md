@@ -108,10 +108,8 @@ systemctl reload apache2
 
 ## 和内置 TLS 方案怎么选
 
-| 方案 | hub 证书 | 端口 | 适用 |
-|---|---|---|---|
-| [③ hub 内置 TLS](../zh/03-01-hub-public.md) | hub 自己持 | 8443 | 单服务、快速起步 |
-| **本文：apache2 反代** | apache2 管（acme.sh 自动续期） | 443 标准 | 多服务共端口、已有 apache2 |
+- **[③ hub 内置 TLS](../zh/03-01-hub-public.md)**：hub 自己持；8443；单服务、快速起步
+- **本文：apache2 反代**：apache2 管（acme.sh 自动续期）；443 标准；多服务共端口、已有 apache2
 
 ## 注意事项
 

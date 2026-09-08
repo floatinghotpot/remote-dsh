@@ -117,11 +117,9 @@ nginx -t && systemctl reload nginx
 
 ## Which of the three to pick?
 
-| Option | HTTPS | Cert renewal | Complexity | Use case |
-|---|---|---|---|---|
-| [② standalone + built-in TLS](../en/02-01-cloud-single-tls.md) | rdsh | Manual (or acme.sh hook) | Low | Quick start / personal |
-| [③ Apache2 + cron acme.sh](../en/02-02-cloud-apache-acme.md) | Apache2 | **Fully automatic via cron** | Medium | Real domain / multiple services |
-| **④ nginx (this post)** | nginx | certbot/acme.sh automatic | Medium | Already on nginx |
+- **[② standalone + built-in TLS](../en/02-01-cloud-single-tls.md)**: rdsh; Manual (or acme.sh hook); Low; Quick start / personal
+- **[③ Apache2 + cron acme.sh](../en/02-02-cloud-apache-acme.md)**: Apache2; **Fully automatic via cron**; Medium; Real domain / multiple services
+- **④ nginx (this post)**: nginx; certbot/acme.sh automatic; Medium; Already on nginx
 
 > Public-internet rule of thumb: **TLS + password auth, mandatory** (all three satisfy it); for multi-machine / cross-region access, later you can use the hub tunnel (M3 — rdsh only connects outbound, no ports exposed).
 

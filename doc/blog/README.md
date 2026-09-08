@@ -5,12 +5,21 @@
 
 ---
 
-## 1. At home or the office: control the dev machine's DSH from any device (LAN pair code)
+## 1. Get started: make your DSH reachable from anywhere
 
-Your DSH runs on the dev machine, but you're on the couch, in a meeting room, or at another desk? No public IP and no hub needed:
+First try the direct routes on your own network; no public IP? relay through the **rdsh cloud hub (https://rdsh.cn)** — register once, then pick how the machine connects:
 
-- **On the same Wi-Fi**, open `http://<dev-machine-ip>:8443` in any browser and type the pair code once — the full DSH is yours — [LAN direct access (pair code)](en/01-01-lan-access.md)
-- **On the road**? VPN back into the LAN first, then it works exactly like being at home — [VPN back into the LAN](en/01-02-vpn-lan.md)
+> **Not sure which way? The easiest route**: if the **DSH web UI is already running** on your computer, go straight to [plugin access](en/01-05-plugin-mode.md) (create an [account](en/01-03-rdsh-account.md) → get an [access token](en/01-04-join-token.md) → install the plugin — three steps). If DSH isn't installed at all, start with [creating an account](en/01-03-rdsh-account.md) and come back once DSH is set up.
+
+- **Same network, no hub** — on the same Wi-Fi, open `http://<dev-machine-ip>:8443` in any browser and type the pair code once — [LAN direct access (pair code)](en/01-01-lan-access.md). On the road? VPN back into the LAN first — [VPN back into the LAN](en/01-02-vpn-lan.md).
+- **No public IP? Use the rdsh cloud hub (recommended)** — machines only connect outbound to the hub (no open ports), and you reach them from anywhere:
+  - [Create an rdsh.cn account](en/01-03-rdsh-account.md) (email-verified, 2FA optional);
+  - [Get a join token](en/01-04-join-token.md) — generate it in the portal once, then bring machines online with it;
+  - Then run the machine in one of three modes (pick one per machine):
+    - **Plugin mode**: a "Remote Access" panel inside DSH — no CLI, no service — [install dsh-web-remote](en/01-05-plugin-mode.md);
+    - **CLI mode**: `rdsh host join` + `rdsh host serve` in the foreground — [CLI mode](en/01-06-cli-mode.md);
+    - **System-service mode**: one command installs an always-on, boot-starting service, by platform: [Linux (systemd, verified)](en/01-07-host-service-mode-linux.md) · [macOS (launchd: starts after login + crash recovery; fully unattended needs a LaunchDaemon, not yet — also needs the upcoming release ≥ 0.10.1)](en/01-07-host-service-mode-mac.md) · [Windows (limited today: WSL2 route)](en/01-07-host-service-mode-windows.md).
+- **Team & security**: 2FA, password recovery, host sharing, audit log — [account security & team sharing](en/01-08-account-security.md).
 
 ## 2. Move DSH to a cloud server: HTTPS + password sign-in (bring your own cert)
 
@@ -19,18 +28,9 @@ Your DSH runs on a machine with a public IP (Alibaba Cloud ECS and friends), and
 - **Simplest**: rdsh holds its own cert, one port, no nginx/apache — [Cloud server direct (built-in TLS)](en/02-01-cloud-single-tls.md)
 - **Standard 443 + fully auto-renewed certs**, HTTPS handled by a reverse proxy: [Apache2](en/02-02-cloud-apache-acme.md) or [nginx](en/02-03-cloud-nginx.md)
 
-## 3. No public IP? Relay through a hub service — one account, many hosts (recommended)
+## 3. Set up your own hub relay service
 
-The machine is behind NAT or inside a private network — nothing can reach it from outside. The fix: a **public hub** acts as the switchboard. Machines only connect **outbound** to the hub (no public IP, no open ports), and you reach any machine from anywhere through the hub. Use someone's hub, or run your own (next section):
-
-- **Join with a join token (recommended)**: generate in the portal, paste one command on the machine, done — [join token access](en/03-04-join-token.md). After registration the token is persisted — restarts need no re-pairing; the same post covers the always-on service variant (boot-start + crash-restart).
-- **No CLI? Install a DSH plugin**: `dsh plugin add dsh-web-remote` adds a "Remote Access" panel right in the DSH UI — paste hub + auth token, click Connect — [DSH plugin, no CLI](en/03-05-plugin.md).
-- **Multi-user & team**: email verification, two-factor auth (2FA), machine sharing, audit log, login rate-limiting — [account security & team sharing](en/03-06-account-security.md).
-- Where do accounts come from? The hub admin creates them for now (self sign-up is on the roadmap); sign in with username + password.
-
-## 4. Set up your own hub relay service
-
-Want to run a hub for your team / yourself? Three deployment routes + user management:
+Want to run a hub for your team / yourself? Three deployment routes + user management. The machine-side guides in §1 work with **any** hub — just use your hub URL in place of `https://rdsh.cn`:
 
 - [Deploy the hub on an ECS (built-in TLS, fastest)](en/03-01-hub-public.md)
 - [Hub behind Apache2 (443 + auto-renewed certs)](en/03-02-hub-behind-apache-https.md)

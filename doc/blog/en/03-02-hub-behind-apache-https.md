@@ -108,10 +108,8 @@ systemctl reload apache2
 
 ## Built-in TLS vs Apache2 front
 
-| Option | Hub cert | Port | Use case |
-|---|---|---|---|
-| [③ hub built-in TLS](../en/03-01-hub-public.md) | hub holds it | 8443 | Single service, quick start |
-| **This post: Apache2 front** | Apache2 (acme.sh auto-renew) | 443 standard | Shared 443, already on Apache2 |
+- **[③ hub built-in TLS](../en/03-01-hub-public.md)**: hub holds it; 8443; Single service, quick start
+- **This post: Apache2 front**: Apache2 (acme.sh auto-renew); 443 standard; Shared 443, already on Apache2
 
 ## Notes
 

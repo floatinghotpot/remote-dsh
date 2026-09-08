@@ -117,11 +117,9 @@ nginx -t && systemctl reload nginx
 
 ## 三篇对比，选哪个？
 
-| 方案 | HTTPS | 证书续期 | 复杂度 | 适用 |
-|---|---|---|---|---|
-| [② 单独 + 内置 TLS](../zh/02-01-cloud-single-tls.md) | rdsh | 手动（或 acme.sh hook） | 低 | 快速起步/个人 |
-| [③ apache2 + cron acme.sh](../zh/02-02-cloud-apache-acme.md) | apache2 | **cron 全自动** | 中 | 正式域名/多服务 |
-| **④ nginx（本文）** | nginx | certbot/acme.sh 自动 | 中 | 已有 nginx |
+- **[② 单独 + 内置 TLS](../zh/02-01-cloud-single-tls.md)**：rdsh；手动（或 acme.sh hook）；低；快速起步/个人
+- **[③ apache2 + cron acme.sh](../zh/02-02-cloud-apache-acme.md)**：apache2；**cron 全自动**；中；正式域名/多服务
+- **④ nginx（本文）**：nginx；certbot/acme.sh 自动；中；已有 nginx
 
 > 公网安全铁律：**必须 TLS + 密码认证**（三种方案都满足）；多机/跨地域场景后续可走 hub 隧道（M3，rdsh 只出站不暴露端口）。
 
