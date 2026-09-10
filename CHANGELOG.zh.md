@@ -9,9 +9,24 @@
 
 ## [Unreleased]
 
-### 新增
+## [rdsh-gateway 0.8.2 · dsh-web-remote 0.5.1 · remote-dsh 0.10.2] - 2026-09-11
 
-- `dsh-web-remote`（0.2.0，未发布）：「远程访问」面板新增**「端到端加密时，信任为本地访问（兼容模式）」复选框**（`dshUiCompat.trustE2EEAsLoopback`，默认开启）——开启后经隧道转发的 JS 响应按 loopback 对待，DSH 的 Models / API key 设置可远程使用；并新增**启动自动接入**（host.json 为 join 模式且有持久化 token、隧道未被 CLI 持有时自动复用 token 建隧道，行为与 `rdsh host serve` 一致），消除「需先点接入才有隧道」的鸡生蛋。
+### 修复
+
+- `dsh-web-remote`（0.5.1）：**修复插件导致 dsh `0.1.5-rc.2` 上 `dsh web` 无法启动**。原先用于注册浏览器 RPC 通道的 `connection.rpc.handle(...)`，其内部经服务 shadow ctx 访问 `owner.webServer`，在 0.1.5-rc.2 上对第三方插件行无法解析该服务，直接中断整棵插件树（上游回归，deepseek-harness discussion #5926）。现改为在 `ctx.webServer` 上自注册原生 `/remote-access` 前缀路由，由插件实现 `client-request`/`server-response` envelope 与 connection 服务一致的状态语义（404/415/413/400；envelope 非法或 `method` 与 path 不一致 → 200 + `gateway/bad-request`；handler 抛错 → 500），并在其前方复用官方 Host/Origin + 浏览器会话围栏（`connection.requestRejection`）；**浏览器半零改动**。已补协议单测，同一份代码在 dsh `0.1.2-rc.1` 与 `0.1.5-rc.2` 双版本实测通过（无版本分支）；浏览器半已在真实 profile + `0.1.5-rc.2` 验证（客户端 bundle 正常下发、设置页可见「远程访问」面板、经 hub 从远端访问成功）。详见 `doc/fix/20260911-dsh-0.1.5-plugin-rpc/` 与 `doc/review/20260911-dsh-0.1.5-rc.2-plugin-compat.md`。
+- 附带修正：插件原先传给 `rpc.handle` 的 `authority: "loopback"` 选项在两个 dsh 版本中**都不存在**（该 helper 只接受 `(channel, handler)`）；真正的围栏一直是 connection 服务的 Host/Origin + 浏览器会话校验，现由插件显式调用。
+- `rdsh-gateway` / `remote-dsh` CLI —— **dsh `0.1.5-rc.2` 网关兼容性（实测，非推断）**：用真实 `dsh@0.1.5-rc.2` 冒烟 `rdsh host serve` —— spawn + `--port 0` 就绪行（含 launch token）、浏览器会话 cookie 换发、`/api` 转发（真实 `settings/describe` 返回数据）、HTML polyfill 注入（含 0.1.2 起的 gzip 剥离）、WebSocket `/api/remote.mux` 升级，以及 join 路径的 `patchLoopbackJs` 仍能命中发行版客户端 bundle 里的 `isLoopbackHostname(pageLocation.hostname)`。未发现破坏 ⇒ `DSH_COMPAT_MAX` 从 `0.1.2-rc.1` 扩到 **`0.1.5-rc.2`**，并为 `dshVersionWarning` 补了窗口边界单测。详见 `doc/review/20260911-dsh-0.1.5-rc.2-plugin-compat.md` §5（G1–G7）；随后做了完整端到端：用 `rdsh host serve` 把主机接入生产 hub，并从远端设备成功访问（G9）。
+- 提醒（旧笔记/文档）：DSH 的 WebSocket 端点自 **0.1.2** 起就是单一 `/api/remote.mux`（`events.mux` / `events.host` 已不存在）；rdsh 一律按 `req.url` 原样透传 WS、**不硬编码路径**，故该更名不影响转发（仅注释/测试仍用旧名）。
+
+### dsh 兼容矩阵
+
+| remote-dsh 组件 | 版本 | 兼容 dsh（冒烟实测） | 机制 |
+|---|---|---|---|
+| remote-dsh CLI（`host serve` / `join`） | 0.10.2 | dsh `0.1.1-rc.2` ✅<br>dsh `0.1.2-rc.1` ✅<br>dsh `0.1.5-rc.2` ✅ | ready 行行为探测，自适应 |
+| `dsh-web-remote` 插件 | 0.5.1 | dsh `0.1.2-rc.1` ✅<br>dsh `0.1.5-rc.2` ✅<br>（`0.1.1` 线未实测） | 原生 `webServer` 路由，无版本分支 |
+| rdsh-hub | 任意 | 与 dsh 版本无关 | 纯中继不解析业务流量 |
+
+> 发布前用仓库自带 `node scripts/smoke-dsh-compat.mjs` 对 dsh `0.1.2-rc.1` 与 `0.1.5-rc.2` 各跑一遍，**S1–S7 全 PASS**；另外 `dsh-web-remote` 浏览器半在真实 profile + `0.1.5-rc.2` 下验证通过（面板可见、经 hub 远端访问成功）。
 
 ## [rdsh-gateway 0.8.1 · remote-dsh 0.10.1] - 2026-09-08
 
@@ -35,6 +50,14 @@
 | remote-dsh CLI（`host serve`/`join`） | 0.10.0 | dsh `0.1.1-rc.2` ✅<br>dsh `0.1.2-rc.1` ✅ | 就绪行行为探测，自适应 |
 | `dsh-web-remote` 插件 | 0.5.0 | dsh `0.1.2-rc.1` ✅<br>（`0.1.1` 线待实证） | 宿主 API shape 两版相同，无版本门 |
 | rdsh-hub | 任意 | 与 dsh 版本无关 | 纯中继不解析业务流量 |
+
+## [dsh-web-remote 0.3.0] - 2026-08-31
+
+> 事后补齐（2026-09-11）：该版本发布时未单独记录小节（`0.2.0`/`0.4.0` 同样缺节）。本节按 npm 发布时间与已发布 tarball 实测内容补记：`0.2.0` 不含下列特性，`0.3.0` 首次包含（`set-ui-compat` RPC 与 `autoConnect` 均在 0.3.0 tarball 中命中），`0.4.0`/`0.5.0` 沿用。
+
+### 新增
+
+- `dsh-web-remote`（0.3.0）：「远程访问」面板新增**「端到端加密时，信任为本地访问（兼容模式）」复选框**（`dshUiCompat.trustE2EEAsLoopback`，默认开启）——开启后经隧道转发的 JS 响应按 loopback 对待，DSH 的 Models / API key 设置可远程使用；并新增**启动自动接入**（host.json 为 join 模式且有持久化 token、隧道未被 CLI 持有时自动复用 token 建隧道，行为与 `rdsh host serve` 一致），消除「需先点接入才有隧道」的鸡生蛋。
 
 ## [0.6.0] - 2026-08-24
 

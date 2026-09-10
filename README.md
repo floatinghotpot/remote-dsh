@@ -133,7 +133,8 @@ Scenario guides, from simple to complex — full index: [English](doc/blog/READM
 remote-dsh follows the latest DeepSeek Harness (dsh). **A single rdsh release is
 smoke-tested against multiple dsh versions**; if a mismatch is detected at
 runtime, the CLI prints an upgrade command — you never need to consult a
-version matrix. Current coverage: dsh `0.1.1-rc.2` ✅ and `0.1.2-rc.1` ✅
+version matrix. Current coverage: dsh `0.1.1-rc.2` ✅, `0.1.2-rc.1` ✅ and
+`0.1.5-rc.2` ✅
 (per-release history in [CHANGELOG](CHANGELOG.md)).
 
 ## Development

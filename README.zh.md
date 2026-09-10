@@ -127,7 +127,7 @@ rdsh hub serve                  # 自建 hub（内置 TLS 或反代部署）
 
 ## 版本兼容
 
-remote-dsh 跟随最新 DeepSeek Harness（dsh）。**一个 rdsh 版本实测兼容多个 dsh 版本**；若运行时不兼容，命令行会直接打印升级命令——你无需查任何版本表。当前覆盖：dsh `0.1.1-rc.2` ✅ 与 `0.1.2-rc.1` ✅（逐版本历史见 [CHANGELOG](CHANGELOG.zh.md)）。
+remote-dsh 跟随最新 DeepSeek Harness（dsh）。**一个 rdsh 版本实测兼容多个 dsh 版本**；若运行时不兼容，命令行会直接打印升级命令——你无需查任何版本表。当前覆盖：dsh `0.1.1-rc.2` ✅、`0.1.2-rc.1` ✅ 与 `0.1.5-rc.2` ✅（逐版本历史见 [CHANGELOG](CHANGELOG.zh.md)）。
 
 ## 开发
 
