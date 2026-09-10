@@ -1,0 +1,115 @@
+/**
+ * theme.css — rdsh-portal 语义化配色层。
+ *
+ * 单层 alias：浅色取改动前的现状字面量（把浅色回归降到最低），深色取值对齐
+ * DSH 官方 token（@deepseek-ai/dsh-client-ui-theme）。切换仅由
+ * prefers-color-scheme 驱动，无手动开关。
+ *
+ * 注意：--rdsh-*-border / --rdsh-danger-soft 以 var() 引用同主题的基础色，
+ * 因此无需在深色块重复声明即可自动跟随（custom property 惰性求值）。
+ */
+
+:root {
+  /* 让 UA 渲染的控件、滚动条、表单弹层跟随页面配色 */
+  color-scheme: light dark;
+
+  /* 表面 */
+  --rdsh-bg-base: #fff;
+  --rdsh-bg-surface: #fff;
+  --rdsh-bg-subtle: #f3f4f6;
+  --rdsh-bg-active: #eef2ff;
+
+  /* 文本 */
+  --rdsh-fg: #111;
+  --rdsh-fg-muted: #6b7280;
+  --rdsh-fg-subtle: #9ca3af;
+  --rdsh-fg-on-fill: #fff;
+
+  /* 描边 */
+  --rdsh-border: #e5e7eb;
+  --rdsh-border-soft: #eee;
+
+  /* 主色：填充与文本分列（深色下文本需提亮才达 AA） */
+  --rdsh-primary: #2563eb;
+  --rdsh-link: #2563eb;
+
+  /* 危险 */
+  --rdsh-danger: #dc2626;
+  --rdsh-danger-on-soft: #dc2626;
+  --rdsh-danger-fill: #dc2626;
+  --rdsh-danger-soft: #fef2f2;
+  --rdsh-danger-border: color-mix(in srgb, var(--rdsh-danger) 33%, transparent);
+
+  /* 成功 */
+  --rdsh-success: #16a34a;
+  --rdsh-success-strong: #047857;
+  --rdsh-success-soft: #ecfdf5;
+  --rdsh-success-border: color-mix(in srgb, var(--rdsh-success) 33%, transparent);
+
+  /* 警告 */
+  --rdsh-warn: #f59e0b;
+  --rdsh-warn-strong: #b45309;
+  --rdsh-warn-soft: #fffbeb;
+
+  /* 第三方品牌色：品牌绿恒定；微信按钮的底与前景按主题反转（req.md R12） */
+  --rdsh-wechat: #07c160;
+  --rdsh-wechat-bg: #07c160;
+  --rdsh-wechat-fg: #fff;
+
+  /* 效果 */
+  --rdsh-scrim: rgba(0, 0, 0, 0.55);
+  --rdsh-scrim-soft: rgba(0, 0, 0, 0.4);
+  --rdsh-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+/* portal 原先没有任何 html/body 规则，深色下必须显式给底色 */
+html,
+body {
+  background: var(--rdsh-bg-base);
+  color: var(--rdsh-fg);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --rdsh-bg-base: #151517;
+    --rdsh-bg-surface: #232324;
+    --rdsh-bg-subtle: #2c2c2e;
+    --rdsh-bg-active: #ffffff14;
+
+    --rdsh-fg: #f9fafb;
+    --rdsh-fg-muted: #cfd3d6;
+    --rdsh-fg-subtle: #adb2b8;
+
+    --rdsh-border: #ffffff29;
+    --rdsh-border-soft: #ffffff1f;
+
+    --rdsh-primary: #2563eb;
+    --rdsh-link: #679efe;
+
+    --rdsh-danger: #f25a5a;
+    --rdsh-danger-on-soft: #f87171;
+    --rdsh-danger-fill: #dc2626;
+    --rdsh-danger-soft: color-mix(in srgb, var(--rdsh-danger) 10%, transparent);
+
+    --rdsh-success: #22c55e;
+    --rdsh-success-strong: #22c55e;
+    --rdsh-success-soft: #233c2c;
+
+    --rdsh-warn: #f59e0b;
+    --rdsh-warn-strong: #f7ad31;
+    --rdsh-warn-soft: #27241f;
+
+    /* 微信按钮反转：深底 + 品牌绿前景（绿字在深底 7.65:1，绿底白字仅 2.38:1） */
+    --rdsh-wechat-bg: #232324;
+    --rdsh-wechat-fg: #07c160;
+
+    --rdsh-scrim: rgba(0, 0, 0, 0.72);
+    --rdsh-scrim-soft: rgba(0, 0, 0, 0.6);
+    --rdsh-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  }
+
+  /* 白底架构图：明度反转 + 色相转回（见 solution.md §5.6） */
+  img.rdsh-arch {
+    filter: invert(1) hue-rotate(180deg);
+  }
+}

@@ -103,11 +103,11 @@ function LangToggle(): React.JSX.Element {
   const style = (active: boolean): React.CSSProperties => ({
     padding: "2px 8px",
     borderRadius: 6,
-    border: "1px solid #ccc",
+    border: "1px solid var(--rdsh-border)",
     cursor: "pointer",
     fontSize: 12,
-    background: active ? "#2563eb" : "#fff",
-    color: active ? "#fff" : "#333",
+    background: active ? "var(--rdsh-primary)" : "var(--rdsh-bg-surface)",
+    color: active ? "var(--rdsh-fg-on-fill)" : "var(--rdsh-fg)",
   });
   return (
     <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
@@ -159,7 +159,7 @@ function AppShell({ children }: { children: React.ReactNode }): React.JSX.Elemen
       </div>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
         {tabs.map((x) => (
-          <button key={x.p} onClick={() => navigate(x.p)} style={{ ...btnStyle("ghost"), fontWeight: active === x.p ? 700 : 400, background: active === x.p ? "#eef2ff" : "#fff" }}>{x.label}</button>
+          <button key={x.p} onClick={() => navigate(x.p)} style={{ ...btnStyle("ghost"), fontWeight: active === x.p ? 700 : 400, background: active === x.p ? "var(--rdsh-bg-active)" : "var(--rdsh-bg-surface)" }}>{x.label}</button>
         ))}
       </div>
       {children}
@@ -171,17 +171,17 @@ function btnStyle(variant: "primary" | "danger" | "ghost" = "primary"): React.CS
   const base: React.CSSProperties = {
     padding: "6px 14px",
     borderRadius: 6,
-    border: "1px solid #ccc",
+    border: "1px solid var(--rdsh-border)",
     cursor: "pointer",
     fontSize: 14,
   };
-  if (variant === "primary") return { ...base, background: "#2563eb", color: "#fff", borderColor: "#2563eb" };
-  if (variant === "danger") return { ...base, background: "#dc2626", color: "#fff", borderColor: "#dc2626" };
-  return { ...base, background: "#fff" };
+  if (variant === "primary") return { ...base, background: "var(--rdsh-primary)", color: "var(--rdsh-fg-on-fill)", borderColor: "var(--rdsh-primary)" };
+  if (variant === "danger") return { ...base, background: "var(--rdsh-danger-fill)", color: "var(--rdsh-fg-on-fill)", borderColor: "var(--rdsh-danger-fill)" };
+  return { ...base, background: "var(--rdsh-bg-surface)" };
 }
 
 function inputStyle(): React.CSSProperties {
-  return { padding: "8px 10px", borderRadius: 6, border: "1px solid #ccc", fontSize: 14, width: "100%", boxSizing: "border-box" };
+  return { padding: "8px 10px", borderRadius: 6, border: "1px solid var(--rdsh-border)", fontSize: 14, width: "100%", boxSizing: "border-box" };
 }
 
 function menuItemStyle(danger = false): React.CSSProperties {
@@ -197,7 +197,7 @@ function menuItemStyle(danger = false): React.CSSProperties {
     cursor: "pointer",
     fontSize: 14,
     borderRadius: 6,
-    color: danger ? "#dc2626" : "#111",
+    color: danger ? "var(--rdsh-danger)" : "var(--rdsh-fg)",
   };
 }
 
@@ -350,15 +350,15 @@ function CaptchaGate({ onCaptcha }: { onCaptcha: (captcha: CaptchaPayload) => vo
       <div style={{ marginBottom: 12 }}>
         <div id="rdsh-captcha-element" />
         <button id="rdsh-captcha-btn" type="button" style={btnStyle("ghost")}>{t("完成滑块验证")}</button>
-        {captchaFail !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{captchaFail}</p>}
-        {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
+        {captchaFail !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{captchaFail}</p>}
+        {err !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{err}</p>}
       </div>
     );
   }
   if (challenge === null) return null;
   return (
     <>
-      <p style={{ fontSize: 13, color: "#666" }}>{t("防机器人验证：{question}", { params: { question: challenge.question } })}</p>
+      <p style={{ fontSize: 13, color: "var(--rdsh-fg-muted)" }}>{t("防机器人验证：{question}", { params: { question: challenge.question } })}</p>
       {field(t("答案"), answer, setAnswer)}
       <button type="button" onClick={() => onCaptcha({ captchaToken: challenge.token, captchaAnswer: answer.trim() })} style={btnStyle()}>{t("确认验证")}</button>
     </>
@@ -383,7 +383,7 @@ function SiteFooter(): React.JSX.Element | null {
   if (cap === null) return null;
 
   const site = cap.site;
-  const link: React.CSSProperties = { color: "#999", textDecoration: "none" };
+  const link: React.CSSProperties = { color: "var(--rdsh-fg-subtle)", textDecoration: "none" };
   const nav: React.ReactNode[] = [];
   if (site?.name !== undefined) {
     nav.push(site.url !== undefined ? <a href={site.url} target="_blank" rel="noreferrer" style={link}>{site.name}</a> : <span>{site.name}</span>);
@@ -393,11 +393,11 @@ function SiteFooter(): React.JSX.Element | null {
   nav.push(legalLink(site?.privacyUrl, "/privacy", t("隐私政策"), link));
 
   return (
-    <footer style={{ textAlign: "center", marginTop: 24, fontSize: 12, color: "#999", lineHeight: 1.8 }}>
+    <footer style={{ textAlign: "center", marginTop: 24, fontSize: 12, color: "var(--rdsh-fg-subtle)", lineHeight: 1.8 }}>
       <div style={{ display: "flex", justifyContent: "center", flexWrap: "wrap" }}>
         {nav.map((node, i) => (
           <span key={i} style={{ whiteSpace: "nowrap", display: "inline-flex", alignItems: "center" }}>
-            {i > 0 && <span style={{ margin: "0 8px", color: "#999" }}>|</span>}
+            {i > 0 && <span style={{ margin: "0 8px", color: "var(--rdsh-fg-subtle)" }}>|</span>}
             {node}
           </span>
         ))}
@@ -442,7 +442,7 @@ function LandingPage(): React.JSX.Element {
 
       <div style={{ textAlign: "center", padding: "48px 0 40px" }}>
         <h1 style={{ fontSize: 22, margin: "0 0 10px" }}>{t("你的 AI 智能体，随处安全可达")}</h1>
-        <p style={{ color: "#666", fontSize: 15, margin: "0 0 28px" }}>{t("免公网 IP · 免装客户端")}</p>
+        <p style={{ color: "var(--rdsh-fg-muted)", fontSize: 15, margin: "0 0 28px" }}>{t("免公网 IP · 免装客户端")}</p>
         <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
           {authed ? (
             <button onClick={() => navigate("/hosts")} style={{ ...btnStyle(), fontSize: 16, padding: "10px 26px" }}>{t("进入控制台")}</button>
@@ -504,13 +504,13 @@ function Login(): React.JSX.Element {
     return (
       <div style={{ maxWidth: 360, margin: "80px auto", padding: "0 16px", fontFamily: "system-ui, sans-serif" }}>
         <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}><LangToggle /></div>
-        <p style={{ fontSize: 22, fontWeight: 700, color: "#111", letterSpacing: 0.5, margin: "0 0 8px" }}>{brand}</p>
+        <p style={{ fontSize: 22, fontWeight: 700, color: "var(--rdsh-fg)", letterSpacing: 0.5, margin: "0 0 8px" }}>{brand}</p>
         <h1 style={{ fontSize: 20, marginBottom: 4 }}>{t("微信登录")}</h1>
-        <p style={{ color: "#666", fontSize: 13, marginBottom: 20 }}>{t("未找到已绑定的账号，是否创建新账号？")}</p>
-        {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
+        <p style={{ color: "var(--rdsh-fg-muted)", fontSize: 13, marginBottom: 20 }}>{t("未找到已绑定的账号，是否创建新账号？")}</p>
+        {err !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{err}</p>}
         <button onClick={confirmWechatCreate} style={{ ...btnStyle(), width: "100%" }}>{t("创建新账号")}</button>
         <button onClick={() => navigate("/login")} style={{ ...btnStyle("ghost"), width: "100%", marginTop: 8 }}>{t("已有账号，去登录")}</button>
-        <p style={{ marginTop: 12, fontSize: 12, color: "#6b7280" }}>{t("已有邮箱/手机号账号？先用账号密码登录，再在设置里绑定微信")}</p>
+        <p style={{ marginTop: 12, fontSize: 12, color: "var(--rdsh-fg-muted)" }}>{t("已有邮箱/手机号账号？先用账号密码登录，再在设置里绑定微信")}</p>
         <SiteFooter />
       </div>
     );
@@ -546,9 +546,9 @@ function Login(): React.JSX.Element {
       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
         <LangToggle />
       </div>
-      <p style={{ fontSize: 22, fontWeight: 700, color: "#111", letterSpacing: 0.5, margin: "0 0 8px" }}>{brand}</p>
+      <p style={{ fontSize: 22, fontWeight: 700, color: "var(--rdsh-fg)", letterSpacing: 0.5, margin: "0 0 8px" }}>{brand}</p>
       <h1 style={{ fontSize: 20, marginBottom: 4 }}>{t("你的 AI 智能体，随处安全可达")}</h1>
-      <p style={{ color: "#666", fontSize: 13, marginBottom: 24 }}>
+      <p style={{ color: "var(--rdsh-fg-muted)", fontSize: 13, marginBottom: 24 }}>
         {totpPending !== null ? t("输入你的两步验证码（TOTP）") : t("远程指挥你的 DeepSeek Harness 智能体，仅需浏览器，任意设备、随时随地，端到端加密")}
       </p>
       {totpPending !== null ? (
@@ -568,7 +568,7 @@ function Login(): React.JSX.Element {
           <label style={{ display: "block", marginBottom: 12, fontSize: 13 }}>
             <input type="checkbox" checked={trustDevice} onChange={(e) => setTrustDevice(e.target.checked)} /> {t("记住此设备 30 天（下次登录免输动态码）")}
           </label>
-          <p style={{ margin: "-6px 0 12px", fontSize: 12, color: "#9ca3af" }}>{t("（自己的常用设备可勾选；公用或他人的设备请勿勾选）")}</p>
+          <p style={{ margin: "-6px 0 12px", fontSize: 12, color: "var(--rdsh-fg-subtle)" }}>{t("（自己的常用设备可勾选；公用或他人的设备请勿勾选）")}</p>
         </div>
       ) : (
         <>
@@ -576,28 +576,28 @@ function Login(): React.JSX.Element {
           {field(t("密码"), password, setPassword, "password")}
         </>
       )}
-      {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
+      {err !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{err}</p>}
       <button onClick={submit} style={{ ...btnStyle(), width: "100%", marginTop: 8 }}>
         {totpPending !== null ? t("验证并登录") : t("登录")}
       </button>
       {wechatEnabled && totpPending === null && (
         <>
-          <p style={{ margin: "14px 0 0", textAlign: "center", color: "#9ca3af", fontSize: 12 }}>{t("或")}</p>
+          <p style={{ margin: "14px 0 0", textAlign: "center", color: "var(--rdsh-fg-subtle)", fontSize: 12 }}>{t("或")}</p>
           <button
             onClick={wechatLogin}
-            style={{ ...btnStyle(), width: "100%", marginTop: 8, background: "#07C160", borderColor: "#07C160", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
+            style={{ ...btnStyle(), width: "100%", marginTop: 8, background: "var(--rdsh-wechat-bg)", borderColor: "var(--rdsh-wechat)", color: "var(--rdsh-wechat-fg)", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
           >
             <WechatIcon size={18} />
             {t("微信登录")}
           </button>
-          <p style={{ marginTop: 6, fontSize: 12, color: "#9ca3af", textAlign: "center" }}>{t("已有邮箱/手机号账号？先用账号密码登录，再在设置里绑定微信")}</p>
+          <p style={{ marginTop: 6, fontSize: 12, color: "var(--rdsh-fg-subtle)", textAlign: "center" }}>{t("已有邮箱/手机号账号？先用账号密码登录，再在设置里绑定微信")}</p>
         </>
       )}
       {totpPending === null && (
         <p style={{ marginTop: 12, textAlign: "center" }}>
-          <a href="#" onClick={(e) => { e.preventDefault(); navigate("/reset-password"); }} style={{ color: "#2563eb", fontSize: 13 }}>{t("忘记密码？")}</a>
+          <a href="#" onClick={(e) => { e.preventDefault(); navigate("/reset-password"); }} style={{ color: "var(--rdsh-link)", fontSize: 13 }}>{t("忘记密码？")}</a>
           {" · "}
-          <a href="#" onClick={(e) => { e.preventDefault(); navigate("/register"); }} style={{ color: "#2563eb", fontSize: 13 }}>{t("注册")}</a>
+          <a href="#" onClick={(e) => { e.preventDefault(); navigate("/register"); }} style={{ color: "var(--rdsh-link)", fontSize: 13 }}>{t("注册")}</a>
         </p>
       )}
       <SiteFooter />
@@ -626,9 +626,9 @@ function Toast({ toast }: { toast: { kind: "ok" | "err"; text: string } | null }
   return (
     <div
       style={{
-        background: ok ? "#ecfdf5" : "#fef2f2",
-        color: ok ? "#047857" : "#dc2626",
-        border: `1px solid ${ok ? "#10b981" : "#f87171"}55`,
+        background: ok ? "var(--rdsh-success-soft)" : "var(--rdsh-danger-soft)",
+        color: ok ? "var(--rdsh-success-strong)" : "var(--rdsh-danger-on-soft)",
+        border: `1px solid ${ok ? "var(--rdsh-success-border)" : "var(--rdsh-danger-border)"}`,
         borderRadius: 8,
         padding: "10px 14px",
         marginBottom: 12,
@@ -643,7 +643,7 @@ function Toast({ toast }: { toast: { kind: "ok" | "err"; text: string } | null }
 /** 分组卡片：标题 + 右侧状态徽标 + 内容。 */
 function Card({ title, badge, children }: { title: string; badge?: React.ReactNode; children: React.ReactNode }): React.JSX.Element {
   return (
-    <div style={{ border: "1px solid #e5e7eb", borderRadius: 10, padding: "14px 16px", marginBottom: 12 }}>
+    <div style={{ border: "1px solid var(--rdsh-border)", borderRadius: 10, padding: "14px 16px", marginBottom: 12 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
         <h2 style={{ fontSize: 15, margin: 0 }}>{title}</h2>
         {badge}
@@ -661,8 +661,8 @@ function Badge({ ok, text }: { ok: boolean; text: string }): React.JSX.Element {
         fontSize: 12,
         padding: "2px 10px",
         borderRadius: 999,
-        background: ok ? "#ecfdf5" : "#f3f4f6",
-        color: ok ? "#047857" : "#6b7280",
+        background: ok ? "var(--rdsh-success-soft)" : "var(--rdsh-bg-subtle)",
+        color: ok ? "var(--rdsh-success-strong)" : "var(--rdsh-fg-muted)",
       }}
     >
       {ok ? "✓ " : ""}
@@ -713,9 +713,9 @@ function SettingRow({ label, desc, badge, onClick, danger }: { label: string; de
         alignItems: "center",
         gap: 10,
         padding: "12px 14px",
-        border: "1px solid #e5e7eb",
+        border: "1px solid var(--rdsh-border)",
         borderRadius: 10,
-        background: "#fff",
+        background: "var(--rdsh-bg-surface)",
         cursor: "pointer",
         marginBottom: 8,
         textAlign: "left",
@@ -723,11 +723,11 @@ function SettingRow({ label, desc, badge, onClick, danger }: { label: string; de
       }}
     >
       <span style={{ flex: 1 }}>
-        <span style={{ display: "block", fontSize: 14, fontWeight: 500, color: danger === true ? "#dc2626" : "#111827" }}>{label}</span>
-        {desc !== undefined && <span style={{ display: "block", fontSize: 12, color: "#6b7280", marginTop: 2 }}>{desc}</span>}
+        <span style={{ display: "block", fontSize: 14, fontWeight: 500, color: danger === true ? "var(--rdsh-danger)" : "var(--rdsh-fg)" }}>{label}</span>
+        {desc !== undefined && <span style={{ display: "block", fontSize: 12, color: "var(--rdsh-fg-muted)", marginTop: 2 }}>{desc}</span>}
       </span>
       {badge}
-      <span style={{ color: "#9ca3af", fontSize: 18 }}>›</span>
+      <span style={{ color: "var(--rdsh-fg-subtle)", fontSize: 18 }}>›</span>
     </button>
   );
 }
@@ -745,9 +745,9 @@ function SettingLink({ label, desc, href }: { label: string; desc?: string; href
         alignItems: "center",
         gap: 10,
         padding: "12px 14px",
-        border: "1px solid #e5e7eb",
+        border: "1px solid var(--rdsh-border)",
         borderRadius: 10,
-        background: "#fff",
+        background: "var(--rdsh-bg-surface)",
         cursor: "pointer",
         marginBottom: 8,
         textAlign: "left",
@@ -757,10 +757,10 @@ function SettingLink({ label, desc, href }: { label: string; desc?: string; href
       }}
     >
       <span style={{ flex: 1 }}>
-        <span style={{ display: "block", fontSize: 14, fontWeight: 500, color: "#111827" }}>{label}</span>
-        {desc !== undefined && <span style={{ display: "block", fontSize: 12, color: "#6b7280", marginTop: 2 }}>{desc}</span>}
+        <span style={{ display: "block", fontSize: 14, fontWeight: 500, color: "var(--rdsh-fg)" }}>{label}</span>
+        {desc !== undefined && <span style={{ display: "block", fontSize: 12, color: "var(--rdsh-fg-muted)", marginTop: 2 }}>{desc}</span>}
       </span>
-      <span style={{ color: "#9ca3af", fontSize: 18 }}>↗</span>
+      <span style={{ color: "var(--rdsh-fg-subtle)", fontSize: 18 }}>↗</span>
     </a>
   );
 }
@@ -838,9 +838,9 @@ function CurrentPlanCard({ sub, onClick }: { sub: SubInfo | null; onClick?: () =
     alignItems: "center",
     gap: 10,
     padding: "14px 16px",
-    border: `1px solid ${warn ? "#f59e0b" : "#e5e7eb"}`,
+    border: `1px solid ${warn ? "var(--rdsh-warn)" : "var(--rdsh-border)"}`,
     borderRadius: 10,
-    background: warn ? "#fffbeb" : "#fff",
+    background: warn ? "var(--rdsh-warn-soft)" : "var(--rdsh-bg-surface)",
     cursor: onClick !== undefined ? "pointer" : "default",
     marginBottom: 12,
     textAlign: "left",
@@ -849,10 +849,10 @@ function CurrentPlanCard({ sub, onClick }: { sub: SubInfo | null; onClick?: () =
   const content = (
     <>
       <span style={{ flex: 1 }}>
-        <span style={{ display: "block", fontSize: 15, fontWeight: 600, color: warn ? "#b45309" : "#111827" }}>{title}</span>
-        <span style={{ display: "block", fontSize: 12, color: "#6b7280", marginTop: 2 }}>{detail}</span>
+        <span style={{ display: "block", fontSize: 15, fontWeight: 600, color: warn ? "var(--rdsh-warn-strong)" : "var(--rdsh-fg)" }}>{title}</span>
+        <span style={{ display: "block", fontSize: 12, color: "var(--rdsh-fg-muted)", marginTop: 2 }}>{detail}</span>
       </span>
-      {onClick !== undefined && <span style={{ color: "#2563eb", fontSize: 13 }}>{action} ›</span>}
+      {onClick !== undefined && <span style={{ color: "var(--rdsh-link)", fontSize: 13 }}>{action} ›</span>}
     </>
   );
   return onClick !== undefined ? (
@@ -881,7 +881,7 @@ function AccountPage(): React.JSX.Element {
   }, []);
   return (
     <Shell title={t("账户与安全")}>
-      {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
+      {err !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{err}</p>}
       <CurrentPlanCard sub={sub} onClick={() => navigate("/billing")} />
       <SettingRow
         label={t("邮箱")}
@@ -943,10 +943,10 @@ function EmailSettingsPage(): React.JSX.Element {
     <Shell title={t("邮箱设置")}>
       <BackToAccount />
       <Toast toast={toast} />
-      {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
+      {err !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{err}</p>}
       <Card title={t("邮箱")} badge={<Badge ok={bound} text={bound ? t("已验证") : t("未绑定")} />}>
         {info?.email !== null && info !== null && (
-          <p style={{ fontSize: 13, color: "#6b7280", marginTop: 0 }}>
+          <p style={{ fontSize: 13, color: "var(--rdsh-fg-muted)", marginTop: 0 }}>
             {t("当前绑定：{x}", { params: { x: maskEmail(info.email!) } })}　
             <button
               onClick={() => void run(async () => { await api.unbindEmail(); show("ok", t("邮箱已解绑")); await refresh(); })}
@@ -989,10 +989,10 @@ function PhoneSettingsPage(): React.JSX.Element {
     <Shell title={t("手机号设置")}>
       <BackToAccount />
       <Toast toast={toast} />
-      {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
+      {err !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{err}</p>}
       <Card title={t("手机号")} badge={<Badge ok={bound} text={bound ? t("已验证") : t("未绑定")} />}>
         {info?.phone !== null && info !== null && (
-          <p style={{ fontSize: 13, color: "#6b7280", marginTop: 0 }}>
+          <p style={{ fontSize: 13, color: "var(--rdsh-fg-muted)", marginTop: 0 }}>
             {t("当前绑定：{x}", { params: { x: maskPhone(info.phone!) } })}　
             <button
               onClick={() => void run(async () => { await api.unbindPhone(); show("ok", t("手机号已解绑")); await refresh(); })}
@@ -1035,12 +1035,12 @@ function TwoFaSettingsPage(): React.JSX.Element {
     <Shell title={t("两步验证")}>
       <BackToAccount />
       <Toast toast={toast} />
-      {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
+      {err !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{err}</p>}
       <Card title={t("两步验证（TOTP）")} badge={<Badge ok={enabled} text={enabled ? t("已开启") : t("未开启")} />}>
         {!enabled ? (
           <>
-            <p style={{ fontSize: 13, lineHeight: 1.7, marginTop: 0, color: "#444" }}>{t("两步验证（2FA）：登录时除了密码，还要输入手机验证器 App 生成的 6 位动态码（每 30 秒变化一次）——登录要同时通过“你知道的密码”和“你手机上的验证码”两道关，建议开启。")}</p>
-            <div style={{ background: "#f8fafc", border: "1px solid #eee", borderRadius: 8, padding: 12, margin: "0 0 12px", fontSize: 12, color: "#444" }}>
+            <p style={{ fontSize: 13, lineHeight: 1.7, marginTop: 0, color: "var(--rdsh-fg)" }}>{t("两步验证（2FA）：登录时除了密码，还要输入手机验证器 App 生成的 6 位动态码（每 30 秒变化一次）——登录要同时通过“你知道的密码”和“你手机上的验证码”两道关，建议开启。")}</p>
+            <div style={{ background: "var(--rdsh-bg-subtle)", border: "1px solid var(--rdsh-border-soft)", borderRadius: 8, padding: 12, margin: "0 0 12px", fontSize: 12, color: "var(--rdsh-fg)" }}>
               <p style={{ margin: "0 0 4px", fontWeight: 600 }}>{t("选择验证器 App（任意 TOTP 应用均可）：")}</p>
               <p style={{ margin: "2px 0" }}>· {t("Microsoft Authenticator —— 推荐首选：安卓与 iPhone 均可在应用商店/官网获取，不依赖 Google Play")}</p>
               <p style={{ margin: "2px 0" }}>· {t("Google Authenticator —— 安卓需 Google Play；iPhone 在 App Store")}</p>
@@ -1057,10 +1057,10 @@ function TwoFaSettingsPage(): React.JSX.Element {
           ) : (
             <div>
               <p style={{ fontSize: 13, marginTop: 0 }}>{t("用 Authenticator App 扫描二维码，或手动输入密钥：")}</p>
-              {qrDataUrl !== "" && <img src={qrDataUrl} alt="TOTP QR" style={{ width: 200, height: 200, borderRadius: 6, border: "1px solid #eee", marginBottom: 8 }} />}
+              {qrDataUrl !== "" && <img src={qrDataUrl} alt="TOTP QR" style={{ width: 200, height: 200, borderRadius: 6, border: "1px solid var(--rdsh-border-soft)", marginBottom: 8 }} />}
               <p style={{ fontSize: 13 }}>{t("密钥（手动添加账号时粘贴）：")}</p>
               <code style={{ wordBreak: "break-all" }}>{twofa.secret}</code>
-              <div style={{ background: "#f8fafc", border: "1px solid #eee", borderRadius: 8, padding: 12, margin: "12px 0", fontSize: 12, color: "#444" }}>
+              <div style={{ background: "var(--rdsh-bg-subtle)", border: "1px solid var(--rdsh-border-soft)", borderRadius: 8, padding: 12, margin: "12px 0", fontSize: 12, color: "var(--rdsh-fg)" }}>
                 <p style={{ margin: "0 0 4px", fontWeight: 600 }}>{t("设置步骤：")}</p>
                 <p style={{ margin: "2px 0" }}>1. {t("任选一款验证器 App 并打开（见上方清单）")}</p>
                 <p style={{ margin: "2px 0" }}>2. {t("添加账号 → 扫码绑定；无法扫码时选「手动输入」，粘贴下方密钥")}</p>
@@ -1081,7 +1081,7 @@ function TwoFaSettingsPage(): React.JSX.Element {
           </>
         ) : (
           <div>
-            <p style={{ fontSize: 13, color: "#6b7280", marginTop: 0 }}>{t("已开启两步验证，登录时需输入 TOTP 动态验证码。")}</p>
+            <p style={{ fontSize: 13, color: "var(--rdsh-fg-muted)", marginTop: 0 }}>{t("已开启两步验证，登录时需输入 TOTP 动态验证码。")}</p>
             {field(t("输入当前验证码以关闭"), twofaCode, setTwofaCode, "text", { numeric: true })}
             <button
               onClick={() => void run(async () => { await api.disable2fa(twofaCode.trim()); setTwofaCode(""); show("ok", t("2FA 已关闭")); await refresh(); })}
@@ -1102,9 +1102,9 @@ function DangerZonePage(): React.JSX.Element {
   return (
     <Shell title={t("删除账号")}>
       <BackToAccount />
-      {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
+      {err !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{err}</p>}
       <Card title={t("删除账号（不可恢复）")}>
-        <p style={{ fontSize: 13, color: "#6b7280", marginTop: 0 }}>
+        <p style={{ fontSize: 13, color: "var(--rdsh-fg-muted)", marginTop: 0 }}>
           {t("删除后将立即断开全部主机并清除个人数据（账务记录保留），且不可恢复。请谨慎操作。")}
         </p>
         {field(t("输入密码以确认"), deletePw, setDeletePw, "password")}
@@ -1154,15 +1154,15 @@ function ResetPasswordPage(): React.JSX.Element {
         <>
           {field(channel === "email" ? t("注册邮箱") : t("手机号（+86）"), identifier, setIdentifier)}
           <CaptchaGate onCaptcha={setCaptchaPayload} />
-          {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
+          {err !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{err}</p>}
           <button onClick={() => void run(async () => { await api.resetRequest(channel, identifier.trim(), captchaPayload); setSent(true); })} style={{ ...btnStyle(), width: "100%" }}>{t("发送重置码")}</button>
         </>
       ) : (
         <>
-          <p style={{ fontSize: 13, color: "#666" }}>{t("若该{channel}已注册，重置码已发送（10 分钟内有效）。", { params: { channel: channel === "email" ? t("邮箱") : t("手机号") } })}</p>
+          <p style={{ fontSize: 13, color: "var(--rdsh-fg-muted)" }}>{t("若该{channel}已注册，重置码已发送（10 分钟内有效）。", { params: { channel: channel === "email" ? t("邮箱") : t("手机号") } })}</p>
           {field(t("重置码"), code, setCode)}
           {field(t("新密码（至少 8 位）"), newPassword, setNewPassword, "password")}
-          {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
+          {err !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{err}</p>}
           <button onClick={() => void run(async () => { await api.resetConfirm(channel, identifier.trim(), code.trim(), newPassword); navigate("/login"); })} style={{ ...btnStyle(), width: "100%" }}>{t("重置密码")}</button>
         </>
       )}
@@ -1181,11 +1181,11 @@ function ShieldIcon(): React.JSX.Element {
       height="13"
       viewBox="0 0 24 24"
       fill="none"
-      stroke="#16a34a"
+      stroke="currentColor"
       strokeWidth="2.4"
       strokeLinecap="round"
       strokeLinejoin="round"
-      style={{ marginRight: 5, verticalAlign: -1.5, flexShrink: 0 }}
+      style={{ marginRight: 5, verticalAlign: -1.5, flexShrink: 0, color: "var(--rdsh-success)" }}
     >
       <title>{t("端到端加密")}</title>
       <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
@@ -1315,32 +1315,32 @@ function HostsPage(): React.JSX.Element {
 
   return (
     <Shell>
-      {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
+      {err !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{err}</p>}
       <div style={{ marginBottom: 16 }}>
         <button onClick={() => navigate("/add-host")} style={btnStyle()}>{t("添加主机接入")}</button>
       </div>
 
       {loading ? (
-        <p style={{ color: "#666" }}>{t("加载中…")}</p>
+        <p style={{ color: "var(--rdsh-fg-muted)" }}>{t("加载中…")}</p>
       ) : hosts.length === 0 ? (
-        <p style={{ color: "#666" }}>{t("还没有接入主机 —— 用上面的「添加主机」接入你的第一台 DSH。")}</p>
+        <p style={{ color: "var(--rdsh-fg-muted)" }}>{t("还没有接入主机 —— 用上面的「添加主机」接入你的第一台 DSH。")}</p>
       ) : (
         <div>
           {hosts.map((h) => {
             const isOwner = h.role !== "member";
             const menuOpen = menuHostId === h.id;
             return (
-              <div key={h.id} style={{ border: "1px solid #eee", borderRadius: 8, marginBottom: 8 }}>
+              <div key={h.id} style={{ border: "1px solid var(--rdsh-border-soft)", borderRadius: 8, marginBottom: 8 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px" }}>
                   <span style={{ fontWeight: 500 }}>
                     {h.e2eePublicKey !== undefined && h.e2eePublicKey !== null && h.e2eePublicKey !== "" && <ShieldIcon />}
                     {h.name}
                   </span>
                   <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                    <span style={{ color: h.online ? "#16a34a" : "#999", fontSize: 14 }}>{h.online ? "●" : "○"}</span>
-                    <span style={{ color: "#666", fontSize: 12 }}>{h.online ? t("在线") : t("离线")}</span>
+                    <span style={{ color: h.online ? "var(--rdsh-success)" : "var(--rdsh-fg-subtle)", fontSize: 14 }}>{h.online ? "●" : "○"}</span>
+                    <span style={{ color: "var(--rdsh-fg-muted)", fontSize: 12 }}>{h.online ? t("在线") : t("离线")}</span>
                   </span>
-                  {!isOwner && <span style={{ color: "#999", fontSize: 12, border: "1px solid #eee", borderRadius: 4, padding: "1px 6px" }}>{t("共享", { en: "Shared" })}</span>}
+                  {!isOwner && <span style={{ color: "var(--rdsh-fg-subtle)", fontSize: 12, border: "1px solid var(--rdsh-border-soft)", borderRadius: 4, padding: "1px 6px" }}>{t("共享", { en: "Shared" })}</span>}
                   <div style={{ marginLeft: "auto", display: "flex", gap: 6, position: "relative" }}>
                     <button onClick={() => requestEnter(h)} style={btnStyle()}>{t("进入")}</button>
                     {isOwner && (
@@ -1351,7 +1351,7 @@ function HostsPage(): React.JSX.Element {
                       >⋯</button>
                     )}
                     {menuOpen && (
-                      <div style={{ position: "absolute", top: "100%", right: 0, marginTop: 4, background: "#fff", border: "1px solid #eee", borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,.1)", zIndex: 20, minWidth: 140, padding: 4 }} onClick={(e) => e.stopPropagation()}>
+                      <div style={{ position: "absolute", top: "100%", right: 0, marginTop: 4, background: "var(--rdsh-bg-surface)", border: "1px solid var(--rdsh-border-soft)", borderRadius: 8, boxShadow: "var(--rdsh-shadow)", zIndex: 20, minWidth: 140, padding: 4 }} onClick={(e) => e.stopPropagation()}>
                         <button style={menuItemStyle()} onClick={() => { setMenuHostId(null); setRenameId(h.id); setRenameName(h.name); }}>
                           <MenuIcon><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /></MenuIcon>
                           {t("改名")}
@@ -1387,7 +1387,7 @@ function HostsPage(): React.JSX.Element {
             );
           })}
           {shareHostId !== null && (
-            <div style={{ marginTop: 12, padding: 12, border: "1px solid #eee", borderRadius: 8 }}>
+            <div style={{ marginTop: 12, padding: 12, border: "1px solid var(--rdsh-border-soft)", borderRadius: 8 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                 <p style={{ fontWeight: 500, margin: 0 }}>{t("共享管理")}{shareHostName !== undefined ? ` · ${shareHostName}` : ""}</p>
                 <button onClick={() => { setShareHostId(null); setShareName(""); }} style={btnStyle("ghost")}>{t("关闭")}</button>
@@ -1397,7 +1397,7 @@ function HostsPage(): React.JSX.Element {
                 <button onClick={doShare} style={btnStyle()}>{t("共享", { en: "Share" })}</button>
               </div>
               {shares.length === 0 ? (
-                <p style={{ color: "#666", fontSize: 13 }}>{t("尚未共享给任何人")}</p>
+                <p style={{ color: "var(--rdsh-fg-muted)", fontSize: 13 }}>{t("尚未共享给任何人")}</p>
               ) : (
                 shares.map((s) => (
                   <div key={s.userId} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
@@ -1411,12 +1411,12 @@ function HostsPage(): React.JSX.Element {
         </div>
       )}
       {pendingTrust !== null && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setPendingTrust(null)}>
-          <div style={{ background: "#fff", padding: 20, borderRadius: 12, maxWidth: 400, textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ position: "fixed", inset: 0, background: "var(--rdsh-scrim)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setPendingTrust(null)}>
+          <div style={{ background: "var(--rdsh-bg-surface)", padding: 20, borderRadius: 12, maxWidth: 400, textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
             <p style={{ margin: 0, fontWeight: 600 }}>{pendingTrust.changed ? t("主机的安全指纹已改变") : t("首次连接这台主机")}</p>
-            <p style={{ color: "#666", fontSize: 13, margin: "8px 0 0" }}>{t("主机")}: {pendingTrust.name}</p>
+            <p style={{ color: "var(--rdsh-fg-muted)", fontSize: 13, margin: "8px 0 0" }}>{t("主机")}: {pendingTrust.name}</p>
             <p style={{ fontFamily: "monospace", fontSize: 16, letterSpacing: 1, margin: "10px 0" }}>{pendingTrust.fingerprint}</p>
-            <p style={{ color: "#999", fontSize: 12, margin: "0 0 12px" }}>
+            <p style={{ color: "var(--rdsh-fg-subtle)", fontSize: 12, margin: "0 0 12px" }}>
               {pendingTrust.changed ? t("可能原因：主机重装 / 重建，或连接被劫持。请确认后重新信任。") : t("信任后，与这台主机的数据将端到端加密（hub 不可读）。")}
             </p>
             <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
@@ -1529,18 +1529,18 @@ function AddHostPage(): React.JSX.Element {
 
   return (
     <Shell title={t("添加主机接入")}>
-      {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
+      {err !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{err}</p>}
       <div style={{ marginBottom: 16 }}>
         <h2 style={{ fontSize: 18, fontWeight: 600, margin: "0 0 8px" }}>{t("生成接入令牌")}</h2>
-        <p style={{ fontSize: 14, color: "#111", margin: "0 0 8px" }}>{t("用于将主机接入 Hub，并绑定到用户的账号。")}</p>
-        <div style={{ fontSize: 12, color: "#666", paddingLeft: 16 }}>
+        <p style={{ fontSize: 14, color: "var(--rdsh-fg)", margin: "0 0 8px" }}>{t("用于将主机接入 Hub，并绑定到用户的账号。")}</p>
+        <div style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", paddingLeft: 16 }}>
           <p style={{ margin: "2px 0" }}>· {t("明文只在生成时显示一次——刷新或离开本页后无法再次查看，请立即复制")}</p>
           <p style={{ margin: "2px 0" }}>· {t("令牌在有效期内可重复使用，可接入多台主机")}</p>
           <p style={{ margin: "2px 0" }}>· {t("接入后主机保持连接，不依赖此令牌——吊销它不影响已接入主机")}</p>
           <p style={{ margin: "2px 0" }}>· {t("遗忘或泄露，请立即吊销并重新生成，旧令牌即刻失效")}</p>
         </div>
       </div>
-      <div style={{ border: "1px solid #ccc", borderRadius: 8, padding: 16, marginBottom: 16 }}>
+      <div style={{ border: "1px solid var(--rdsh-border)", borderRadius: 8, padding: 16, marginBottom: 16 }}>
         {field(t("令牌备注（可选）"), note, setNote)}
         <label style={{ display: "block", marginBottom: 16, fontSize: 13 }}>
           <span style={{ display: "block", marginBottom: 4 }}>{t("有效期")}</span>
@@ -1557,48 +1557,48 @@ function AddHostPage(): React.JSX.Element {
 
       {generated !== null && (
         <div style={{ marginBottom: 16 }}>
-          <p style={{ color: "#dc2626", fontSize: 13, fontWeight: 600, margin: "0 0 8px" }}>{t("接入令牌明文只显示这一次，请立即复制")}</p>
-          <div style={{ border: "1px solid #eee", borderRadius: 8, padding: 16, marginBottom: 12 }}>
+          <p style={{ color: "var(--rdsh-danger)", fontSize: 13, fontWeight: 600, margin: "0 0 8px" }}>{t("接入令牌明文只显示这一次，请立即复制")}</p>
+          <div style={{ border: "1px solid var(--rdsh-border-soft)", borderRadius: 8, padding: 16, marginBottom: 12 }}>
             <p style={{ margin: "0 0 10px", fontWeight: 600, fontSize: 14 }}>{t("方式一：DSH 插件（界面操作，免装 CLI）")}</p>
-            <p style={{ color: "#666", fontSize: 12, margin: 0 }}>{t("未装插件？在主机终端执行：")}</p>
-            <pre style={{ background: "#f8fafc", border: "1px solid #eee", borderRadius: 6, padding: 8, fontSize: 12, margin: "4px 0 6px", overflowX: "auto" }}>dsh plugin --profile web add dsh-web-remote</pre>
-            <p style={{ color: "#666", fontSize: 12, margin: "0 0 10px" }}>{t("然后重启 dsh web（插件 boot 时加载）")}</p>
-            <p style={{ color: "#666", fontSize: 13, margin: "0 0 8px" }}>{t("在 DSH 设置 →「远程访问」面板填入：")}</p>
+            <p style={{ color: "var(--rdsh-fg-muted)", fontSize: 12, margin: 0 }}>{t("未装插件？在主机终端执行：")}</p>
+            <pre style={{ background: "var(--rdsh-bg-subtle)", border: "1px solid var(--rdsh-border-soft)", borderRadius: 6, padding: 8, fontSize: 12, margin: "4px 0 6px", overflowX: "auto" }}>dsh plugin --profile web add dsh-web-remote</pre>
+            <p style={{ color: "var(--rdsh-fg-muted)", fontSize: 12, margin: "0 0 10px" }}>{t("然后重启 dsh web（插件 boot 时加载）")}</p>
+            <p style={{ color: "var(--rdsh-fg-muted)", fontSize: 13, margin: "0 0 8px" }}>{t("在 DSH 设置 →「远程访问」面板填入：")}</p>
             <div style={{ marginBottom: 10 }}>
-              <code style={{ display: "block", fontSize: 12, color: "#666", background: "#f3f4f6", padding: "6px 8px", borderRadius: 4, wordBreak: "break-all" }}>{generated.hub}</code>
+              <code style={{ display: "block", fontSize: 12, color: "var(--rdsh-fg-muted)", background: "var(--rdsh-bg-subtle)", padding: "6px 8px", borderRadius: 4, wordBreak: "break-all" }}>{generated.hub}</code>
               <button onClick={() => copy("hub", generated.hub)} style={{ ...btnStyle(), marginTop: 6 }}>{copiedKey === "hub" ? `${t("已复制")} ✓` : t("复制 Hub 地址")}</button>
             </div>
             <div style={{ marginBottom: 0 }}>
-              <code style={{ display: "block", fontSize: 12, color: "#111", background: "#f3f4f6", padding: "6px 8px", borderRadius: 4, wordBreak: "break-all" }}>{generated.token}</code>
+              <code style={{ display: "block", fontSize: 12, color: "var(--rdsh-fg)", background: "var(--rdsh-bg-subtle)", padding: "6px 8px", borderRadius: 4, wordBreak: "break-all" }}>{generated.token}</code>
               <button onClick={() => copy("token", generated.token)} style={{ ...btnStyle(), marginTop: 6 }}>{copiedKey === "token" ? `${t("已复制")} ✓` : t("复制令牌")}</button>
             </div>
           </div>
-          <div style={{ border: "1px solid #eee", borderRadius: 8, padding: 16 }}>
+          <div style={{ border: "1px solid var(--rdsh-border-soft)", borderRadius: 8, padding: 16 }}>
             <p style={{ margin: "0 0 10px", fontWeight: 600, fontSize: 14 }}>{t("方式二：rdsh-gateway（命令行）")}</p>
-            <p style={{ color: "#666", fontSize: 12, margin: 0 }}>{t("未装 CLI？终端执行：")}</p>
-            <pre style={{ background: "#f8fafc", border: "1px solid #eee", borderRadius: 6, padding: 8, fontSize: 12, margin: "4px 0 10px", overflowX: "auto" }}>npm i -g remote-dsh</pre>
-            <p style={{ color: "#666", fontSize: 13, margin: "0 0 6px" }}>{t("在主机终端执行：")}</p>
-            <pre style={{ background: "#f8fafc", border: "1px solid #eee", borderRadius: 6, padding: 8, fontSize: 12, margin: "0 0 8px", overflowX: "auto" }}>{generated.command}</pre>
+            <p style={{ color: "var(--rdsh-fg-muted)", fontSize: 12, margin: 0 }}>{t("未装 CLI？终端执行：")}</p>
+            <pre style={{ background: "var(--rdsh-bg-subtle)", border: "1px solid var(--rdsh-border-soft)", borderRadius: 6, padding: 8, fontSize: 12, margin: "4px 0 10px", overflowX: "auto" }}>npm i -g remote-dsh</pre>
+            <p style={{ color: "var(--rdsh-fg-muted)", fontSize: 13, margin: "0 0 6px" }}>{t("在主机终端执行：")}</p>
+            <pre style={{ background: "var(--rdsh-bg-subtle)", border: "1px solid var(--rdsh-border-soft)", borderRadius: 6, padding: 8, fontSize: 12, margin: "0 0 8px", overflowX: "auto" }}>{generated.command}</pre>
             <button onClick={() => copy("command", generated.command)} style={btnStyle()}>{copiedKey === "command" ? `${t("已复制")} ✓` : t("复制命令")}</button>
-            {copyErr !== "" && <p style={{ color: "#dc2626", fontSize: 13, margin: "8px 0 0" }}>{copyErr}</p>}
-            <p style={{ color: "#666", fontSize: 12, margin: "10px 0 2px" }}>{t("接入后运行隧道：")}</p>
-            <p style={{ color: "#666", fontSize: 12, margin: "2px 0" }}>· {t("前台运行：rdsh host serve")}</p>
-            <p style={{ color: "#666", fontSize: 12, margin: "2px 0" }}>· {t("常驻服务（服务器 7×24）：rdsh host service install")}</p>
-            <p style={{ color: "#666", fontSize: 12, margin: "10px 0 0" }}>{t("主机名默认取机器 hostname，可追加 --name 覆盖")}</p>
+            {copyErr !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13, margin: "8px 0 0" }}>{copyErr}</p>}
+            <p style={{ color: "var(--rdsh-fg-muted)", fontSize: 12, margin: "10px 0 2px" }}>{t("接入后运行隧道：")}</p>
+            <p style={{ color: "var(--rdsh-fg-muted)", fontSize: 12, margin: "2px 0" }}>· {t("前台运行：rdsh host serve")}</p>
+            <p style={{ color: "var(--rdsh-fg-muted)", fontSize: 12, margin: "2px 0" }}>· {t("常驻服务（服务器 7×24）：rdsh host service install")}</p>
+            <p style={{ color: "var(--rdsh-fg-muted)", fontSize: 12, margin: "10px 0 0" }}>{t("主机名默认取机器 hostname，可追加 --name 覆盖")}</p>
           </div>
         </div>
       )}
 
-      <p style={{ fontSize: 13, color: "#666", fontWeight: 600, marginBottom: 6 }}>{t("接入令牌")}</p>
+      <p style={{ fontSize: 13, color: "var(--rdsh-fg-muted)", fontWeight: 600, marginBottom: 6 }}>{t("接入令牌")}</p>
       {tokens.length === 0 ? (
-        <p style={{ color: "#999", fontSize: 13 }}>{t("（无）")}</p>
+        <p style={{ color: "var(--rdsh-fg-subtle)", fontSize: 13 }}>{t("（无）")}</p>
       ) : (
         <div>
           {tokens.map((tok) => (
-            <div key={tok.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", border: "1px solid #eee", borderRadius: 8, marginBottom: 8 }}>
+            <div key={tok.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", border: "1px solid var(--rdsh-border-soft)", borderRadius: 8, marginBottom: 8 }}>
               <span style={{ fontWeight: 500 }}>{tok.label ?? compactTimestamp(tok.createdAt)}</span>
-              <code style={{ fontSize: 12, color: "#666", background: "#f3f4f6", padding: "2px 6px", borderRadius: 4 }}>{tok.fingerprint}</code>
-              <span style={{ color: "#666", fontSize: 12 }}>{t("到期 {date}", { params: { date: new Date(tok.expiresAt).toLocaleDateString() } })}</span>
+              <code style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", background: "var(--rdsh-bg-subtle)", padding: "2px 6px", borderRadius: 4 }}>{tok.fingerprint}</code>
+              <span style={{ color: "var(--rdsh-fg-muted)", fontSize: 12 }}>{t("到期 {date}", { params: { date: new Date(tok.expiresAt).toLocaleDateString() } })}</span>
               <button onClick={() => revoke(tok.id)} style={{ ...btnStyle("danger"), marginLeft: "auto" }}>{t("吊销")}</button>
             </div>
           ))}
@@ -1635,14 +1635,14 @@ function PasswordPage(): React.JSX.Element {
   return (
     <Shell title={t("修改密码")}>
       <div style={{ maxWidth: 420 }}>
-        {done && <p style={{ color: "#16a34a", fontSize: 14 }}>{t("密码已修改，全部会话已失效 —— 即将跳转登录…")}</p>}
+        {done && <p style={{ color: "var(--rdsh-success)", fontSize: 14 }}>{t("密码已修改，全部会话已失效 —— 即将跳转登录…")}</p>}
         {!done && (
           <>
             {field(t("当前密码"), current, setCurrent, "password")}
             {field(t("新密码（至少 8 位）"), next, setNext, "password")}
             {field(t("确认新密码"), again, setAgain, "password")}
-            {next !== again && next !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{t("两次输入不一致")}</p>}
-            {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
+            {next !== again && next !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{t("两次输入不一致")}</p>}
+            {err !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{err}</p>}
             <button onClick={submit} style={btnStyle()}>{t("保存")}</button>
           </>
         )}
@@ -1685,7 +1685,7 @@ function RegisterPage(): React.JSX.Element {
         <LangToggle />
       </div>
       <h1 style={{ fontSize: 20, marginBottom: 4 }}>{t("注册 rdsh")}</h1>
-      <p style={{ color: "#666", fontSize: 13, marginBottom: 24 }}>{t("注册即享 7 天试用（1 台主机），随时随地浏览器访问你的 DSH。")}</p>
+      <p style={{ color: "var(--rdsh-fg-muted)", fontSize: 13, marginBottom: 24 }}>{t("注册即享 7 天试用（1 台主机），随时随地浏览器访问你的 DSH。")}</p>
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
         <button onClick={() => setChannel("email")} style={channel === "email" ? btnStyle() : btnStyle("ghost")}>{t("邮箱")}</button>
         {cap?.smsEnabled !== false && (
@@ -1699,15 +1699,15 @@ function RegisterPage(): React.JSX.Element {
         <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} style={{ marginTop: 2 }} />
         <span>
           {t("我已阅读并同意")}
-          {legalLink(cap?.site?.termsUrl, "/terms", t("《用户协议》"), { color: "#2563eb" })}
+          {legalLink(cap?.site?.termsUrl, "/terms", t("《用户协议》"), { color: "var(--rdsh-link)" })}
           {t("与")}
-          {legalLink(cap?.site?.privacyUrl, "/privacy", t("《隐私政策》"), { color: "#2563eb" })}
+          {legalLink(cap?.site?.privacyUrl, "/privacy", t("《隐私政策》"), { color: "var(--rdsh-link)" })}
         </span>
       </label>
-      {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
+      {err !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{err}</p>}
       <button onClick={submit} disabled={!agreed} style={{ ...btnStyle(), width: "100%", marginTop: 8, opacity: agreed ? 1 : 0.5 }}>{t("获取验证码并注册")}</button>
       <p style={{ marginTop: 12, textAlign: "center" }}>
-        <a href="#" onClick={(e) => { e.preventDefault(); navigate("/login"); }} style={{ color: "#2563eb", fontSize: 13 }}>{t("已有账号？登录")}</a>
+        <a href="#" onClick={(e) => { e.preventDefault(); navigate("/login"); }} style={{ color: "var(--rdsh-link)", fontSize: 13 }}>{t("已有账号？登录")}</a>
       </p>
       <SiteFooter />
     </div>
@@ -1736,9 +1736,9 @@ function VerifyPage(): React.JSX.Element {
         <LangToggle />
       </div>
       <h1 style={{ fontSize: 20 }}>{t("验证{channel}", { params: { channel: channel === "email" ? t("邮箱") : t("手机号") } })}</h1>
-      <p style={{ color: "#666", fontSize: 13, marginBottom: 24 }}>{t("验证码已发送至 {identifier}（10 分钟内有效）。", { params: { identifier } })}</p>
+      <p style={{ color: "var(--rdsh-fg-muted)", fontSize: 13, marginBottom: 24 }}>{t("验证码已发送至 {identifier}（10 分钟内有效）。", { params: { identifier } })}</p>
       {field(t("6 位验证码"), code, setCode)}
-      {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
+      {err !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{err}</p>}
       <button onClick={submit} style={{ ...btnStyle(), width: "100%" }}>{t("验证并登录")}</button>
     </div>
   );
@@ -1762,13 +1762,13 @@ function isMobileBrowser(): boolean {
   return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
 }
 
-/** 微信官方 logo（白色版，用于绿底「微信登录」按钮；商标 © Tencent）。 */
+/** 微信官方 logo（颜色随按钮前景色，用于「微信登录」按钮；商标 © Tencent）。 */
 function WechatIcon({ size = 18 }: { size?: number }): React.JSX.Element {
   return (
     <svg width={size} height={Math.round((size * 310) / 384)} viewBox="0 0 384 310" aria-hidden="true">
       <path
         d="M343.37 275.112c24.333-17.635 39.886-43.726 39.886-72.71 0-53.132-51.685-96.198-115.439-96.198-63.754 0-115.435 43.066-115.435 96.198 0 53.129 51.681 96.194 115.435 96.194 13.174 0 25.89-1.88 37.68-5.272a11.59 11.59 0 0 1 3.397-.505c2.212 0 4.23.673 6.126 1.774l25.272 14.587c.706.408 1.387.719 2.224.719a3.847 3.847 0 0 0 3.847-3.852c0-.946-.378-1.9-.618-2.808-.147-.543-3.263-12.157-5.201-19.406-.223-.811-.404-1.598-.404-2.451a7.687 7.687 0 0 1 3.23-6.27m-114.036-88.1c-8.493 0-15.385-6.89-15.385-15.393 0-8.502 6.892-15.394 15.385-15.394 8.507 0 15.394 6.892 15.394 15.394 0 8.502-6.887 15.394-15.394 15.394m76.961 0c-8.498 0-15.39-6.892-15.39-15.394 0-8.502 6.892-15.394 15.39-15.394 8.503 0 15.39 6.892 15.39 15.394 0 8.502-6.887 15.394-15.39 15.394zM138.524 0c69.11 0 126.385 42.174 136.817 97.32a153.735 153.735 0 0 0-7.523-.201c-69.775 0-126.338 47.14-126.338 105.28 0 9.806 1.644 19.292 4.655 28.295-2.523.113-5.055.18-7.611.18-15.806 0-31.065-2.262-45.215-6.328a13.889 13.889 0 0 0-4.074-.61c-2.658 0-5.071.812-7.354 2.128l-30.326 17.51c-.845.487-1.669.861-2.67.861a4.614 4.614 0 0 1-4.617-4.617c0-1.143.455-2.283.745-3.376l6.24-23.282c.265-.98.487-1.922.487-2.944a9.23 9.23 0 0 0-3.876-7.526C18.657 181.53 0 150.222 0 115.44 0 51.685 62.017 0 138.524 0zM92.346 96.968c10.206 0 18.472-8.267 18.472-18.472 0-10.201-8.266-18.468-18.472-18.468-10.196 0-18.467 8.267-18.467 18.468 0 10.205 8.27 18.472 18.467 18.472zm92.355 0c10.201 0 18.472-8.267 18.472-18.472 0-10.201-8.27-18.468-18.472-18.468-10.205 0-18.471 8.267-18.471 18.468 0 10.205 8.266 18.472 18.471 18.472z"
-        fill="#FFF"
+        fill="currentColor"
         fillRule="evenodd"
       />
     </svg>
@@ -1897,20 +1897,20 @@ function BillingPage(): React.JSX.Element {
     <>
       <Shell title={t("套餐与订阅")}>
         <Toast toast={toast} />
-        {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
+        {err !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{err}</p>}
         {hasStatus && <CurrentPlanCard sub={sub} />}
         {hasPlans ? (
           <Card title={t("选择套餐")}>
             {plans.map((p) => {
               const current = p.id === currentPlanId;
               return (
-                <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", border: "1px solid #e5e7eb", borderRadius: 10, marginBottom: 8 }}>
+                <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", border: "1px solid var(--rdsh-border)", borderRadius: 10, marginBottom: 8 }}>
                   <div style={{ flex: 1 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       <span style={{ fontWeight: 600, fontSize: 14 }}>{p.name}</span>
-                      {current && <span style={{ fontSize: 11, padding: "1px 8px", borderRadius: 999, background: "#ecfdf5", color: "#047857" }}>{t("当前套餐")}</span>}
+                      {current && <span style={{ fontSize: 11, padding: "1px 8px", borderRadius: 999, background: "var(--rdsh-success-soft)", color: "var(--rdsh-success-strong)" }}>{t("当前套餐")}</span>}
                     </div>
-                    <div style={{ fontSize: 13, color: "#6b7280", marginTop: 2 }}>{t("{hosts} 台 host · ¥{price}/{interval} 天", { params: { hosts: p.hosts, price: p.priceCny, interval: p.intervalDays } })}</div>
+                    <div style={{ fontSize: 13, color: "var(--rdsh-fg-muted)", marginTop: 2 }}>{t("{hosts} 台 host · ¥{price}/{interval} 天", { params: { hosts: p.hosts, price: p.priceCny, interval: p.intervalDays } })}</div>
                   </div>
                   <button disabled={current} onClick={() => subscribe(p.id)} style={btnStyle()}>
                     {current ? t("当前套餐") : t("订阅")}
@@ -1922,22 +1922,22 @@ function BillingPage(): React.JSX.Element {
         ) : (
           <Card title={t("自托管模式")}>
             <p style={{ fontSize: 13, margin: 0 }}>{t("你正在自托管运行 remote-dsh（开源免费）：host 数量不限 · 无需订阅 · 无到期限制。")}</p>
-            <p style={{ fontSize: 13, color: "#6b7280", margin: "8px 0 0" }}>{t("完整功能：多用户 / 2FA / 审计 / 共享。")}</p>
-            <p style={{ fontSize: 12, color: "#9ca3af", margin: "8px 0 0" }}>{t("运营方在 hub.json 配置 billing.plans 后，此处将展示套餐与订阅入口。")}</p>
+            <p style={{ fontSize: 13, color: "var(--rdsh-fg-muted)", margin: "8px 0 0" }}>{t("完整功能：多用户 / 2FA / 审计 / 共享。")}</p>
+            <p style={{ fontSize: 12, color: "var(--rdsh-fg-subtle)", margin: "8px 0 0" }}>{t("运营方在 hub.json 配置 billing.plans 后，此处将展示套餐与订阅入口。")}</p>
           </Card>
         )}
         <Card title={t("计费说明")}>
-          <p style={{ fontSize: 13, color: "#6b7280", margin: 0 }}>
+          <p style={{ fontSize: 13, color: "var(--rdsh-fg-muted)", margin: 0 }}>
             {t("订阅/试用到期后进入 3 天宽限期（隧道保留），之后降级免费档（0 台在线，host 数据保留 30 天）。")}
           </p>
-          <p style={{ fontSize: 13, color: "#6b7280", margin: "8px 0 0" }}>
+          <p style={{ fontSize: 13, color: "var(--rdsh-fg-muted)", margin: "8px 0 0" }}>
             {t("支付：微信支付（扫码 / H5 / 微信内）· 暂不提供发票。")}
           </p>
         </Card>
       </Shell>
       {qrDataUrl !== null && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setQrDataUrl(null)}>
-          <div style={{ background: "#fff", padding: 20, borderRadius: 12, textAlign: "center", maxWidth: 280 }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ position: "fixed", inset: 0, background: "var(--rdsh-scrim)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setQrDataUrl(null)}>
+          <div style={{ background: "var(--rdsh-bg-surface)", padding: 20, borderRadius: 12, textAlign: "center", maxWidth: 280 }} onClick={(e) => e.stopPropagation()}>
             <img src={qrDataUrl} width={220} height={220} alt="qr" />
             <p style={{ margin: "12px 0 8px", fontSize: 14 }}>{t("请用微信扫一扫完成支付")}</p>
             <button onClick={() => setQrDataUrl(null)} style={btnStyle("ghost")}>{t("取消")}</button>
@@ -1957,9 +1957,9 @@ const ADMIN_CSS = `
   @media (max-width: 640px) {
     .admintbl thead { display: none; }
     .admintbl, .admintbl tbody, .admintbl tr, .admintbl td { display: block !important; width: 100% !important; box-sizing: border-box; }
-    .admintbl tr { margin-bottom: 10px; border: 1px solid #e5e7eb !important; border-radius: 10px; padding: 8px 12px !important; background: #fff; }
+    .admintbl tr { margin-bottom: 10px; border: 1px solid var(--rdsh-border) !important; border-radius: 10px; padding: 8px 12px !important; background: var(--rdsh-bg-surface); }
     .admintbl td { border: none !important; padding: 5px 0 !important; display: flex !important; justify-content: space-between; align-items: center; gap: 12px; text-align: left !important; }
-    .admintbl td::before { content: attr(data-label); font-weight: 600; color: #6b7280; flex-shrink: 0; }
+    .admintbl td::before { content: attr(data-label); font-weight: 600; color: var(--rdsh-fg-muted); flex-shrink: 0; }
     .admintbl td.act { justify-content: flex-end !important; }
   }
 `;
@@ -1972,10 +1972,10 @@ function adminRoleLabel(t: T, role: string): string {
 }
 
 function adminBtnStyle(variant: "primary" | "danger" | "ghost" = "primary"): React.CSSProperties {
-  const base: React.CSSProperties = { padding: "6px 12px", borderRadius: 6, border: "1px solid #ccc", cursor: "pointer", fontSize: 13 };
-  if (variant === "primary") return { ...base, background: "#2563eb", color: "#fff", borderColor: "#2563eb" };
-  if (variant === "danger") return { ...base, background: "#dc2626", color: "#fff", borderColor: "#dc2626" };
-  return { ...base, background: "#fff" };
+  const base: React.CSSProperties = { padding: "6px 12px", borderRadius: 6, border: "1px solid var(--rdsh-border)", cursor: "pointer", fontSize: 13 };
+  if (variant === "primary") return { ...base, background: "var(--rdsh-primary)", color: "var(--rdsh-fg-on-fill)", borderColor: "var(--rdsh-primary)" };
+  if (variant === "danger") return { ...base, background: "var(--rdsh-danger-fill)", color: "var(--rdsh-fg-on-fill)", borderColor: "var(--rdsh-danger-fill)" };
+  return { ...base, background: "var(--rdsh-bg-surface)" };
 }
 
 function adminTableStyle(): React.CSSProperties {
@@ -1998,7 +1998,7 @@ function Pager({ page, total, pageSize, onPage }: { page: number; total: number;
   return (
     <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 10, fontSize: 13 }}>
       <button disabled={page === 0} onClick={() => onPage(page - 1)} style={{ ...adminBtnStyle("ghost"), opacity: page === 0 ? 0.4 : 1 }}>{t("上一页")}</button>
-      <span style={{ color: "#6b7280" }}>{page + 1} / {totalPages} · {total} {t("条")}</span>
+      <span style={{ color: "var(--rdsh-fg-muted)" }}>{page + 1} / {totalPages} · {total} {t("条")}</span>
       <button disabled={page >= totalPages - 1} onClick={() => onPage(page + 1)} style={{ ...adminBtnStyle("ghost"), opacity: page >= totalPages - 1 ? 0.4 : 1 }}>{t("下一页")}</button>
     </div>
   );
@@ -2049,17 +2049,17 @@ function ActionDialog({ spec, onClose }: { spec: DialogSpec; onClose: () => void
     void Promise.resolve(spec.submit(reason.trim(), values)).finally(() => setBusy(false));
   };
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 16, boxSizing: "border-box" }}>
-      <div style={{ background: "#fff", borderRadius: 12, padding: 20, width: 440, maxWidth: "100%", fontFamily: "system-ui, sans-serif" }}>
+    <div style={{ position: "fixed", inset: 0, background: "var(--rdsh-scrim-soft)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 16, boxSizing: "border-box" }}>
+      <div style={{ background: "var(--rdsh-bg-surface)", borderRadius: 12, padding: 20, width: 440, maxWidth: "100%", fontFamily: "system-ui, sans-serif" }}>
         <h3 style={{ margin: "0 0 12px", fontSize: 16 }}>{spec.title}</h3>
         {spec.fields.map((f) => (
           <div key={f.key} style={{ marginBottom: 10 }}>
-            <label style={{ display: "block", fontSize: 12, color: "#6b7280", marginBottom: 4 }}>{f.label}</label>
+            <label style={{ display: "block", fontSize: 12, color: "var(--rdsh-fg-muted)", marginBottom: 4 }}>{f.label}</label>
             {f.options !== undefined ? (
               <select
                 value={values[f.key] ?? f.value ?? f.options[0]?.value ?? ""}
                 onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
-                style={{ width: "100%", padding: "8px 10px", boxSizing: "border-box", fontSize: 14, background: "#fff" }}
+                style={{ width: "100%", padding: "8px 10px", boxSizing: "border-box", fontSize: 14, background: "var(--rdsh-bg-surface)" }}
               >
                 {f.options.map((o) => (
                   <option key={o.value} value={o.value}>{o.label}</option>
@@ -2078,7 +2078,7 @@ function ActionDialog({ spec, onClose }: { spec: DialogSpec; onClose: () => void
         ))}
         {spec.confirmText !== undefined && (
           <div style={{ marginBottom: 12 }}>
-            <label style={{ display: "block", fontSize: 12, color: "#6b7280", marginBottom: 4 }}>{t("输入 {name} 以确认", { params: { name: spec.confirmText } })}</label>
+            <label style={{ display: "block", fontSize: 12, color: "var(--rdsh-fg-muted)", marginBottom: 4 }}>{t("输入 {name} 以确认", { params: { name: spec.confirmText } })}</label>
             <input
               value={confirmInput}
               onChange={(e) => setConfirmInput(e.target.value)}
@@ -2088,9 +2088,9 @@ function ActionDialog({ spec, onClose }: { spec: DialogSpec; onClose: () => void
           </div>
         )}
         <div style={{ marginBottom: 12 }}>
-          <label style={{ display: "block", fontSize: 12, color: "#6b7280", marginBottom: 4 }}>{t("原因（必填）")}</label>
+          <label style={{ display: "block", fontSize: 12, color: "var(--rdsh-fg-muted)", marginBottom: 4 }}>{t("原因（必填）")}</label>
           <textarea value={reason} onChange={(e) => { setReason(e.target.value); if (reasonErr !== "") setReasonErr(""); }} rows={2} placeholder={t("请填写操作原因")} style={{ width: "100%", padding: "8px 10px", boxSizing: "border-box", fontSize: 14 }} />
-          {reasonErr !== "" && <p style={{ color: "#dc2626", fontSize: 12, margin: "4px 0 0" }}>{reasonErr}</p>}
+          {reasonErr !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 12, margin: "4px 0 0" }}>{reasonErr}</p>}
         </div>
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
           <button onClick={onClose} disabled={busy} style={{ ...adminBtnStyle("ghost"), opacity: busy ? 0.5 : 1 }}>{t("取消")}</button>
@@ -2109,16 +2109,16 @@ function AdminUserDetail({ userId }: { userId: number }): React.JSX.Element {
   useEffect(() => {
     adminApi.userDetail(userId).then(setD).catch((e: unknown) => setErr(e instanceof Error ? e.message : "load failed"));
   }, [userId]);
-  if (err !== "") return <p style={{ color: "#dc2626" }}>{err}</p>;
+  if (err !== "") return <p style={{ color: "var(--rdsh-danger)" }}>{err}</p>;
   if (d === null) return <p>{t("加载中…")}</p>;
   const u = d.user;
   const ts = (ms: number | null): string => (ms === null ? "—" : new Date(ms).toLocaleString());
-  const section = (title: string): React.JSX.Element => <h3 style={{ fontSize: 14, margin: "16px 0 6px", color: "#111827" }}>{title}</h3>;
+  const section = (title: string): React.JSX.Element => <h3 style={{ fontSize: 14, margin: "16px 0 6px", color: "var(--rdsh-fg)" }}>{title}</h3>;
   return (
     <div>
       <button onClick={() => navigate("/admin/users")} style={adminBtnStyle("ghost")}>{t("← 返回用户列表")}</button>
       <h2 style={{ fontSize: 18, margin: "10px 0 4px" }}>{u.name}</h2>
-      <p style={{ fontSize: 12, color: "#6b7280", margin: "0 0 8px" }}>{t("ID")} {u.id} · {adminRoleLabel(t, u.role)} · {u.accountStatus}</p>
+      <p style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", margin: "0 0 8px" }}>{t("ID")} {u.id} · {adminRoleLabel(t, u.role)} · {u.accountStatus}</p>
 
       {section(t("账号信息"))}
       <table className="admintbl" style={adminTableStyle()}>
@@ -2140,11 +2140,11 @@ function AdminUserDetail({ userId }: { userId: number }): React.JSX.Element {
       </table>
 
       {section(t("订阅历史"))}
-      {d.subscriptions.length === 0 ? <p style={{ color: "#9ca3af", fontSize: 13 }}>{t("（无）")}</p> : (
+      {d.subscriptions.length === 0 ? <p style={{ color: "var(--rdsh-fg-subtle)", fontSize: 13 }}>{t("（无）")}</p> : (
         <table className="admintbl" style={adminTableStyle()}>
-          <thead><tr style={{ borderBottom: "1px solid #e5e7eb" }}>{[t("套餐"), t("状态"), t("开始"), t("到期")].map(adminTh)}</tr></thead>
+          <thead><tr style={{ borderBottom: "1px solid var(--rdsh-border)" }}>{[t("套餐"), t("状态"), t("开始"), t("到期")].map(adminTh)}</tr></thead>
           <tbody>{d.subscriptions.map((s) => (
-            <tr key={s.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
+            <tr key={s.id} style={{ borderBottom: "1px solid var(--rdsh-bg-subtle)" }}>
               {adminTd(t("套餐"), s.planId)}{adminTd(t("状态"), s.status)}{adminTd(t("开始"), ts(s.startedAt))}{adminTd(t("到期"), ts(s.expiresAt))}
             </tr>
           ))}</tbody>
@@ -2152,11 +2152,11 @@ function AdminUserDetail({ userId }: { userId: number }): React.JSX.Element {
       )}
 
       {section(t("订单"))}
-      {d.orders.length === 0 ? <p style={{ color: "#9ca3af", fontSize: 13 }}>{t("（无）")}</p> : (
+      {d.orders.length === 0 ? <p style={{ color: "var(--rdsh-fg-subtle)", fontSize: 13 }}>{t("（无）")}</p> : (
         <table className="admintbl" style={adminTableStyle()}>
-          <thead><tr style={{ borderBottom: "1px solid #e5e7eb" }}>{[t("订单号"), t("套餐"), t("金额"), t("状态"), t("时间")].map(adminTh)}</tr></thead>
+          <thead><tr style={{ borderBottom: "1px solid var(--rdsh-border)" }}>{[t("订单号"), t("套餐"), t("金额"), t("状态"), t("时间")].map(adminTh)}</tr></thead>
           <tbody>{d.orders.map((o) => (
-            <tr key={o.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
+            <tr key={o.id} style={{ borderBottom: "1px solid var(--rdsh-bg-subtle)" }}>
               {adminTd(t("订单号"), o.id)}{adminTd(t("套餐"), o.planId)}{adminTd(t("金额"), `¥${o.amountCny}`)}{adminTd(t("状态"), o.status)}{adminTd(t("时间"), ts(o.createdAt))}
             </tr>
           ))}</tbody>
@@ -2164,11 +2164,11 @@ function AdminUserDetail({ userId }: { userId: number }): React.JSX.Element {
       )}
 
       {section(t("支付流水"))}
-      {d.payments.length === 0 ? <p style={{ color: "#9ca3af", fontSize: 13 }}>{t("（无）")}</p> : (
+      {d.payments.length === 0 ? <p style={{ color: "var(--rdsh-fg-subtle)", fontSize: 13 }}>{t("（无）")}</p> : (
         <table className="admintbl" style={adminTableStyle()}>
-          <thead><tr style={{ borderBottom: "1px solid #e5e7eb" }}>{[t("渠道"), t("渠道单号"), t("金额"), t("时间")].map(adminTh)}</tr></thead>
+          <thead><tr style={{ borderBottom: "1px solid var(--rdsh-border)" }}>{[t("渠道"), t("渠道单号"), t("金额"), t("时间")].map(adminTh)}</tr></thead>
           <tbody>{d.payments.map((p) => (
-            <tr key={p.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
+            <tr key={p.id} style={{ borderBottom: "1px solid var(--rdsh-bg-subtle)" }}>
               {adminTd(t("渠道"), p.channel)}{adminTd(t("渠道单号"), p.channelOrderId)}{adminTd(t("金额"), `¥${p.amountCny}`)}{adminTd(t("时间"), ts(p.paidAt))}
             </tr>
           ))}</tbody>
@@ -2176,11 +2176,11 @@ function AdminUserDetail({ userId }: { userId: number }): React.JSX.Element {
       )}
 
       {section(t("审计轨迹"))}
-      {d.audit.length === 0 ? <p style={{ color: "#9ca3af", fontSize: 13 }}>{t("（无）")}</p> : (
+      {d.audit.length === 0 ? <p style={{ color: "var(--rdsh-fg-subtle)", fontSize: 13 }}>{t("（无）")}</p> : (
         <table className="admintbl" style={adminTableStyle()}>
-          <thead><tr style={{ borderBottom: "1px solid #e5e7eb" }}>{[t("时间"), t("事件"), t("来源"), t("IP")].map(adminTh)}</tr></thead>
+          <thead><tr style={{ borderBottom: "1px solid var(--rdsh-border)" }}>{[t("时间"), t("事件"), t("来源"), t("IP")].map(adminTh)}</tr></thead>
           <tbody>{d.audit.map((a) => (
-            <tr key={a.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
+            <tr key={a.id} style={{ borderBottom: "1px solid var(--rdsh-bg-subtle)" }}>
               {adminTd(t("时间"), ts(a.createdAt))}{adminTd(t("事件"), a.event)}{adminTd(t("来源"), a.source)}{adminTd(t("IP"), a.ip)}
             </tr>
           ))}</tbody>
@@ -2227,7 +2227,7 @@ function AdminApp({ path }: { path: string }): React.JSX.Element {  const { t } 
         {nav
           .filter((n) => !n.adminOnly || isAdmin)
           .map((n) => (
-            <button key={n.p} onClick={() => navigate(n.p === "/" ? "/admin" : `/admin${n.p}`)} style={{ ...adminBtnStyle("ghost"), fontWeight: path === n.p || path.startsWith(n.p + "/") ? 700 : 400, background: path === n.p || path.startsWith(n.p + "/") ? "#eef2ff" : "#fff" }}>
+            <button key={n.p} onClick={() => navigate(n.p === "/" ? "/admin" : `/admin${n.p}`)} style={{ ...adminBtnStyle("ghost"), fontWeight: path === n.p || path.startsWith(n.p + "/") ? 700 : 400, background: path === n.p || path.startsWith(n.p + "/") ? "var(--rdsh-bg-active)" : "var(--rdsh-bg-surface)" }}>
               {n.label}
             </button>
           ))}
@@ -2294,17 +2294,17 @@ function AdminLogin({ onSuccess }: { onSuccess: () => void }): React.JSX.Element
   if (portalInfo === undefined) return <div style={{ padding: 40, fontFamily: "system-ui, sans-serif" }}>{t("加载中…")}</div>;
   if (portalInfo.totpEnabled !== true) {
     return (
-      <div style={{ maxWidth: 360, margin: "40px auto", padding: "24px", border: "1px solid #e5e7eb", borderRadius: 12, fontFamily: "system-ui, sans-serif" }}>
+      <div style={{ maxWidth: 360, margin: "40px auto", padding: "24px", border: "1px solid var(--rdsh-border)", borderRadius: 12, fontFamily: "system-ui, sans-serif" }}>
         <h2 style={{ fontSize: 18, margin: "0 0 8px" }}>{t("进入管理后台")}</h2>
-        <p style={{ fontSize: 13, color: "#6b7280", margin: "0 0 16px" }}>{t("管理后台需要两步验证（TOTP）才能使用，请先开启 2FA。")}</p>
+        <p style={{ fontSize: 13, color: "var(--rdsh-fg-muted)", margin: "0 0 16px" }}>{t("管理后台需要两步验证（TOTP）才能使用，请先开启 2FA。")}</p>
         <button onClick={() => navigate("/settings/2fa")} style={{ ...adminBtnStyle(), width: "100%", padding: "10px", fontSize: 15 }}>{t("去开启 2FA")}</button>
       </div>
     );
   }
   return (
-    <div style={{ maxWidth: 360, margin: "40px auto", padding: "24px", border: "1px solid #e5e7eb", borderRadius: 12, fontFamily: "system-ui, sans-serif" }}>
+    <div style={{ maxWidth: 360, margin: "40px auto", padding: "24px", border: "1px solid var(--rdsh-border)", borderRadius: 12, fontFamily: "system-ui, sans-serif" }}>
       <h2 style={{ fontSize: 18, margin: "0 0 8px" }}>{t("进入管理后台")}</h2>
-      <p style={{ fontSize: 12, color: "#6b7280", margin: "0 0 16px" }}>{t("管理后台需两步验证（TOTP）。未开启 2FA 的账号请先在「账户与安全」开启。")}</p>
+      <p style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", margin: "0 0 16px" }}>{t("管理后台需两步验证（TOTP）。未开启 2FA 的账号请先在「账户与安全」开启。")}</p>
       <input
         value={totp}
         onChange={(e) => setTotp(e.target.value.replace(/\D/g, "").slice(0, 6))}
@@ -2313,13 +2313,13 @@ function AdminLogin({ onSuccess }: { onSuccess: () => void }): React.JSX.Element
         autoFocus
         maxLength={6}
         placeholder={t("动态验证码")}
-        style={{ width: "100%", padding: "10px", fontSize: 20, letterSpacing: 6, textAlign: "center", marginBottom: 8, boxSizing: "border-box", border: "1px solid #ccc", borderRadius: 6 }}
+        style={{ width: "100%", padding: "10px", fontSize: 20, letterSpacing: 6, textAlign: "center", marginBottom: 8, boxSizing: "border-box", border: "1px solid var(--rdsh-border)", borderRadius: 6 }}
       />
       <label style={{ display: "block", fontSize: 13, marginBottom: 12 }}>
         <input type="checkbox" checked={trustDevice} onChange={(e) => setTrustDevice(e.target.checked)} /> {t("记住此设备 30 天（下次登录免输动态码）")}
       </label>
-      <p style={{ margin: "-4px 0 12px", fontSize: 12, color: "#9ca3af" }}>{t("（自己的常用设备可勾选；公用或他人的设备请勿勾选）")}</p>
-      {err !== "" && <p style={{ color: "#dc2626", fontSize: 13 }}>{err}</p>}
+      <p style={{ margin: "-4px 0 12px", fontSize: 12, color: "var(--rdsh-fg-subtle)" }}>{t("（自己的常用设备可勾选；公用或他人的设备请勿勾选）")}</p>
+      {err !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{err}</p>}
       <button onClick={submit} style={{ ...adminBtnStyle(), width: "100%", padding: "10px", fontSize: 15 }}>{t("进入")}</button>
     </div>
   );
@@ -2332,7 +2332,7 @@ function AdminDashboard(): React.JSX.Element {
   useEffect(() => {
     adminApi.dashboard().then(setD).catch((e: unknown) => setErr(e instanceof Error ? e.message : "load failed"));
   }, []);
-  if (err !== "") return <p style={{ color: "#dc2626" }}>{err}</p>;
+  if (err !== "") return <p style={{ color: "var(--rdsh-danger)" }}>{err}</p>;
   if (d === null) return <p>{t("加载中…")}</p>;
   const stats: Array<[string, string | number]> = [
     [t("注册用户"), d.totalUsers],
@@ -2347,8 +2347,8 @@ function AdminDashboard(): React.JSX.Element {
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
       {stats.map(([k, v]) => (
-        <div key={k} style={{ border: "1px solid #e5e7eb", borderRadius: 10, padding: "14px 16px" }}>
-          <div style={{ fontSize: 12, color: "#6b7280" }}>{k}</div>
+        <div key={k} style={{ border: "1px solid var(--rdsh-border)", borderRadius: 10, padding: "14px 16px" }}>
+          <div style={{ fontSize: 12, color: "var(--rdsh-fg-muted)" }}>{k}</div>
           <div style={{ fontSize: 22, fontWeight: 700 }}>{v}</div>
         </div>
       ))}
@@ -2450,7 +2450,7 @@ function AdminUsers({ isWrite, isAdmin }: { isWrite: boolean; isAdmin: boolean }
     return (
       <span>
         {stateParts.join(" · ")}
-        {badges.length > 0 ? <span style={{ color: "#9ca3af", fontSize: 11 }}>{` (${badges.join(" / ")})`}</span> : null}
+        {badges.length > 0 ? <span style={{ color: "var(--rdsh-fg-subtle)", fontSize: 11 }}>{` (${badges.join(" / ")})`}</span> : null}
       </span>
     );
   };
@@ -2461,16 +2461,16 @@ function AdminUsers({ isWrite, isAdmin }: { isWrite: boolean; isAdmin: boolean }
         <input value={q} onChange={(e) => { setQ(e.target.value); setPage(0); }} placeholder={t("搜索 用户名/邮箱/手机号")} style={{ padding: "8px 10px", width: "100%", maxWidth: 300, boxSizing: "border-box" }} />
         {isWrite && <button onClick={() => setShowCreate(true)} style={adminBtnStyle("primary")}>{t("+ 新建用户")}</button>}
       </div>
-      {msg !== "" && <p style={{ fontSize: 12, color: "#2563eb" }}>{msg}</p>}
+      {msg !== "" && <p style={{ fontSize: 12, color: "var(--rdsh-link)" }}>{msg}</p>}
       <table className="admintbl" style={adminTableStyle()}>
         <thead>
-          <tr style={{ borderBottom: "1px solid #e5e7eb" }}>{[t("用户"), t("角色"), t("状态"), t("主机"), t("套餐"), t("最后登录"), t("操作")].map(adminTh)}</tr>
+          <tr style={{ borderBottom: "1px solid var(--rdsh-border)" }}>{[t("用户"), t("角色"), t("状态"), t("主机"), t("套餐"), t("最后登录"), t("操作")].map(adminTh)}</tr>
         </thead>
         <tbody>
           {list.map((u) => (
-            <tr key={u.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
+            <tr key={u.id} style={{ borderBottom: "1px solid var(--rdsh-bg-subtle)" }}>
               {adminTd(t("用户"), u.name)}
-              {adminTd(t("角色"), <span style={{ color: "#6b7280" }}>{adminRoleLabel(t, u.role)}</span>)}
+              {adminTd(t("角色"), <span style={{ color: "var(--rdsh-fg-muted)" }}>{adminRoleLabel(t, u.role)}</span>)}
               {adminTd(t("状态"), statusCell(u))}
               {adminTd(t("主机"), u.hostCount)}
               {adminTd(t("套餐"), u.planStatus ?? "—")}
@@ -2483,7 +2483,7 @@ function AdminUsers({ isWrite, isAdmin }: { isWrite: boolean; isAdmin: boolean }
                     title={t("更多操作")}
                   >⋯</button>
                   {menuUserId === u.id && (
-                    <div style={{ position: "absolute", right: 0, top: "100%", marginTop: 4, background: "#fff", border: "1px solid #e5e7eb", borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,.1)", zIndex: 20, minWidth: 130, padding: 4 }} onClick={(e) => e.stopPropagation()}>
+                    <div style={{ position: "absolute", right: 0, top: "100%", marginTop: 4, background: "var(--rdsh-bg-surface)", border: "1px solid var(--rdsh-border)", borderRadius: 8, boxShadow: "var(--rdsh-shadow)", zIndex: 20, minWidth: 130, padding: 4 }} onClick={(e) => e.stopPropagation()}>
                       <button style={menuItemStyle()} onClick={() => { setMenuUserId(null); navigate(`/admin/users/${u.id}`); }}>{t("详情")}</button>
                       {isWrite && u.accountStatus !== "banned" && <button style={menuItemStyle(true)} onClick={() => { setMenuUserId(null); open(u, t("封禁"), "ban", [], true); }}>{t("封禁")}</button>}
                       {isWrite && u.accountStatus === "banned" && <button style={menuItemStyle()} onClick={() => { setMenuUserId(null); open(u, t("解封"), "unban"); }}>{t("解封")}</button>}
@@ -2538,30 +2538,30 @@ function CreateUserDialog({ isAdmin, onClose, onCreated }: { isAdmin: boolean; o
   };
   const field = (label: React.ReactNode, node: React.ReactNode): React.JSX.Element => (
     <div style={{ marginBottom: 10 }}>
-      <label style={{ display: "block", fontSize: 12, color: "#6b7280", marginBottom: 4 }}>{label}</label>
+      <label style={{ display: "block", fontSize: 12, color: "var(--rdsh-fg-muted)", marginBottom: 4 }}>{label}</label>
       {node}
     </div>
   );
   const inputStyle: React.CSSProperties = { width: "100%", padding: "8px 10px", boxSizing: "border-box", fontSize: 14 };
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 16, boxSizing: "border-box" }}>
-      <div style={{ background: "#fff", borderRadius: 12, padding: 20, width: 440, maxWidth: "100%", fontFamily: "system-ui, sans-serif" }}>
+    <div style={{ position: "fixed", inset: 0, background: "var(--rdsh-scrim-soft)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 16, boxSizing: "border-box" }}>
+      <div style={{ background: "var(--rdsh-bg-surface)", borderRadius: 12, padding: 20, width: 440, maxWidth: "100%", fontFamily: "system-ui, sans-serif" }}>
         <h3 style={{ margin: "0 0 12px", fontSize: 16 }}>{t("新建用户")}</h3>
         {field(t("登录标识（用户名 / 邮箱 / +86 手机）"), <input value={identifier} onChange={(e) => setIdentifier(e.target.value)} placeholder="zhangsan@corp.com" style={inputStyle} />)}
         {field(t("角色"), (
-          <select value={role} onChange={(e) => setRole(e.target.value)} style={{ ...inputStyle, background: "#fff" }}>
+          <select value={role} onChange={(e) => setRole(e.target.value)} style={{ ...inputStyle, background: "var(--rdsh-bg-surface)" }}>
             {roleOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         ))}
         {field(t("初始密码（≥8 位）"), <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} style={inputStyle} />)}
         {field(t("确认密码"), <input type="password" value={password2} onChange={(e) => setPassword2(e.target.value)} style={inputStyle} />)}
-        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, marginBottom: 10, color: "#374151" }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, marginBottom: 10, color: "var(--rdsh-fg)" }}>
           <input type="checkbox" checked={mustChange} onChange={(e) => setMustChange(e.target.checked)} />
           {t("强制首次登录修改密码")}
         </label>
         {field(t("到期时间（留空 = 无期限）"), <input type="date" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} style={inputStyle} />)}
         {field(t("原因（必填）"), <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} placeholder={t("请填写操作原因")} style={{ ...inputStyle, fontFamily: "inherit" }} />)}
-        {err !== "" && <p style={{ color: "#dc2626", fontSize: 12, margin: "0 0 8px" }}>{err}</p>}
+        {err !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 12, margin: "0 0 8px" }}>{err}</p>}
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
           <button onClick={onClose} disabled={busy} style={{ ...adminBtnStyle("ghost"), opacity: busy ? 0.5 : 1 }}>{t("取消")}</button>
           <button onClick={create} disabled={busy} style={{ ...adminBtnStyle("primary"), opacity: busy ? 0.5 : 1 }}>{t("创建")}</button>
@@ -2603,16 +2603,16 @@ function AdminHosts({ isWrite }: { isWrite: boolean }): React.JSX.Element {
   return (
     <div>
       <input value={q} onChange={(e) => { setQ(e.target.value); setPage(0); }} placeholder={t("搜索 主机名/归属用户")} style={{ padding: "8px 10px", marginBottom: 10, width: "100%", maxWidth: 300, boxSizing: "border-box" }} />
-      {msg !== "" && <p style={{ fontSize: 12, color: "#2563eb" }}>{msg}</p>}
+      {msg !== "" && <p style={{ fontSize: 12, color: "var(--rdsh-link)" }}>{msg}</p>}
       <table className="admintbl" style={adminTableStyle()}>
         <thead>
-          <tr style={{ borderBottom: "1px solid #e5e7eb" }}>{[t("主机名"), t("归属"), t("在线"), t("E2EE"), t("加入时间"), t("操作")].map(adminTh)}</tr>
+          <tr style={{ borderBottom: "1px solid var(--rdsh-border)" }}>{[t("主机名"), t("归属"), t("在线"), t("E2EE"), t("加入时间"), t("操作")].map(adminTh)}</tr>
         </thead>
         <tbody>
           {(hosts ?? []).map((h) => (
-            <tr key={h.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
+            <tr key={h.id} style={{ borderBottom: "1px solid var(--rdsh-bg-subtle)" }}>
               {adminTd(t("主机名"), h.name)}
-              {adminTd(t("归属"), <span style={{ color: "#6b7280" }}>{h.ownerName}</span>)}
+              {adminTd(t("归属"), <span style={{ color: "var(--rdsh-fg-muted)" }}>{h.ownerName}</span>)}
               {adminTd(t("在线"), h.online ? "●" : "○")}
               {adminTd(t("E2EE"), h.e2eePublicKey != null ? "🛡" : "—")}
               {adminTd(t("加入时间"), new Date(h.createdAt).toLocaleDateString())}
@@ -2665,18 +2665,18 @@ function AdminBilling({ isWrite, isAdmin }: { isWrite: boolean; isAdmin: boolean
   };
   return (
     <div>
-      {msg !== "" && <p style={{ fontSize: 12, color: "#2563eb" }}>{msg}</p>}
+      {msg !== "" && <p style={{ fontSize: 12, color: "var(--rdsh-link)" }}>{msg}</p>}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "space-between", alignItems: "center" }}>
         <h3 style={{ fontSize: 14, margin: 0 }}>{t("订单")}</h3>
         {isAdmin && <button onClick={credit} style={adminBtnStyle("primary")}>{t("补单")}</button>}
       </div>
       <table className="admintbl" style={{ ...adminTableStyle(), marginTop: 8 }}>
         <thead>
-          <tr style={{ borderBottom: "1px solid #e5e7eb" }}>{[t("订单号"), t("用户"), t("套餐"), t("金额"), t("状态"), t("操作")].map(adminTh)}</tr>
+          <tr style={{ borderBottom: "1px solid var(--rdsh-border)" }}>{[t("订单号"), t("用户"), t("套餐"), t("金额"), t("状态"), t("操作")].map(adminTh)}</tr>
         </thead>
         <tbody>
           {(orders ?? []).map((o) => (
-            <tr key={o.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
+            <tr key={o.id} style={{ borderBottom: "1px solid var(--rdsh-bg-subtle)" }}>
               {adminTd(t("订单号"), o.id)}
               {adminTd(t("用户"), o.userId)}
               {adminTd(t("套餐"), o.planId)}
@@ -2690,11 +2690,11 @@ function AdminBilling({ isWrite, isAdmin }: { isWrite: boolean; isAdmin: boolean
       <h3 style={{ fontSize: 14, marginTop: 16 }}>{t("支付流水")}</h3>
       <table className="admintbl" style={adminTableStyle()}>
         <thead>
-          <tr style={{ borderBottom: "1px solid #e5e7eb" }}>{[t("流水号"), t("订单号"), t("渠道"), t("渠道单号"), t("金额"), t("支付时间")].map(adminTh)}</tr>
+          <tr style={{ borderBottom: "1px solid var(--rdsh-border)" }}>{[t("流水号"), t("订单号"), t("渠道"), t("渠道单号"), t("金额"), t("支付时间")].map(adminTh)}</tr>
         </thead>
         <tbody>
           {(payments ?? []).map((p) => (
-            <tr key={p.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
+            <tr key={p.id} style={{ borderBottom: "1px solid var(--rdsh-bg-subtle)" }}>
               {adminTd(t("流水号"), p.id)}
               {adminTd(t("订单号"), p.orderId)}
               {adminTd(t("渠道"), p.channel)}
@@ -2729,16 +2729,16 @@ function AdminAudit(): React.JSX.Element {
       </div>
       <table className="admintbl" style={adminTableStyle()}>
         <thead>
-          <tr style={{ borderBottom: "1px solid #e5e7eb" }}>{[t("时间"), t("用户"), t("事件"), t("来源"), t("操作者")].map(adminTh)}</tr>
+          <tr style={{ borderBottom: "1px solid var(--rdsh-border)" }}>{[t("时间"), t("用户"), t("事件"), t("来源"), t("操作者")].map(adminTh)}</tr>
         </thead>
         <tbody>
           {(events ?? []).map((e) => (
-            <tr key={e.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
+            <tr key={e.id} style={{ borderBottom: "1px solid var(--rdsh-bg-subtle)" }}>
               {adminTd(t("时间"), new Date(e.createdAt).toLocaleString())}
               {adminTd(t("用户"), e.userId ?? "—")}
               {adminTd(t("事件"), e.event)}
               {adminTd(t("来源"), e.source)}
-              {adminTd(t("操作者"), <span style={{ color: "#6b7280" }}>{e.actorUserId ?? "—"}</span>)}
+              {adminTd(t("操作者"), <span style={{ color: "var(--rdsh-fg-muted)" }}>{e.actorUserId ?? "—"}</span>)}
             </tr>
           ))}
         </tbody>
@@ -2765,8 +2765,8 @@ function AdminHealth(): React.JSX.Element {
   return (
     <div>
       {rows.map(([k, v]) => (
-        <div key={k} style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "10px 0", borderBottom: "1px solid #f3f4f6", flexWrap: "wrap" }}>
-          <span style={{ color: "#6b7280" }}>{k}</span>
+        <div key={k} style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "10px 0", borderBottom: "1px solid var(--rdsh-bg-subtle)", flexWrap: "wrap" }}>
+          <span style={{ color: "var(--rdsh-fg-muted)" }}>{k}</span>
           <span style={{ fontWeight: 500 }}>{v}</span>
         </div>
       ))}
@@ -2781,7 +2781,7 @@ function AdminConfigPage(): React.JSX.Element {
     adminApi.config().then(setC).catch(() => undefined);
   }, []);
   if (c === null) return <p>{t("加载中…")}</p>;
-  return <pre style={{ fontSize: 12, background: "#f9fafb", padding: 16, borderRadius: 10, overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{JSON.stringify(c, null, 2)}</pre>;
+  return <pre style={{ fontSize: 12, background: "var(--rdsh-bg-subtle)", padding: 16, borderRadius: 10, overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{JSON.stringify(c, null, 2)}</pre>;
 }
 
 function AdminAdmins({ isAdmin, meId }: { isAdmin: boolean; meId: number }): React.JSX.Element {
@@ -2824,16 +2824,16 @@ function AdminAdmins({ isAdmin, meId }: { isAdmin: boolean; meId: number }): Rea
   };
   return (
     <div>
-      {msg !== "" && <p style={{ fontSize: 12, color: "#2563eb" }}>{msg}</p>}
+      {msg !== "" && <p style={{ fontSize: 12, color: "var(--rdsh-link)" }}>{msg}</p>}
       <table className="admintbl" style={adminTableStyle()}>
         <thead>
-          <tr style={{ borderBottom: "1px solid #e5e7eb" }}>{[t("账号"), t("邮箱"), t("角色"), t("操作")].map(adminTh)}</tr>
+          <tr style={{ borderBottom: "1px solid var(--rdsh-border)" }}>{[t("账号"), t("邮箱"), t("角色"), t("操作")].map(adminTh)}</tr>
         </thead>
         <tbody>
           {(admins ?? []).map((a) => (
-            <tr key={a.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
+            <tr key={a.id} style={{ borderBottom: "1px solid var(--rdsh-bg-subtle)" }}>
               {adminTd(t("账号"), a.name)}
-              {adminTd(t("邮箱"), <span style={{ color: "#6b7280" }}>{a.email ?? "—"}</span>)}
+              {adminTd(t("邮箱"), <span style={{ color: "var(--rdsh-fg-muted)" }}>{a.email ?? "—"}</span>)}
               {adminTd(t("角色"), adminRoleLabel(t, a.role))}
               {adminTd(null, isAdmin && (
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>

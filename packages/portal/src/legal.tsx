@@ -17,11 +17,11 @@ export function LegalContent({ html }: { html: string }): React.JSX.Element {
     <>
       <div
         className="rdsh-legal"
-        style={{ fontSize: 14, lineHeight: 1.7, color: "#333" }}
+        style={{ fontSize: 14, lineHeight: 1.7, color: "var(--rdsh-fg)" }}
         // 内容为构建期生成、来源可信，非用户输入
         dangerouslySetInnerHTML={{ __html: html }}
       />
-      <style>{`.rdsh-legal h1{font-size:22px;margin:12px 0}.rdsh-legal h2{font-size:16px;margin:20px 0 6px}.rdsh-legal h3{font-size:14px;margin:14px 0 4px}.rdsh-legal p{margin:8px 0}.rdsh-legal ul{margin:8px 0;padding-left:20px}.rdsh-legal li{margin:4px 0}.rdsh-legal code{background:#f3f4f6;padding:1px 5px;border-radius:4px;font-size:13px}.rdsh-legal a{color:#2563eb}.rdsh-legal blockquote{color:#999;border-left:3px solid #e5e7eb;padding-left:12px;margin:12px 0}`}</style>
+      <style>{`.rdsh-legal h1{font-size:22px;margin:12px 0}.rdsh-legal h2{font-size:16px;margin:20px 0 6px}.rdsh-legal h3{font-size:14px;margin:14px 0 4px}.rdsh-legal p{margin:8px 0}.rdsh-legal ul{margin:8px 0;padding-left:20px}.rdsh-legal li{margin:4px 0}.rdsh-legal code{background:var(--rdsh-bg-subtle);padding:1px 5px;border-radius:4px;font-size:13px}.rdsh-legal a{color:var(--rdsh-link)}.rdsh-legal blockquote{color:var(--rdsh-fg-subtle);border-left:3px solid var(--rdsh-border);padding-left:12px;margin:12px 0}`}</style>
     </>
   );
 }
@@ -29,7 +29,7 @@ export function LegalContent({ html }: { html: string }): React.JSX.Element {
 function StaticDoc({ html }: { html: string }): React.JSX.Element {
   return (
     <div style={{ maxWidth: 720, margin: "40px auto", padding: "0 16px", fontFamily: "system-ui, sans-serif" }}>
-      <a href="#" onClick={(e) => { e.preventDefault(); window.history.back(); }} style={{ color: "#2563eb", fontSize: 13 }}>← 返回</a>
+      <a href="#" onClick={(e) => { e.preventDefault(); window.history.back(); }} style={{ color: "var(--rdsh-link)", fontSize: 13 }}>← 返回</a>
       <LegalContent html={html} />
     </div>
   );
@@ -47,11 +47,11 @@ export function ProductPage(): React.JSX.Element {
   const { t } = useT();
   return (
     <div style={{ maxWidth: 760, margin: "40px auto", padding: "0 16px", fontFamily: "system-ui, sans-serif" }}>
-      <a href="#" onClick={(e) => { e.preventDefault(); window.history.back(); }} style={{ color: "#2563eb", fontSize: 13 }}>← 返回</a>
+      <a href="#" onClick={(e) => { e.preventDefault(); window.history.back(); }} style={{ color: "var(--rdsh-link)", fontSize: 13 }}>← 返回</a>
       <div style={{ textAlign: "center", padding: "24px 0 16px" }}>
         <h1 style={{ fontSize: 22, margin: "0 0 8px" }}>{t("你的 AI 智能体，随处安全可达")}</h1>
-        <p style={{ color: "#666", fontSize: 15, margin: "0 0 20px" }}>{t("免公网 IP · 免装客户端 · 端到端加密")}</p>
-        <img src="/portal/media/rdsh-arch.jpg" alt={t("rdsh 架构图")} style={{ width: "100%", maxWidth: 640, borderRadius: 8, border: "1px solid #eee" }} />
+        <p style={{ color: "var(--rdsh-fg-muted)", fontSize: 15, margin: "0 0 20px" }}>{t("免公网 IP · 免装客户端 · 端到端加密")}</p>
+        <img src="/portal/media/rdsh-arch.jpg" alt={t("rdsh 架构图")} className="rdsh-arch" style={{ width: "100%", maxWidth: 640, borderRadius: 8, border: "1px solid var(--rdsh-border-soft)" }} />
       </div>
       <LegalContent html={LEGAL.product} />
     </div>
