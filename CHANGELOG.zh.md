@@ -9,6 +9,13 @@
 
 ## [Unreleased]
 
+## [rdsh-hub 0.7.1 · remote-dsh 0.10.3] - 2026-09-11
+
+### 新增
+
+- **Portal 深色模式**：hub 网页门户（`/portal`）现在跟随系统的浅/深色偏好。此前 portal 没有任何主题层——所有颜色都是写死的浅色字面量，所以在深色系统上页面始终是白底。现在引入 **30 个语义化色 token**（`--rdsh-*`），由 `prefers-color-scheme` 驱动（CSS `color-scheme: light dark` + 对应 `<meta>`），深色取值对齐 DSH 官方 token；浅色取值与改动前逐字一致，**浅色不回归**。覆盖 `pages.tsx`（含管理台 CSS 与组件）与法务页，另含二维码容器与架构图（CSS 滤镜，零新资产）。深色对比度按 WCAG AA 核验（18 组全部 ≥ 4.5:1，发布时已独立复算）。详见 `doc/feature/16-portal-dark-mode/`。
+- 说明：portal 是随 `rdsh-hub` 分发的（`files: ["portal"]`），而 `remote-dsh` 对 `rdsh-hub` 是**精确锁版本**，因此**两个包必须一起发**——否则 `npm i -g remote-dsh` 拿到的还是旧 portal。
+
 ## [rdsh-gateway 0.8.2 · dsh-web-remote 0.5.1 · remote-dsh 0.10.2] - 2026-09-11
 
 ### 修复

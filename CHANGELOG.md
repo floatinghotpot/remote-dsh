@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [rdsh-hub 0.7.1 · remote-dsh 0.10.3] - 2026-09-11
+
+### Added
+
+- **Portal dark mode**: the hub's web portal (`/portal`) now follows the OS light/dark preference. It previously had no theme layer at all — every colour was a hardcoded light literal, so the page stayed white on dark systems. The portal now uses a 30-token semantic colour layer (`--rdsh-*`) driven by `prefers-color-scheme` (`color-scheme: light dark` plus a matching `<meta>`), with dark values aligned to DSH's own tokens; light values are kept byte-for-byte as before, so light mode does not regress. Covers `pages.tsx` (including the admin console CSS and components) and the legal pages, plus the QR container and the architecture diagram (CSS filter, no new asset). Dark-mode contrast was verified against WCAG AA (18 pairs, all ≥ 4.5:1 — independently recomputed at release time). See `doc/feature/16-portal-dark-mode/`.
+- Note: the portal is distributed inside `rdsh-hub` (`files: ["portal"]`) and `remote-dsh` pins `rdsh-hub` to an exact version, so **both packages are released together** — otherwise `npm i -g remote-dsh` would keep serving the old portal.
+
 ## [rdsh-gateway 0.8.2 · dsh-web-remote 0.5.1 · remote-dsh 0.10.2] - 2026-09-11
 
 ### Fixed
