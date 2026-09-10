@@ -5,6 +5,12 @@
  * (`127.0.0.1:<webServer.port>`), and exposes the `/remote-access` RPC channel
  * (`connect` / `disconnect` / `revoke` / `state`) to the browser client half.
  *
+ * The channel is a native prefix route on the web server (see `./rpc-route.ts`),
+ * not `connection.rpc.handle(...)`: since 0.1.5-rc.2 that helper reads
+ * `owner.webServer` through a service shadow whose fiber cannot resolve
+ * `webServer` for third-party plugins and aborts the whole plugin tree
+ * (upstream regression, deepseek-harness discussion #5926).
+ *
  * Function-plugin form (export `inject` + `apply`) — no `@deepseek-ai/cordis`
  * runtime import, only a minimal local `Ctx` type.
  */
@@ -22,23 +28,16 @@ import {
   DEFAULT_HOST_CONFIG_PATH,
 } from "rdsh-gateway";
 import type { JoinHandle, JoinState, RdshConfig } from "rdsh-gateway";
+import { RPC_CHANNEL, handleRpcRoute } from "./rpc-route.ts";
+import type { ConnectionService, RpcDispatch, RpcResult, WebServerService } from "./rpc-route.ts";
 
 /** 面板状态（client 半 §2 五态 + 断开后态） */
 export type Status = "unconfigured" | "disconnected" | "connecting" | "connected" | "reconnecting" | "external";
 
-type RpcResult = { ok: true; value: unknown } | { ok: false; error: { code: string; message: string; details?: unknown } };
-
-interface RpcHandler {
-  handle(
-    channel: string,
-    handler: (endpoint: string, payload: { args?: Record<string, unknown> }, signal: AbortSignal) => Promise<RpcResult>,
-    options?: { authority?: string },
-  ): void;
-}
-
 interface Ctx {
-  connection: { rpc: RpcHandler; authenticatedUrl?: (baseUrl: string) => string };
-  webServer: { port: number };
+  connection: ConnectionService;
+  webServer: WebServerService;
+  effect(callback: () => unknown, label: string): void;
   on(event: string, cb: () => void): void;
 }
 
@@ -73,7 +72,7 @@ export function apply(ctx: Ctx): void {
   let dshAuthCookieHeader: string | null = null; // 0.1.2+ 进程内换发的 dsh 会话 cookie
 
   // 0.1.2+ 进程内换发：能力探测 authenticatedUrl → 换发浏览器会话 cookie（0.1.1 无此方法 → 跳过）
-  const authConn = ctx.connection as { authenticatedUrl?: (baseUrl: string) => string };
+  const authConn = ctx.connection;
   if (typeof authConn.authenticatedUrl === "function") {
     void (async () => {
       try {
@@ -341,28 +340,35 @@ export function apply(ctx: Ctx): void {
     }
   }
 
-  ctx.connection.rpc.handle(
-    "/remote-access",
-    async (endpoint, payload, _signal) => {
-      const args = payload?.args ?? {};
-      switch (endpoint) {
-        case "connect":
-          return await connect(args);
-        case "disconnect":
-          return await disconnect();
-        case "revoke":
-          return await revoke();
-        case "state":
-          return await state();
-        case "set-ui-compat":
-          return await setUiCompat(args);
-        case "set-access-code":
-          return await setAccessCode(args);
-        default:
-          return err("bad-request", `unknown endpoint ${endpoint}`);
-      }
-    },
-    { authority: "loopback" },
+  /** Business dispatch of the browser half's channel; the envelope is handled by `handleRpcRoute`. */
+  const dispatch: RpcDispatch = async (endpoint, payload) => {
+    const args = payload.args ?? {};
+    switch (endpoint) {
+      case "connect":
+        return await connect(args);
+      case "disconnect":
+        return await disconnect();
+      case "revoke":
+        return await revoke();
+      case "state":
+        return await state();
+      case "set-ui-compat":
+        return await setUiCompat(args);
+      case "set-access-code":
+        return await setAccessCode(args);
+      default:
+        return err("bad-request", `unknown endpoint ${endpoint}`);
+    }
+  };
+
+  ctx.effect(
+    () =>
+      ctx.webServer.register({
+        kind: "prefix",
+        path: RPC_CHANNEL,
+        handler: (req, res) => void handleRpcRoute(ctx.connection, req, res, dispatch),
+      }),
+    `dsh-web-remote: ${RPC_CHANNEL} RPC route`,
   );
 
   // 启动自动接入（静默；CLI 托管时跳过，见 autoConnect 前置条件）

@@ -211,9 +211,12 @@ export function compareDshVersions(a: string, b: string): number {
 /**
  * remote-dsh 已实测兼容的 dsh 版本窗口（registry 实存版本定界）。
  * ⚠️ 适配新的 dsh 版本并真机实测后，须同步扩展此窗口（见 doc/fix/20260907-dsh-0.1.2-rc1-auth/）。
+ * 2026-09-11：MAX 扩到 `0.1.5-rc.2` —— 真机实测通过（spawn + ready 行 token + 会话 cookie 换发 +
+ * `/api` 转发 + HTML 注入 + WS `/api/remote.mux` 桥接 + join 的 `patchLoopbackJs` 命中），
+ * 见 doc/review/20260911-dsh-0.1.5-rc.2-plugin-compat.md §5。
  */
 export const DSH_COMPAT_MIN = "0.1.1-rc.2";
-export const DSH_COMPAT_MAX = "0.1.2-rc.1";
+export const DSH_COMPAT_MAX = "0.1.5-rc.2";
 
 /**
  * 版本落在实测窗口外时的提示文案（零文档导向：直接给动作指令，用户不查表）。

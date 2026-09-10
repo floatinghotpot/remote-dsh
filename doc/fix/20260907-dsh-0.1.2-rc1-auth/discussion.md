@@ -5,6 +5,8 @@
 > **涉及**: `packages/gateway`（spawn-dsh/proxy/join/serve）、`packages/web-remote`、`.github/workflows/ci.yml`、README（兼容表）
 > **来源**: 复核结论见 `doc/review/20260907-dsh-0.1.2-rc.1-auth-gate-compat.md`（推翻 09-03 静态核验）
 > **关联**: dsh4vscode `doc/fix/20260907-dsh-0.1.2-rc1-auth/record.md`（同款破坏实测，先于本仓库 4 天）
+>
+> ⚠️ **2026-09-11 更正（历史记录，勿据此设计）**：本文中「服务端 `rpc.handle(..., {authority:"loopback"})` ✅」的核验**有误**——该第三参在 0.1.2-rc.1 与 0.1.5-rc.2 均**不存在**（`handle` 只接受 `(channel, handler)`），真正的围栏一直是 connection 服务的 Host/Origin fence + 浏览器会话校验；且 `rpc.handle` 自 0.1.5-rc.2 起对第三方插件不可用。见 [20260911-dsh-0.1.5-plugin-rpc](../20260911-dsh-0.1.5-plugin-rpc/discussion.md)。
 
 ---
 

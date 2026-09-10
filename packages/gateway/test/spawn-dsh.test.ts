@@ -4,7 +4,7 @@ import { mkdtemp, writeFile, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:http";
-import { findDsh, spawnDsh, exchangeDshSessionCookie, detectDshVersion, compareDshVersions } from "../src/spawn-dsh.ts";
+import { findDsh, spawnDsh, exchangeDshSessionCookie, detectDshVersion, compareDshVersions, dshVersionWarning, DSH_COMPAT_MIN, DSH_COMPAT_MAX } from "../src/spawn-dsh.ts";
 
 test("findDsh 找不到时返回 null", () => {
   const oldPath = process.env.PATH;
@@ -123,4 +123,21 @@ test("compareDshVersions：核心版本与 rc 后缀比较", () => {
   // 不可解析排序为更旧
   assert.ok(compareDshVersions("garbage", "0.1.2-rc.1") < 0);
   assert.equal(compareDshVersions("a", "b"), 0);
+});
+
+test("dshVersionWarning：窗口内不提示，越界给动作指令", () => {
+  // 实测窗口 [DSH_COMPAT_MIN, DSH_COMPAT_MAX]：两端与中间版本均不提示
+  for (const version of [DSH_COMPAT_MIN, "0.1.2-rc.1", DSH_COMPAT_MAX]) {
+    assert.equal(dshVersionWarning(version), null, `${version} 应在窗口内`);
+  }
+  // 比 MAX 新 → 提示升级 remote-dsh（含同 core 的后续 rc 与正式版）
+  for (const version of ["0.1.5-rc.3", "0.1.5", "0.2.0-rc.1"]) {
+    const warn = dshVersionWarning(version);
+    assert.ok(warn !== null && warn.includes("超出 remote-dsh 已实测范围"), `${version} 应提示超窗`);
+  }
+  // 比 MIN 旧 → 提示升级 dsh
+  const tooOld = dshVersionWarning("0.1.1-rc.1");
+  assert.ok(tooOld !== null && tooOld.includes("版本过旧"), "0.1.1-rc.1 应提示过旧");
+  // 探测失败 → 不提示
+  assert.equal(dshVersionWarning(null), null);
 });
