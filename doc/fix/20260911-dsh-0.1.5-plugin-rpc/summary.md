@@ -38,9 +38,10 @@ dsh 升级到 `0.1.5-rc.2` 后，装有 `dsh-web-remote` 时 `dsh web` 起不来
 | 网关 join 侧 `patchLoopbackJs` 对真实 0.1.5 bundle 命中 | ✅ G7 |
 | 窗口扩展后重跑网关 E2E（版本警告消失、功能不变） | ✅ |
 | **完整隧道端到端**：`rdsh host serve` join 到生产 hub → 远端设备实际访问本机 DSH | ✅ G9（用户人工实测） |
+| **npm 发布**：`rdsh-gateway@0.8.2` / `dsh-web-remote@0.5.1` / `remote-dsh@0.10.2`，并按 registry 产物逐一核对 | ✅ 2026-09-11 |
 
-细节见 [verification.md](verification.md) 与 [doc/review/20260911-dsh-0.1.5-rc.2-plugin-compat.md](../../review/20260911-dsh-0.1.5-rc.2-plugin-compat.md) §5。
+细节见 [verification.md](verification.md) 与 [doc/review/20260911-dsh-0.1.5-rc.2-plugin-compat.md](../../review/20260911-dsh-0.1.5-rc.2-plugin-compat.md) §6（网关）/§7（发布记录）。
 
 ## 未做（见 TODO.md）
 
-- `dsh-web-remote@0.5.1` 发布 npm（需显式授权）。
+- 无 —— 全部任务（T1–T12）完成。

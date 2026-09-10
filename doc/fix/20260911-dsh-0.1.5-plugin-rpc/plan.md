@@ -17,7 +17,7 @@
 | R5 | 构建/测试零 issue | CLAUDE.md §2 | T9 | ✅ |
 | R6 | 文档与变更日志 | CLAUDE.md §7 | T7、T8 | ✅ |
 | R7 | 网关侧 dsh 兼容窗口（`DSH_COMPAT_MAX`）扩展 | spawn-dsh.ts 注释要求 + 用户追加要求 | T11 | ✅ |
-| R8 | `dsh-web-remote@0.5.1` 发布 npm | 用户确认范围 | — | ⏭️ |
+| R8 | `dsh-web-remote@0.5.1` 发布 npm | 用户确认范围 | T12 | ✅ |
 
 ## 任务清单
 
@@ -36,9 +36,9 @@
 | T9 | `pnpm build`（tsc strict）+ `pnpm test`（gateway 109 / hub 91 / web-remote 16） | ✅ |
 | T10 | 双版本端到端实测（0.1.5-rc.2、0.1.2-rc.1） | ✅ |
 | T11 | 网关 `DSH_COMPAT_MAX` 扩到 `0.1.5-rc.2` + `dshVersionWarning` 窗口边界单测 | ✅ |
-| T12 | npm 发布 0.5.1 | ⏭️ 同 R8 |
+| T12 | npm 发布：`rdsh-gateway@0.8.2` + `dsh-web-remote@0.5.1` + `remote-dsh@0.10.2` | ✅ |
 
 ## 状态说明
 
 - **R7 / T11 ✅（2026-09-11 已完成）**：按 `spawn-dsh.ts` 注释要求先做**真机实测**（真实 `dsh@0.1.5-rc.2` + `rdsh host serve`：spawn/ready token/cookie 换发/`/api` 转发/HTML 注入/WS `/api/remote.mux` 桥接，以及 join 的 `patchLoopbackJs` 命中），通过后把 `DSH_COMPAT_MAX` 扩到 `0.1.5-rc.2`。证据见 [doc/review/20260911-dsh-0.1.5-rc.2-plugin-compat.md](../../review/20260911-dsh-0.1.5-rc.2-plugin-compat.md) §5（G1–G7）。
-- **R8 / T12 ⏭️ 原因**：用户明确本次「暂不发 npm」（公开发布需单独授权）。
+- **R8 / T12 ✅（2026-09-11 已完成）**：用户显式授权发布，三个包已上线并核对（gateway 0.8.2 / web-remote 0.5.1 / CLI 0.10.2），发布记录见 [doc/review/20260911-dsh-0.1.5-rc.2-plugin-compat.md](../../review/20260911-dsh-0.1.5-rc.2-plugin-compat.md) §7。
