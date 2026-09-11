@@ -1,0 +1,39 @@
+{
+  "name": "dsh-agent-mesh",
+  "version": "0.0.1",
+  "description": "Cross-host agent mesh for DeepSeek Harness — placeholder release: reserves the package name, no functionality yet (design docs in the repository)",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "agent",
+    "mesh",
+    "multi-agent",
+    "cross-host"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/floatinghotpot/remote-dsh.git",
+    "directory": "packages/agent-mesh"
+  },
+  "homepage": "https://github.com/floatinghotpot/remote-dsh/tree/main/doc/feature/21-agent-mesh",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test \"test/*.test.ts\""
+  }
+}
