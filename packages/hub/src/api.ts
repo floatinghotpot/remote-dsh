@@ -12,7 +12,7 @@ import { BILLING_DEFAULTS } from "./config.ts";
 import type { HubDb, UserRow } from "./db.ts";
 import type { HubAuth } from "./auth.ts";
 import { createLoginLimiter, hashPassword, verifyPassword, ADMIN_TTL_MS, RECENT_TOTP_WINDOW_MS } from "./auth.ts";
-import type { TunnelRegistry } from "./tunnel.ts";
+import type { TunnelRegistry, TunnelTimings } from "./tunnel.ts";
 import type { EventHub } from "./events.ts";
 import { randomToken, sha256 } from "./jwt.ts";
 import { createEmailSender } from "./email/index.ts";
@@ -44,6 +44,8 @@ const WECHAT_TRIAL_LIMIT = { max: 3, windowMs: 24 * 3600 * 1000 }; // 同 IP 自
 const WECHAT_REFRESH_COOKIE = "rdsh_wechat_refresh"; // 302 登录后 refresh 交接（非 HttpOnly、短效）
 
 export interface HubRuntime {
+  /** 隧道心跳时序（测试注入；缺省见 PROTOCOL.md） */
+  tunnelTimings?: TunnelTimings;
   config: HubConfig;
   db: HubDb;
   auth: HubAuth;

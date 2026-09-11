@@ -27,6 +27,7 @@ import type { EmailConfig } from "./email/types.ts";
 import type { SmsConfig } from "./sms/types.ts";
 import type { CaptchaConfig, SecurityConfig, BillingConfig, BeianConfig, SiteConfig, E2eeConfig, BackupConfig, WechatLoginConfig } from "./config.ts";
 import { TunnelConn, TunnelRegistry } from "./tunnel.ts";
+import type { TunnelTimings } from "./tunnel.ts";
 import { EventHub, createEventsServer } from "./events.ts";
 import { handleRelay, handleRelayUpgrade, handleRawUpgrade } from "./relay.ts";
 import { servePortal } from "./portal.ts";
@@ -64,6 +65,11 @@ export interface HubServerOptions {
   e2ee?: E2eeConfig;
   /** 每日快照备份（dir 已解析；serve.ts 从 hub.json 传入）。 */
   backup?: BackupConfig;
+  /**
+   * 隧道心跳时序（缺省 30s/10s，见 PROTOCOL.md「心跳与重连」）。
+   * 仅供测试注入毫秒级小值以快速验证超时判离线，生产不传。
+   */
+  tunnelTimings?: TunnelTimings;
 }
 
 export interface RunningHub {
@@ -102,6 +108,7 @@ export function parseCookies(header?: string): Record<string, string> {
 
 export async function startHubServer(opts: HubServerOptions): Promise<RunningHub> {
   const runtime: HubRuntime = {
+    tunnelTimings: opts.tunnelTimings,
     config: {
       host: opts.host,
       port: opts.port,
@@ -304,9 +311,14 @@ function handleTunnelUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer,
   const wss = new WebSocketServer({ noServer: true });
   wss.handleUpgrade(req, socket, head, (ws) => {
     const conn = new TunnelConn(ws, host.id, (hostId) => {
-      runtime.tunnels.unregister(hostId);
-      runtime.events.pushToUser(host.ownerId, { type: "host.offline", hostId });
-    });
+      // 身份校验：重连时旧连接被 terminate，其 close 晚于新连接注册，
+      // 若不校验会把新连接一起摘掉（host 假离线）。
+      runtime.tunnels.unregister(hostId, conn);
+      // 仅当确实已无活跃连接时才推 offline；已被新连接接管则保持在线状态。
+      if (!runtime.tunnels.isOnline(hostId)) {
+        runtime.events.pushToUser(host.ownerId, { type: "host.offline", hostId });
+      }
+    }, runtime.tunnelTimings);
     runtime.tunnels.register(conn);
     runtime.events.pushToUser(host.ownerId, { type: "host.online", hostId: host.id });
   });

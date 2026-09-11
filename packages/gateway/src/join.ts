@@ -81,6 +81,16 @@ export interface StartJoinOptions {
   name?: string;
   /** 宿主代持的 dsh 浏览器会话 cookie（`dsh-auth-*`，0.1.2+）；有值时注入隧道→本地转发 */
   dshAuthCookieHeader?: string | null;
+  /**
+   * 心跳间隔（缺省 30s，协议 PROTOCOL.md「心跳与重连」）。
+   * 测试可注入毫秒级小值以快速验证超时判定。
+   */
+  heartbeatMs?: number;
+  /**
+   * 发出 PING 后等待对端任何帧的上限（缺省 10s）；超时即判连接已死并主动断开。
+   * 测试可注入小值。
+   */
+  pongTimeoutMs?: number;
 }
 
 /** 可停止的 join 隧道句柄。 */
@@ -115,6 +125,8 @@ export async function detectInsecure(hubUrl: string): Promise<boolean> {
 }
 
 const HEARTBEAT_MS = 30_000;
+/** 发出 PING 后等待对端任何帧的上限：超时即判连接已死并主动断开（协议 PROTOCOL.md）。 */
+const PONG_TIMEOUT_MS = 10_000;
 const RECONNECT_BASE_MS = 1_000;
 const RECONNECT_MAX_MS = 60_000;
 
@@ -312,7 +324,13 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
   let shuttingDown = false;
   let reconnectDelay = RECONNECT_BASE_MS;
   let heartbeat: NodeJS.Timeout | undefined;
+  /** 发出 PING 后的存活死线：期间收到**任何**入站帧即撤销（PROTOCOL.md 心跳与重连）。 */
+  let livenessDeadline: NodeJS.Timeout | undefined;
   let currentClient: WebSocket | undefined;
+  const heartbeatMs = opts.heartbeatMs ?? HEARTBEAT_MS;
+  const pongTimeoutMs = opts.pongTimeoutMs ?? PONG_TIMEOUT_MS;
+  /** 日志用人类可读单位：生产 30000ms → "30s"；测试注入的毫秒值原样显示。 */
+  const heartbeatLabel = heartbeatMs % 1000 === 0 ? `${heartbeatMs / 1000}s` : `${heartbeatMs}ms`;
 
   /** 发送一个隧道帧（走当前隧道 WS；flags 由调用方在 encodeFrame 时给定）。 */
   function sendTunnelFrame(frame: Buffer): void {
@@ -717,6 +735,10 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
       clearInterval(heartbeat);
       heartbeat = undefined;
     }
+    if (livenessDeadline !== undefined) {
+      clearTimeout(livenessDeadline);
+      livenessDeadline = undefined;
+    }
     plainDispatcher.cleanup();
     for (const raw of rawStreams.values()) raw.inner.cleanup();
     rawStreams.clear();
@@ -745,17 +767,36 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
     client.on("open", () => {
       reconnectDelay = RECONNECT_BASE_MS;
       setState("connected");
-      log("info", "tunnel established (heartbeat 30s)");
+      log("info", `tunnel established (heartbeat ${heartbeatLabel})`);
       if (heartbeat !== undefined) clearInterval(heartbeat);
       heartbeat = setInterval(() => {
         if (client.readyState === client.OPEN) {
           client.send(encodeFrame(FRAME_TYPE.PING, 0, jsonPayload({ ts: Date.now() })));
+          // 发出 PING 后武装死线：pongTimeoutMs 内收到任何入站帧即撤销（下方 message 处理）。
+          // 只在**没有未决死线**时武装——上一发 PING 未获回应时原死线继续计时，不重置。
+          if (livenessDeadline === undefined) {
+            livenessDeadline = setTimeout(() => {
+              livenessDeadline = undefined;
+              log("info", `heartbeat timeout — no frame from hub within ${pongTimeoutMs}ms; reconnecting`);
+              try {
+                client.terminate();
+              } catch {
+                /* 已关闭 */
+              }
+            }, pongTimeoutMs);
+            livenessDeadline.unref?.();
+          }
         }
-      }, HEARTBEAT_MS);
+      }, heartbeatMs);
     });
 
     client.on("message", (data, isBinary) => {
       if (!isBinary) return;
+      // 任何入站帧都是存活证据 → 撤销死线（不限于 PONG）
+      if (livenessDeadline !== undefined) {
+        clearTimeout(livenessDeadline);
+        livenessDeadline = undefined;
+      }
       const chunk = Array.isArray(data)
         ? Buffer.concat(data as Buffer[])
         : Buffer.isBuffer(data)

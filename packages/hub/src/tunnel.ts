@@ -21,19 +21,68 @@ export interface StreamHandler {
   onError(code: string, message: string): void;
 }
 
+/** 心跳间隔与死线上限（协议 PROTOCOL.md「心跳与重连」；双方对称维护）。 */
+const HEARTBEAT_MS = 30_000;
+const PONG_TIMEOUT_MS = 10_000;
+
+/** 心跳时序（测试可注入毫秒级小值）。 */
+export interface TunnelTimings {
+  heartbeatMs?: number;
+  pongTimeoutMs?: number;
+}
+
 export class TunnelConn {
   readonly hostId: string;
   private readonly ws: WebSocket;
   private readonly parser = new FrameParser();
   private nextStreamId = 1;
   private readonly streams = new Map<number, StreamHandler>();
+  private heartbeat: NodeJS.Timeout | undefined;
+  /** 发出 PING 后的存活死线：期间收到**任何**入站帧即撤销。 */
+  private livenessDeadline: NodeJS.Timeout | undefined;
 
-  constructor(ws: WebSocket, hostId: string, onClose: (hostId: string) => void) {
+  constructor(ws: WebSocket, hostId: string, onClose: (hostId: string) => void, timings: TunnelTimings = {}) {
     this.ws = ws;
     this.hostId = hostId;
+    const heartbeatMs = timings.heartbeatMs ?? HEARTBEAT_MS;
+    const pongTimeoutMs = timings.pongTimeoutMs ?? PONG_TIMEOUT_MS;
     ws.on("message", (data, isBinary) => this.onMessage(data, isBinary));
-    ws.on("close", () => onClose(hostId));
-    ws.on("error", () => onClose(hostId));
+    ws.on("close", () => {
+      this.stopHeartbeat();
+      onClose(hostId);
+    });
+    ws.on("error", () => {
+      this.stopHeartbeat();
+      onClose(hostId);
+    });
+    // hub 侧也主动发 PING（对称心跳）：发出后 pongTimeoutMs 内收不到任何帧
+    // 即判连接已死 → terminate → close → onClose（摘除注册表 + 推送 host.offline）。
+    this.heartbeat = setInterval(() => {
+      if (this.ws.readyState !== this.ws.OPEN) return;
+      this.send(FRAME_TYPE.PING, 0, jsonPayload({ ts: Date.now() }));
+      // 只在**没有未决死线**时武装：上一发 PING 仍未获任何回应时，原死线继续计时（不重置），
+      // 否则当 heartbeatMs < pongTimeoutMs 时死线会被每个周期无限推迟（永不判死）。
+      if (this.livenessDeadline === undefined) {
+        this.livenessDeadline = setTimeout(() => {
+          this.livenessDeadline = undefined;
+          this.terminate();
+        }, pongTimeoutMs);
+        this.livenessDeadline.unref?.();
+      }
+    }, heartbeatMs);
+    this.heartbeat.unref?.();
+  }
+
+  /** 停止心跳与死线定时器（连接关闭/出错时；避免定时器泄漏并让进程可退出）。 */
+  private stopHeartbeat(): void {
+    if (this.heartbeat !== undefined) {
+      clearInterval(this.heartbeat);
+      this.heartbeat = undefined;
+    }
+    if (this.livenessDeadline !== undefined) {
+      clearTimeout(this.livenessDeadline);
+      this.livenessDeadline = undefined;
+    }
   }
 
   /** 分配 streamId（原子递增）。 */
@@ -98,6 +147,11 @@ export class TunnelConn {
   }
 
   private onMessage(data: unknown, isBinary: boolean): void {
+    // 任何入站帧都是存活证据 → 撤销死线（不限于 PONG）
+    if (this.livenessDeadline !== undefined) {
+      clearTimeout(this.livenessDeadline);
+      this.livenessDeadline = undefined;
+    }
     const chunk = Array.isArray(data)
       ? Buffer.concat(data as Buffer[])
       : Buffer.isBuffer(data)
@@ -128,7 +182,7 @@ export class TunnelConn {
         return;
       }
       case FRAME_TYPE.PONG:
-        return; // 心跳回显（gateway 侧维护超时）
+        return; // 存活证据已由 onMessage 撤销死线（双方对称维护超时，见 PROTOCOL.md）
       case FRAME_TYPE.OPEN: {
         // gateway 侧流开始 = 上游响应头
         const handler = this.streams.get(frame.streamId);
@@ -206,8 +260,21 @@ export class TunnelRegistry {
     this.tunnels.set(conn.hostId, conn);
   }
 
-  unregister(hostId: string): void {
+  /**
+   * 摘除隧道。传 `conn` 时做**身份校验**：仅当注册表当前持有的正是该连接才摘除。
+   *
+   * 必要性：重连时 `register` 会 terminate 旧连接，而旧连接的 close 回调**晚于**
+   * 新连接注册才触发；若无条件 delete，会把刚接手的新连接一起摘掉 —— 表现为
+   * host 假离线（门户显示离线、`relay` 取不到 conn → 503），且新隧道其实活着。
+   *
+   * @returns 是否真的摘除了（false = 已被新连接接管，或本就未注册）
+   */
+  unregister(hostId: string, conn?: TunnelConn): boolean {
+    const current = this.tunnels.get(hostId);
+    if (current === undefined) return false;
+    if (conn !== undefined && current !== conn) return false;
     this.tunnels.delete(hostId);
+    return true;
   }
 
   get(hostId: string): TunnelConn | null {
