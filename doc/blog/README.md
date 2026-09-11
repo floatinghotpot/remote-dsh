@@ -36,3 +36,9 @@ Want to run a hub for your team / yourself? Three deployment routes + user manag
 - [Hub behind Apache2 (443 + auto-renewed certs)](en/03-02-hub-behind-apache-https.md)
 - [Hub behind nginx](en/03-03-hub-behind-nginx.md)
 - User management (create / password / revoke hosts) — see [usage.md §8.3](../overview/usage.md)
+
+## 4. Cross-host agent interconnection (design preview, not available yet)
+
+Let the agents on the machines of one account discover each other, hand work to each other and answer each other — so that when the job has to happen on another machine, you no longer have to be the courier. **Still in the design stage, not released.** This post explains why it is worth building:
+
+- [Why it is worth connecting the agents on your machines to each other](en/04-01-why-agent-mesh.md) (see also the [technical version](../feature/21-agent-mesh/what-and-why.md) and the [requirements](../feature/21-agent-mesh/req.md))

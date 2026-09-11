@@ -36,3 +36,9 @@ DSH 跑在阿里云 ECS 这类有公网 IP 的机器上，你想在任何地方�
 - [hub 放 apache2 后面（443 + 证书自动续期）](zh/03-02-hub-behind-apache-https.md)
 - [hub 放 nginx 后面](zh/03-03-hub-behind-nginx.md)
 - 用户管理（建号 / 改密 / 吊销 host）见 [usage.md §8.3](../overview/usage.md)
+
+## 4. 跨主机智能体互联（设计预告，暂不可用）
+
+让同一个账号下、不同机器上的智能体互相发现、互相派活、互相应答 —— 这样"活得在另一台机器上干"时，你不必再当人肉搬运工。**目前仍在设计阶段，尚未发布**（本文讲为什么做、值不值得做）：
+
+- [为什么值得让几台机器上的智能体互相联系](zh/04-01-why-agent-mesh.md)（同一篇的[技术版](../feature/21-agent-mesh/what-and-why.md)与[需求文档](../feature/21-agent-mesh/req.md)）
