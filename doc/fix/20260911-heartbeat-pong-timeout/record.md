@@ -131,3 +131,55 @@
 
 反证（测试是否真能锁住该缺陷）：临时回退 `server.ts` 的修复 → 新测试**失败**（`waitFor timeout`，3023ms）；恢复后通过。
 
+## 10. 发布记录（2026-09-11，**四个包均已上线**）
+
+本次修复涉及 **2 个包的代码** + **2 个依赖包的重发**；`rdsh-tunnel` **不发布**（代码零改动；`files: ["dist"]` ⇒ PROTOCOL.md 仅文档、不进包）。时间均为本地时间（UTC+8）。
+
+| 包 | 版本 | registry 上线 | 变更内容 | 核对要点（registry tarball 实测） |
+|---|---|---|---|---|
+| `rdsh-gateway` | 0.8.2 → **0.8.3** | ✅ 18:15:50 | 心跳死线：发 PING 后 10s 内无任何入站帧 → 判死并断开重连；日志按秒显示 | dep `rdsh-tunnel 0.2.0`；`dist/join.js` 含 `heartbeat timeout — no frame from hub` |
+| `rdsh-hub` | 0.7.1 → **0.7.2** | ✅ 18:19:07 | 对称心跳（30s PING + 10s 死线）+ `TunnelRegistry.unregister` 身份校验（重连竞态） | dep `rdsh-tunnel 0.2.0`；`dist/tunnel.js` 含 `livenessDeadline` ×11、`current !== conn`；`portal/` 资产随包（4 文件） |
+| `remote-dsh`（CLI） | 0.10.3 → **0.10.4** | ✅ 18:16:00 | 依赖升级（经 `rdsh host join` / serve 生效） | deps `rdsh-gateway 0.8.3` + `rdsh-hub 0.7.2`（后者上线后依赖图才可解析，见下） |
+| `dsh-web-remote` | 0.5.1 → **0.5.2** | ✅ 18:17:44 | 依赖升级（插件路径的隧道客户端才是多数用户的实际入口） | dep `rdsh-gateway 0.8.3`；含 `client.js` / `cordis.patch.yml` / `dist/rpc-route.js` |
+| `rdsh-tunnel` | 0.2.0（**不变**） | — | 线协议字节级不变，PROTOCOL.md 仅文档更新 | — |
+
+四个 `latest` 均已指向目标版本（`npm view <pkg> version` 实测），且用户已在测试机上以新版 hub 实测通过。
+
+**发布顺序（必须）**：`rdsh-gateway` → `rdsh-hub` → (`remote-dsh`, `dsh-web-remote`)。后两者打包时把 `workspace:*` 重写为**精确版本**（实测：`0.8.3` / `0.7.2`），先发它们会导致消费者装不上。
+
+```bash
+pnpm --filter ./packages/gateway publish --no-git-checks \
+  && pnpm --filter ./packages/hub publish --no-git-checks \
+  && pnpm --filter ./packages/cli publish --no-git-checks \
+  && pnpm --filter ./packages/web-remote publish --no-git-checks
+```
+
+> ⚠️ **踩坑（本次新发现）**：仓库根 `package.json` 也叫 `remote-dsh@0.1.0`（`private: true`），所以 `pnpm --filter remote-dsh pack` 会**同时打包根包**（实测产出 `remote-dsh-0.1.0.tgz` = 整个仓库）。发布一律用**路径过滤** `--filter ./packages/cli`，别用包名。
+
+### 发布过程（含一次事故：staged publish 卡住 hub）
+
+1. **第一次执行**：`rdsh-gateway` / `remote-dsh` / `dsh-web-remote` 直接成功；`rdsh-hub` 被 **npm 12 staged publish** 接走（`pnpm publish` 打印了 `📦 rdsh-hub@0.7.2 → https://registry.npmjs.org/` 但 registry 上没有该版本），重发报 `409 Cannot publish over previously staged version "0.7.2"`。
+2. **连带影响（约 3 分钟破窗）**：`remote-dsh@0.10.4` 已上线，但它依赖的 `rdsh-hub@0.7.2` 尚不存在 ⇒ 此时 `npm i -g remote-dsh@0.10.4` 会 `ETARGET` 失败。18:19 后 hub 上线即**自愈，CLI 无需重发**。
+3. **诊断（未能取到 stage id）**：`npm stage list [rdsh-hub]`、`pnpm stage list`、带 token 直连 `GET /-/stage`（含 `?package=rdsh-hub`）**全部返回空列表**，与 409 的"已暂存"事实矛盾；`GET /-/stage/rdsh-hub` 返回 `"stageId" must be a valid GUID`。npm 12 帮助文档确认根因机制：**staged 与已发布版本共用同一个 semver 唯一索引**，因此"覆盖已 staged 版本"必然 409（[Staged publishing for npm packages](https://docs.npmjs.com/staged-publishing)：staging 不需 2FA、approve/reject 需要）。
+4. **结果**：随后一次尝试**直接成功**（hub `0.7.2` 上线时间戳 `10:19:07Z`）；具体触发条件（stage 被批准 / 过期 / 首次 409 属瞬态）**未能观测到**，如实记录。
+
+### 教训（下次发布照此执行）
+
+1. 四条发布命令用**一条 `&&` 链**跑完 —— 本次实际是分批跑的，才出现"cli 已发、hub 未发"的破窗。
+2. `pnpm publish` 的**完整输出要落盘**（`| tee /tmp/publish.log`）：暂存提示里的 `(staged with id <uuid>)` 是 **stage id 的唯一来源**，本次因未留日志而无法 `stage approve`。
+3. 再遇 409：先 `pnpm stage list` / `npm stage list`；**取不到 id 就原样重试一次**（本次证明可通），**不要**随手跳版本号 —— 否则要么留一个永久装不上的版本，要么得连带重发整条依赖链。
+
+**发布后核对**：
+
+```bash
+npm view rdsh-gateway version; npm view rdsh-hub version; npm view remote-dsh version; npm view dsh-web-remote version
+# 直连 registry 复核（排除镜像/缓存假象）：
+curl -s https://registry.npmjs.org/rdsh-hub | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8"))["dist-tags"].latest'
+```
+
+**质量门（发布前已跑）**：`pnpm build` 0 error；`pnpm test` tunnel 12 / hub 96 / gateway 113 / web-remote 16，0 fail；`pnpm build` 未产生 portal 资产差异（无需附带提交）。
+
+**消费者升级路径**：CLI 用户 `npm i -g remote-dsh@0.10.4`；插件用户 `dsh plugin --profile web add dsh-web-remote@0.5.2`（钉版本，规避 pnpm ≥12 的 `minimumReleaseAge` 24h 窗口）。
+
+**观察（不在本次改动范围）**：`files: ["dist", "!dist/**/*.map"]` 的否定规则在 `pnpm pack` 下**未生效** —— 各包 tarball 仍带 `.map`（如 `dsh-web-remote` 的 `dist/rpc-route.js.map`）。属既有行为、无功能影响（源码映射对排障有益），是否收紧留待后续决定。
+
