@@ -1,7 +1,7 @@
 # 跨主机智能体通信层（agent mesh）（req）
 
 > **日期**: 2026-09-11
-> **来源**: [discussion.md](discussion.md)（含 3 个只读子代理的审计事实；决策 D1–D23）
+> **来源**: [what-and-why.md](what-and-why.md)（**驱动文档：是什么 / 价值 / 目的 / 时机**）+ [discussion.md](discussion.md)（含 3 个只读子代理的审计事实；决策 D1–D25）
 > **状态**: 决策 D2–D25 **已定，无未决项**（2026-09-11，结论见 §7）；**需求本身待用户批准**（`req.md` 是需求门：批准后才进入 `solution.md`）
 > **范围**: **仅同一 hub 账号下的 host 之间**（D20，已定）
 > **关联**: [doc/fix/20260911-heartbeat-pong-timeout/](../../fix/20260911-heartbeat-pong-timeout/record.md)（前置修复）
