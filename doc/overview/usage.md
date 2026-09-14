@@ -407,6 +407,27 @@ rdsh hub service install|status|uninstall      # hub 服务化（rdsh-hub.servic
 | `auth.mode: "none"` | 等同把 DSH 暴露给同网段所有人（任意命令执行）—— 仅限完全可信网络 |
 | 密钥文件 | `~/.rdsh/secret.key`（0600）—— 泄露=会话可伪造 |
 | 改密 | 改密会自动轮换密钥使旧会话失效 —— 这是特性不是 bug |
+| E2EE 覆盖边界 | E2EE 只覆盖**页面里**经 shim 包装的 `fetch` / `WebSocket`；**Worker 内的 `fetch`/`XMLHttpRequest` 不受覆盖**（DSH 的"后台上传"跑在 Blob Worker 里）⇒ 这类上传**明文**经 hub。hub 自身不落盘、不记 payload（`packages/hub/src/relay.ts` 请求体直接流进隧道），但 hub 运营方/任何 TLS 终止点可见其内容。详见 §9.1 |
+| 反代缓冲 | hub 若在 nginx 后面：`proxy_request_buffering` **默认 on**，大请求体会被写进 hub 机器上的临时文件（非 rdsh 行为）；访问日志会记录 URL（上传接口的 query 含 `name=<文件名>`）与字节数，**不含内容**。要避免落盘：`proxy_request_buffering off;` |
+
+### 9.1 E2EE 覆盖边界（已知限制）
+
+按"**内容从哪里出浏览器**"分类（2026-09-14 逐条查证）。**常用的主路径（把图给 AI 认、预览文档/图片、界面 API 与实时通道）全部走 E2EE**；明文只出现在低频路径上：
+
+| 场景 | 传输 | 是否加密 | 说明 |
+|---|---|---|---|
+| 界面里的 API RPC（设置、模型目录、会话列表…） | 页面 `fetch` | ✅ 加密 | 经 shim 走 `/e2e` 单条 E2EE 通道 |
+| 实时通道（`events.mux` / `remote.mux`） | 页面 `WebSocket` | ✅ 加密 | 同上 |
+| **图片附件**（拖/贴上来的图，最常见：截图 / UI 设计稿） | 随 prompt 以 **base64** 走页面 `fetch` | ✅ 加密 | 图片**不**走后台上传；大图会显著增大请求体（已支持分片） |
+| **文档/图片预览** | pdf.js `PDFFetchStream` → 页面 `fetch`（含 Range） | ✅ 加密 | 但响应目前被整体缓冲 + 强制 UTF-8 解码 ⇒ **二进制/Range 语义会坏**（AC2/AC3 待修） |
+| **非图片文件**附件（pdf/zip/bin…，低频） | **Worker 里的 `XMLHttpRequest`** | ❌ **明文** | DSH 的"后台上传"跑在 Blob Worker 里，shim 只作用于页面 `window`。**2026-09-14 决策：暂时接受**（可用性优先），复谈条件见下 |
+| dev/HMR 的 `EventSource` | 页面 `EventSource` | ❌ 明文 | 仅 dev 模式；生产不涉及（低危） |
+
+- **怎么判断某次上传走哪条路**：上传后看 **DevTools → Network 过滤 `uploadFileBinary`** —— 出现 HTTP 请求 = 明文（Worker 路）；只在 `/e2e` WS 里 = 加密。
+- **决策（2026-09-14）**：明文范围**仅剩"非图片文件附件的后台 Worker 上传"**，暂时接受（**可用性优先**，不让功能不可用）；"包装 `window.Worker` 给 worker 注入 shim"等 DSH 稳定后再评估；**永不改 DSH 源码**。
+- **企业选项（未来，opt-in，不作默认）**：`e2ee.mode: "required"` —— 主机侧拒绝经明文通道进入的敏感请求（fail-closed），把"静默明文"变成"明确失败"。默认仍是"可用优先"。
+- **运维侧**（与 rdsh 代码无关）：反向代理 `proxy_request_buffering` 默认 on，会把大请求体写进 hub 机器临时文件；访问日志会记录上传 URL（含文件名）与字节数，**不含内容**。hub 自身不落盘、不记 payload。
+
 
 ## 10. 故障排查
 

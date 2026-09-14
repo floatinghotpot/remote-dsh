@@ -143,6 +143,8 @@ export const E2EE_SHIM_HTML = `<script>
 
   // ---- fetch 包装 ----
   var nativeFetch = window.fetch.bind(window);
+  /** 无 body 的状态码：构造 Response 时不能带 body（204/205/304/1xx）。 */
+  function isNullBodyStatus(s) { return s === 101 || s === 103 || s === 204 || s === 205 || s === 304; }
   window.fetch = function (input, init) {
     // input 可能是 string / URL / Request —— DSH 的 HTTP carrier 传的是 **URL 实例**
     //（2026-09-14 实测：只认 input.url ⇒ url=undefined ⇒ new URL(undefined, base) = "/undefined"
@@ -160,26 +162,69 @@ export const E2EE_SHIM_HTML = `<script>
         if (typeof init.headers.forEach === "function") init.headers.forEach(function (v, k) { headers[k] = v; });
         else Object.keys(init.headers).forEach(function (k) { headers[k] = init.headers[k]; });
       }
+      var signal = init && init.signal;
       return await new Promise(function (resolve, reject) {
-        var status = 200, respHeaders = {}, chunks = [];
+        var status = 200, statusText = "", respHeaders = {}, ctrl = null, settled = false, aborted = false;
+        // 响应体**按字节流式**透传，交给原生 Response 处理 .text()/.json()/.arrayBuffer()。
+        // 历史缺陷：整体缓冲到 CLOSE + 一律 TextDecoder 解码 + JSON 走 parse→stringify
+        //  ⇒ 二进制（PDF/图片）损坏、response.body.getReader() 拿到的是"一次性全给"、
+        //    大响应全量驻留内存（AC2/AC3）。
+        var stream = new ReadableStream({
+          start: function (controller) { ctrl = controller; },
+          cancel: function () {
+            // 消费方取消（pdf.js 会放弃 Range 请求）→ 通知 host 中止上游流
+            aborted = true;
+            c.handlers.delete(id);
+            if (!settled) { settled = true; reject(new Error("e2ee response cancelled")); }
+            sendFrame(c, FT.CLOSE, id, JSON.stringify({ code: 1, message: "client cancelled" })).catch(function () {});
+          }
+        });
+        /** 响应头一到就 resolve（body 继续流），无 body 状态码则直接收尾。 */
+        function settle() {
+          if (settled) return;
+          settled = true;
+          if (isNullBodyStatus(status)) {
+            try { ctrl.close(); } catch (e) { /* 已关闭 */ }
+            resolve(new Response(null, { status: status, statusText: statusText, headers: respHeaders }));
+            return;
+          }
+          resolve(new Response(stream, { status: status, statusText: statusText, headers: respHeaders }));
+        }
         // 先挂 handler 再发帧：否则快响应（如 400）可能早于 handler 注册而丢失
         c.handlers.set(id, {
-          onOpen: function (p) { if (p.status != null) status = p.status; if (p.headers) respHeaders = p.headers; },
-          onData: function (d) { chunks.push(d); },
+          onOpen: function (p) {
+            if (p.status != null) status = p.status;
+            if (p.reason != null) statusText = String(p.reason);
+            if (p.headers) respHeaders = p.headers;
+            settle();
+          },
+          onData: function (d) { if (ctrl && !aborted) ctrl.enqueue(new Uint8Array(d)); },
           onClose: function () {
-            var len = 0; chunks.forEach(function (d) { len += d.length; });
-            var body = new Uint8Array(len); var off = 0;
-            chunks.forEach(function (d) { body.set(d, off); off += d.length; });
-            var text = new TextDecoder().decode(body);
-            var ct = (respHeaders["content-type"] || "");
-            var isJson = ct.indexOf("json") >= 0;
-            var payload = isJson ? (text ? JSON.parse(text) : null) : text;
-            resolve(new Response(isJson ? JSON.stringify(payload) : text, { status: status, headers: respHeaders }));
+            if (!settled) settle();
+            if (ctrl && !aborted) { try { ctrl.close(); } catch (e) { /* 已关闭 */ } }
           },
           // 通道断了必须**报错**，不能静默挂起（2026-09-14 实测：超大帧被 hub 以 1009 拒绝后
           // 请求永远不 settle，用户看到的是 "no error and no reply"）
-          onError: function (err) { c.handlers.delete(id); reject(err); }
+          onError: function (err) {
+            c.handlers.delete(id);
+            if (!settled) { settled = true; reject(err); return; }
+            if (ctrl) { try { ctrl.error(err); } catch (e) { /* 已报错 */ } }
+          }
         });
+        if (signal) {
+          if (signal.aborted) {
+            c.handlers.delete(id);
+            settled = true;
+            reject(new Error("aborted"));
+            return;
+          }
+          signal.addEventListener("abort", function () {
+            aborted = true;
+            c.handlers.delete(id);
+            if (ctrl) { try { ctrl.error(new Error("aborted")); } catch (e) { /* 已报错 */ } }
+            sendFrame(c, FT.CLOSE, id, JSON.stringify({ code: 1, message: "client aborted" })).catch(function () {});
+          });
+        }
         (async function () {
           try {
             await sendFrame(c, FT.OPEN, id, JSON.stringify({ kind: "http", method: method, path: u.pathname + u.search, headers: headers }));
@@ -193,7 +238,8 @@ export const E2EE_SHIM_HTML = `<script>
             await sendFrame(c, FT.CLOSE, id, JSON.stringify({ code: 0 }));
           } catch (err) {
             c.handlers.delete(id);
-            reject(err);
+            if (!settled) { settled = true; reject(err); return; }
+            if (ctrl) { try { ctrl.error(err); } catch (e) { /* 已报错 */ } }
           }
         })();
       });

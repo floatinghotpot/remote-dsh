@@ -44,7 +44,12 @@
 | **F10** | `EventSource` 真实使用点唯一：`new EventSource(EVENTS_ENDPOINT)`，位于 HMR 客户端 | `@deepseek-ai/dsh-client-hmr/lib/client.js` |
 | **F11** | **请求体一次性塞进一帧**：`if (body) await sendFrame(c, FT.DATA, id, body)`；而隧道协议载荷上限 **16 MiB**（编帧与解析两侧都抛 `ProtocolError`）⇒ **任何 >16 MiB 的 fetch 上传都会失败** | `packages/hub/src/e2ee-shim.ts:141`；`packages/tunnel/src/frame.ts:12,28-29,74-75` |
 | **F12** | **shim 覆盖不到 Worker**：页面里 `fetch`/`WebSocket` 已包装（`WrappedWS`），但 Blob Worker 里 `fetch`/`XMLHttpRequest`/`WebSocket` **全部是原生**，`self.__RDSH_HOST_ID__ === undefined` | CDP 探针（`new Worker(blob)` 自报）：`{page:{fetchNative:false,wsNative:false}, worker:{fetchNative:true,xhrNative:true,wsNative:true}}` |
-| **F13** | **后台上传因此是明文**：`dsh-client-file-upload` 把上传放进 **Blob Worker**，Blob 体走 `XMLHttpRequest`、ReadableStream 体走 worker 原生 `fetch`（`FILE_UPLOAD_PATH = /api/session/uploadFileBinary`）⇒ shim 拦不住 ⇒ 该路径数据经 hub 明文 | 代码：`fileUploadWorker(scope, createXhr=()=>new XMLHttpRequest(), doFetch=(i,n)=>fetch(i,n))`；实测：E2EE 页面内 XHR POST 该路径 ⇒ `performance` 多出 1 条 `xmlhttprequest` 明文条目（shim 已接管的情况下） |
+| **F13** | **后台上传因此是明文**：`dsh-client-file-upload` 把上传放进 **Blob Worker**，Blob 体走 `XMLHttpRequest`、ReadableStream 体走 worker 原生 `fetch`（`FILE_UPLOAD_PATH = /api/session/uploadFileBinary`）⇒ shim 拦不住 ⇒ 该路径数据经 hub 明文。**决策（2026-09-14，用户拍板）：暂时接受**——理由：① 包装 `window.Worker` 注入 shim 与 DSH 的快速演进耦合太紧（Blob Worker 源码重写风险），等 DSH 稳定后再评估；② **永不改 DSH 源码**（硬约束）。⇒ 写入用户手册 `doc/overview/usage.md` §9.1 作为已知限制，并给出"怎么判断某次上传走哪条路"的判据 | 代码：`fileUploadWorker(scope, createXhr=()=>new XMLHttpRequest(), doFetch=(i,n)=>fetch(i,n))`；实测：E2EE 页面内 XHR POST 该路径 ⇒ `performance` 多出 1 条 `xmlhttprequest` 明文条目（shim 已接管的情况下）；决策见 usage.md §9.1 |
+| **F13b** | **hub 不缓存、不落盘请求体**（用户关切）：中继把请求体**直接流进隧道**（`req.on("data", chunk => conn.sendData(streamId, chunk))`），hub 源码无写文件/临时文件（`serve.ts` 只写 TLS key）；日志只记字节数与错误码、从不记 payload | `packages/hub/src/relay.ts:138-140`、`:239`、`:314`；`packages/hub/src/serve.ts:31` |
+| **F13c** | 但**部署侧**要留意：hub 在 nginx 后面时 `proxy_request_buffering` 默认 **on** ⇒ 大请求体被写进 hub 机器临时文件；访问日志记录 URL（上传接口 query 含 `name=<文件名>`）与字节数。另：host 若配了访问口令（gate），网关会把**首个**请求体缓存在**内存**里做口令校验（不落盘） | nginx 默认行为；`packages/gateway/src/join.ts:348,483,604-628` |
+| **F25** | **明文范围只有"非图片文件附件"这一类**（2026-09-14 逐条查证）：① **图片**附件在挂载时**不**调用 `fileUpload.upload`，而是随 prompt 以 **base64** 走页面 `fetch` ⇒ **加密**（`base64ImageOf` → `data: await base64ImageOf(file)`）；② **非图片文件**（`kind:"file"`）才 `beginFileUpload` → `upload(sessionId, attachment.file)`，`data` 是 `File`(Blob) 且 `available=true` ⇒ Worker XHR ⇒ **明文**；③ 预览走 pdf.js `PDFFetchStream`（页面 `fetch` + Range + `getReader()`）⇒ **加密** | `dsh-client-ui-conversation/lib/client.js`（`browserDraftAttachment` 只 `probeDimensions`、`:2975-2990` file 分支、`:3212-3216` base64 图片线格式）；`dsh-client-ui-sidebar-documentpreview/lib/client.js`（`PDFFetchStream`/`PDFFetchStreamReader`，7 处） |
+| **F26** | 上一条的**数值旁证**：崩溃那次 25,007,697 B 的单帧 ≈ 18,755,423 B 原图 base64（=25,007,232 B）+ JSON 信封（~465 B）⇒ 印证图片确实是"base64 进请求体、经页面 fetch 走 E2EE" | 算术 + F18 |
+| **F27** | **可用性优先**（2026-09-14 用户口径）：不以 fail-closed 作为默认；`e2ee.mode: "required"` 只作为**未来企业 opt-in**，默认保持"能传图给 AI"的可用路径 | 用户决策 |
 | **F14** | 该 XHR 实测返回 **`502 {"code":"UPSTREAM_ERROR","message":"UPSTREAM_UNREACHABLE: dsh not reachable"}`** —— 文案来自网关 `up.on("error")`（`packages/gateway/src/join.ts:591`），即上游请求**提前中断**被误报成"不可达"，真实的 401/400 被掩盖 ⇒ **待定位**（是否 D12 剥离会话 cookie 导致 dsh 拒绝、或 `content-length` 与分片发送不匹配） | 同上；对照：同环境其它 `/api` 调用（经 E2EE mux）全部 200 |
 | **F15** | **大文件走的是另一条路**：`fileUpload.upload()` 在 `data instanceof Uint8Array`（或后台传输不可用）时走 **RPC + base64**（整个文件 base64 进 JSON）⇒ 经页面 `fetch`（被 shim 包）以**单帧**发出；18 MiB 文件 ⇒ **25,007,697 B** 的一条 E2EE 帧 | `@deepseek-ai/dsh-client-file-upload/lib/client.js:177-196`；`packages/hub/src/e2ee-shim.ts:141` |
 | **F16** | shim 自己的 `encodeFrame` **不校验** `MAX_PAYLOAD_LENGTH`（与线协议分歧）；该分歧的直接后果见 §2.3（hub 崩溃），分片仍必须做 | `packages/hub/src/e2ee-shim.ts` 的 encodeFrame 实现 vs `packages/tunnel/src/frame.ts:12,28-30` |
@@ -107,5 +112,8 @@
 
 | 缺陷 | 状态 | 证据 |
 |---|---|---|
-| ② hub 被超大帧打死 | ✅ **已修已验**（本次） | F24；`packages/hub/test/relay-oversize-frame.test.ts` 2 例 + 反证；真机 20 MiB → hub 存活 |
-| ① 数据面能力（分片/流式/二进制/类型） | ⏳ **待做**（本记录主体） | F1/F11/F15/F16/F17；AC1–AC5、AC6 |
+| ② hub 被超大帧打死 | ✅ **已修已验** | F24；`packages/hub/test/relay-oversize-frame.test.ts` 2 例 + 反证；真机 20 MiB → hub 存活 |
+| ①a 请求体分片（>16 MiB 上传） | ✅ **已修已验** | 单测 3 帧拆分 + 字节一致；真机 20 MiB 全量送达 |
+| ①b 通道失效不静默挂起 | ✅ **已修已验** | F17；单测：关闭通道 ⇒ 立刻 reject + 重新握手 |
+| ①c 响应二进制保真 + 流式（AC2/AC3） | ✅ **已修已验** | 真机 18,755,423 B PNG 经 E2EE **逐字节一致**（287 块、首块 206 ms、sha256 与本地文件相同）；单测：块边界/字节/204/取消 |
+| ①d 请求体类型（Blob/FormData/ReadableStream） | ⏳ 待做 | AC4 |

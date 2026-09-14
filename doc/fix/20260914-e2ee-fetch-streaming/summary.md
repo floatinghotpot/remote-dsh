@@ -1,7 +1,7 @@
 # E2EE 大文件上传：分片 + 通道自愈（summary）
 
 > **日期**: 2026-09-14 ｜ **对应**: [discussion.md](./discussion.md) · [solution.md](./solution.md) · [verification.md](./verification.md)
-> **一句话**: "大文件上传"这一条结果里的三件事全部落地 —— **大请求体能送达**（1 MiB 分片）、**失败时报错不再静默挂起**（通道失效 reject + 自动重握手）、**超大帧不再打死 hub**（中继 `maxPayload` + 只废流）。
+> **一句话**: "大文件上传 + 预览"这条线全部打通 —— **大请求体能送达**（1 MiB 分片）、**失败时报错不再静默挂起**、**超大帧不再打死 hub**、**响应二进制逐字节保真且流式**（真机 17.9 MB PNG sha256 一致、287 块、首块 206 ms）。
 
 ---
 
@@ -12,6 +12,7 @@
 | ① | 请求体整包一帧（>16 MiB 必失败；18 MiB 文件 ⇒ 25 MB 单帧） | 按 **1 MiB** 分片发送（http 流天然支持多 DATA；WS 消息**不分片**以保消息边界）；**先挂 handler 再发帧**（快响应不再丢）；发送失败即 reject | `packages/hub/src/e2ee-shim.ts` |
 | ② | 通道失效后请求**静默挂起**（"no error and no reply"），且必须刷新页面 | `failChannel`：reject 全部挂起请求 + 复位 `channel`（下次请求自动重新握手）；WS 侧 `.catch(shutdown)` | 同上 |
 | ③ | 超大中继帧**打死 hub**（跨租户 DoS，用户实测全站 `ERR_CONNECTION_REFUSED`） | `wss.maxPayload = 16 MiB`（超限 ws 层 **1009**）+ 两个中继回调 try/catch（封装不了只废该流） | `packages/hub/src/relay.ts` |
+| ④ | 响应被**整体缓冲 + 强制 UTF-8 解码** ⇒ 预览二进制损坏、无流式（AC2/AC3） | 响应体改为**按字节的 `ReadableStream`**（头到即 resolve，DATA 帧逐块 enqueue）；JSON 交给原生 `.json()`（删掉 parse→stringify）；`cancel()`/`AbortSignal` 会向 host 发 `CLOSE(code 1)` 中止上游；204/205/304 走无 body 构造 | `packages/hub/src/e2ee-shim.ts` |
 
 ## 2. 关键证据
 
@@ -33,4 +34,4 @@
 
 ## 5. 遗留
 
-见 [TODO.md](./TODO.md)：响应二进制/流式（AC2/AC3）、请求体类型（AC4）、**后台上传走 Worker ⇒ 明文**（F13，需产品决策）、上传路径 502 文案（F14）、发布 `rdsh-hub`。
+见 [TODO.md](./TODO.md)：请求体类型（AC4）、**后台上传走 Worker ⇒ 明文**（F13，**已决策：暂时接受并文档化**；hub 不缓存/不落盘请求体，反代缓冲见 F13c）、上传路径 502 文案（F14）、发布 `rdsh-hub`。

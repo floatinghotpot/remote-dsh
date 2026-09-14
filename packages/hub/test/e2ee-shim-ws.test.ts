@@ -13,7 +13,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { webcrypto } from "node:crypto";
-import { encodeFrame, FRAME_TYPE, FrameParser } from "rdsh-tunnel";
+import { encodeFrame, FRAME_TYPE, FrameParser, jsonPayload } from "rdsh-tunnel";
 import { E2EE_SHIM_HTML, injectE2eeShim } from "../src/e2ee-shim.ts";
 
 const subtle = webcrypto.subtle as SubtleCrypto;
@@ -85,6 +85,7 @@ function runShim(opts: { pin?: string; hostId?: string; cookie?: string; ws?: un
     "atob",
     "URL",
     "Response",
+    "ReadableStream",
     "Uint8Array",
     "DataView",
     "Map",
@@ -112,6 +113,7 @@ function runShim(opts: { pin?: string; hostId?: string; cookie?: string; ws?: un
     atob,
     URL,
     Response,
+    ReadableStream,
     Uint8Array,
     DataView,
     Map,
@@ -307,6 +309,118 @@ async function decryptSent(hostPriv: CryptoKey, inner: FakeWS): Promise<{ type: 
   }
   return frames;
 }
+
+/** 由 ephPub 推导 host→browser 密钥 r2i（后 32 字节），返回与 shim 内 Aead 同构的加密函数（nonce 计数器从 0 起）。 */
+async function deriveR2i(hostPriv: CryptoKey, ephPub: Uint8Array): Promise<(pt: Uint8Array) => Promise<Uint8Array>> {
+  const ephImp = await subtle.importKey("raw", ephPub, { name: "X25519" }, false, []);
+  const ss = new Uint8Array(await subtle.deriveBits({ name: "X25519", public: ephImp }, hostPriv, 256));
+  const hkdf = await subtle.importKey("raw", ss, "HKDF", false, ["deriveBits"]);
+  const okm = new Uint8Array(
+    await subtle.deriveBits(
+      { name: "HKDF", hash: "SHA-256", salt: enc.encode("rdsh-e2ee-nk-v1"), info: enc.encode("session") },
+      hkdf,
+      512,
+    ),
+  );
+  const key = await subtle.importKey("raw", okm.slice(32), { name: "AES-GCM" }, false, ["encrypt"]);
+  let counter = 0n;
+  return async (pt: Uint8Array): Promise<Uint8Array> => {
+    const nonce = new Uint8Array(12);
+    new DataView(nonce.buffer).setBigUint64(4, counter);
+    counter += 1n;
+    const ct = new Uint8Array(await subtle.encrypt({ name: "AES-GCM", iv: nonce }, key, pt));
+    const out = new Uint8Array(12 + ct.length);
+    out.set(nonce, 0);
+    out.set(ct, 12);
+    return out;
+  };
+}
+
+test("响应二进制保真 + 流式：头到即 resolve、块边界与字节原样、JSON 走原生 .json()", async () => {
+  instances.length = 0;
+  const host = await hostKeyPair();
+  const sb = runShim({ pin: b64u(host.pub), hostId: "host-1" });
+  const fetchFn = (sb.window as unknown as { fetch: (i: unknown, n?: unknown) => Promise<Response> }).fetch;
+
+  const pending = fetchFn(new URL("http://rdsh.local/api/session/file"), { method: "GET" });
+  await waitFor(() => (instances[0]?.sent.length ?? 0) >= 2); // 请求 OPEN 已发出
+  const inner = instances[0]!;
+  const send = await deriveR2i(host.priv, inner.sent[0]!);
+
+  // 只发响应头：Response 必须立刻可用（AC3：不再等 CLOSE）
+  inner.deliver(await send(encodeFrame(FRAME_TYPE.OPEN, 1, jsonPayload({ kind: "http", status: 200, reason: "OK", headers: { "content-type": "application/pdf" } }))));
+  const headOnly = await Promise.race([pending, new Promise<Response>((r) => setTimeout(() => r(new Response(null)), 2000))]);
+  assert.equal(headOnly.status, 200, "响应头到达后应立刻 resolve（不等 CLOSE）");
+  assert.equal(headOnly.headers.get("content-type"), "application/pdf");
+
+  // 含 0x00/0xFF/0x80 等字节：旧实现（TextDecoder 解码）必变形，这里必须原样
+  const chunk1 = new Uint8Array([0x00, 0xff, 0x80, 0x7f, 0xc3, 0x28]);
+  assert.notDeepEqual(
+    Array.from(enc.encode(new TextDecoder().decode(chunk1))),
+    Array.from(chunk1),
+    "前提：该字节序列经 UTF-8 往返确实变形（说明本用例能抓住旧的文本化实现）",
+  );
+  inner.deliver(await send(encodeFrame(FRAME_TYPE.DATA, 1, Buffer.from(chunk1))));
+  const reader = headOnly.body!.getReader();
+  const first = await reader.read();
+  assert.equal(first.done, false);
+  assert.deepEqual(Array.from(first.value!), Array.from(chunk1), "首块字节必须原样透传（AC2）");
+
+  const chunk2 = new Uint8Array([0xde, 0xad, 0xbe, 0xef]);
+  inner.deliver(await send(encodeFrame(FRAME_TYPE.DATA, 1, Buffer.from(chunk2))));
+  const second = await reader.read();
+  assert.deepEqual(Array.from(second.value!), Array.from(chunk2), "第二块保持独立边界");
+  inner.deliver(await send(encodeFrame(FRAME_TYPE.CLOSE, 1, jsonPayload({ code: 0 }))));
+  assert.equal((await reader.read()).done, true, "CLOSE 后流应结束");
+
+  // JSON：交给原生 Response.json()（不再自己 parse→stringify）
+  const pending2 = fetchFn(new URL("http://rdsh.local/api/settings/describe"), { method: "POST" });
+  await waitFor(() => inner.sent.length >= 4);
+  inner.deliver(await send(encodeFrame(FRAME_TYPE.OPEN, 2, jsonPayload({ kind: "http", status: 200, headers: { "content-type": "application/json" } }))));
+  inner.deliver(await send(encodeFrame(FRAME_TYPE.DATA, 2, Buffer.from(enc.encode('{"ok":true,"n":1}')))));
+  inner.deliver(await send(encodeFrame(FRAME_TYPE.CLOSE, 2, jsonPayload({ code: 0 }))));
+  assert.deepEqual(await (await pending2).json(), { ok: true, n: 1 }, "JSON 响应仍可正常解析");
+});
+
+test("无 body 状态码（204）：Response 构造不得抛错，body 必须为 null", async () => {
+  instances.length = 0;
+  const host = await hostKeyPair();
+  const sb = runShim({ pin: b64u(host.pub), hostId: "host-1" });
+  const fetchFn = (sb.window as unknown as { fetch: (i: unknown, n?: unknown) => Promise<Response> }).fetch;
+
+  const pending = fetchFn(new URL("http://rdsh.local/api/session/empty"), { method: "DELETE" });
+  await waitFor(() => (instances[0]?.sent.length ?? 0) >= 2);
+  const inner = instances[0]!;
+  const send = await deriveR2i(host.priv, inner.sent[0]!);
+  inner.deliver(await send(encodeFrame(FRAME_TYPE.OPEN, 1, jsonPayload({ kind: "http", status: 204, headers: {} }))));
+  inner.deliver(await send(encodeFrame(FRAME_TYPE.CLOSE, 1, jsonPayload({ code: 0 }))));
+  const resp = await pending;
+  assert.equal(resp.status, 204);
+  assert.equal(resp.body, null, "204 不得带 body");
+});
+
+test("消费方取消响应体（pdf.js 放弃 Range 请求）：向 host 发出 CLOSE(code 1) 中止上游流", async () => {
+  instances.length = 0;
+  const host = await hostKeyPair();
+  const sb = runShim({ pin: b64u(host.pub), hostId: "host-1" });
+  const fetchFn = (sb.window as unknown as { fetch: (i: unknown, n?: unknown) => Promise<Response> }).fetch;
+
+  const pending = fetchFn(new URL("http://rdsh.local/api/session/file"), { method: "GET" });
+  await waitFor(() => (instances[0]?.sent.length ?? 0) >= 2);
+  const inner = instances[0]!;
+  const send = await deriveR2i(host.priv, inner.sent[0]!);
+  inner.deliver(await send(encodeFrame(FRAME_TYPE.OPEN, 1, jsonPayload({ kind: "http", status: 200, headers: { "content-type": "application/pdf" } }))));
+  const resp = await pending;
+  await resp.body!.cancel();
+
+  await waitFor(() => inner.sent.length >= 4, 3000); // OPEN + CLOSE(请求体结束) + CLOSE(code 1)
+  const key = await deriveI2r(host.priv, inner.sent[0]!);
+  const last = inner.sent[inner.sent.length - 1]!;
+  const pt = new Uint8Array(await subtle.decrypt({ name: "AES-GCM", iv: last.slice(0, 12) }, key, last.slice(12)));
+  const close = new FrameParser().push(Buffer.from(pt)).find((f) => f.type === FRAME_TYPE.CLOSE);
+  assert.ok(close !== undefined, "取消后应发出 CLOSE 帧");
+  assert.equal((JSON.parse(new TextDecoder().decode(close!.payload)) as { code: number }).code, 1, "CLOSE 必须带 code 1（client cancelled）");
+});
 
 test("fetch 请求体超过分片阈值时必须多帧发送、每帧 ≤ 上限、拼起来字节一致", async () => {
   instances.length = 0;
