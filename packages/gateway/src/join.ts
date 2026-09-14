@@ -254,7 +254,8 @@ export function classifyUpstreamFailure(
   return { kind: "error", code: "UPSTREAM_ABORTED", message: `upstream closed before responding (${reason})` };
 }
 
-/** JS 响应判定（content-type 含 javascript）。 */export function isJsContentType(headers: IncomingHttpHeaders): boolean {
+/** JS 响应判定（content-type 含 javascript）。 */
+export function isJsContentType(headers: IncomingHttpHeaders): boolean {
   const ct = headers["content-type"];
   const s = Array.isArray(ct) ? ct.join(";") : (ct ?? "");
   return /javascript/i.test(s);
@@ -314,10 +315,23 @@ function gateChallengeHtml(hostName: string, actionPath: string, error: GateErro
   );
 }
 
+/** http 响应体的分片发送上限：单帧超过隧道 16 MiB 会让 `encodeFrame` 抛 `ProtocolError`，
+ *  抛点在响应回调里未捕获 ⇒ 打死 host（gateway）进程（P1，2026-09-14 复审发现）。1 MiB 远低于上限，
+ *  且给 E2EE 方向（密文 = 内层帧 + 28 B nonce/tag）也留足余量。 */
+const DATA_FRAME_CHUNK = 1 << 20;
+
+/** 按 DATA_FRAME_CHUNK 分片发送响应体（多 DATA 帧在 hub/浏览器侧天然拼回同一个 body）。 */
+function sendChunkedBody(send: (frame: Buffer) => void, streamId: number, body: Buffer): void {
+  if (body.length === 0) return;
+  for (let off = 0; off < body.length; off += DATA_FRAME_CHUNK) {
+    send(encodeFrame(FRAME_TYPE.DATA, streamId, body.subarray(off, Math.min(off + DATA_FRAME_CHUNK, body.length))));
+  }
+}
+
 /** 发送合成的 HTTP 响应帧（gateway 不触达 dsh）。 */
 function sendSyntheticHttp(send: (frame: Buffer) => void, streamId: number, status: number, headers: Record<string, string>, body: Buffer): void {
   send(encodeFrame(FRAME_TYPE.OPEN, streamId, jsonPayload({ kind: "http", status, reason: undefined, headers })));
-  send(encodeFrame(FRAME_TYPE.DATA, streamId, body));
+  sendChunkedBody(send, streamId, body);
   send(encodeFrame(FRAME_TYPE.CLOSE, streamId, jsonPayload({ code: 0 })));
 }
 
@@ -604,7 +618,7 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
                 jsonPayload({ kind: "http", status, reason: upRes.statusMessage, headers: outHeaders }),
               ),
             );
-            send(encodeFrame(FRAME_TYPE.DATA, streamId, body));
+            sendChunkedBody(send, streamId, body);
             send(encodeFrame(FRAME_TYPE.CLOSE, streamId, jsonPayload({ code: 0 })));
             httpStreams.delete(streamId);
           });

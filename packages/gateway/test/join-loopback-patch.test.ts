@@ -144,3 +144,66 @@ test("loopback 补丁：identity / gzip / br 命中；未知编码与 JSON 原�
     await new Promise<void>((r) => upstream.server.close(() => r()));
   }
 });
+
+test(">16 MiB 的 JS 响应：按 ≤1 MiB 分片发送、字节一致、补丁仍生效（P1 回归）", async () => {
+  const upstream = createServer((req, res) => {
+    const big = Buffer.alloc(17 * 1024 * 1024);
+    Buffer.from(`var loop = ${TARGET};`).copy(big, 0);
+    res.writeHead(200, { "content-type": "text/javascript; charset=utf-8" });
+    res.end(big);
+  });
+  await new Promise<void>((r) => upstream.listen(0, "127.0.0.1", () => r()));
+  const wss = new WebSocketServer({ port: 0 });
+  await new Promise<void>((r) => wss.on("listening", () => r()));
+  const hubPort = (wss.address() as { port: number }).port;
+
+  const frames = new Map<number, Frame[]>();
+  let hubSocket: WebSocket | undefined;
+  wss.on("connection", (ws) => {
+    hubSocket = ws;
+    const parser = new FrameParser();
+    ws.on("message", (data) => {
+      for (const f of parser.push(Buffer.from(data as ArrayBuffer))) {
+        const list = frames.get(f.streamId) ?? [];
+        list.push(f);
+        frames.set(f.streamId, list);
+      }
+    });
+  });
+
+  const lockPath = join(await mkdtemp(join(tmpdir(), "rdsh-bigframe-")), "join.lock");
+  const handle = startJoin({
+    hubUrl: `http://127.0.0.1:${hubPort}`,
+    token: "t".repeat(43),
+    insecure: false,
+    target: { host: "127.0.0.1", port: (upstream.address() as { port: number }).port },
+    role: "plugin",
+    lockPath,
+    hooks: {},
+  });
+
+  try {
+    await waitFor(() => hubSocket !== undefined);
+    const hub = hubSocket as WebSocket;
+    hub.send(encodeFrame(FRAME_TYPE.OPEN, 1, jsonPayload({ kind: "http", method: "GET", path: "/plugins/big.js", headers: { host: "127.0.0.1" } })));
+    hub.send(encodeFrame(FRAME_TYPE.CLOSE, 1, jsonPayload({ code: 0 })));
+    await waitFor(() => (frames.get(1) ?? []).some((f) => f.type === FRAME_TYPE.CLOSE));
+
+    const list = frames.get(1) ?? [];
+    const dataFrames = list.filter((f) => f.type === FRAME_TYPE.DATA);
+    assert.ok(dataFrames.length > 1, `17 MiB 体必须分片（实际 ${dataFrames.length} 帧）`);
+    for (const f of dataFrames) assert.ok(f.payload.length <= 1 << 20, `每帧必须 ≤ 1 MiB（实际 ${f.payload.length}）`);
+
+    const body = Buffer.concat(dataFrames.map((f) => f.payload));
+    assert.equal(body.length, 17 * 1024 * 1024 - (TARGET.length - "true".length), "重组字节数 = 原 body 减去补丁缩水");
+    assert.ok(body.subarray(0, 32).toString("utf8").includes("var loop = true;"), "分片后补丁必须仍生效");
+
+    const open = list.find((f) => f.type === FRAME_TYPE.OPEN)!;
+    const headers = (JSON.parse(open.payload.toString("utf8")) as { headers: Record<string, string> }).headers;
+    assert.equal(headers["content-length"], String(body.length), "content-length 必须与实际字节一致");
+  } finally {
+    await handle.stop();
+    await new Promise<void>((r) => wss.close(() => r()));
+    await new Promise<void>((r) => upstream.close(() => r()));
+  }
+});

@@ -124,7 +124,14 @@ export const E2EE_SHIM_HTML = `<script>
           var f = frames[i], h = handlers.get(f.streamId); if (!h) continue;
           if (f.type === FT.OPEN) { if (h.onOpen) h.onOpen(JSON.parse(new TextDecoder().decode(f.payload))); }
           else if (f.type === FT.DATA) { h.onData(f.payload); }
-          else if (f.type === FT.CLOSE || f.type === FT.ERROR) { if (h.onClose) h.onClose(); handlers.delete(f.streamId); }
+          else if (f.type === FT.CLOSE) { if (h.onClose) h.onClose(f.payload); handlers.delete(f.streamId); }
+          else if (f.type === FT.ERROR) {
+            // ERROR 帧必须**报错**：旧实现与 CLOSE 同路 ⇒ 上游不可达时 fetch 得到"200 空 body"而非失败
+            var em = "upstream error";
+            try { var ej = JSON.parse(new TextDecoder().decode(f.payload)); em = (ej && (ej.message || ej.code)) || em; } catch (e) { /* 保留默认文案 */ }
+            if (h.onError) h.onError(new Error(em)); else if (h.onClose) h.onClose(f.payload);
+            handlers.delete(f.streamId);
+          }
         }
       }).catch(function () { try { ws.close(); } catch (e) {} });
     };
@@ -231,7 +238,19 @@ export const E2EE_SHIM_HTML = `<script>
             settle();
           },
           onData: function (d) { if (ctrl && !aborted) ctrl.enqueue(new Uint8Array(d)); },
-          onClose: function () {
+          onClose: function (payload) {
+            // CLOSE 带非零 code（如 UPSTREAM_ABORTED）＝响应体被截断，必须**报错**，
+            // 否则 chunked 响应（无 content-length）下消费方会把截断的 body 当成功（2026-09-14 复审发现）
+            var code = 0, msg = null;
+            if (payload && payload.length) {
+              try { var m = JSON.parse(new TextDecoder().decode(payload)); if (m && m.code != null && m.code !== 0) { code = m.code; msg = m.message || null; } } catch (e) { /* 无 code 视为干净结束 */ }
+            }
+            if (code !== 0) {
+              var err = new Error(msg || ("upstream error: " + code));
+              if (!settled) { settled = true; reject(err); }
+              else if (ctrl) { try { ctrl.error(err); } catch (e) { /* 已报错 */ } }
+              return;
+            }
             if (!settled) settle();
             if (ctrl && !aborted) { try { ctrl.close(); } catch (e) { /* 已关闭 */ } }
           },

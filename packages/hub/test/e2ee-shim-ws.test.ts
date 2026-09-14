@@ -382,6 +382,41 @@ test("响应二进制保真 + 流式：头到即 resolve、块边界与字节原
   assert.deepEqual(await (await pending2).json(), { ok: true, n: 1 }, "JSON 响应仍可正常解析");
 });
 
+test("CLOSE 带非零 code（响应体截断）：读流必须报错，不得当作完整响应", async () => {
+  instances.length = 0;
+  const host = await hostKeyPair();
+  const sb = runShim({ pin: b64u(host.pub), hostId: "host-1" });
+  const fetchFn = (sb.window as unknown as { fetch: (i: unknown, n?: unknown) => Promise<Response> }).fetch;
+
+  const pending = fetchFn(new URL("http://rdsh.local/api/file"), { method: "GET" });
+  await waitFor(() => (instances[0]?.sent.length ?? 0) >= 2);
+  const inner = instances[0]!;
+  const send = await deriveR2i(host.priv, inner.sent[0]!);
+  inner.deliver(await send(encodeFrame(FRAME_TYPE.OPEN, 1, jsonPayload({ kind: "http", status: 200, headers: {} }))));
+  const resp = await pending;
+  inner.deliver(await send(encodeFrame(FRAME_TYPE.DATA, 1, Buffer.from([1, 2, 3]))));
+  inner.deliver(await send(encodeFrame(FRAME_TYPE.CLOSE, 1, jsonPayload({ code: "UPSTREAM_ABORTED", message: "boom" }))));
+
+  const reader = resp.body!.getReader();
+  const first = await reader.read();
+  assert.deepEqual(Array.from(first.value!), [1, 2, 3], "截断前已收到的字节应可读");
+  await assert.rejects(reader.read(), /boom/, "截断的响应必须让后续 read 报错（chunked 下不得当成功）");
+});
+
+test("ERROR 帧（上游不可达）：fetch 必须 reject，不得 resolve 成 200 空 body", async () => {
+  instances.length = 0;
+  const host = await hostKeyPair();
+  const sb = runShim({ pin: b64u(host.pub), hostId: "host-1" });
+  const fetchFn = (sb.window as unknown as { fetch: (i: unknown, n?: unknown) => Promise<Response> }).fetch;
+
+  const pending = fetchFn(new URL("http://rdsh.local/api/x"), { method: "GET" });
+  await waitFor(() => (instances[0]?.sent.length ?? 0) >= 2);
+  const inner = instances[0]!;
+  const send = await deriveR2i(host.priv, inner.sent[0]!);
+  inner.deliver(await send(encodeFrame(FRAME_TYPE.ERROR, 1, jsonPayload({ code: "UPSTREAM_UNREACHABLE", message: "dsh not reachable (ECONNREFUSED)" }))));
+  await assert.rejects(pending, /dsh not reachable/, "ERROR 帧必须 reject（旧实现会 settle 成 200 空 body）");
+});
+
 test("无 body 状态码（204）：Response 构造不得抛错，body 必须为 null", async () => {
   instances.length = 0;
   const host = await hostKeyPair();

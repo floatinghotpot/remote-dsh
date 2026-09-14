@@ -120,6 +120,47 @@ test("带有效 Cookie 访问 → 转发到 dsh；Cookie 无效 → 307", async 
   }
 });
 
+test("配对/会话分支也必须打 loopback 补丁（jsPatch 接线回归）", async () => {
+  // 自建上游：JS 路由返回带目标串的脚本（其余 text/plain）
+  const upstream = createServer((req, res) => {
+    if (req.url?.startsWith("/js/")) {
+      res.writeHead(200, { "content-type": "text/javascript; charset=utf-8" });
+      res.end("var loop = isLoopbackHostname(pageLocation.hostname);");
+      return;
+    }
+    res.writeHead(200, { "content-type": "text/plain" });
+    res.end("dsh-ok");
+  });
+  await new Promise<void>((r) => upstream.listen(0, "127.0.0.1", r));
+  const keyDir = await mkdtemp(join(tmpdir(), "rdsh-gw-"));
+  const gw = await startGateway({
+    host: "127.0.0.1",
+    port: 0,
+    pairCode: "123456",
+    sessionTtlSeconds: 3600,
+    dshPort: (upstream.address() as AddressInfo).port,
+    keyDir,
+  });
+  const base = `http://127.0.0.1:${gw.actualPort}`;
+  try {
+    const pair = await fetch(`${base}/pair`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code: "123456" }),
+      redirect: "manual",
+    });
+    const cookie = pair.headers.get("set-cookie")!.split(";")[0]!;
+
+    // 会话分支（已配对）：JS 必须被补丁替换（旧实现漏传 jsPatch ⇒ 原样透传）
+    const js = await (await fetch(`${base}/js/plain.js`, { headers: { cookie } })).text();
+    assert.ok(js.includes("var loop = true;"), "配对会话下 JS 补丁必须生效（旧实现未接线）");
+    assert.ok(!js.includes("isLoopbackHostname"), "不应残留原始判定");
+  } finally {
+    closeServer(gw.server);
+    closeServer(upstream);
+  }
+});
+
 test("连续 5 次错误码 → 429 锁定（即使后续码正确）", async () => {
   const t = await startTestGateway("123456");
   try {

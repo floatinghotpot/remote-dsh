@@ -10,6 +10,6 @@
 
 ## 范围外（已移交 / 另行立项）
 
-- [ ] **AC5 移交**：[20260914-e2ee-fetch-streaming](../20260914-e2ee-fetch-streaming/discussion.md) —— 在真 E2EE 下重跑 ① 文档预览（二进制/流式）② 18 MiB 上传（16 MiB 单帧上限）③ 请求体分片；该记录需新增 F12/F13 同款事实（`URL` 实例、405）作为背景
+- [x] **AC5 移交**：[20260914-e2ee-fetch-streaming](../20260914-e2ee-fetch-streaming/discussion.md) —— 在真 E2EE 下重跑 ① 文档预览（二进制/流式）② 18 MiB 上传（16 MiB 单帧上限）③ 请求体分片；该记录需新增 F12/F13 同款事实（`URL` 实例、405）作为背景
 - [x] **已修**（2026-09-14）：`manifest.webmanifest` 的 Chrome 报错根因是**浏览器取 manifest 不带 cookie**（规范 credentials omit）⇒ hub 判不出 host ⇒ 落到 portal 兜底返回 **HTML** ⇒ Chrome 解析失败。修法：`packages/hub/src/server.ts` 在无 host 上下文时对 `*.webmanifest` 返回合法的同源 manifest（有 host 上下文仍原样转发 DSH 自己的 manifest）；回归测试 `packages/hub/test/manifest-fallback.test.ts`（2 例：无 cookie ⇒ 合法 JSON；导航仍回落 portal）；真机复验：E2EE 页面 console **0 报错**
-- [ ] LAN（`rdsh host serve`）路径的 E2EE 不存在（无 shim），本次未触及；如需明确文档口径可在 `doc/overview/usage.md` 补一句
+- [x] LAN（`rdsh host serve`）路径的 E2EE 不存在（无 shim），本次未触及；如需明确文档口径可在 `doc/overview/usage.md` 补一句

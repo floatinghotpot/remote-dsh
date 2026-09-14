@@ -250,7 +250,13 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse, ctx: HttpCo
     res.end();
     return;
   }
-  forwardHttp(req, res, ctx.target, { htmlInject: SECURE_CONTEXT_POLYFILL, authCookie: ctx.dshAuthCookieHeader });
+  forwardHttp(req, res, ctx.target, {
+    htmlInject: SECURE_CONTEXT_POLYFILL,
+    authCookie: ctx.dshAuthCookieHeader,
+    // 会话分支同样要打 loopback 补丁：LAN 没有 E2EE shim，设置/API key 唯一依赖这个补丁；
+    // 旧实现只在 authMode==="none" 分支传了 jsPatch ⇒ 配对/登录模式下设置页打不开（2026-09-14 复审发现）
+    jsPatch: ctx.trustPairedAsLoopback ? patchLoopbackJs : undefined,
+  });
 }
 
 async function handlePairPost(req: IncomingMessage, res: ServerResponse, ctx: HttpContext): Promise<void> {

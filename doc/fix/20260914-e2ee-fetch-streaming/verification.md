@@ -8,7 +8,7 @@
 
 | AC | 状态 | 证据 |
 |---|---|---|
-| **AC1 大文件上传**（>16 MiB 分片、字节一致） | 🟡 **传输层 ✅ / 端到端待用户复测** | ① 单测：2 MiB+1234 B 请求体 ⇒ 3 个 DATA 帧、每帧 ≤1 MiB、拼接字节全等、OPEN/CLOSE 顺序正确（`e2ee-shim-ws.test.ts`）；② 真机：**20 MiB 请求体经 E2EE 全量送达** —— DSH 读到完整 body 后回 `HTTP 400 · body is not JSON`，**448 ms 完成**（修复前：单帧 20 MiB ⇒ hub 1009 + 永久挂起）；③ 用户端 18 MiB 文件待复测 |
+| **AC1 大文件上传**（>16 MiB 分片、字节一致） | ✅ **真机 + 用户实测** | ① 单测：2 MiB+1234 B 请求体 ⇒ 3 个 DATA 帧、每帧 ≤1 MiB、拼接字节全等；② 真机：20 MiB 请求体全量送达（`HTTP 400 · body is not JSON`，448 ms）；③ 用户实测 17.9 MB PNG 上传成功、AI 读到内容 |
 | **AC2 预览二进制保真** | ✅ **真机实测** | 18,755,423 B PNG（`/api/file?path=/tmp/big18.png`）经 E2EE 取回：长度一致、**sha256 = `df348384168c8c5d…`，与本地文件相同**；对照明文 XHR 亦一致。单测：含 `0x00/0xff/0x80` 的字节块逐块原样（旧实现经 UTF-8 往返必变形，用例已断言该前提） |
 | **AC3 流式响应** | ✅ **真机实测** | 同一响应被切成 **287 块**逐块读取（不再是一次性整包）；**首块 206 ms 到达**而整体仍在传输；单测：只发响应头时 `fetch` 即 resolve（不等 CLOSE）、块边界保持、`cancel()` 向 host 发 `CLOSE(code 1)` 中止上游 |
 | **AC4 请求体类型**（Blob/FormData/ReadableStream + 不支持类型明确报错） | ✅ **已修已验** | Blob/File、ReadableStream（边读边发）、FormData（multipart+boundary）、URLSearchParams 字节正确；其余抛 `TypeError` 且**开流前**失败。真机：Blob 体 200 + rpcId 回显、2 块流式体 200 + 回显、`{not:'a body'}` ⇒ `TypeError`。单测 4 例 |
@@ -33,7 +33,7 @@
 
 ## 4. 尚未完成（见 [TODO.md](./TODO.md)）
 
-_（代码项已清空）_
-3. **F13（已决策）**：后台上传走 Blob Worker（原生 XHR/fetch）⇒ **不经 E2EE** ⇒ **暂时接受**并写入 `doc/overview/usage.md` §9.1；hub 侧确认**不缓存/不落盘**请求体（F13b），部署侧注意反代 `proxy_request_buffering` 与访问日志（F13c）；
-3. **F14**：上传路径 502 文案（`UPSTREAM_UNREACHABLE`）掩盖真实错误，待定位；
-4. 用户端**文档/图片预览**复测；发布 `rdsh-hub`。
+_代码项已清空。剩余为**已决策限制**与**交付项**：_
+
+- **F13（已决策，限制）**：后台上传走 Blob Worker ⇒ 仅"非图片文件附件"明文（已写入 `doc/overview/usage.md` §9.1）。
+- **交付项**：用户端文档/图片预览复测；发布 `rdsh-hub` / `rdsh-gateway` / `remote-dsh`；运维确认反代 `proxy_request_buffering off` 与访问日志脱敏。

@@ -13,11 +13,11 @@ _（本轮已清空：AC4 与 F14 均已完成，见下）_
 
 ## LIMITATION（已知限制，**已决策不修**；不是待办 bug）
 
-- [ ] **非图片文件附件走 Blob Worker ⇒ 明文**（F13）：范围**仅**"拖 pdf/zip/bin 当附件"这一类；图片随 prompt 走 E2EE、预览走页面 `fetch` 也是 E2EE（F25/F26）。已写入用户手册 `doc/overview/usage.md` §9.1（含判据）。复谈条件：**等 DSH 稳定后**再评估"包装 `window.Worker` + fail-closed"；**永不改 DSH 源码**
-- [ ] **dev/HMR 的 `EventSource` 不经 E2EE**（F10/AC5）：仅 dev 模式，生产路径不涉及
-- [ ] **响应头 `content-encoding` 原样透传**：若上游真回压缩体，消费方拿到的是压缩字节（native `Response` 不会解压）。**当前不可达**——我们的请求不带 `accept-encoding`（浏览器也禁止 JS 设置该头）⇒ 上游一律 identity；留作防御性加固项
-- [ ] **WS 消息不做分片**（设计上限）：单条 >16 MiB 的浏览器 WS 消息会被 hub 以 1009 拒绝（只废该流，不打挂 hub）。WS 分片会破坏 host 侧的消息边界，故不做
-- [ ] **LAN（`rdsh host serve`）本就没有 E2EE**：无 shim 注入，属设计差异，非缺陷
+- [x] **非图片文件附件走 Blob Worker ⇒ 明文**（F13）：范围**仅**"拖 pdf/zip/bin 当附件"这一类；图片随 prompt 走 E2EE、预览走页面 `fetch` 也是 E2EE（F25/F26）。已写入用户手册 `doc/overview/usage.md` §9.1（含判据）。复谈条件：**等 DSH 稳定后**再评估"包装 `window.Worker` + fail-closed"；**永不改 DSH 源码**
+- [x] **dev/HMR 的 `EventSource` 不经 E2EE**（F10/AC5）：仅 dev 模式，生产路径不涉及
+- [x] **响应头 `content-encoding` 原样透传**：若上游真回压缩体，消费方拿到的是压缩字节（native `Response` 不会解压）。**当前不可达**——我们的请求不带 `accept-encoding`（浏览器也禁止 JS 设置该头）⇒ 上游一律 identity；留作防御性加固项
+- [x] **WS 消息不做分片**（设计上限）：单条 >16 MiB 的浏览器 WS 消息会被 hub 以 1009 拒绝（只废该流，不打挂 hub）。WS 分片会破坏 host 侧的消息边界，故不做
+- [x] **LAN（`rdsh host serve`）本就没有 E2EE**：无 shim 注入，属设计差异，非缺陷
 
 ## 交付项（非代码）
 
