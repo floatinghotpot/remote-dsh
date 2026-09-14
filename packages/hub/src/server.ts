@@ -84,6 +84,25 @@ export const HOST_COOKIE = "rdsh_host";
 export const PORTAL_PREFIX = "/portal";
 const HOST_COOKIE_MAX_AGE = 7 * 24 * 60 * 60; // 7 天（签名 host cookie，含会话版本）
 
+/**
+ * 无 host 上下文时的兜底 web app manifest。
+ *
+ * 为什么需要：浏览器取 manifest 时**不带 cookie**（规范要求 credentials omit），hub 因此无法
+ * 判断是哪台 host；此前会落到 portal 兜底返回 HTML，Chrome 报
+ * `Manifest: Line 1, column 1, Syntax error`（2026-09-14 用户实测）。
+ * 这里给一个合法的同源 manifest，保证解析通过（有 host 上下文时仍原样转发 DSH 自己的 manifest）。
+ */
+const HUB_MANIFEST = {
+  id: "/",
+  name: "rdsh",
+  short_name: "rdsh",
+  start_url: "/",
+  scope: "/",
+  display: "standalone",
+  background_color: "#0b0f14",
+  theme_color: "#0b0f14",
+} as const;
+
 function hostCookie(hostId: string, userId: number, auth: HubAuth): string {
   const token = auth.signHostCookie(hostId, userId);
   return `${HOST_COOKIE}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${HOST_COOKIE_MAX_AGE}`;
@@ -250,6 +269,16 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse, runtime: Hu
   // hub API（无 host 上下文）
   if (pathname.startsWith("/api/")) {
     await handleApi(req, res, runtime);
+    return;
+  }
+
+  // web app manifest（无 host 上下文）：浏览器按**规范以 credentials omit** 取 manifest，
+  // 所以这里**永远拿不到 rdsh_host** —— 若继续走 portal 兜底会返回 HTML，Chrome 报
+  // "Manifest: Line 1, column 1, Syntax error"（2026-09-14 用户实测）。
+  // hub 此时不知道是哪台 host，给一个合法的同源 manifest（start_url 仍为 /），先把错误消掉。
+  if (pathname === "/manifest.webmanifest" || pathname.endsWith(".webmanifest")) {
+    res.writeHead(200, { "content-type": "application/manifest+json; charset=utf-8", "cache-control": "no-store" });
+    res.end(JSON.stringify(HUB_MANIFEST));
     return;
   }
 

@@ -17,7 +17,7 @@
 | **AC1 shim 接管**（`window.WebSocket.name === "WrappedWS"` 且 `fetch` 非原生） | ✅ **真机实测** | 无头 Chrome 153 + CDP，`http://e2e.localhost:8799/`（非 loopback + 安全上下文），pin 有效：`wsName: "WrappedWS"`, `fetchPatched: true`, `hostIdInjected: "e2e-host-1"` |
 | **AC2 数据面仍为密文** | ✅ 代码 + 单测 + 网络层 | ① `e2ee-shim-ws.test.ts`「真实密码学往返」：用主机私钥推出 i2r/r2i 才能解开帧（AES-GCM），即线上帧是密文；② E2EE 场景下浏览器 **0 条** `/api/*` HTTP 请求（`Network.requestWillBeSent` 计数 = 0）⇒ API 流量全在加密 WS 里；③ 抓帧日志（临时插桩）显示 shim 只经 `sendFrame` → `enc.encrypt` 出网 |
 | **AC3 TOFU pin 仍生效** | ✅ **真机实测** | 清空 `localStorage["rdsh_e2ee_pins"]` 后重载：`wsName: "WebSocket"`, `fetchPatched: false`, `pins: []`（**不猜想、不误连**）；重新写 pin 后回到 AC1 状态 |
-| **AC4 无回归（设置/凭证路径）** | ✅ | E2EE 下 DSH 自身启动调用（`settings/describe`、`credentials/describe`、`session/list`、`modelCatalog` …）无一条报错；页面 console 仅剩 2 条与 E2EE 无关的 `manifest.webmanifest` 抱怨（见 §4） |
+| **AC4 无回归（设置/凭证路径）** | ✅ | E2EE 下 DSH 自身启动调用（`settings/describe`、`credentials/describe`、`session/list`、`modelCatalog` …）无一条报错；页面 console 0 报错（`manifest.webmanifest` 的抱怨已于同日修复，见 §4 与 TODO） |
 | **AC4b E2EE 下前端可正常启动** | ✅ **真机实测** | 修复前：`failed to apply loader entry (@deepseek-ai/dsh-api-gateway): Cannot set property url of #<WebSocket>…` + `HTTP 405` 刷屏；修复后：**两条均消失**，`#root` 已挂载（`rootChildren: 1`），`/api/settings/describe` 与 `/api/credentials/describe` 经 E2EE 返回 **200** |
 | **AC5 重跑延期验证**（预览/18 MiB 上传） | ⏭️ 移交 | 现已在**真 E2EE** 下可复现，交接给 [20260914-e2ee-fetch-streaming](../20260914-e2ee-fetch-streaming/discussion.md)（本项非目标） |
 
@@ -50,7 +50,7 @@ AC3（清 pin 后不接管）: ✅
 
 ## 4. 已知但不阻塞（登记）
 
-- `manifest.webmanifest` 在 Chrome 里报 `Manifest: Line: 1, column: 1, Syntax error.`：**E2EE 开/关都出现**。直连抓取该 URL 返回 `200 application/manifest+json` 且 JSON 合法（267 B）⇒ 与 shim/E2EE 无关，另行排查（见 TODO）。
+- `manifest.webmanifest` 在 Chrome 里报 `Manifest: Line: 1, column: 1, Syntax error.` —— **已修**：浏览器按规范以 *credentials omit* 取 manifest ⇒ hub 拿不到 host cookie ⇒ 兜底返回了 portal HTML。现由 `packages/hub/src/server.ts` 在无 host 上下文时返回合法 manifest（`packages/hub/test/manifest-fallback.test.ts` 覆盖）。
 - 控制台 `[patch] miss: /plugins/ … content-encoding=gzip`：网关 JS 补丁的既有日志（补丁只针对特定字面量），不影响功能。
 
 ## 5. 质量门
