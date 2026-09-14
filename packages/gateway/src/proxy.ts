@@ -6,6 +6,7 @@
  */
 import { request } from "node:http";
 import { WebSocket, WebSocketServer } from "ws";
+import { decodeBody, encodeBody, firstEncoding } from "./http-encoding.ts";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Duplex } from "node:stream";
 
@@ -26,6 +27,12 @@ export interface ForwardOptions {
    * 提供时合并进每个转发/升级请求的 cookie 头，穿透 dsh 0.1.2 认证层。
    */
   authCookie?: string | null;
+  /**
+   * JS 响应补丁（LAN 路径；隧道路径见 `join.ts` 的 `patchLoopbackJs`）。
+   * 命中 content-type 含 `javascript` 时缓冲后调用；返回 `null` = 原样透传（fail-open）。
+   * 用途：把 DSH 前端的 `isLoopback` 判定替换为 `true` —— DSH 的设置/凭据界面只对 loopback 开放。
+   */
+  jsPatch?: (body: Buffer) => Buffer | null;
 }
 
 /**
@@ -106,6 +113,36 @@ export function forwardHttp(
           delete outHeaders.connection;
           res.writeHead(upstreamRes.statusCode ?? 200, outHeaders);
           res.end(html);
+        })().catch(() => {
+          if (!res.headersSent) res.writeHead(502, { "content-type": "text/plain" });
+          res.end("bad gateway");
+        });
+        return;
+      }
+      const canPatchJs =
+        opts?.jsPatch !== undefined && typeof contentType === "string" && /javascript/i.test(contentType);
+      if (canPatchJs) {
+        // JS bundle 需缓冲后才能替换目标串；先按 content-encoding 解码（dsh 会 gzip JS），
+        // 补丁后按原编码重压（fail-open：未命中/不支持编码 → 原字节原头透传）
+        void (async () => {
+          const chunks: Buffer[] = [];
+          for await (const chunk of upstreamRes) chunks.push(chunk as Buffer);
+          const raw = Buffer.concat(chunks);
+          const encoding = firstEncoding(upstreamRes.headers["content-encoding"]);
+          const decoded = decodeBody(raw, encoding);
+          const patched = decoded === null ? null : opts!.jsPatch!(decoded);
+          const recoded = patched === null ? null : encodeBody(patched, encoding);
+          const outBody = recoded ?? raw;
+          const outHeaders: Record<string, string | string[] | undefined> = { ...upstreamRes.headers };
+          if (recoded !== null) {
+            outHeaders["content-length"] = String(outBody.length);
+            delete outHeaders["transfer-encoding"];
+            // 同 join.ts：补丁后不可沿用 immutable/长 max-age（URL 不变，旧未补丁体可能被长期缓存）
+            outHeaders["cache-control"] = "public, max-age=300";
+          }
+          delete outHeaders.connection;
+          res.writeHead(upstreamRes.statusCode ?? 200, outHeaders);
+          res.end(outBody);
         })().catch(() => {
           if (!res.headersSent) res.writeHead(502, { "content-type": "text/plain" });
           res.end("bad gateway");

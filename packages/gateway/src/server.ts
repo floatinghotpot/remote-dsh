@@ -20,6 +20,7 @@ import { SessionManager, sessionTokenFromCookie } from "./session.ts";
 import { PairManager } from "./pair.ts";
 import { UserManager } from "./auth.ts";
 import { createUpgradeProxy, forwardHttp } from "./proxy.ts";
+import { patchLoopbackJs } from "./join.ts";
 import type { ProxyTarget } from "./proxy.ts";
 import { pairPageHtml } from "./pair-page.ts";
 import { loginPageHtml } from "./login-page.ts";
@@ -37,6 +38,11 @@ export interface GatewayOptions {
   dshPort: number;
   /** 宿主代持的 dsh 浏览器会话 cookie（`dsh-auth-*`，0.1.2+）；有值时注入转发 */
   dshAuthCookieHeader?: string | null;
+  /**
+   * DSH UI 兼容（LAN 路径）：`trustPairedAsLoopback` 默认 true —— 把已通过本机配对/登录的
+   * LAN 会话视同 loopback，使 DSH 的设置与"持久化凭据"界面可用（否则 LAN 用户无法在界面里输入 API key）。
+   */
+  dshUiCompat?: { trustPairedAsLoopback?: boolean };
   /** true = 启动时重置会话密钥（全部会话失效） */
   reset?: boolean;
   /** 会话密钥目录（默认 ~/.rdsh；测试可注入临时目录） */
@@ -77,6 +83,8 @@ interface HttpContext {
   authMode: AuthMode;
   behindProxy: boolean;
   dshAuthCookieHeader: string | null;
+  /** LAN 会话是否视同 loopback（DSH 设置/凭据界面可用性；默认 true） */
+  trustPairedAsLoopback: boolean;
   getVersion(): number;
   isAllowed(ip: string): boolean;
   userManager?: UserManager;
@@ -132,6 +140,7 @@ export async function startGateway(opts: GatewayOptions): Promise<RunningGateway
     authMode,
     behindProxy,
     dshAuthCookieHeader: opts.dshAuthCookieHeader ?? null,
+    trustPairedAsLoopback: opts.dshUiCompat?.trustPairedAsLoopback !== false,
     getVersion: () => currentVersion,
     isAllowed: (ip) => currentAllowFrom.length === 0 || ipInCidrs(ip, currentAllowFrom),
     userManager: opts.userManager,
@@ -229,7 +238,11 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse, ctx: HttpCo
   }
 
   if (ctx.authMode === "none") {
-    forwardHttp(req, res, ctx.target, { htmlInject: SECURE_CONTEXT_POLYFILL, authCookie: ctx.dshAuthCookieHeader });
+    forwardHttp(req, res, ctx.target, {
+      htmlInject: SECURE_CONTEXT_POLYFILL,
+      authCookie: ctx.dshAuthCookieHeader,
+      jsPatch: ctx.trustPairedAsLoopback ? patchLoopbackJs : undefined,
+    });
     return;
   }
   if (!hasValidSession(req, ctx)) {

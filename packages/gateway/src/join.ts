@@ -20,6 +20,7 @@ import { findDsh, spawnDsh, exchangeDshSessionCookie, detectDshVersion, dshVersi
 import { rewriteHeadersForDsh } from "./proxy.ts";
 import type { ProxyTarget } from "./proxy.ts";
 import { clearPersistedToken, persistToken, readPersistedToken } from "./token-store.ts";
+import { decodeBody, encodeBody, firstEncoding } from "./http-encoding.ts";
 import { acquireJoinLock, releaseJoinLock } from "./lock.ts";
 import type { JoinLockRole } from "./lock.ts";
 import { responderHandshake, Aead } from "./e2ee.ts";
@@ -345,6 +346,8 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
     const wsStreams = new Map<number, { upstream: WebSocket; queue: Buffer[] }>();
     // gate 未过、等待 code 提交的 http 流（OPEN 后缓冲 DATA，CLOSE 时校验）
     const gatedHttp = new Map<number, { method: string; path: string; body: Buffer[]; size: number; acceptLanguage?: string }>();
+    /** 已报告过"loopback 补丁未命中"的路径（每个路径只报一次，避免日志刷屏）。 */
+    const patchMissReported = new Set<string>();
 
     /** 从转发头里取 rdsh_gate cookie（hub D12 白名单透传）。 */
     function gateCookie(headers: Record<string, string | string[]>): string | null {
@@ -504,28 +507,23 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
           headers: rewriteHeadersForDsh(headers, opts.target, dshAuthCookie),
         },
         (upRes) => {
-          send(
-            encodeFrame(
-              FRAME_TYPE.OPEN,
-              streamId,
-              jsonPayload({
-                kind: "http",
-                status: upRes.statusCode ?? 502,
-                reason: upRes.statusMessage,
-                headers: normalizeRespHeaders(upRes.headers),
-              }),
-            ),
-          );
-          if (dio?.jsPatch?.() === true && isJsContentType(upRes.headers)) {
-            // 最小 patch：E2EE 流上的 JS 响应，把前端 isLoopback 判定替换为 true
-            // （fail-open：未命中 → 原样透传；DSH 升级不炸）
-            const chunks: Buffer[] = [];
-            upRes.on("data", (chunk: Buffer) => chunks.push(chunk));
+          const status = upRes.statusCode ?? 502;
+          const baseHeaders = normalizeRespHeaders(upRes.headers);
+          const wantsPatch = dio?.jsPatch?.() === true && isJsContentType(upRes.headers);
+
+          // 非 JS / 未开补丁：保持原流式路径（OPEN 立即发，body 边到边发）
+          if (!wantsPatch) {
+            send(
+              encodeFrame(
+                FRAME_TYPE.OPEN,
+                streamId,
+                jsonPayload({ kind: "http", status, reason: upRes.statusMessage, headers: baseHeaders }),
+              ),
+            );
+            upRes.on("data", (chunk: Buffer) => {
+              send(encodeFrame(FRAME_TYPE.DATA, streamId, chunk));
+            });
             upRes.on("end", () => {
-              const body = Buffer.concat(chunks);
-              const patched = patchLoopbackJs(body);
-              // fail-open：未命中也必须原样发 body（否则空响应白屏）
-              send(encodeFrame(FRAME_TYPE.DATA, streamId, patched !== null ? patched : body));
               send(encodeFrame(FRAME_TYPE.CLOSE, streamId, jsonPayload({ code: 0 })));
               httpStreams.delete(streamId);
             });
@@ -535,10 +533,51 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
             });
             return;
           }
-          upRes.on("data", (chunk: Buffer) => {
-            send(encodeFrame(FRAME_TYPE.DATA, streamId, chunk));
-          });
+
+          // JS + 补丁：**必须先缓冲/处理再发 OPEN** —— patch 与"按原编码重压"都会改变 body 长度，
+          // 而 OPEN 帧里的 content-length 必须与实际字节一致（否则浏览器截断或一直等）。
+          // dsh 会按 accept-encoding 压缩 JS（gzip 等），所以这里必须先解码再补丁、再按原编码重压。
+          const chunks: Buffer[] = [];
+          upRes.on("data", (chunk: Buffer) => chunks.push(chunk));
           upRes.on("end", () => {
+            const raw = Buffer.concat(chunks);
+            const encoding = firstEncoding(upRes.headers["content-encoding"]);
+            const decoded = decodeBody(raw, encoding);
+            let body: Buffer = raw;
+            let outHeaders = baseHeaders;
+            let hit = false;
+            if (decoded !== null) {
+              const patched = patchLoopbackJs(decoded);
+              const recoded = patched === null ? null : encodeBody(patched, encoding);
+              if (recoded !== null) {
+                body = recoded;
+                hit = true;
+                outHeaders = { ...baseHeaders, "content-length": String(body.length) };
+                delete outHeaders["transfer-encoding"];
+                // 不能沿用上游的 `immutable` / 长 max-age：补丁改了 body 但 URL(rev) 由上游内容决定，
+                // 浏览器会把"旧的未补丁 bundle"缓存很久 ⇒ 修复无法生效（2026-09-14 实测踩到）。
+                outHeaders["cache-control"] = "public, max-age=300";
+              }
+            }
+            // 未命中必须留痕（每个路径一次）：fail-open 是刻意设计，但"补丁从未生效"不能静默
+            //（2026-09-14 gzip 事故正是因为没有这条日志而排查了很久）
+            if (!hit) {
+              const key = (path.split("?")[0] ?? path).slice(0, 120);
+              if (!patchMissReported.has(key)) {
+                patchMissReported.add(key);
+                console.log(`[patch] miss: ${key} (${raw.length}B, content-encoding=${encoding === "" ? "identity" : encoding})`);
+              }
+            } else if (process.env.RDSH_DEBUG_PATCH === "1") {
+              console.log(`[patch] hit: ${path.slice(0, 120)} (${raw.length}B → ${body.length}B, ${encoding === "" ? "identity" : encoding})`);
+            }
+            send(
+              encodeFrame(
+                FRAME_TYPE.OPEN,
+                streamId,
+                jsonPayload({ kind: "http", status, reason: upRes.statusMessage, headers: outHeaders }),
+              ),
+            );
+            send(encodeFrame(FRAME_TYPE.DATA, streamId, body));
             send(encodeFrame(FRAME_TYPE.CLOSE, streamId, jsonPayload({ code: 0 })));
             httpStreams.delete(streamId);
           });

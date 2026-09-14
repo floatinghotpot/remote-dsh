@@ -380,7 +380,22 @@ rdsh hub service install|status|uninstall      # hub 服务化（rdsh-hub.servic
   | 服务环境属性 | `systemctl --user show rdsh-join -p Environment` |
   | 进程真实环境 | `tr '\0' '\n' < /proc/<pid>/environ` |
 
-  需要给 dsh 注入环境变量（如 `DEEPSEEK_API_KEY`）时用 `EnvironmentFile=-<绝对路径>`（0600 文件，`~` 不展开）；API key 更推荐由 DSH 自管（portal 内粘贴，见 `doc/fix/20260824-portal-apikey-pastebox`）。
+  需要给 dsh 注入**非凭据类**环境变量（代理、`NODE_OPTIONS` 等）时，用 systemd **drop-in** 追加 `EnvironmentFile=`（CLI 生成的 unit 里**不含**这一行，需自行加；0600 文件、`~` 不展开）：
+
+  ```bash
+  mkdir -p ~/.config/systemd/user/rdsh-join.service.d
+  printf '[Service]\nEnvironmentFile=-/home/<user>/.rdsh/join.env\n' > ~/.config/systemd/user/rdsh-join.service.d/env-file.conf
+  systemctl --user daemon-reload && systemctl --user restart rdsh-join
+  ```
+
+  ⚠️ **API key 不要放这里**：凭据归 DSH 自管（`~/.dsh/.credentials.yaml`），而 DSH **拒绝持久化"启动环境提供"的密钥** —— 把 key 塞进服务环境会让界面里保存的 key 被顶掉、且无法保存。推荐路径：在 Web UI 里粘贴一次，由 DSH 自己持久化（见 `doc/fix/20260824-portal-apikey-pastebox`）。
+
+  **UI 设置/凭据界面的可用性（loopback 门禁）**：DSH 只在 loopback 时创建"设置 / 持久化凭据"界面，我们用前端 JS 补丁把远程会话视同 loopback：
+
+  | 路径 | 开关 | 默认 |
+  |---|---|---|
+  | 隧道（hub / E2EE） | `dshUiCompat.trustE2EEAsLoopback` | `true` |
+  | LAN（`rdsh host serve`） | `dshUiCompat.trustPairedAsLoopback` | `true`（`false` = 严格模式：LAN 用户无法在界面里输入 API key，只能手写 `~/.dsh/.credentials.yaml`） |
 
 ## 9. 安全注意事项
 

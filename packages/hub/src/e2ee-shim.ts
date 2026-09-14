@@ -158,32 +158,88 @@ export const E2EE_SHIM_HTML = `<script>
   };
 
   // ---- WebSocket 包装 ----
+  // 门面必须覆盖 DSH 的实际调用面（dsh-api-gateway/lib/client.js）：
+  // ① addEventListener/removeEventListener（含 { once: true }）；
+  // ② 静态常量 CONNECTING/OPEN/CLOSING/CLOSED（DSH 以 readyState === WebSocket.OPEN 判定）；
+  // ③ on* 与 addEventListener 双通道都要派发；④ close() 必须落到 CLOSED 并派发 close。
+  // 历史缺陷：只实现了 on* ⇒ 远端流通道建不起来（设置页 Models 报 settings are unavailable）。
   function WrappedWS(url, protocols) {
     var self = this;
     var u = new URL(url, location.href);
-    var c = null, id = 0, queue = [];
-    this.readyState = 0;
+    var c = null, id = 0, queue = [], closed = false;
+    var listeners = { open: [], message: [], close: [], error: [] };
+    this.url = u.href;
+    this.protocol = typeof protocols === "string" ? protocols : (protocols && protocols[0]) || "";
+    this.extensions = "";
+    this.binaryType = "blob";
+    this.bufferedAmount = 0;
+    this.readyState = 0; // CONNECTING
     this.onopen = this.onmessage = this.onclose = this.onerror = null;
+
+    function emit(type, event) {
+      var direct = self["on" + type];
+      if (typeof direct === "function") { try { direct.call(self, event); } catch (e) { /* 单个监听器异常不影响其它 */ } }
+      var list = listeners[type];
+      for (var i = 0; i < list.length; i++) {
+        var entry = list[i];
+        try { entry.fn.call(self, event); } catch (e) { /* 同上 */ }
+        if (entry.once) { list.splice(i, 1); i--; }
+      }
+    }
+    /** 关闭统一出口：置 CLOSED 并派发 close（幂等）。 */
+    function shutdown() {
+      if (self.readyState === 3) return;
+      self.readyState = 3;
+      emit("close", { type: "close", code: 1000, wasClean: true });
+    }
+
+    this.addEventListener = function (type, fn, options) {
+      var list = listeners[type];
+      if (list === undefined || typeof fn !== "function") return;
+      var once = !!(options && options.once);
+      for (var i = 0; i < list.length; i++) if (list[i].fn === fn && list[i].once === once) return;
+      list.push({ fn: fn, once: once });
+    };
+    this.removeEventListener = function (type, fn) {
+      var list = listeners[type];
+      if (list === undefined) return;
+      for (var i = 0; i < list.length; i++) if (list[i].fn === fn) { list.splice(i, 1); return; }
+    };
     this.send = function (data) {
+      if (closed || self.readyState === 3) return; // 已关闭：静默丢弃（贴近原生）
       var bytes = typeof data === "string" ? new TextEncoder().encode(data) : new Uint8Array(data);
       if (c && self.readyState === 1) sendFrame(c, FT.DATA, id, bytes);
       else queue.push(bytes);
     };
-    this.close = function () { if (c) sendFrame(c, FT.CLOSE, id, JSON.stringify({ code: 0 })); };
+    this.close = function () {
+      if (closed) return;
+      closed = true;
+      if (self.readyState < 2) self.readyState = 2; // CLOSING
+      if (c) sendFrame(c, FT.CLOSE, id, JSON.stringify({ code: 0 }));
+      shutdown();
+    };
     (async function () {
       try {
         c = await ensureChannel(); id = c.alloc();
         await sendFrame(c, FT.OPEN, id, JSON.stringify({ kind: "ws", path: u.pathname + u.search }));
-        self.readyState = 1; if (self.onopen) self.onopen({});
-        queue.forEach(function (b) { sendFrame(c, FT.DATA, id, b); }); queue = [];
+        if (closed) { sendFrame(c, FT.CLOSE, id, JSON.stringify({ code: 0 })); return; }
+        // handlers 必须在派发 open 之前挂好：否则 OPEN 与 open 之间到达的帧会被丢掉
         c.handlers.set(id, {
-          onData: function (d) { if (self.onmessage) self.onmessage({ data: new TextDecoder().decode(d) }); },
-          onClose: function () { self.readyState = 3; if (self.onclose) self.onclose({}); }
+          onData: function (d) { emit("message", { type: "message", data: new TextDecoder().decode(d) }); },
+          onClose: function () { shutdown(); }
         });
-      } catch (e) { self.readyState = 3; if (self.onerror) self.onerror({}); }
+        self.readyState = 1; // OPEN
+        emit("open", { type: "open" });
+        for (var i = 0; i < queue.length; i++) sendFrame(c, FT.DATA, id, queue[i]);
+        queue = [];
+      } catch (e) { self.readyState = 3; emit("error", { type: "error" }); }
     })();
   }
   WrappedWS.prototype = Object.create(NativeWS.prototype);
+  WrappedWS.CONNECTING = NativeWS.CONNECTING;
+  WrappedWS.OPEN = NativeWS.OPEN;
+  WrappedWS.CLOSING = NativeWS.CLOSING;
+  WrappedWS.CLOSED = NativeWS.CLOSED;
   window.WebSocket = WrappedWS;
 })();
 </script>`;

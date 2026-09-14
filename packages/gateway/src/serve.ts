@@ -87,6 +87,7 @@ export async function serve(opts: ServeOptions): Promise<void> {
       authVersion: config.auth.version,
       allowFrom: config.allowFrom,
       behindProxy: config.behindProxy,
+      dshUiCompat: config.dshUiCompat,
       tlsMaterial,
       userManager,
       configPath,

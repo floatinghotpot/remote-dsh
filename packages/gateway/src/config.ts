@@ -61,6 +61,13 @@ export interface GatewayConfig {
 export interface DshUiCompat {
   /** E2EE 激活（或宿主启用）时 patch JS；false = 保持 DSH 原样（共享 host/敏感场景） */
   trustE2EEAsLoopback?: boolean;
+  /**
+   * LAN / 已配对会话是否同样视同 loopback（默认 true）。
+   * 背景：DSH 的设置与"持久化凭据"界面只对 loopback 开放，而 LAN 访问的 hostname 是局域网 IP，
+   * 不满足 DSH 的 loopback 判定 ⇒ 不打开时 LAN 用户无法在界面里输入 API key。
+   * false = 严格模式（LAN 用户需自行在 `~/.dsh/.credentials.yaml` 配置）。
+   */
+  trustPairedAsLoopback?: boolean;
 }
 
 export const DEFAULT_HOST_CONFIG_PATH = join(homedir(), ".rdsh", "host.json");
@@ -77,7 +84,7 @@ const DEFAULTS: RdshConfig = {
   behindProxy: false,
   allowFrom: [],
   auth: DEFAULT_AUTH,
-  dshUiCompat: { trustE2EEAsLoopback: true },
+  dshUiCompat: { trustE2EEAsLoopback: true, trustPairedAsLoopback: true },
   gateway: { accessCode: null },
 };
 
@@ -235,12 +242,20 @@ export function normalizeConfig(raw: unknown, source = "config"): RdshConfig {
       throw new Error(`${source}: "dshUiCompat" must be an object`);
     }
     const compat = cfg.dshUiCompat as Record<string, unknown>;
+    const compatOut: DshUiCompat = {};
     if (compat.trustE2EEAsLoopback !== undefined) {
       if (typeof compat.trustE2EEAsLoopback !== "boolean") {
         throw new Error(`${source}: "dshUiCompat.trustE2EEAsLoopback" must be boolean`);
       }
-      out.dshUiCompat = { trustE2EEAsLoopback: compat.trustE2EEAsLoopback };
+      compatOut.trustE2EEAsLoopback = compat.trustE2EEAsLoopback;
     }
+    if (compat.trustPairedAsLoopback !== undefined) {
+      if (typeof compat.trustPairedAsLoopback !== "boolean") {
+        throw new Error(`${source}: "dshUiCompat.trustPairedAsLoopback" must be boolean`);
+      }
+      compatOut.trustPairedAsLoopback = compat.trustPairedAsLoopback;
+    }
+    out.dshUiCompat = compatOut;
   }
   // ---- gateway（访问口令；缺省 accessCode null = gate off）----
   if (cfg.gateway !== undefined) {
