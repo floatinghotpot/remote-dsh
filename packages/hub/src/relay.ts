@@ -8,12 +8,21 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocketServer } from "ws";
 import type { WebSocket } from "ws";
+import { MAX_PAYLOAD_LENGTH } from "rdsh-tunnel";
 import { writeError } from "./api.ts";
 import { parseCookies, HOST_COOKIE } from "./server.ts";
 import type { HubRuntime } from "./api.ts";
-import { E2EE_SHIM_HTML } from "./e2ee-shim.ts";
+import { injectE2eeShim } from "./e2ee-shim.ts";
 
-const wss = new WebSocketServer({ noServer: true });
+/**
+ * 中继上的浏览器 WS。`maxPayload` 必须等于隧道协议单帧上限：
+ * 超过它的浏览器消息 hub 无法封装成 DATA 帧，若放进来会让 `encodeFrame` 抛 ProtocolError ——
+ * 而抛点在 ws 的 message 回调里，**未捕获异常会直接打死整个 hub 进程**（远程 DoS：一个
+ * 已授权的浏览器发一条 17 MiB 消息即可；2026-09-14 真机复现：E2EE 下上传 18 MiB 附件，
+ * 页面走 RPC + base64 ⇒ 25,007,697 B 的单条 WS 消息 ⇒ hub crash，全体租户掉线）。
+ * 交给 ws 层在解帧阶段就按 1009 关闭，比收到消息后再判断更早、更省内存。
+ */
+const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD_LENGTH });
 
 /**
  * 授权 host 访问：验 HMAC 签名 host cookie（进入 host 时签发，7 天，绑定会话版本）。
@@ -104,8 +113,9 @@ export async function handleRelay(req: IncomingMessage, res: ServerResponse, run
       if (htmlBuf !== null) {
         let html = Buffer.concat(htmlBuf).toString("utf8");
         // E2EE shim 注入到 <head> 最前（须先于 DSH 脚本 wrap fetch/WebSocket；off 时不注入）
+        // 同时注入 hostId：host cookie 是 HttpOnly，shim 读不到它（2026-09-14 实测）
         if ((runtime.config.e2ee?.mode ?? "optional") !== "off") {
-          html = html.replace(/<head([^>]*)>/i, `<head$1>${E2EE_SHIM_HTML}`);
+          html = injectE2eeShim(html, hostId);
         }
         // 返回按钮注入到 </head> 前（固定定位悬浮，不改动 DSH 文档流/布局）
         html = html.replace("</head>", `${BACK_BAR_HTML}</head>`);
@@ -221,7 +231,19 @@ export function handleRelayUpgrade(req: IncomingMessage, socket: Duplex, head: B
         : Buffer.isBuffer(data)
           ? (data as Buffer)
           : Buffer.from(data as ArrayBuffer);
-      conn.sendData(streamId, buf);
+      // 兜底：任何"封装不了"的帧只废掉这一条流，绝不允许异常逃逸到进程
+      //（maxPayload 已在 ws 层拦下超限消息；这里是纵深防御 + 未来路径的护栏）
+      try {
+        conn.sendData(streamId, buf);
+      } catch (err) {
+        console.error(`[relay] ws frame rejected (${buf.length}B): ${err instanceof Error ? err.message : String(err)}`);
+        try {
+          clientWs.close(1009, "message too big");
+        } catch {
+          /* 忽略 */
+        }
+        conn.abortStream(streamId);
+      }
     });
     const close = (): void => {
       conn.abortStream(streamId);
@@ -284,7 +306,19 @@ export function handleRawUpgrade(req: IncomingMessage, socket: Duplex, head: Buf
         : Buffer.isBuffer(data)
           ? (data as Buffer)
           : Buffer.from(data as ArrayBuffer);
-      conn.sendRawData(streamId, buf);
+      // E2EE raw 流是"一条 WS 消息 = 一个隧道 DATA 帧"（host 侧按 AES-GCM 包逐帧解密，
+      // 见 gateway join.ts handleRawData），所以超限消息既不能拆也不能封装 ⇒ 只能废流。
+      try {
+        conn.sendRawData(streamId, buf);
+      } catch (err) {
+        console.error(`[relay] raw ws frame rejected (${buf.length}B): ${err instanceof Error ? err.message : String(err)}`);
+        try {
+          clientWs.close(1009, "message too big");
+        } catch {
+          /* 忽略 */
+        }
+        conn.abortStream(streamId);
+      }
     });
     const close = (): void => {
       conn.abortStream(streamId);

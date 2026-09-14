@@ -46,6 +46,10 @@ export const E2EE_SHIM_HTML = `<script>
   };
 
   function getHostId() {
+    // 优先用 hub 注入的 hostId：host cookie（rdsh_host）是 HttpOnly，document.cookie 读不到
+    //（2026-09-14 实测：读不到 ⇒ 取不到 pin ⇒ 整段 shim 退出 ⇒ E2EE 静默失效）
+    var injected = window.__RDSH_HOST_ID__;
+    if (typeof injected === "string" && injected !== "") return injected;
     var m = document.cookie.match(/(?:^|; )rdsh_host=([^;]+)/);
     return m ? decodeURIComponent(m[1]) : null;
   }
@@ -87,6 +91,21 @@ export const E2EE_SHIM_HTML = `<script>
 
   var NativeWS = window.WebSocket;
   var channel = null;
+  // HTTP 请求体分片大小：内层 DATA 帧 → AES-GCM(12B nonce + 16B tag) → 外层 WS 消息，
+  // 必须远低于隧道单帧上限 16 MiB（2026-09-14：整包发送曾让 18 MiB 附件变成 25 MB 单条
+  // WS 消息，直接把 hub 打挂）。1 MiB 既安全又不产生过多帧。
+  var CHUNK = 1 << 20;
+  /** 通道失效（对端关闭/出错）：让挂起的请求**立刻报错**、复位通道以便下次重新握手。
+   *  历史缺陷：只复位不复位 handlers、且不响应 close ⇒ 请求静默挂起（"no error and no reply"）。 */
+  function failChannel(ch, reason) {
+    if (ch.dead) return;
+    ch.dead = true;
+    if (channel === ch) channel = null;
+    ch.handlers.forEach(function (h) {
+      try { if (h.onError) h.onError(new Error(reason)); else if (h.onClose) h.onClose(); } catch (e) { /* 单个 handler 异常不影响其它 */ }
+    });
+    ch.handlers.clear();
+  }
   async function ensureChannel() {
     if (channel) return channel;
     var hs = await handshake();
@@ -109,18 +128,26 @@ export const E2EE_SHIM_HTML = `<script>
         }
       }).catch(function () { try { ws.close(); } catch (e) {} });
     };
-    channel = { ws: ws, enc: enc, handlers: handlers, alloc: function () { return nextId++; } };
-    return channel;
+    var ch = { ws: ws, enc: enc, handlers: handlers, dead: false, alloc: function () { return nextId++; } };
+    ws.onclose = function () { failChannel(ch, "e2ee channel closed"); };
+    ws.onerror = function () { failChannel(ch, "e2ee channel error"); };
+    channel = ch;
+    return ch;
   }
   async function sendFrame(c, type, streamId, payload) {
+    if (c.dead) throw new Error("e2ee channel closed");
     var ct = await c.enc.encrypt(encodeFrame(type, streamId, payload));
+    if (c.dead) throw new Error("e2ee channel closed");
     c.ws.send(ct.buffer);
   }
 
   // ---- fetch 包装 ----
   var nativeFetch = window.fetch.bind(window);
   window.fetch = function (input, init) {
-    var url = typeof input === "string" ? input : (input && input.url);
+    // input 可能是 string / URL / Request —— DSH 的 HTTP carrier 传的是 **URL 实例**
+    //（2026-09-14 实测：只认 input.url ⇒ url=undefined ⇒ new URL(undefined, base) = "/undefined"
+    //  ⇒ 所有 /api 请求打到错误路径、主机回 405，E2EE 下一片报错）
+    var url = typeof input === "string" ? input : (input && (input.url || input.href)) || String(input);
     var u = new URL(url, location.href);
     if (!getHostId() || u.pathname.indexOf("/portal") === 0) return nativeFetch(input, init);
     return (async function () {
@@ -133,12 +160,9 @@ export const E2EE_SHIM_HTML = `<script>
         if (typeof init.headers.forEach === "function") init.headers.forEach(function (v, k) { headers[k] = v; });
         else Object.keys(init.headers).forEach(function (k) { headers[k] = init.headers[k]; });
       }
-      await sendFrame(c, FT.OPEN, id, JSON.stringify({ kind: "http", method: method, path: u.pathname + u.search, headers: headers }));
-      if (body) await sendFrame(c, FT.DATA, id, body);
-      await sendFrame(c, FT.CLOSE, id, JSON.stringify({ code: 0 }));
-
       return await new Promise(function (resolve, reject) {
         var status = 200, respHeaders = {}, chunks = [];
+        // 先挂 handler 再发帧：否则快响应（如 400）可能早于 handler 注册而丢失
         c.handlers.set(id, {
           onOpen: function (p) { if (p.status != null) status = p.status; if (p.headers) respHeaders = p.headers; },
           onData: function (d) { chunks.push(d); },
@@ -151,8 +175,27 @@ export const E2EE_SHIM_HTML = `<script>
             var isJson = ct.indexOf("json") >= 0;
             var payload = isJson ? (text ? JSON.parse(text) : null) : text;
             resolve(new Response(isJson ? JSON.stringify(payload) : text, { status: status, headers: respHeaders }));
-          }
+          },
+          // 通道断了必须**报错**，不能静默挂起（2026-09-14 实测：超大帧被 hub 以 1009 拒绝后
+          // 请求永远不 settle，用户看到的是 "no error and no reply"）
+          onError: function (err) { c.handlers.delete(id); reject(err); }
         });
+        (async function () {
+          try {
+            await sendFrame(c, FT.OPEN, id, JSON.stringify({ kind: "http", method: method, path: u.pathname + u.search, headers: headers }));
+            // 请求体**分片**：gateway 侧对每个 DATA 帧执行 up.write()（join.ts:621），
+            // 所以 http 流的多个 DATA 帧会被拼成同一个请求体（2026-09-14 起支持 >16 MiB 上传）
+            if (body) {
+              for (var off = 0; off < body.length; off += CHUNK) {
+                await sendFrame(c, FT.DATA, id, body.subarray(off, Math.min(off + CHUNK, body.length)));
+              }
+            }
+            await sendFrame(c, FT.CLOSE, id, JSON.stringify({ code: 0 }));
+          } catch (err) {
+            c.handlers.delete(id);
+            reject(err);
+          }
+        })();
       });
     })();
   };
@@ -163,18 +206,33 @@ export const E2EE_SHIM_HTML = `<script>
   // ② 静态常量 CONNECTING/OPEN/CLOSING/CLOSED（DSH 以 readyState === WebSocket.OPEN 判定）；
   // ③ on* 与 addEventListener 双通道都要派发；④ close() 必须落到 CLOSED 并派发 close。
   // 历史缺陷：只实现了 on* ⇒ 远端流通道建不起来（设置页 Models 报 settings are unavailable）。
+  /**
+   * 定义**自有**数据属性。
+   *
+   * 必须这样做：WrappedWS 继承了 native WebSocket.prototype，而 url/protocol/extensions/
+   * bufferedAmount/readyState/on* 在那里都是**只有 getter**（或带 brand 校验）的访问器；
+   * 本文件是严格模式，直接 this.url = … 会抛
+   * "Cannot set property url of #<WebSocket> which has only a getter" ⇒ 构造函数整体失败
+   *（2026-09-14 真机实测：dsh-api-gateway 插件 loader entry 报这个错，E2EE 通道建不起来）。
+   */
+  function own(obj, name, value) {
+    Object.defineProperty(obj, name, { value: value, writable: true, configurable: true, enumerable: true });
+  }
   function WrappedWS(url, protocols) {
     var self = this;
     var u = new URL(url, location.href);
     var c = null, id = 0, queue = [], closed = false;
     var listeners = { open: [], message: [], close: [], error: [] };
-    this.url = u.href;
-    this.protocol = typeof protocols === "string" ? protocols : (protocols && protocols[0]) || "";
-    this.extensions = "";
-    this.binaryType = "blob";
-    this.bufferedAmount = 0;
-    this.readyState = 0; // CONNECTING
-    this.onopen = this.onmessage = this.onclose = this.onerror = null;
+    own(this, "url", u.href);
+    own(this, "protocol", typeof protocols === "string" ? protocols : (protocols && protocols[0]) || "");
+    own(this, "extensions", "");
+    own(this, "binaryType", "blob");
+    own(this, "bufferedAmount", 0);
+    own(this, "readyState", 0); // CONNECTING
+    own(this, "onopen", null);
+    own(this, "onmessage", null);
+    own(this, "onclose", null);
+    own(this, "onerror", null);
 
     function emit(type, event) {
       var direct = self["on" + type];
@@ -208,14 +266,14 @@ export const E2EE_SHIM_HTML = `<script>
     this.send = function (data) {
       if (closed || self.readyState === 3) return; // 已关闭：静默丢弃（贴近原生）
       var bytes = typeof data === "string" ? new TextEncoder().encode(data) : new Uint8Array(data);
-      if (c && self.readyState === 1) sendFrame(c, FT.DATA, id, bytes);
+      if (c && self.readyState === 1) sendFrame(c, FT.DATA, id, bytes).catch(function () { shutdown(); });
       else queue.push(bytes);
     };
     this.close = function () {
       if (closed) return;
       closed = true;
       if (self.readyState < 2) self.readyState = 2; // CLOSING
-      if (c) sendFrame(c, FT.CLOSE, id, JSON.stringify({ code: 0 }));
+      if (c) sendFrame(c, FT.CLOSE, id, JSON.stringify({ code: 0 })).catch(function () { /* 通道已断，无需再通知 */ });
       shutdown();
     };
     (async function () {
@@ -230,7 +288,7 @@ export const E2EE_SHIM_HTML = `<script>
         });
         self.readyState = 1; // OPEN
         emit("open", { type: "open" });
-        for (var i = 0; i < queue.length; i++) sendFrame(c, FT.DATA, id, queue[i]);
+        for (var i = 0; i < queue.length; i++) sendFrame(c, FT.DATA, id, queue[i]).catch(function () { shutdown(); });
         queue = [];
       } catch (e) { self.readyState = 3; emit("error", { type: "error" }); }
     })();
@@ -243,3 +301,23 @@ export const E2EE_SHIM_HTML = `<script>
   window.WebSocket = WrappedWS;
 })();
 </script>`;
+
+/**
+ * 注入 E2EE shim，并把 hostId 一并交给它。
+ *
+ * 必要性：host cookie（`rdsh_host`）是 **HttpOnly**，页面 JS 读不到（`document.cookie` 里没有），
+ * 而 shim 需要 hostId 去 localStorage 的 pin 表里取对端公钥 —— 读不到就直接退出、E2EE 静默失效
+ *（2026-09-14 实测：`document.cookie.includes("rdsh_host") === false`）。
+ *
+ * 顺序：**先 hostId bootstrap，再 shim**（shim 是立即执行的 IIFE，解析到就会跑）。
+ */
+export function injectE2eeShim(html: string, hostId: string): string {
+  const bootstrap = `<script>window.__RDSH_HOST_ID__=${JSON.stringify(hostId)};</script>`;
+  const inject = `${bootstrap}${E2EE_SHIM_HTML}`;
+  // 函数式替换：避免 hostId 含 `$&`/`$'` 时被 String.replace 当作替换模式展开
+  if (/<head[^>]*>/i.test(html)) {
+    return html.replace(/<head([^>]*)>/i, (_m, attrs: string) => `<head${attrs}>${inject}`);
+  }
+  // 无 <head> 时也必须注入，否则 E2EE 再次静默失效（宁可写在文档最前）
+  return inject + html;
+}
