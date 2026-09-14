@@ -229,8 +229,32 @@ async function register(
  * 启动 join 隧道（no-spawn）：转发到外部 `opts.target`，不 spawn dsh、不 process.exit。
  * 获取 pid 锁（opts.role）；返回 `JoinHandle`，`stop()` 干净停止（关 WS/清 heartbeat/释放锁）。
  */
-/** JS 响应判定（content-type 含 javascript）。 */
-export function isJsContentType(headers: IncomingHttpHeaders): boolean {
+/**
+ * 上游失败分类。
+ *
+ * 旧实现把所有 `up.on("error")` 都报成 `UPSTREAM_UNREACHABLE: dsh not reachable`，
+ * 于是"dsh 已接受连接、但在读请求体阶段就断开（常见于 401/413）"被伪装成部署故障，
+ * 掩盖真实原因（2026-09-14 实测：上传大文件得到 502 "dsh not reachable"，与事实不符）。
+ */
+export function classifyUpstreamFailure(
+  code: string | undefined,
+  responded: boolean,
+  message?: string,
+): { kind: "error" | "close"; code: string; message: string } {
+  const reason = code !== undefined && code !== "" ? code : (message ?? "unknown");
+  if (responded) {
+    // 客户端已拿到状态头/部分 body：此时只能发 CLOSE 表示"响应体被截断"
+    return { kind: "close", code: "UPSTREAM_ABORTED", message: `upstream aborted mid-response (${reason})` };
+  }
+  const unreachable =
+    code === "ECONNREFUSED" || code === "ENOTFOUND" || code === "EAI_AGAIN" || code === "EHOSTUNREACH" || code === "ENETUNREACH";
+  if (unreachable) {
+    return { kind: "error", code: "UPSTREAM_UNREACHABLE", message: `dsh not reachable (${reason})` };
+  }
+  return { kind: "error", code: "UPSTREAM_ABORTED", message: `upstream closed before responding (${reason})` };
+}
+
+/** JS 响应判定（content-type 含 javascript）。 */export function isJsContentType(headers: IncomingHttpHeaders): boolean {
   const ct = headers["content-type"];
   const s = Array.isArray(ct) ? ct.join(";") : (ct ?? "");
   return /javascript/i.test(s);
@@ -498,6 +522,8 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
       }
 
       const streamId = frame.streamId;
+      /** 响应头是否已发给客户端（决定失败时能回 ERROR 还是只能用 CLOSE 表示截断）。 */
+      let responded = false;
       const up = httpRequest(
         {
           host: opts.target.host,
@@ -507,6 +533,7 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
           headers: rewriteHeadersForDsh(headers, opts.target, dshAuthCookie),
         },
         (upRes) => {
+          responded = true;
           const status = upRes.statusCode ?? 502;
           const baseHeaders = normalizeRespHeaders(upRes.headers);
           const wantsPatch = dio?.jsPatch?.() === true && isJsContentType(upRes.headers);
@@ -587,8 +614,10 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
           });
         },
       );
-      up.on("error", () => {
-        send(encodeFrame(FRAME_TYPE.ERROR, streamId, jsonPayload({ code: "UPSTREAM_UNREACHABLE", message: "dsh not reachable" })));
+      up.on("error", (err: NodeJS.ErrnoException) => {
+        const outcome = classifyUpstreamFailure(err.code, responded, err.message);
+        const type = outcome.kind === "close" ? FRAME_TYPE.CLOSE : FRAME_TYPE.ERROR;
+        send(encodeFrame(type, streamId, jsonPayload({ code: outcome.code, message: outcome.message })));
         httpStreams.delete(streamId);
       });
       httpStreams.set(streamId, { up });

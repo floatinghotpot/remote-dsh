@@ -153,16 +153,48 @@ export const E2EE_SHIM_HTML = `<script>
     var u = new URL(url, location.href);
     if (!getHostId() || u.pathname.indexOf("/portal") === 0) return nativeFetch(input, init);
     return (async function () {
-      var c = await ensureChannel(); var id = c.alloc();
       var method = (init && init.method) || "GET";
-      var body = null;
-      if (init && init.body != null) body = typeof init.body === "string" ? new TextEncoder().encode(init.body) : new Uint8Array(init.body);
+      // 请求体归一化：**支持的类型必须字节正确，不支持的类型必须明确报错**（不得静默发错）。
+      // 历史缺陷：只做 new Uint8Array(body) ⇒ Blob/ReadableStream 变 0 字节、FormData 变 1 个垃圾字节。
+      var bodyBytes = null, bodyStream = null, bodyType = null;
+      if (init && init.body != null) {
+        var b = init.body;
+        if (typeof b === "string") bodyBytes = new TextEncoder().encode(b);
+        else if (b instanceof ArrayBuffer) bodyBytes = new Uint8Array(b);
+        else if (ArrayBuffer.isView(b)) bodyBytes = new Uint8Array(b.buffer, b.byteOffset, b.byteLength);
+        else if (typeof URLSearchParams !== "undefined" && b instanceof URLSearchParams) {
+          bodyBytes = new TextEncoder().encode(b.toString());
+          bodyType = "application/x-www-form-urlencoded;charset=UTF-8";
+        } else if (typeof FormData !== "undefined" && b instanceof FormData) {
+          // 用 Response 编码 multipart（自动生成 boundary 并给出对应 content-type）
+          var fd = new Response(b);
+          bodyStream = fd.body; bodyType = fd.headers.get("content-type");
+        } else if (typeof ReadableStream !== "undefined" && b instanceof ReadableStream) {
+          bodyStream = b;
+        } else if (typeof Blob !== "undefined" && b instanceof Blob) {
+          bodyType = b.type || null;
+          if (typeof b.stream === "function") bodyStream = b.stream();
+          else bodyBytes = new Uint8Array(await b.arrayBuffer());
+        } else {
+          throw new TypeError("rdsh E2EE fetch: unsupported request body type: " + Object.prototype.toString.call(b));
+        }
+      }
       var headers = {};
       if (init && init.headers) {
         if (typeof init.headers.forEach === "function") init.headers.forEach(function (v, k) { headers[k] = v; });
         else Object.keys(init.headers).forEach(function (k) { headers[k] = init.headers[k]; });
       }
+      var headerHas = function (name) {
+        return Object.keys(headers).some(function (k) { return k.toLowerCase() === name; });
+      };
+      var headerDrop = function (name) {
+        Object.keys(headers).forEach(function (k) { if (k.toLowerCase() === name) delete headers[k]; });
+      };
+      if (bodyType !== null && !headerHas("content-type")) headers["content-type"] = bodyType;
+      // 流式体长度未知：必须去掉可能存在的 content-length，否则上游会等一个永远发不满的体
+      if (bodyStream !== null) headerDrop("content-length");
       var signal = init && init.signal;
+      var c = await ensureChannel(); var id = c.alloc();
       return await new Promise(function (resolve, reject) {
         var status = 200, statusText = "", respHeaders = {}, ctrl = null, settled = false, aborted = false;
         // 响应体**按字节流式**透传，交给原生 Response 处理 .text()/.json()/.arrayBuffer()。
@@ -230,10 +262,24 @@ export const E2EE_SHIM_HTML = `<script>
             await sendFrame(c, FT.OPEN, id, JSON.stringify({ kind: "http", method: method, path: u.pathname + u.search, headers: headers }));
             // 请求体**分片**：gateway 侧对每个 DATA 帧执行 up.write()（join.ts:621），
             // 所以 http 流的多个 DATA 帧会被拼成同一个请求体（2026-09-14 起支持 >16 MiB 上传）
-            if (body) {
-              for (var off = 0; off < body.length; off += CHUNK) {
-                await sendFrame(c, FT.DATA, id, body.subarray(off, Math.min(off + CHUNK, body.length)));
+            if (bodyBytes) {
+              for (var off = 0; off < bodyBytes.length; off += CHUNK) {
+                await sendFrame(c, FT.DATA, id, bodyBytes.subarray(off, Math.min(off + CHUNK, bodyBytes.length)));
               }
+            } else if (bodyStream) {
+              // 流式体：边读边发（不整体 buffering），每块仍按 CHUNK 上限切分
+              var reader = bodyStream.getReader();
+              for (;;) {
+                if (aborted || c.dead) { try { reader.cancel(); } catch (e) { /* 已取消 */ } break; }
+                var step = await reader.read();
+                if (step.done) break;
+                if (step.value == null) continue;
+                var chunk = step.value instanceof Uint8Array ? step.value : new Uint8Array(step.value);
+                for (var off2 = 0; off2 < chunk.length; off2 += CHUNK) {
+                  await sendFrame(c, FT.DATA, id, chunk.subarray(off2, Math.min(off2 + CHUNK, chunk.length)));
+                }
+              }
+              try { reader.releaseLock(); } catch (e) { /* 已释放 */ }
             }
             await sendFrame(c, FT.CLOSE, id, JSON.stringify({ code: 0 }));
           } catch (err) {

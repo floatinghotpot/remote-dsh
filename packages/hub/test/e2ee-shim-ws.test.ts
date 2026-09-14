@@ -445,6 +445,91 @@ test("fetch 请求体超过分片阈值时必须多帧发送、每帧 ≤ 上限
   assert.equal(frames[frames.length - 1]?.type, FRAME_TYPE.CLOSE, "末帧应为 CLOSE");
 });
 
+/** 解密出的 DATA 帧按顺序拼成完整请求体。 */
+function dataOf(frames: { type: number; payload: Uint8Array }[]): Buffer {
+  return Buffer.concat(frames.filter((f) => f.type === FRAME_TYPE.DATA).map((f) => Buffer.from(f.payload)));
+}
+
+/** 解出 OPEN 帧的 meta（headers 等）。 */
+function openMeta(frames: { type: number; payload: Uint8Array }[]): { method: string; headers: Record<string, string> } {
+  const open = frames.find((f) => f.type === FRAME_TYPE.OPEN);
+  assert.ok(open !== undefined, "应发出 OPEN 帧");
+  return JSON.parse(new TextDecoder().decode(open!.payload)) as { method: string; headers: Record<string, string> };
+}
+
+test("请求体类型：Blob 必须按字节发送，并自动补 blob.type 作为 content-type", async () => {
+  instances.length = 0;
+  const host = await hostKeyPair();
+  const sb = runShim({ pin: b64u(host.pub), hostId: "host-1" });
+  const fetchFn = (sb.window as unknown as { fetch: (i: unknown, n?: unknown) => Promise<unknown> }).fetch;
+
+  const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, 0x10]);
+  void fetchFn(new URL("http://rdsh.local/api/upload"), { method: "POST", body: new Blob([bytes], { type: "image/png" }) });
+  await waitFor(() => (instances[0]?.sent.length ?? 0) >= 4); // ephPub + OPEN + DATA + CLOSE
+
+  const frames = await decryptSent(host.priv, instances[0]!);
+  assert.equal(openMeta(frames).headers["content-type"], "image/png", "caller 未设 content-type 时应补上 blob.type");
+  assert.deepEqual(Array.from(dataOf(frames)), Array.from(bytes), "Blob 体必须字节正确（旧实现会发 0 字节）");
+});
+
+test("请求体类型：ReadableStream 必须边读边发、字节正确，且去掉未知的 content-length", async () => {
+  instances.length = 0;
+  const host = await hostKeyPair();
+  const sb = runShim({ pin: b64u(host.pub), hostId: "host-1" });
+  const fetchFn = (sb.window as unknown as { fetch: (i: unknown, n?: unknown) => Promise<unknown> }).fetch;
+
+  const big = new Uint8Array(1 << 20).fill(1); // 恰好一个 CHUNK
+  const tail = new Uint8Array([2, 3, 4]);
+  const stream = new ReadableStream({
+    start(c) {
+      c.enqueue(big);
+      c.enqueue(tail);
+      c.close();
+    },
+  });
+  void fetchFn(new URL("http://rdsh.local/api/stream"), { method: "POST", body: stream, headers: { "content-length": "999999" } });
+  await waitFor(() => (instances[0]?.sent.length ?? 0) >= 5); // ephPub + OPEN + 2×DATA + CLOSE
+
+  const frames = await decryptSent(host.priv, instances[0]!);
+  assert.equal(openMeta(frames).headers["content-length"], undefined, "流式体长度未知，必须去掉 content-length");
+  const body = dataOf(frames);
+  assert.equal(body.length, big.length + tail.length, "流式体总字节数必须正确");
+  assert.deepEqual(Array.from(body.subarray(0, 3)), [1, 1, 1]);
+  assert.deepEqual(Array.from(body.subarray(body.length - 3)), [2, 3, 4]);
+});
+
+test("请求体类型：FormData 必须编码成 multipart（带 boundary），字段内容原样", async () => {
+  instances.length = 0;
+  const host = await hostKeyPair();
+  const sb = runShim({ pin: b64u(host.pub), hostId: "host-1" });
+  const fetchFn = (sb.window as unknown as { fetch: (i: unknown, n?: unknown) => Promise<unknown> }).fetch;
+
+  const fd = new FormData();
+  fd.append("greeting", "hello-rdsh");
+  void fetchFn(new URL("http://rdsh.local/api/form"), { method: "POST", body: fd });
+  await waitFor(() => (instances[0]?.sent.length ?? 0) >= 4);
+
+  const frames = await decryptSent(host.priv, instances[0]!);
+  const ct = openMeta(frames).headers["content-type"] ?? "";
+  assert.match(ct, /^multipart\/form-data; boundary=/, `FormData 必须带 boundary（实际 ${ct}）`);
+  const text = dataOf(frames).toString("utf8");
+  assert.ok(text.includes('name="greeting"') && text.includes("hello-rdsh"), "multipart 体必须包含字段名与值");
+});
+
+test("请求体类型：不支持的类型必须明确报错，且不得开流（不得静默发空体）", async () => {
+  instances.length = 0;
+  const host = await hostKeyPair();
+  const sb = runShim({ pin: b64u(host.pub), hostId: "host-1" });
+  const fetchFn = (sb.window as unknown as { fetch: (i: unknown, n?: unknown) => Promise<unknown> }).fetch;
+
+  await assert.rejects(
+    fetchFn(new URL("http://rdsh.local/api/x"), { method: "POST", body: { a: 1 } }),
+    /unsupported request body type/,
+    "不支持的类型必须抛错（旧实现会静默发 0 字节）",
+  );
+  assert.equal(instances.length, 0, "不支持的类型应在开流之前失败");
+});
+
 test("通道被对端关闭：挂起请求立刻报错（不静默挂起），且下次请求重新握手", async () => {
   instances.length = 0;
   const host = await hostKeyPair();

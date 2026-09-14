@@ -419,7 +419,7 @@ rdsh hub service install|status|uninstall      # hub 服务化（rdsh-hub.servic
 | 界面里的 API RPC（设置、模型目录、会话列表…） | 页面 `fetch` | ✅ 加密 | 经 shim 走 `/e2e` 单条 E2EE 通道 |
 | 实时通道（`events.mux` / `remote.mux`） | 页面 `WebSocket` | ✅ 加密 | 同上 |
 | **图片附件**（拖/贴上来的图，最常见：截图 / UI 设计稿） | 随 prompt 以 **base64** 走页面 `fetch` | ✅ 加密 | 图片**不**走后台上传；大图会显著增大请求体（已支持分片） |
-| **文档/图片预览** | pdf.js `PDFFetchStream` → 页面 `fetch`（含 Range） | ✅ 加密 | 但响应目前被整体缓冲 + 强制 UTF-8 解码 ⇒ **二进制/Range 语义会坏**（AC2/AC3 待修） |
+| **文档/图片预览** | pdf.js `PDFFetchStream` → 页面 `fetch`（含 Range） | ✅ 加密 | **已支持二进制保真 + 流式**（`getReader()` 逐块、Range/取消语义正常；真机 17.9 MB PNG 逐字节一致） |
 | **非图片文件**附件（pdf/zip/bin…，低频） | **Worker 里的 `XMLHttpRequest`** | ❌ **明文** | DSH 的"后台上传"跑在 Blob Worker 里，shim 只作用于页面 `window`。**2026-09-14 决策：暂时接受**（可用性优先），复谈条件见下 |
 | dev/HMR 的 `EventSource` | 页面 `EventSource` | ❌ 明文 | 仅 dev 模式；生产不涉及（低危） |
 
@@ -440,6 +440,9 @@ rdsh hub service install|status|uninstall      # hub 服务化（rdsh-hub.servic
 | 端口被占 | — | `--port` 换端口 |
 | 手机打不开 | AP 隔离 / 防火墙 | 确认同一 WiFi、允许传入连接 |
 | 配对码在哪里 | 终端 `pair code:` 行 | 重启会生成新码 |
+| 上传/请求报 `UPSTREAM_ABORTED: upstream closed before responding (ECONNRESET)` | **不是网络不通**：dsh 已接受连接、但在读请求体阶段就断开（常见于鉴权失败、体积限制） | 看主机侧 dsh 日志确认真实原因（旧版网关会把这类错误误报成 `UPSTREAM_UNREACHABLE: dsh not reachable`，升级到当前版本后文案已修正） |
+| 报 `UPSTREAM_UNREACHABLE: dsh not reachable (ECONNREFUSED/ENOTFOUND…)` | 主机侧 dsh 真的没在监听 / DNS 不对 | 确认 `dsh web` 在跑、`target` 主机端口正确 |
+| E2EE 下预览空白/内容错乱（旧版） | 旧版 shim 把响应整体缓冲并按文本解码 | 升级（当前版本响应按字节流式透传） |
 
 ## 11. 相关文档
 

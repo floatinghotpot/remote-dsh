@@ -4,9 +4,12 @@
 
 ## TODO（代码未修，待做）
 
-- [ ] **AC4 请求体类型**：`packages/hub/src/e2ee-shim.ts` 现在只认 string / ArrayBuffer·TypedArray；`Blob`→**0 字节**、`ReadableStream`→**0 字节**、`FormData`→**1 个垃圾字节**（实测，且**静默**）。要求：Blob / FormData / ReadableStream **正确支持**，其余类型**明确抛 TypeError**（不得静默发错）
-- [ ] 随 AC4 扩展 F7 沙箱：Blob/FormData/ReadableStream 请求体字节一致 + 不支持类型抛错（二进制响应/流式/取消已覆盖）
-- [ ] **F14 错误文案误导**：`packages/gateway/src/join.ts:591` 把"上游已接受但中途断开（ECONNRESET）"统一报成 `UPSTREAM_UNREACHABLE: dsh not reachable`，掩盖真实 401/400/413。要求：区分"连不上"与"上游中断"，已收到响应头时用 `CLOSE(code, reason)` 而非 ERROR
+_（本轮已清空：AC4 与 F14 均已完成，见下）_
+
+## 已完成（本轮）
+
+- [x] **AC4 请求体类型**（`packages/hub/src/e2ee-shim.ts`）：Blob / File（按 `blob.type` 补 content-type）、ReadableStream（边读边发、去掉未知 `content-length`）、FormData（multipart + boundary）、URLSearchParams 全部**字节正确**；**不支持的类型抛 `TypeError`**（且在开流之前失败）。真机验证：Blob 体 200 且 rpcId 原样回显、2 块流式体 200 且回显、`{not:'a body'}` 抛 `TypeError: unsupported request body type`。单测 4 例
+- [x] **F14 错误文案**（`packages/gateway/src/join.ts`）：新增 `classifyUpstreamFailure()` —— 连不上（`ECONNREFUSED/ENOTFOUND/EAI_AGAIN/EHOSTUNREACH/ENETUNREACH`）才报 `UPSTREAM_UNREACHABLE`；已连上但提前断开报 `UPSTREAM_ABORTED: upstream closed before responding (ECONNRESET)`；**已发出响应头**时改用 `CLOSE(code 502)` 表示 body 截断。真机复现同一请求：`502 UPSTREAM_UNREACHABLE: dsh not reachable` → **`502 UPSTREAM_ABORTED: upstream closed before responding (ECONNRESET)`**。单测 4 例
 
 ## LIMITATION（已知限制，**已决策不修**；不是待办 bug）
 
@@ -18,7 +21,7 @@
 
 ## 交付项（非代码）
 
-- [ ] **发布 `rdsh-hub`**（+ `remote-dsh` 依赖版本）：**不发版则线上不变**（仍无 E2EE / 大文件失败 / hub 会被打挂 / 预览坏 / manifest 报错）
+- [ ] **发布 `rdsh-hub` + `rdsh-gateway`**（+ `remote-dsh` 依赖版本）：hub 侧含 shim/中继/manifest，gateway 侧含 F14；**不发版则线上不变**（仍无 E2EE / 大文件失败 / hub 会被打挂 / 预览坏 / manifest 报错 / 错误文案误导）
 - [ ] 发布后复核：>16 MiB 上传、预览文档/图片、通道失效有明确报错、hub 不被单帧打死、console 0 报错
 - [ ] **用户端复测预览**（PDF / 大图）：字节与流式已在真机验证（sha256 一致、287 块），渲染需人工确认
 - [ ] **运维跟进（F13c）**：确认生产反代 `proxy_request_buffering off`（默认 on 会把大请求体写进 hub 机器临时文件）；知悉访问日志含上传文件名+大小（不含内容）

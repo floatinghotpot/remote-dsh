@@ -116,4 +116,5 @@
 | ①a 请求体分片（>16 MiB 上传） | ✅ **已修已验** | 单测 3 帧拆分 + 字节一致；真机 20 MiB 全量送达 |
 | ①b 通道失效不静默挂起 | ✅ **已修已验** | F17；单测：关闭通道 ⇒ 立刻 reject + 重新握手 |
 | ①c 响应二进制保真 + 流式（AC2/AC3） | ✅ **已修已验** | 真机 18,755,423 B PNG 经 E2EE **逐字节一致**（287 块、首块 206 ms、sha256 与本地文件相同）；单测：块边界/字节/204/取消 |
-| ①d 请求体类型（Blob/FormData/ReadableStream） | ⏳ 待做 | AC4 |
+| ①d 请求体类型（Blob/FormData/ReadableStream） | ✅ **已修已验** | 单测 4 例 + 真机：Blob/流式体 200 且 rpcId 回显、不支持类型抛 TypeError |
+| ③ F14 上游失败误导 | ✅ **已修已验** | `classifyUpstreamFailure`；真机同请求：`UPSTREAM_UNREACHABLE: dsh not reachable` → `UPSTREAM_ABORTED: upstream closed before responding (ECONNRESET)`；单测 4 例 |
