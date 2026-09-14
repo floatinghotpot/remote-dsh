@@ -104,3 +104,19 @@
 | 6【低·格式】`join.ts` `*/export function` 粘连一行 | 属实（本次引入） | 已修（换行），待提交 |
 
 **本轮新增代码改动**：`packages/gateway/src/server.ts`（jsPatch 会话分支）、`packages/hub/src/e2ee-shim.ts`（ERROR/CLOSE code 语义）、`packages/gateway/test/server.test.ts`、`packages/hub/test/e2ee-shim-ws.test.ts`（20/20）。`pnpm build` 0 error、`pnpm test` 全绿。
+
+---
+
+## 10. 第四审（E2EE 判界少算 AEAD 开销 28 B）→ 处理结果
+
+> 反馈：E2EE 下 WS 判界只按明文 ≤ 16 MiB，但密文 = 明文 + 43 B（内层帧头 15 + nonce 12 + tag 16）⇒ 明文落在 (16 MiB−43, 16 MiB] 窗口内时，`encodeFrame(密文)` 在加密发送器里抛 `ProtocolError`，回调未捕获 ⇒ 打死 host。属"结构性收口"漏掉的 28 B。
+
+| 项 | 处置 |
+|---|---|
+| `sendWsData` 判界 | 改为 `MAX_PAYLOAD_LENGTH − E2EE_FRAME_OVERHEAD`（新增导出常量 `E2EE_FRAME_OVERHEAD = 15 + 12 + 16 = 43`），明文/密文路径统一按最保守的界判 |
+| E2EE 加密发送器（`startRawStream` 的 `send`） | 加结构兜底：密文超限时**给该内层流回一个 ERROR**（小帧，加密后必放得下）并记录；整体 try/catch，任何加密/封帧异常只记录、绝不重抛 |
+| 回归 | 新增 `e2ee-overhead.test.ts`：钉死 43 B 开销 + 边界（`MAX−43` 恰好放得下、`MAX−42` 必抛 `ProtocolError`） |
+
+**核实无需修改**（复审方也已确认）：
+- 同流双 CLOSE（超限先发 `CLOSE(1009)`，`upstream.close` 又触发 `cleanup()` 再发 `CLOSE{code:0}`）：shim 分发器收到首个 CLOSE 即 `handlers.delete(streamId)`，第二个无 handler，无实际影响。
+- WS 门面 `shutdown()` 固定 `code:1000/wasClean:true`、`onClose` 丢弃 payload：已核实 `dsh-api-gateway/client.js:431-437` 的 `closed` 只 `this.lost(socket)`、不读 `event.code/wasClean`，当前无害；将来若有消费方按 code 分支再透传。

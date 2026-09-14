@@ -320,6 +320,14 @@ function gateChallengeHtml(hostName: string, actionPath: string, error: GateErro
  *  且给 E2EE 方向（密文 = 内层帧 + 28 B nonce/tag）也留足余量。 */
 const DATA_FRAME_CHUNK = 1 << 20;
 
+/**
+ * E2EE 包装的固定开销：内层帧 15 B 头（MAGIC4+ver1+flags1+type1+streamId4+len4）+ AEAD
+ * nonce 12 B + GCM tag 16 B = **43 B**。WS 消息判界必须预留它，否则"明文 ≤16 MiB"的 WS 消息
+ * 经 E2EE 加密后刚好超出隧道上限，`encodeFrame` 在加密发送器里抛 `ProtocolError` 打死 host
+ *（2026-09-14 第三审发现的 28 B 窗口，加上内层帧头实为 43 B）。
+ */
+export const E2EE_FRAME_OVERHEAD = 15 + 12 + 16;
+
 /** 按 DATA_FRAME_CHUNK 分片发送响应体（多 DATA 帧在 hub/浏览器侧天然拼回同一个 body）。 */
 function sendChunkedBody(send: (frame: Buffer) => void, streamId: number, body: Buffer): void {
   if (body.length === 0) return;
@@ -330,11 +338,11 @@ function sendChunkedBody(send: (frame: Buffer) => void, streamId: number, body: 
 
 /**
  * WS 消息转发：**一条消息 = 一帧，不能分片**（分片会破坏 host 侧的消息边界）。
- * 超限（>16 MiB）时发 CLOSE(1009) 给客户端并返回 false，由调用方关掉上游——绝不让 `encodeFrame`
- * 的 `ProtocolError` 逃逸到 ws 回调打死 host 进程（P1 的 WS 面，2026-09-14 复审发现）。
+ * 超限（>16 MiB − E2EE_FRAME_OVERHEAD）时发 CLOSE(1009) 给客户端并返回 false，由调用方关掉上游
+ * —— 绝不让 `encodeFrame` 的 `ProtocolError` 逃逸到 ws 回调打死 host 进程。
  */
 function sendWsData(send: (frame: Buffer) => void, streamId: number, buf: Buffer): boolean {
-  if (buf.length > MAX_PAYLOAD_LENGTH) {
+  if (buf.length > MAX_PAYLOAD_LENGTH - E2EE_FRAME_OVERHEAD) {
     send(encodeFrame(FRAME_TYPE.CLOSE, streamId, jsonPayload({ code: 1009, message: "upstream ws message too large" })));
     return false;
   }
@@ -745,9 +753,25 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
     const inner = makeInnerDispatcher(
       (frame) => {
         const raw = rawStreams.get(streamId);
-        if (raw?.encryptor !== null && raw?.encryptor !== undefined) {
+        if (raw?.encryptor === null || raw?.encryptor === undefined) return;
+        try {
           const ct = raw.encryptor.encrypt(frame, Buffer.alloc(0));
+          if (ct.length > MAX_PAYLOAD_LENGTH) {
+            // 结构兜底：内层帧经 E2EE 包装（+43 B）后超限。绝不能让 encodeFrame 的 ProtocolError
+            // 逃逸；给该内层流回一个 ERROR（小帧，加密后必然放得下），消费方据此干净报错。
+            const innerId = frame.length >= 11 ? frame.readUInt32BE(7) : 0;
+            const errCt = raw.encryptor.encrypt(
+              encodeFrame(FRAME_TYPE.ERROR, innerId, jsonPayload({ code: "FRAME_TOO_LARGE", message: "e2ee frame too large" })),
+              Buffer.alloc(0),
+            );
+            console.error(`[join] e2ee frame too large (${ct.length}B) for inner stream ${innerId}`);
+            sendTunnelFrame(encodeFrame(FRAME_TYPE.DATA, streamId, errCt, FLAG_E2E));
+            return;
+          }
           sendTunnelFrame(encodeFrame(FRAME_TYPE.DATA, streamId, ct, FLAG_E2E));
+        } catch (err) {
+          // 最后一道：任何加密/封帧异常只记录，绝不重抛打死 host
+          console.error(`[join] e2ee send failed: ${err instanceof Error ? err.message : String(err)}`);
         }
       },
       { jsPatch: () => uiCompat.trustE2EEAsLoopback },
