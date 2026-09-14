@@ -11,20 +11,20 @@
 
 ### 修复
 
-- **E2EE 数据面首次真正生效**（hub）：此前在所有部署里都静默关闭——host cookie 是 HttpOnly，注入的 shim 读不到 hostId，也就查不到 TOFU pin，于是在包装 `fetch`/`WebSocket` 之前就提前退出。三个缺陷共享同一结果，均已修：现在在 shim 之前注入 hostId（`window.__RDSH_HOST_ID__`）；WebSocket 门面改为定义自有可写字段，而不是给原生 prototype 上"只有 getter"的 `url`/`protocol`/… 赋值（严格模式下会抛错，表现为 "failed to apply loader entry @deepseek-ai/dsh-api-gateway"）；`fetch` 把输入归一化为 string / `Request.url` / `URL.href`（DSH 的 HTTP carrier 传的是 `URL` 实例，曾被解析成 `/undefined`，导致所有 `/api` 都 405）。详见 `doc/fix/20260914-e2ee-not-engaged/`。
-- **E2EE 下大文件上传可用**（hub）：请求体按 1 MiB 分片发送，不再整包打成一帧，>16 MiB 不再撞单帧上限（一个 18 MiB 附件曾变成 25 MB base64 RPC，即一条 25,007,697 字节的帧）。详见 `doc/fix/20260914-e2ee-fetch-streaming/`。
-- **文档/图片预览字节保真且流式**（hub）：响应以按字节透传的 `ReadableStream` 返回、在 OPEN 时 resolve（而非 CLOSE）；JSON 交回原生 `Response.json()`；`cancel()`/`AbortSignal` 会中止上游流；无 body 状态码（204/205/304）构造无 body 响应；ERROR 帧与带非零 code 的 CLOSE 会作为错误上抛，而不是被当成干净结束（上游不可达此前会变成"200 + 空 body"）。一个 18,755,423 字节的 PNG 往返 sha256 一致，分 287 块送达。
-- **请求体全类型支持**（hub）：Blob/File、ReadableStream（边读边发、不整体缓冲）、FormData（multipart）、URLSearchParams；其余类型在开流前抛 `TypeError`（Blob 曾变成 0 字节 body，FormData 曾变成 1 个垃圾字节）。
-- **`manifest.webmanifest` 兜底**（hub）：浏览器以不带 cookie 的方式取 manifest，hub 无法判断主机，曾回传 portal HTML，Chrome 报 `Manifest: Line 1, column 1, Syntax error`；现在无 host 上下文的 `*.webmanifest` 会返回合法的同源 manifest。
-- **上游失败不再误报**（gateway）：只有连接级错误（ECONNREFUSED/ENOTFOUND/EAI_AGAIN/…）才报 `UPSTREAM_UNREACHABLE`；已连上但中途断开报 `UPSTREAM_ABORTED` 并带真实 errno。
-- **LAN 配对/登录会话也打 loopback 补丁**（gateway）：设置/API key 的 JS 补丁此前只在 `authMode === "none"` 分支接线，导致 LAN 配对模式下设置页打不开（而 LAN 没有 E2EE shim 可依赖）。
-- **远程 Web UI 的设置与 API key 可用**（gateway）：loopback 补丁编码感知（解 gzip/deflate/br → 补丁 → 按原编码重压）、补丁后再发 OPEN（content-length 才正确）、不再继承上游的 `immutable`/长 `max-age`，且补丁未命中时按路径留一次日志，不再静默 fail-open。详见 `doc/fix/20260914-remote-webui-settings/`。
+- **E2EE 数据面现在真正生效**（hub）：注入 hostId、门面可构造、`fetch` 输入归一化，修掉三个此前让数据面一直静默明文的缺陷。
+- **E2EE 下大文件上传可用**（hub）：请求体按 1 MiB 分片，不再整包一帧。
+- **预览字节保真且流式**（hub）：响应按字节流式返回、在 OPEN 时 resolve，JSON 走原生解析，中止/错误正确上抛。
+- **请求体全类型支持**（hub）：Blob/File、ReadableStream、FormData、URLSearchParams；其余抛错。
+- **manifest 兜底**（hub）：不带 cookie 的 `manifest.webmanifest` 请求不再回传 portal HTML。
+- **上游失败分类**（gateway）：只有真连接错误才报"不可达"，中途断开带 errno。
+- **LAN 配对会话也打 loopback 补丁**（gateway）：配对模式下设置/API key 同样可用。
+- **远程 UI 设置/API key 可用**（gateway）：编码感知补丁、content-length 正确、不再继承 immutable 缓存、补丁未命中留日志。
 
 ### 安全
 
-- **超大帧不再能打死 hub 或 host（远程 DoS）**：hub 中继的浏览器 WebSocket 按隧道 16 MiB 单帧上限设 `maxPayload`，每个中继回调只废自己的流；host 侧响应体按 1 MiB 分片、超限 WS 消息回 `CLOSE(1009)` 并关上游而不是抛错、E2EE 发送器判界时预留 43 字节包装开销。此前一个已授权浏览器发一条 >16 MiB 消息就能把整个多租户 hub 打挂，现在按流 fail-closed。
+- **超大帧不再打死 hub 或 host（远程 DoS）**：两侧有界发送器按流失败，而不是崩进程。
 
-> hub 与新旧 host 均向后兼容（测试环境已实测：混合版本主机可接入、设置/模型页正常）。dsh 兼容性与上一版一致（`0.1.2-rc.1` / `0.1.5-rc.2` 冒烟实测；hub 与 dsh 版本无关）。
+> hub ↔ host 新旧版本混跑已验证兼容；dsh 兼容性不变。
 
 ## [rdsh-hub 0.7.1 · remote-dsh 0.10.3] - 2026-09-11
 

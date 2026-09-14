@@ -11,20 +11,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **The E2EE data plane engages for the first time** (hub). It had silently stayed off in every deployment: the host cookie is HttpOnly, so the injected shim could not read the host id, which meant it could not look up its TOFU pin and returned before wrapping `fetch`/`WebSocket`. Three defects shared that outcome, all fixed: the host id is now injected ahead of the shim (`window.__RDSH_HOST_ID__`); the WebSocket facade defines its own writable fields instead of assigning to the native prototype's getter-only `url`/`protocol`/… (which threw under strict mode and surfaced as "failed to apply loader entry @deepseek-ai/dsh-api-gateway"); and `fetch` normalises its input to string / `Request.url` / `URL.href` (DSH's HTTP carrier passes a `URL` instance, which used to resolve to `/undefined` and turned every `/api` call into a 405). See `doc/fix/20260914-e2ee-not-engaged/`.
-- **Large uploads work over E2EE** (hub): request bodies are chunked at 1 MiB instead of being framed whole, so a file over 16 MiB no longer hits the single-frame cap (an 18 MiB attachment used to become a 25 MB base64 RPC, i.e. one 25,007,697-byte frame). See `doc/fix/20260914-e2ee-fetch-streaming/`.
-- **Document/image preview is byte-exact and streamed** (hub): responses are forwarded as a byte-preserving `ReadableStream` resolved at OPEN rather than CLOSE, JSON is handed back to the native `Response.json()`, `cancel()`/`AbortSignal` abort the upstream stream, null-body statuses (204/205/304) build a body-less response, and ERROR frames / CLOSE with a non-zero code are surfaced as errors instead of a clean end (an unreachable upstream previously resolved as a 200 with an empty body). An 18,755,423-byte PNG round-trips with the same sha256, delivered in 287 chunks.
-- **All request body types are supported** (hub): Blob/File, ReadableStream (streamed, unbuffered), FormData (multipart) and URLSearchParams; anything else throws a `TypeError` before the stream opens (a Blob previously became a zero-length body, a FormData a single junk byte).
-- **`manifest.webmanifest` fallback** (hub): browsers fetch a manifest with credentials omitted, so the hub could not tell the host and answered with the portal HTML, which Chrome reported as `Manifest: Line 1, column 1, Syntax error`; a host-context-less `*.webmanifest` now returns a valid same-origin manifest.
-- **Upstream failures are no longer misreported** (gateway): only connection-level errors (ECONNREFUSED/ENOTFOUND/EAI_AGAIN/…) are `UPSTREAM_UNREACHABLE`; an upstream that accepted the connection and then closed mid-body is `UPSTREAM_ABORTED` with the real errno.
-- **LAN paired/logged-in sessions apply the loopback patch** (gateway): the settings/API-key JS patch was only wired into the `authMode === "none"` branch, so on LAN with pair auth the settings page stayed hidden even though LAN has no E2EE shim to fall back on.
-- **Settings and API key usable from the remote web UI** (gateway): the loopback patch is encoding-aware (decodes gzip/deflate/br, patches, re-encodes), sends the OPEN frame only after patching so content-length stays correct, no longer inherits the upstream's immutable/long `max-age`, and logs a `[patch] miss` once per path instead of failing open silently. See `doc/fix/20260914-remote-webui-settings/`.
+- **The E2EE data plane now actually engages** (hub): host-id injection, a constructible WebSocket facade, and `fetch` input normalisation fix three defects that had kept it silently in plaintext.
+- **Large uploads work over E2EE** (hub): request bodies are chunked at 1 MiB instead of one oversized frame.
+- **Previews stream byte-exact** (hub): responses are a byte-preserving stream resolved at OPEN, JSON goes through the native parser, and abort/error are surfaced correctly.
+- **All request body types are supported** (hub): Blob/File, ReadableStream, FormData, URLSearchParams; anything else throws.
+- **Manifest fallback** (hub): a cookie-less `manifest.webmanifest` request no longer returns the portal HTML.
+- **Upstream failures are classified** (gateway): only real connection errors read "unreachable"; mid-body closes carry the errno.
+- **LAN paired sessions apply the loopback patch** (gateway): settings/API key reachable with pair auth too.
+- **Settings/API key usable from the remote UI** (gateway): encoding-aware loopback patch, correct content-length, no immutable caching, logged patch misses.
 
 ### Security
 
-- **An oversized frame can no longer kill the hub or the host** (remote DoS): the hub's relayed browser WebSocket is capped at the 16 MiB tunnel frame limit (`maxPayload`) and each relay callback only fails its own stream; on the host, response bodies are chunked at 1 MiB, an oversized WS message answers `CLOSE(1009)` and closes the upstream instead of throwing, and the E2EE sender reserves the 43-byte wrapping overhead when bounding WS messages. A single authorised browser could previously send one >16 MiB message and take the whole multi-tenant hub down; that path is now fail-closed per stream.
+- **An oversized frame can no longer kill the hub or the host** (remote DoS): bounded senders fail the stream instead of crashing the process.
 
-> The hub is backwards-compatible with older and newer hosts (verified in the test environment: mixed host versions join and the settings/models page works). dsh compatibility is unchanged from the previous release (`0.1.2-rc.1` / `0.1.5-rc.2` smoke-tested; the hub is dsh-version agnostic).
+> hub ↔ host version mixing (old/new) verified compatible; dsh compatibility unchanged.
 
 ## [rdsh-hub 0.7.1 · remote-dsh 0.10.3] - 2026-09-11
 
