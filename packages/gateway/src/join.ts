@@ -14,7 +14,7 @@ import { request as httpsRequest } from "node:https";
 import { hostname as osHostname } from "node:os";
 import type { IncomingHttpHeaders } from "node:http";
 import { WebSocket } from "ws";
-import { FrameParser, FRAME_TYPE, encodeFrame, jsonPayload, parseJsonPayload, FLAG_E2E } from "rdsh-tunnel";
+import { FrameParser, FRAME_TYPE, encodeFrame, jsonPayload, parseJsonPayload, FLAG_E2E, MAX_PAYLOAD_LENGTH } from "rdsh-tunnel";
 import type { Frame } from "rdsh-tunnel";
 import { findDsh, spawnDsh, exchangeDshSessionCookie, detectDshVersion, dshVersionWarning } from "./spawn-dsh.ts";
 import { rewriteHeadersForDsh } from "./proxy.ts";
@@ -328,6 +328,20 @@ function sendChunkedBody(send: (frame: Buffer) => void, streamId: number, body: 
   }
 }
 
+/**
+ * WS 消息转发：**一条消息 = 一帧，不能分片**（分片会破坏 host 侧的消息边界）。
+ * 超限（>16 MiB）时发 CLOSE(1009) 给客户端并返回 false，由调用方关掉上游——绝不让 `encodeFrame`
+ * 的 `ProtocolError` 逃逸到 ws 回调打死 host 进程（P1 的 WS 面，2026-09-14 复审发现）。
+ */
+function sendWsData(send: (frame: Buffer) => void, streamId: number, buf: Buffer): boolean {
+  if (buf.length > MAX_PAYLOAD_LENGTH) {
+    send(encodeFrame(FRAME_TYPE.CLOSE, streamId, jsonPayload({ code: 1009, message: "upstream ws message too large" })));
+    return false;
+  }
+  send(encodeFrame(FRAME_TYPE.DATA, streamId, buf));
+  return true;
+}
+
 /** 发送合成的 HTTP 响应帧（gateway 不触达 dsh）。 */
 function sendSyntheticHttp(send: (frame: Buffer) => void, streamId: number, status: number, headers: Record<string, string>, body: Buffer): void {
   send(encodeFrame(FRAME_TYPE.OPEN, streamId, jsonPayload({ kind: "http", status, reason: undefined, headers })));
@@ -477,7 +491,15 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
           : Buffer.isBuffer(data)
             ? (data as Buffer)
             : Buffer.from(data as ArrayBuffer);
-        send(encodeFrame(FRAME_TYPE.DATA, streamId, buf));
+        if (!sendWsData(send, streamId, buf)) {
+          // 超限：已发 CLOSE(1009) 给客户端，这里关掉上游 dsh 连接，绝不让异常逃逸
+          console.error(`[join] upstream ws message too large (${buf.length}B), closing stream ${streamId}`);
+          try {
+            upstream.close(1009, "message too big");
+          } catch {
+            /* 已关闭 */
+          }
+        }
       });
       const cleanup = (): void => {
         wsStreams.delete(streamId);
@@ -562,7 +584,7 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
               ),
             );
             upRes.on("data", (chunk: Buffer) => {
-              send(encodeFrame(FRAME_TYPE.DATA, streamId, chunk));
+              sendChunkedBody(send, streamId, chunk);
             });
             upRes.on("end", () => {
               send(encodeFrame(FRAME_TYPE.CLOSE, streamId, jsonPayload({ code: 0 })));

@@ -72,6 +72,24 @@
 
 ---
 
+---
+
+## 9. 第三审（结构性地收口"任何发送路径都不抛未捕获异常"）
+
+测试环境侧复审指出：分片护栏只盖了 4 个 DATA 发送点中的 2 个，还有两处可能打死 host。已收口：
+
+| 发送点 | 处置 |
+|---|---|
+| 补丁路径 + `sendSyntheticHttp`（HTTP） | `sendChunkedBody()` 分片（第二轮已修） |
+| 非补丁 HTTP 流式路径（`upRes.on("data"）` | 改走 `sendChunkedBody()`（每个 chunk 通常 ≤64 KiB，结构上不再裸调 `encodeFrame`） |
+| **WS 流（`openWsStream` 上游消息）** | 新增 `sendWsData()`：超 16 MiB 不发 DATA、改发 `CLOSE(1009)` 并关上游；**WS 消息不能分片**（保消息边界），超限即废流 |
+| 微观 nit：`onClose` JSON 解析失败按"干净结束" | 已改为**解析失败按失败处理**（`MALFORMED_CLOSE`） |
+
+回归：`join-ws-oversize.test.ts`（WS 上游 >16 MiB ⇒ `CLOSE(1009)`、无 DATA 帧、上游被关 1009、进程不死）；`join-loopback-patch.test.ts`（17 MiB HTTP 分片）保持。`pnpm build` 0 error、`pnpm test` 全绿。
+
+至此，host 侧**所有 DATA 发送路径都有界**：HTTP 超限分片、WS 超限废流；`encodeFrame` 不再可能因超限把 `ProtocolError` 抛进回调。
+
+
 ## 8. 第二审（测试环境侧反馈）→ 处理结果
 
 > 第二审（另一侧在测试环境读 diff）反馈 6 条，逐条处置如下。

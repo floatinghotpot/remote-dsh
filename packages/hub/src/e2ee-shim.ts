@@ -243,7 +243,10 @@ export const E2EE_SHIM_HTML = `<script>
             // 否则 chunked 响应（无 content-length）下消费方会把截断的 body 当成功（2026-09-14 复审发现）
             var code = 0, msg = null;
             if (payload && payload.length) {
-              try { var m = JSON.parse(new TextDecoder().decode(payload)); if (m && m.code != null && m.code !== 0) { code = m.code; msg = m.message || null; } } catch (e) { /* 无 code 视为干净结束 */ }
+              var m = null, parsed = false;
+              try { m = JSON.parse(new TextDecoder().decode(payload)); parsed = true; } catch (e) { /* 解析失败按失败处理 */ }
+              if (!parsed) code = "MALFORMED_CLOSE";
+              else if (m && m.code != null && m.code !== 0) { code = m.code; msg = m.message || null; }
             }
             if (code !== 0) {
               var err = new Error(msg || ("upstream error: " + code));
