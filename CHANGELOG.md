@@ -30,58 +30,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Portal dark mode**: the hub's web portal (`/portal`) now follows the OS light/dark preference. It previously had no theme layer at all — every colour was a hardcoded light literal, so the page stayed white on dark systems. The portal now uses a 30-token semantic colour layer (`--rdsh-*`) driven by `prefers-color-scheme` (`color-scheme: light dark` plus a matching `<meta>`), with dark values aligned to DSH's own tokens; light values are kept byte-for-byte as before, so light mode does not regress. Covers `pages.tsx` (including the admin console CSS and components) and the legal pages, plus the QR container and the architecture diagram (CSS filter, no new asset). Dark-mode contrast was verified against WCAG AA (18 pairs, all ≥ 4.5:1 — independently recomputed at release time). See `doc/feature/16-portal-dark-mode/`.
-- Note: the portal is distributed inside `rdsh-hub` (`files: ["portal"]`) and `remote-dsh` pins `rdsh-hub` to an exact version, so **both packages are released together** — otherwise `npm i -g remote-dsh` would keep serving the old portal.
+- **Portal dark mode**: the hub's web portal now follows the OS light/dark preference via a 30-token semantic colour layer (`--rdsh-*`) driven by `prefers-color-scheme`; dark values align to DSH's tokens and light mode is byte-identical (WCAG AA verified, 18 pairs ≥ 4.5:1).
+- Note: the portal ships inside `rdsh-hub`; `remote-dsh` pins `rdsh-hub`, so both release together.
 
 ## [rdsh-gateway 0.8.2 · dsh-web-remote 0.5.1 · remote-dsh 0.10.2] - 2026-09-11
 
 ### Fixed
 
-- `dsh-web-remote` (0.5.1): **the plugin no longer breaks `dsh web` on dsh `0.1.5-rc.2`**. `connection.rpc.handle(...)` — how the browser RPC channel used to be registered — reaches `owner.webServer` through a service shadow that cannot resolve `webServer` for third-party plugin rows on 0.1.5-rc.2, which aborts the whole plugin tree at boot (upstream regression, deepseek-harness discussion #5926). The channel is now a native `/remote-access` prefix route registered on `ctx.webServer`, with the `client-request`/`server-response` envelope and the connection service's own status semantics (404/415/413/400, `gateway/bad-request` inside a 200 for an invalid envelope or a `method` that disagrees with the path, 500 for a throwing handler) implemented in the plugin and the official Host/Origin + browser-session fence (`connection.requestRejection`) kept in front of it; the browser half is unchanged. Covered by protocol unit tests and smoke-tested on both dsh `0.1.2-rc.1` and `0.1.5-rc.2` from one code path (no version fork); the browser half was verified in a real profile on `0.1.5-rc.2` (client bundle served, Remote Access panel renders in Settings, and a remote visit through the hub works). See `doc/fix/20260911-dsh-0.1.5-plugin-rpc/` and `doc/review/20260911-dsh-0.1.5-rc.2-plugin-compat.md`.
-- Fix note: the `authority: "loopback"` option the plugin passed to `rpc.handle` never existed in either dsh version (the helper takes `(channel, handler)` only); the real fence has always been the connection service's Host/Origin + browser-session check, which the plugin now calls explicitly.
-- `rdsh-gateway` / `remote-dsh` CLI — **dsh `0.1.5-rc.2` compatibility (verified, not just assumed)**: `rdsh host serve` was smoke-tested against a real `dsh@0.1.5-rc.2` — spawn + `--port 0` ready line with launch token, browser-session cookie exchange, `/api` forwarding (real `settings/describe` answered), HTML polyfill injection (including the 0.1.2+ gzip workaround), WebSocket `/api/remote.mux` upgrade, and (for the join path) `patchLoopbackJs` still hitting `isLoopbackHostname(pageLocation.hostname)` in the shipped client bundle. No breakage found, so `DSH_COMPAT_MAX` is now `0.1.5-rc.2` (was `0.1.2-rc.1`) and `dshVersionWarning` gained boundary tests. See `doc/review/20260911-dsh-0.1.5-rc.2-plugin-compat.md` §5 (G1–G7); a full end-to-end check followed — the host was joined to the production hub with `rdsh host serve` and opened from a remote device successfully (G9).
-- Note for older notes/docs: the DSH WebSocket endpoint has been the single `/api/remote.mux` since dsh `0.1.2` (`events.mux` / `events.host` are gone); rdsh relays WS by verbatim `req.url` and never hardcodes the path, so the rename does not affect forwarding (only comments/tests still mention the old names).
+- `dsh-web-remote` (0.5.1): no longer breaks `dsh web` on dsh `0.1.5-rc.2` — the browser RPC channel is now a native `/remote-access` route instead of `connection.rpc.handle(...)` (upstream regression, discussion #5926). One code path, no version fork; verified on `0.1.2-rc.1` and `0.1.5-rc.2`.
+- `rdsh-gateway` / CLI: dsh `0.1.5-rc.2` compatibility verified end-to-end (spawn, cookie exchange, `/api`, HTML polyfill, WS `remote.mux`, loopback patch); `DSH_COMPAT_MAX` → `0.1.5-rc.2`.
+- Note: DSH's WebSocket endpoint has been the single `/api/remote.mux` since `0.1.2`; rdsh relays WS by verbatim URL, so the rename doesn't affect forwarding.
 
 ### dsh compatibility matrix
 
 | remote-dsh component | version | compatible dsh (smoke-tested) | mechanism |
 |---|---|---|---|
 | remote-dsh CLI (`host serve` / `join`) | 0.10.2 | dsh `0.1.1-rc.2` ✅<br>dsh `0.1.2-rc.1` ✅<br>dsh `0.1.5-rc.2` ✅ | ready-line behavior detection, adaptive |
-| `dsh-web-remote` plugin | 0.5.1 | dsh `0.1.2-rc.1` ✅<br>dsh `0.1.5-rc.2` ✅<br>(`0.1.1` line untested) | native `webServer` route, no version fork |
+| `dsh-web-remote` plugin | 0.5.1 | dsh `0.1.2-rc.1` ✅<br>dsh `0.1.5-rc.2` ✅<br>(`0.1.1` untested) | native `webServer` route, no version fork |
 | rdsh-hub | any | dsh-version agnostic | pure relay, never parses traffic |
-
-> Before this release the in-repo `node scripts/smoke-dsh-compat.mjs` was run against dsh `0.1.2-rc.1` and `0.1.5-rc.2` — **S1–S7 all PASS**; the `dsh-web-remote` browser half was additionally verified in a real profile on `0.1.5-rc.2` (panel visible, remote visit through the hub works).
 
 ## [rdsh-gateway 0.8.1 · remote-dsh 0.10.1] - 2026-09-08
 
 ### Fixed
 
-- `rdsh host service install` on macOS (launchd): `ProgramArguments` now splits node / script / args into separate `<string>` argv elements (launchd does not split on spaces — the old single-string form made the service fail to exec); reinstalling is idempotent (unload before load); `KeepAlive` restarts only on failed exit (aligned with Linux `Restart=on-failure`); `rdsh host service status` distinguishes `active` from `loaded (not running)` via `launchctl print` state. See `doc/fix/20260908-host-service-launchd/`.
-- Note: macOS fix is not yet regression-tested on real Intel / Apple Silicon hardware (Linux systemd path unchanged, verified).
+- `rdsh host service install` on macOS (launchd): correct `ProgramArguments` splitting, idempotent reinstall, `KeepAlive` on failure only, `service status` distinguishes active vs loaded. Not yet regression-tested on real Apple Silicon (Linux systemd unchanged).
 
 ## [rdsh-gateway 0.8.0 · dsh-web-remote 0.5.0 · remote-dsh 0.10.0] - 2026-09-08
 
 ### Added
 
-- dsh `0.1.2-rc.1` compatibility: rdsh now exchanges and holds dsh's browser-session cookie (introduced in 0.1.2) and injects it into every relayed request (HTTP + WebSocket) across all three access paths (LAN serve / hub join / `dsh-web-remote` plugin), so remote access works again on the latest dsh; the `0.1.1` line still works unchanged via ready-line behavior detection (adaptive, no version fork). A runtime version check warns (without blocking) outside the tested window and prints an upgrade command.
-- Fix: dsh 0.1.2 serves the index document gzip-compressed, which made the hub-injected back bar and E2EE shim silently skip; rdsh now strips `accept-encoding` on document-navigation requests so dsh returns plain HTML and the injected UI (back-to-host-list, E2EE data plane) works again.
-- Install note (pnpm ≥ 12): within 24h of a release, `dsh plugin add` (bare or `@latest`) can **silently install the previous version** because of pnpm's default `minimumReleaseAge` policy — check the actually installed version with `dsh plugin ls`; pin an exact version (`dsh plugin add <pkg>@<version>`) when it matters (see `doc/review/20260908-pnpm-12-minimum-release-age-plugin-install.md`).
+- dsh `0.1.2-rc.1` compatibility: rdsh exchanges and injects dsh's browser-session cookie across all three paths (LAN / hub join / plugin); `0.1.1` still works via adaptive ready-line detection; a runtime version warning prints outside the tested window.
+- Fix: dsh 0.1.2 serves the index gzip-compressed; rdsh now strips `accept-encoding` on document navigation so the injected back bar / E2EE shim apply again.
+- Install note (pnpm ≥ 12): within 24h of release, `dsh plugin add` may install the previous version (`minimumReleaseAge`); pin an exact version when it matters.
 
 ### dsh compatibility matrix
 
 | remote-dsh component | version | compatible dsh (smoke-tested) | mechanism |
 |---|---|---|---|
 | remote-dsh CLI (`host serve`/`join`) | 0.10.0 | dsh `0.1.1-rc.2` ✅<br>dsh `0.1.2-rc.1` ✅ | ready-line behavior detection, adaptive |
-| `dsh-web-remote` plugin | 0.5.0 | dsh `0.1.2-rc.1` ✅<br>(`0.1.1` line pending) | same host API shape across both, no version gate |
+| `dsh-web-remote` plugin | 0.5.0 | dsh `0.1.2-rc.1` ✅<br>(`0.1.1` pending) | same host API shape, no version gate |
 | rdsh-hub | any | dsh-version agnostic | pure relay, never parses traffic |
 
 ## [dsh-web-remote 0.3.0] - 2026-08-31
 
-> Back-filled (2026-09-11): this release shipped without its own section (`0.2.0` / `0.4.0` lack one too). Recorded from the npm publish date and the published tarballs: `0.2.0` does **not** contain the features below, `0.3.0` contains them first (the `set-ui-compat` RPC and `autoConnect` both match in the 0.3.0 tarball), and `0.4.0` / `0.5.0` carry them on.
+> Back-filled (2026-09-11): recorded from the npm publish date and tarballs — `0.3.0` is the first version with the features below.
 
 ### Added
 
-- `dsh-web-remote` (0.3.0): the Remote Access panel gains a **"Trust as local access when E2EE (compatibility)"** checkbox (`dshUiCompat.trustE2EEAsLoopback`, on by default) — with the patch, JS responses relayed through the tunnel treat the browser as loopback, so DSH's Models / API-key settings work remotely; and the plugin now **auto-connects at boot** when `host.json` is in join mode with a persisted token and no CLI owns the tunnel (same behavior as `rdsh host serve`), removing the "connect first to reach the panel" chicken-and-egg.
+- `dsh-web-remote` (0.3.0): the Remote Access panel gains "Trust as local access when E2EE" (`dshUiCompat.trustE2EEAsLoopback`, on by default) so Models/API-key settings work remotely; the plugin auto-connects at boot when in join mode with a persisted token and no CLI owns the tunnel.
 
 ## [0.6.0] - 2026-08-24
 
