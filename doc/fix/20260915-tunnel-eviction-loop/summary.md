@@ -22,10 +22,25 @@
 - **两轮独立对抗性审查**（含针对重写实现的第二轮复审）发现的缺陷已逐条处置；未覆盖项与"接受不修"的 nit 均记入 [TODO.md](./TODO.md) 与审查记录。
 - 真机证据（改前）：两个 `dsh web` 交替连 rdsh.cn，源端口每 ~1.2s 递增；锁文件只记一个 pid 却有两条隧道。
 
+## 发布（2026-09-15）
+
+| 包 | 版本 | 依赖（registry 实查） |
+|---|---|---|
+| `rdsh-gateway` | **0.8.5** | `ws` · `rdsh-tunnel 0.2.0` |
+| `dsh-web-remote` | **0.5.4** | `rdsh-gateway 0.8.5`（精确） |
+| `remote-dsh` | **0.10.6** | `rdsh-gateway 0.8.5` · `rdsh-hub 0.7.3` |
+
+- `rdsh-hub` / `rdsh-tunnel` **未改未发**（线协议零变化，无需部署 hub）。
+- 双源核对：腾讯镜像与 npmjs 的 `dist-tags.latest` 一致、`shasum` 逐包相同；tarball 内容已拆包核对
+  （gateway `dist/lock.js` 含 `linkSync`/`FRESH_LOCK_MS`/inode 比对、`dist/join.js` 含同进程报错；web-remote `dist/index.js` 含锁冲突上抛；CLI `dist/bin.js` 在包内）。
+
 ## 生效方式
 
 重装插件即可（`dsh-web-remote` 精确锁定 `rdsh-gateway`，插件升级会带上新 gateway）：**不需要**部署 hub、不需要动 tunnel。
 
+- 插件路径：`cd ~/.dsh/profiles/web && pnpm update dsh-web-remote`（依赖 `^0.5.2` → 0.5.4，`patchReload: "live"` 自动重载）。
+- CLI / 服务化路径：升级 `remote-dsh` 到 0.10.6。
+
 ## 遗留
 
-见 [TODO.md](./TODO.md)。
+见 [TODO.md](./TODO.md)（G3 真机复测仍需重装后确认）。

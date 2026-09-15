@@ -7,6 +7,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [rdsh-gateway 0.8.5 · dsh-web-remote 0.5.4 · remote-dsh 0.10.6] - 2026-09-15
+
+### Fixed
+
+- **One tunnel per machine** (gateway): the join lock is published atomically (temp file + `link`), only provably dead locks are reaped, and any live lock — including our own pid — is refused. Two `dsh web` instances used to fight over one host, each kicking the other offline every ~1.2 s.
+- **Lock conflicts are visible** (web-remote): the panel shows why it stayed disconnected instead of failing silently.
+
+> Wire protocol unchanged, no hub deployment needed. Reinstall the plugin (or upgrade the CLI) to pick up `rdsh-gateway` 0.8.5.
+
 ## [rdsh-gateway 0.8.4 · rdsh-hub 0.7.3 · remote-dsh 0.10.5 · dsh-web-remote 0.5.3] - 2026-09-14
 
 ### Fixed

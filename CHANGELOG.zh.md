@@ -7,6 +7,15 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [rdsh-gateway 0.8.5 · dsh-web-remote 0.5.4 · remote-dsh 0.10.6] - 2026-09-15
+
+### 修复
+
+- **一台机器只允许一条隧道**（gateway）：join 锁改为原子发布（临时文件 + `link`），只回收确定已死的锁，任何活锁（含本进程自己）一律拒绝。此前两个 `dsh web` 实例会争夺同一个 host，互相踢下线（约 1.2 秒一轮）。
+- **锁冲突可见**（web-remote）：面板显示停在 disconnected 的原因，而不是静默失败。
+
+> 线协议未变，无需部署 hub。重装插件（或升级 CLI）即可拿到 `rdsh-gateway` 0.8.5。
+
 ## [rdsh-gateway 0.8.4 · rdsh-hub 0.7.3 · remote-dsh 0.10.5 · dsh-web-remote 0.5.3] - 2026-09-14
 
 ### 修复
