@@ -377,8 +377,25 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
 
   const lock = acquireJoinLock(opts.role, opts.lockPath);
   if (!lock.ok) {
-    throw new Error(`join lock held by ${lock.heldBy.role} (pid ${lock.heldBy.pid}); stop it first`);
+    // 「同机单隧道」铁律：任何活锁都拒绝（含本进程自己的 pid —— 那是热重载时的同进程重复获取）
+    throw new Error(
+      "contended" in lock
+        ? "join lock is contended by another instance; retry"
+        : lock.heldBy.pid === process.pid
+          ? "another tunnel is already running in this process"
+          : `join lock held by ${lock.heldBy.role} (pid ${lock.heldBy.pid}); stop it first`,
+    );
   }
+
+  /**
+   * 构造期同步抛错必须把锁还回去（否则本进程再也起不来隧道，还谎报「本进程已有隧道」）。
+   * 现实抛点：E2EE 密钥生成/序列化（`loadOrCreateE2eeKeyPair`）与 `connect()` 里的
+   * `new WebSocket(非法 URL)`、以及 embedder 的 onState 钩子。
+   */
+  const releaseLockAndRethrow = (err: unknown): never => {
+    releaseJoinLock(opts.lockPath);
+    throw err;
+  };
 
   const parser = new FrameParser();
 
@@ -736,7 +753,12 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
   const plainDispatcher = makeInnerDispatcher(sendTunnelFrame, { jsPatch: () => uiCompat.trustE2EEAsLoopback, gate: true });
 
   // host 端 E2EE 静态密钥对（持久化 ~/.rdsh/e2ee-key.json；join 注册时上送指纹）
-  const hostE2eeKeypair: KeyPair = loadOrCreateE2eeKeyPair();
+  let hostE2eeKeypair: KeyPair;
+  try {
+    hostE2eeKeypair = loadOrCreateE2eeKeyPair();
+  } catch (err) {
+    releaseLockAndRethrow(err);
+  }
 
   /** E2EE raw 流状态（Noise 响应方 + 内层分发）。 */
   interface RawStreamState {
@@ -878,7 +900,6 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
     const url = `${hubWsBase}/tunnel`;
     const client = new WebSocket(url, { headers: { authorization: `Bearer ${opts.token}` }, rejectUnauthorized: !opts.insecure });
     currentClient = client;
-    setState("connecting", { message: `connecting to ${opts.hubUrl}` });
 
     // 401/403 = token 被拒（吊销/不存在）。监听此事件后 ws 不再自动 abort，
     // 需手动 terminate → 触发 close → 决定「重配对」还是「普通重连」。
@@ -966,9 +987,17 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
         /* 已关闭 */
       }
     });
+
+    // 状态回调放在所有监听器挂好**之后**：embedder 的 onState 若抛错，异常会向上抛并被
+    // releaseLockAndRethrow 处理；此时 socket 已有 error 监听，不会因后续连接失败变成未捕获 error 崩进程。
+    setState("connecting", { message: `connecting to ${opts.hubUrl}` });
   }
 
-  connect();
+  try {
+    connect();
+  } catch (err) {
+    releaseLockAndRethrow(err);
+  }
 
   return {
     setUiCompat(trustE2EEAsLoopback: boolean): void {

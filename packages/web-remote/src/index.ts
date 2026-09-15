@@ -204,8 +204,12 @@ export function apply(ctx: Ctx): void {
         name: config.name,
       });
       startTunnel(config, config.hub, hostToken, joinedName, insecure);
-    } catch {
-      // 自动接入失败不阻塞面板；用户可手动接入重试
+    } catch (e) {
+      // 自动接入失败不阻塞面板；用户可手动接入重试。
+      // 例外：锁被占用（同机另一实例在跑隧道）必须让用户看见原因 —— 否则表现为
+      // 「面板一直 disconnected」，与修复前的「状态反复掉线/连线」一样无法自查。
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes("join lock") || msg.includes("another tunnel is already running")) lastMessage = msg;
     }
   }
 
