@@ -7,7 +7,7 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [rdsh-gateway 0.8.6 · dsh-web-remote 0.5.5 · remote-dsh 0.10.7] - 2026-09-17
 
 ### 修复
 
