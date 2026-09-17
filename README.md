@@ -22,7 +22,8 @@
 ### ① Get started fast (rdsh Hub cloud relay)
 - **For**: most users who want the fastest path — no self-hosted hub, no public IP; just install the DSH plugin on your machine;
 - **Needs**: an rdsh account ([sign up at rdsh.cn](https://rdsh.cn)) + the `dsh-web-remote` DSH plugin;
-- **Result**: access from anywhere (laptop / phone / in-WeChat browser) by signing in.
+- **Result**: access from anywhere (laptop / phone / in-WeChat browser) by signing in;
+- **Note**: the plugin pins DSH's workspace directory picker to the **in-app browser**, so choosing a workspace works from a remote browser (a host OS dialog would open on the host's own screen, out of your reach).
 
 ```bash
 # via the DSH plugin (no CLI):

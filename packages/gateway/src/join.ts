@@ -16,7 +16,7 @@ import type { IncomingHttpHeaders } from "node:http";
 import { WebSocket } from "ws";
 import { FrameParser, FRAME_TYPE, encodeFrame, jsonPayload, parseJsonPayload, FLAG_E2E, MAX_PAYLOAD_LENGTH } from "rdsh-tunnel";
 import type { Frame } from "rdsh-tunnel";
-import { findDsh, spawnDsh, exchangeDshSessionCookie, detectDshVersion, dshVersionWarning } from "./spawn-dsh.ts";
+import { findDsh, spawnDsh, exchangeDshSessionCookie, detectDshVersion, dshVersionWarning, checkRemotePickerGraph, remotePickerWarning } from "./spawn-dsh.ts";
 import { rewriteHeadersForDsh } from "./proxy.ts";
 import type { ProxyTarget } from "./proxy.ts";
 import { clearPersistedToken, persistToken, readPersistedToken } from "./token-store.ts";
@@ -1049,6 +1049,11 @@ export async function join(opts: JoinOptions): Promise<void> {
     if (dshAuthCookieHeader === null) {
       console.warn("rdsh join: dsh 0.1.2+ 会话 cookie 换发失败——远程访问将返回 401。");
     }
+  }
+
+  // 自检：目录选择器必须是浏览器内形态（否则远端浏览器只会看到弹在宿主屏幕上的原生对话框）
+  if ((await checkRemotePickerGraph(dsh.port, dshAuthCookieHeader)) === false) {
+    console.warn(`\n⚠  ${remotePickerWarning()}\n`);
   }
 
   // 解析 host token（含证书自动检测 + 持久化）；进程重启后复用，避免重复配对。

@@ -50,6 +50,11 @@ window.__ModuleLoader__.load({
       accessCodePlaceholder: "输入新密码（至少 4 位）",
       accessCodeSet: "设置",
       accessCodeClear: "清除",
+      pickerLabel: "目录选择",
+      pickerOkText: "浏览器内（browse）",
+      pickerBadText: "宿主原生对话框（native）——远端浏览器无法操作",
+      pickerHint: "插件已把目录选择器固定为浏览器内形态；若显示 native，通常是被其它 patch 层覆盖（目录选择器只允许一个 pin 通道）。",
+      pickerUnknownText: "未知",
     };
 
     const en = {
@@ -85,6 +90,11 @@ window.__ModuleLoader__.load({
       accessCodePlaceholder: "New code (min 4 chars)",
       accessCodeSet: "Set",
       accessCodeClear: "Clear",
+      pickerLabel: "Directory picker",
+      pickerOkText: "In-app browser (browse)",
+      pickerBadText: "Host OS dialog (native) — unusable from a remote browser",
+      pickerHint: "The plugin pins the picker to the in-app browser. Seeing native usually means another patch layer overrode it (only one pin channel is allowed).",
+      pickerUnknownText: "Unknown",
     };
 
     const CSS = `
@@ -157,6 +167,8 @@ window.__ModuleLoader__.load({
       const [hasAccessCode, setHasAccessCode] = React.useState(false);
       const [codeInput, setCodeInput] = React.useState("");
       const [codeBusy, setCodeBusy] = React.useState(false);
+      const [pickerKind, setPickerKind] = React.useState(undefined);
+      const [pickerOk, setPickerOk] = React.useState(undefined);
 
       React.useEffect(() => {
         let alive = true;
@@ -172,6 +184,8 @@ window.__ModuleLoader__.load({
             setSavedToken(v.hasToken === true);
             if (typeof v.uiCompat === "boolean") setUiCompat(v.uiCompat);
             if (typeof v.hasAccessCode === "boolean") setHasAccessCode(v.hasAccessCode);
+            if (typeof v.pickerKind === "string") setPickerKind(v.pickerKind);
+            if (typeof v.pickerOk === "boolean") setPickerOk(v.pickerOk);
           } catch {
             /* 瞬时错误忽略，下一轮重试 */
           }
@@ -411,11 +425,39 @@ window.__ModuleLoader__.load({
             ),
           );
 
+      // 只读诊断：目录选择器形态（插件把它钉成 browse；不是 browse 就要能看见）
+      const pickerText =
+        pickerKind === undefined
+          ? t("pickerUnknownText")
+          : pickerOk === true
+            ? t("pickerOkText")
+            : pickerKind === "unknown" || pickerKind === "none"
+              ? t("pickerUnknownText")
+              : t("pickerBadText");
+      const pickerRow = React.createElement(
+        "div",
+        { className: "dsh-web-remote-field" },
+        React.createElement("label", null, t("pickerLabel")),
+        React.createElement(
+          "div",
+          { className: "dsh-web-remote-accesscode" },
+          React.createElement(
+            "span",
+            { className: "dsh-web-remote-accesscode-badge" + (pickerOk === true ? " set" : "") },
+            pickerText,
+          ),
+        ),
+        pickerOk === false
+          ? React.createElement("span", { className: "dsh-web-remote-compat-desc" }, " ", t("pickerHint"))
+          : null,
+      );
+
       return React.createElement(
         "div",
         { className: "dsh-web-remote" },
         statusLine,
         tip,
+        pickerRow,
         message ? React.createElement("p", { className: "dsh-web-remote-msg" }, message) : null,
         form,
         compatToggle,

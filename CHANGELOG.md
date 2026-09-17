@@ -7,6 +7,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Choosing a workspace works from a remote browser** (web-remote + gateway): DSH resolves its directory picker once at boot; on a desktop host launched outside SSH it picked the **host OS dialog**, which opens on the host's own screen and cannot be driven from a remote browser. The plugin now pins the picker to the in-app browser (`browse`) in its bundle patch — unconditionally, connected or not — and the CLI (`rdsh host serve` / `rdsh host join`) spawns `dsh web` with the remote-session signal DSH reads for the same decision. The panel shows which picker actually took effect.
+- **Silent regression guard** (gateway): `rdsh host serve` / `join` checks the spawned dsh's boot graph for the in-app picker and warns instead of leaving the operator with an unusable picker.
+
+> ⚠️ The picker is single-occupancy: never add a second pin channel (a hand-written layer in the profile's `cordis.patch.yml`, or `dsh web --patch`). Duplicate rows make dsh fail to boot. Reinstall the plugin (or upgrade the CLI) to pick this up; no hub deployment needed.
+
 ## [rdsh-gateway 0.8.5 · dsh-web-remote 0.5.4 · remote-dsh 0.10.6] - 2026-09-15
 
 ### Fixed

@@ -7,6 +7,15 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### 修复
+
+- **远端浏览器可以正常选择工作区目录**（web-remote + gateway）：DSH 的目录选择器在启动时一次解析；宿主是桌面操作系统且非 SSH 启动时会选成**宿主原生对话框**——它弹在宿主自己的屏幕上，远端浏览器无法操作。现在插件在自己的 bundle patch 里把选择器固定为**浏览器内**形态（无条件，与隧道状态无关）；CLI（`rdsh host serve` / `rdsh host join`）在 spawn `dsh web` 时注入 DSH 判定所用的远端会话信号。面板会显示实际生效的选择器形态。
+- **静默回归护栏**（gateway）：`rdsh host serve` / `join` 启动后检查 spawn 出的 dsh 的 boot graph 是否含浏览器内选择器，缺失时告警，而不是让操作者面对一个用不了的目录选择器。
+
+> ⚠️ 选择器是**单占用**的：不要再加第二个 pin 通道（手工写 profile 的 `cordis.patch.yml`，或给 `dsh web` 传 `--patch`）——重复的条目会让 dsh **启动失败**。重装插件（或升级 CLI）即可生效，无需部署 hub。
+
 ## [rdsh-gateway 0.8.5 · dsh-web-remote 0.5.4 · remote-dsh 0.10.6] - 2026-09-15
 
 ### 修复

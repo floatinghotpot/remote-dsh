@@ -9,6 +9,7 @@
 
 - **Anytime**: your DSH agent keeps working on the computer, and from **anywhere** (your phone, tablet, or any computer's browser) you can see how far it's got and send new tasks — no need to sit by the machine for long jobs. "Step away — the work doesn't stop."
 - **Secure**: it all runs over encrypted connections — what you view and operate remotely is ciphertext, and only your account can enter your computer. Using it from outside feels as safe as sitting right in front of it.
+- **Workspace picking just works**: once the plugin is installed, DSH's directory picker is pinned to the **in-app** browser — from a remote browser you can browse this computer's filesystem and create folders (DSH's native OS dialog would open on that computer's own screen, out of your reach).
 
 ## How it works: install a plugin
 

@@ -1,11 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile, chmod } from "node:fs/promises";
+import { mkdtemp, writeFile, chmod, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:http";
 import { findDsh, spawnDsh, exchangeDshSessionCookie, detectDshVersion, compareDshVersions, dshVersionWarning, DSH_COMPAT_MIN, DSH_COMPAT_MAX } from "../src/spawn-dsh.ts";
-
 test("findDsh 找不到时返回 null", () => {
   const oldPath = process.env.PATH;
   process.env.PATH = "/nonexistent-dir";
@@ -125,8 +124,7 @@ test("compareDshVersions：核心版本与 rc 后缀比较", () => {
   assert.equal(compareDshVersions("a", "b"), 0);
 });
 
-test("dshVersionWarning：窗口内不提示，越界给动作指令", () => {
-  // 实测窗口 [DSH_COMPAT_MIN, DSH_COMPAT_MAX]：两端与中间版本均不提示
+test("dshVersionWarning：窗口内不提示，越界给动作指令", () => {  // 实测窗口 [DSH_COMPAT_MIN, DSH_COMPAT_MAX]：两端与中间版本均不提示
   for (const version of [DSH_COMPAT_MIN, "0.1.2-rc.1", DSH_COMPAT_MAX]) {
     assert.equal(dshVersionWarning(version), null, `${version} 应在窗口内`);
   }
@@ -140,4 +138,53 @@ test("dshVersionWarning：窗口内不提示，越界给动作指令", () => {
   assert.ok(tooOld !== null && tooOld.includes("版本过旧"), "0.1.1-rc.1 应提示过旧");
   // 探测失败 → 不提示
   assert.equal(dshVersionWarning(null), null);
+});
+
+test("spawnDsh 给子进程注入 SSH_TTY（让 dsh 解析出浏览器内目录选择器）", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "rdsh-spawn-"));
+  const fake = join(dir, "dsh");
+  const seen = join(dir, "ssh-tty.txt");
+  // 假 dsh：先把继承到的 SSH_TTY 落盘，再打印就绪行并保持运行
+  await writeFile(
+    fake,
+    `#!/bin/sh\nprintf '%s' "\${SSH_TTY:-<unset>}" > "${seen}"\nprintf 'dsh web: http://127.0.0.1:38994\\n'\nsleep 30\n`,
+  );
+  await chmod(fake, 0o755);
+
+  const savedTty = process.env.SSH_TTY;
+  const savedConn = process.env.SSH_CONNECTION;
+  delete process.env.SSH_TTY;
+  delete process.env.SSH_CONNECTION;
+  try {
+    const dsh = await spawnDsh(fake);
+    await dsh.stop();
+    assert.equal(await readFile(seen, "utf8"), "rdsh-remote");
+  } finally {
+    if (savedTty === undefined) delete process.env.SSH_TTY;
+    else process.env.SSH_TTY = savedTty;
+    if (savedConn === undefined) delete process.env.SSH_CONNECTION;
+    else process.env.SSH_CONNECTION = savedConn;
+  }
+});
+
+test("spawnDsh 不覆盖用户真实的 SSH 信号", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "rdsh-spawn-"));
+  const fake = join(dir, "dsh");
+  const seen = join(dir, "ssh-tty.txt");
+  await writeFile(
+    fake,
+    `#!/bin/sh\nprintf '%s' "\${SSH_TTY:-<unset>}" > "${seen}"\nprintf 'dsh web: http://127.0.0.1:38995\\n'\nsleep 30\n`,
+  );
+  await chmod(fake, 0o755);
+
+  const savedTty = process.env.SSH_TTY;
+  process.env.SSH_TTY = "/dev/ttys999";
+  try {
+    const dsh = await spawnDsh(fake);
+    await dsh.stop();
+    assert.equal(await readFile(seen, "utf8"), "/dev/ttys999");
+  } finally {
+    if (savedTty === undefined) delete process.env.SSH_TTY;
+    else process.env.SSH_TTY = savedTty;
+  }
 });

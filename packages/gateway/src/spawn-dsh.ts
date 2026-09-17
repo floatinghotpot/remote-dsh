@@ -57,6 +57,33 @@ export function findDsh(override?: string): string | null {
 }
 
 /**
+ * 注入给 dsh 的「远端操作者」信号值。用可读字面量而非 `/dev/...`：
+ * 让 `env` 里一眼看出这是 rdsh 注入的，而不是真实终端路径。
+ */
+export const RDSH_REMOTE_TTY = "rdsh-remote";
+
+/**
+ * 构造 spawn dsh 时的环境：保证 dsh 把目录选择器解析为 **browse**（浏览器内目录浏览器）。
+ *
+ * 事实依据（doc/fix/20260917-remote-workspace-picker/discussion.md F2/F4/F8）：
+ * `@deepseek-ai/dsh-host-directory-picker-auto` 在 boot 时读 `SSH_CONNECTION`/`SSH_TTY`
+ * （仅继承进程层，非空即可）——「操作者看不到宿主显示」正是 rdsh 的场景（等价于
+ * SSH 端口转发下的无人值守宿主）。不注入它，宿主是 macOS/Windows/带 DISPLAY 的 Linux
+ * 时会解析成 `native`，原生对话框弹在宿主屏幕上、远端浏览器无法操作。
+ *
+ * 只设 `SSH_TTY`：`SSH_CONNECTION` 有固定 `"ip port ip port"` 格式，写假值会误导解析它的工具。
+ * 用户真的在 SSH 会话里启动时（已有非空信号）保持原值不动。
+ *
+ * ⚠️ 这是上游启发式的输入：上游若改变判定信号，本注入会静默失效（spawn 后自检见
+ * `checkRemotePickerGraph` 与 doc/fix/20260917-remote-workspace-picker/solution.md §6）。
+ */
+export function dshSpawnEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const hasSignal = (base.SSH_TTY ?? "") !== "" || (base.SSH_CONNECTION ?? "") !== "";
+  if (hasSignal) return { ...base };
+  return { ...base, SSH_TTY: RDSH_REMOTE_TTY };
+}
+
+/**
  * spawn `dsh web --port 0 --no-open` 并等待其报告监听端口。
  * 就绪后把 dsh 的 stdout/stderr 透传到本进程。
  * dsh 启动失败/超时 → reject。
@@ -65,6 +92,7 @@ export function spawnDsh(dshPath: string): Promise<SpawnedDsh> {
   return new Promise((resolve, reject) => {
     const child = spawn(dshPath, ["web", "--port", "0", "--no-open"], {
       stdio: ["ignore", "pipe", "pipe"],
+      env: dshSpawnEnv(),
     });
     let stderrBuf = "";
     const timeout = setTimeout(() => {
@@ -142,6 +170,74 @@ export function exchangeDshSessionCookie(port: number, token: string, timeoutMs 
       resolve(null);
     });
   });
+}
+
+const GRAPH_CHECK_TIMEOUT_MS = 5_000;
+const MAX_GRAPH_BYTES = 512 * 1024;
+
+/** boot graph 里浏览器内目录选择器的客户端模块标识（命中即说明 picker = browse）。 */
+const BROWSE_PICKER_MODULE = "@deepseek-ai/dsh-client-ui-directory-picker-browse";
+
+/**
+ * 自检：spawn 出的 dsh 是否真的把目录选择器解析成了 **browse**。
+ *
+ * 方法（与 doc/fix/20260917-remote-workspace-picker 的验证手段一致）：取一次首页，
+ * 在注入的 boot graph 里找浏览器内选择器的客户端模块 —— 在 → 远端浏览器可用；
+ * 不在 → 选择器是 `native`（原生对话框弹在宿主屏幕上）。
+ *
+ * @returns `true`（已挂载 browse）/ `false`（确认未挂载）/ `null`（无法判定：网络、鉴权、超限）
+ * 只有 `false` 才值得告警；`null` 静默，避免噪声。
+ */
+export function checkRemotePickerGraph(
+  port: number,
+  cookieHeader: string | null = null,
+  timeoutMs = GRAPH_CHECK_TIMEOUT_MS,
+): Promise<boolean | null> {
+  return new Promise((resolve) => {
+    const headers: Record<string, string> = { Host: `127.0.0.1:${port}` };
+    if (cookieHeader !== null) headers.Cookie = cookieHeader;
+    let settled = false;
+    const finish = (value: boolean | null): void => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const req = get({ host: "127.0.0.1", port, path: "/", headers }, (res) => {
+      if (res.statusCode !== 200) {
+        res.resume();
+        finish(null);
+        return;
+      }
+      let body = "";
+      res.setEncoding("utf8");
+      res.on("data", (chunk: string) => {
+        body += chunk;
+        if (body.length > MAX_GRAPH_BYTES) {
+          req.destroy();
+          finish(null);
+        }
+      });
+      res.on("end", () => finish(body.includes(BROWSE_PICKER_MODULE)));
+      res.on("error", () => finish(null));
+    });
+    req.on("error", () => finish(null));
+    req.setTimeout(timeoutMs, () => {
+      req.destroy();
+      finish(null);
+    });
+  });
+}
+
+/**
+ * 自检失败（确认未挂载浏览器内选择器）时的告警文案。
+ * 零文档导向：说清后果 + 直接给动作。
+ */
+export function remotePickerWarning(): string {
+  return (
+    "rdsh: 远端浏览器的目录选择器不是浏览器内目录浏览器（很可能是宿主原生对话框，远端无法操作）。" +
+    "若装了 dsh-web-remote 插件，请检查 profile 的 cordis.patch.yml 是否被其它 patch 层覆盖（目录选择器只允许一个 pin 通道）。" +
+    "否则可能是 dsh 版本变更导致远端信号失效——升级 remote-dsh：npm i -g remote-dsh@latest。"
+  );
 }
 
 /** 探测 dsh 版本号（`dsh --version` 输出如 `0.1.2-rc.1`）；失败/不可解析 → null。 */

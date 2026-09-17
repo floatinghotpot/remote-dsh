@@ -5,7 +5,7 @@ import { networkInterfaces } from "node:os";
 import type { NetworkInterfaceInfo } from "node:os";
 import { startGateway } from "./server.ts";
 import type { RunningGateway } from "./server.ts";
-import { findDsh, spawnDsh, exchangeDshSessionCookie, detectDshVersion, dshVersionWarning } from "./spawn-dsh.ts";
+import { findDsh, spawnDsh, exchangeDshSessionCookie, detectDshVersion, dshVersionWarning, checkRemotePickerGraph, remotePickerWarning } from "./spawn-dsh.ts";
 import { loadConfig, resolveConfigPath } from "./config.ts";
 import type { RdshConfig } from "./config.ts";
 import { UserManager } from "./auth.ts";
@@ -58,6 +58,11 @@ export async function serve(opts: ServeOptions): Promise<void> {
     if (dshAuthCookieHeader === null) {
       console.warn("rdsh: dsh 0.1.2+ 会话 cookie 换发失败——远程访问将返回 401（请确认 dsh web 已就绪或暂用 dsh@0.1.1-rc.2）。");
     }
+  }
+
+  // 自检：目录选择器必须是浏览器内形态（否则远端浏览器只会看到弹在宿主屏幕上的原生对话框）
+  if ((await checkRemotePickerGraph(dsh.port, dshAuthCookieHeader)) === false) {
+    console.warn(`\n⚠  ${remotePickerWarning()}\n`);
   }
 
   // TLS 决策：有 tls.cert/key → https；无 → http（behindProxy 或 pair/none）。

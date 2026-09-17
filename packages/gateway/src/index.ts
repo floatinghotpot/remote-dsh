@@ -10,7 +10,7 @@ export type { SessionPayload } from "./session.ts";
 export { PairManager } from "./pair.ts";
 export { startGateway } from "./server.ts";
 export type { GatewayOptions, RunningGateway } from "./server.ts";
-export { findDsh, spawnDsh, exchangeDshSessionCookie, detectDshVersion, compareDshVersions, dshVersionWarning, DSH_COMPAT_MIN, DSH_COMPAT_MAX } from "./spawn-dsh.ts";
+export { findDsh, spawnDsh, dshSpawnEnv, RDSH_REMOTE_TTY, checkRemotePickerGraph, remotePickerWarning, exchangeDshSessionCookie, detectDshVersion, compareDshVersions, dshVersionWarning, DSH_COMPAT_MIN, DSH_COMPAT_MAX } from "./spawn-dsh.ts";
 export type { SpawnedDsh } from "./spawn-dsh.ts";
 export { forwardHttp, createUpgradeProxy, rewriteHeadersForDsh } from "./proxy.ts";
 export type { ProxyTarget } from "./proxy.ts";

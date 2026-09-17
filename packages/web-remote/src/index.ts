@@ -39,6 +39,43 @@ interface Ctx {
   webServer: WebServerService;
   effect(callback: () => unknown, label: string): void;
   on(event: string, cb: () => void): void;
+  /**
+   * 读取服务而不建立硬依赖（缺席返回 undefined）。用于取 `directoryPicker`
+   * 做只读诊断——本插件不 inject 它，避免没有选择器的组合把插件树拖垮。
+   */
+  get(name: string): unknown;
+}
+
+/** `directoryPicker` 服务的最小形状（只读 kind，避免依赖上游类型包）。 */
+interface DirectoryPickerLike {
+  capability?: () => { kind?: string } | undefined;
+}
+
+/** 本部署期望的选择器形态：插件就是为远程访问而生，必须是浏览器内形态。 */
+const EXPECTED_PICKER_KIND = "browse";
+
+/** 当前解析出的选择器形态（`browse` / `native` / `none` / `unknown`）——只读诊断，不参与业务。 */
+function pickerKindOf(ctx: { get(name: string): unknown }): string {
+  try {
+    const kind = (ctx.get("directoryPicker") as DirectoryPickerLike | undefined)?.capability?.()?.kind;
+    return typeof kind === "string" ? kind : "none";
+  } catch {
+    return "unknown";
+  }
+}
+
+/**
+ * 面板用的目录选择器诊断（纯函数，便于单测）。
+ * `pickerOk === false` 是远端访问的**故障信号**：说明选择器不是浏览器内形态，
+ * 远端浏览器只会看到弹在宿主屏幕上的原生对话框。
+ */
+export function pickerDiagnostics(ctx: { get(name: string): unknown }): {
+  pickerKind: string;
+  expectedPickerKind: string;
+  pickerOk: boolean;
+} {
+  const pickerKind = pickerKindOf(ctx);
+  return { pickerKind, expectedPickerKind: EXPECTED_PICKER_KIND, pickerOk: pickerKind === EXPECTED_PICKER_KIND };
 }
 
 const ok = (value: unknown): RpcResult => ({ ok: true, value });
@@ -255,6 +292,8 @@ export function apply(ctx: Ctx): void {
   async function state(): Promise<RpcResult> {
     try {
       const compat = uiCompatEnabled();
+      // 只读诊断：每个分支都带上，面板据此显示/告警当前目录选择器形态
+      const picker = pickerDiagnostics(ctx);
       if (handle !== null && liveState !== null) {
         return ok({
           status: mapState(liveState),
@@ -264,11 +303,12 @@ export function apply(ctx: Ctx): void {
           hasToken: true,
           uiCompat: compat,
           hasAccessCode: accessCodeEnabled(),
+          ...picker,
         });
       }
       const held = readJoinLock();
       if (held !== null && held.role === "cli") {
-        return ok({ status: "external", uiCompat: compat, hasAccessCode: accessCodeEnabled() });
+        return ok({ status: "external", uiCompat: compat, hasAccessCode: accessCodeEnabled(), ...picker });
       }
       const config = await loadConfig(DEFAULT_HOST_CONFIG_PATH);
       const hasAccessCode = config.gateway?.accessCode != null;
@@ -281,9 +321,10 @@ export function apply(ctx: Ctx): void {
           hasToken: readPersistedToken(config.hub) !== null,
           uiCompat: compat,
           hasAccessCode,
+          ...picker,
         });
       }
-      return ok({ status: "unconfigured", uiCompat: compat, hasAccessCode });
+      return ok({ status: "unconfigured", uiCompat: compat, hasAccessCode, ...picker });
     } catch (e) {
       return err("internal", e instanceof Error ? e.message : String(e));
     }

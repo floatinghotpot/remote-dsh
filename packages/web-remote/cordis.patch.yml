@@ -4,3 +4,24 @@
 - insert:
     - id: remote-access
       name: 'dsh-web-remote'
+
+# ── Pin the workspace directory picker to the in-app browser (browse) ────────
+# This plugin exists for remote access: a remote browser can never reach the
+# host's OS dialog, so DSH's boot-time adaptive chooser
+# (@deepseek-ai/dsh-host-directory-picker-auto) must not be allowed to resolve
+# `native` here. Disable that row and compose the browse pair directly — the
+# documented pin (see the auto package README, "Pinning is not a config field
+# here: compose the -native or -browse row directly").
+#
+# ⚠ Sole declarative inserter: a second pin channel (a hand-written layer in the
+#   profile's cordis.patch.yml, or a `--patch` overlay) inserting these rows
+#   makes dsh fail to boot with `duplicate loader entry id` / a duplicate
+#   `directoryPicker` service. Never add one.
+- id: directory-picker
+  disabled: true
+
+- insert:
+    - id: directory-picker-browse
+      name: '@deepseek-ai/dsh-host-directory-picker-browse'
+    - id: ui-directory-picker-browse
+      name: '@deepseek-ai/dsh-client-ui-directory-picker-browse'

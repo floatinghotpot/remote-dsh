@@ -436,6 +436,8 @@ rdsh hub service install|status|uninstall      # hub 服务化（rdsh-hub.servic
 | 浏览器报 `crypto.randomUUID is not a function` | 旧版网关（0.2.0 已修复 polyfill） | 升级 |
 | `/api/...` 报 403 | Host/Origin 未改写（0.2.0 已修复） | 升级 |
 | 配对后目录选择失败 | 同上 | 升级 |
+| 远端点「添加工作区」时**原生对话框弹在宿主屏幕上**（远端看不到、点不了） | DSH 在启动时把目录选择器解析成了 `native`（宿主是 macOS/Windows/带显示器的 Linux，且不是从 SSH 会话启动） | 升级到当前版本：插件 `dsh plugin --profile web add dsh-web-remote@latest` 会把选择器固定为**浏览器内**形态；CLI 形态（`rdsh host serve/join`）已在 spawn 时注入远端信号。仍出现时检查该 profile 的 `cordis.patch.yml` 是否被手工 patch 覆盖——**目录选择器只允许一个 pin 通道**，重复会让 dsh 启不来 |
+| 装了 `dsh-web-remote` 后，**宿主本机**浏览器里也变成浏览器内选目录 | 预期行为：目录选择器是 boot 级单一实现，插件按"远程优先"固定为浏览器内形态（远端够不到宿主 OS 对话框） | 无需处理；能力等价（浏览 + 新建目录都作用于宿主文件系统） |
 | Ctrl+C 后 dsh 残留 | 0.2.0 已修复（SIGINT/SIGTERM/SIGHUP 优雅退出） | 升级 |
 | 端口被占 | — | `--port` 换端口 |
 | 手机打不开 | AP 隔离 / 防火墙 | 确认同一 WiFi、允许传入连接 |
@@ -443,6 +445,17 @@ rdsh hub service install|status|uninstall      # hub 服务化（rdsh-hub.servic
 | 上传/请求报 `UPSTREAM_ABORTED: upstream closed before responding (ECONNRESET)` | **不是网络不通**：dsh 已接受连接、但在读请求体阶段就断开（常见于鉴权失败、体积限制） | 看主机侧 dsh 日志确认真实原因（旧版网关会把这类错误误报成 `UPSTREAM_UNREACHABLE: dsh not reachable`，升级到当前版本后文案已修正） |
 | 报 `UPSTREAM_UNREACHABLE: dsh not reachable (ECONNREFUSED/ENOTFOUND…)` | 主机侧 dsh 真的没在监听 / DNS 不对 | 确认 `dsh web` 在跑、`target` 主机端口正确 |
 | E2EE 下预览空白/内容错乱（旧版） | 旧版 shim 把响应整体缓冲并按文本解码 | 升级（当前版本响应按字节流式透传） |
+
+### 10.1 远端「添加工作区」的目录选择器（只允许一个 pin 通道）
+
+DSH 的目录选择器有两套实现，**在启动时二选一**、之后不再改变：
+
+- `native`：宿主 OS 原生对话框 —— 弹在**宿主屏幕上**，远端浏览器看不到、点不了；
+- `browse`：**浏览器内**目录浏览器 —— 列出宿主文件系统，可浏览、可新建目录。
+
+remote-dsh 的两条入口都把结果固定为 `browse`：插件 `dsh-web-remote` 在自己的 bundle patch 里禁用 DSH 的自适应行并直接组合 `browse`（无论隧道是否连接）；CLI（`rdsh host serve` / `rdsh host join`）在 spawn `dsh web` 时注入远端信号（上游据此判定 `browse`）。插件面板的「目录选择」一行可看到当前实际生效的形态 —— 显示 `native` 即为异常。
+
+> ⚠️ **不要手工 pin**：`directory-picker` 是**单占用**的（一个后端服务 + 一个浏览器半）。任何"第二个插入者"（手工写 profile 的 `cordis.patch.yml`、或给 `dsh web` 传 `--patch`）都会让 dsh **启动失败**（`duplicate loader entry id` / 重复注册 `directoryPicker`）。装了插件就不要再手工加 patch。
 
 ## 11. 相关文档
 
