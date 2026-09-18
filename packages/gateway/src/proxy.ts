@@ -36,6 +36,21 @@ export interface ForwardOptions {
 }
 
 /**
+ * 已知**不含**补丁目标串的 URL（按 patcher 函数身份隔离——目标串由 patcher 决定，只看 URL 会误判）。
+ * 目的与隧道路径（`join.ts` 的 `patchSkipped`）一致：DSH 前端壳资源每次页面加载都被缓冲 + 解压 + 全量扫描，
+ * 而这些字节永远不会命中；记住一次即可一直走流式。
+ */
+const jsPatchMissedUrls = new WeakMap<(body: Buffer) => Buffer | null, Set<string>>();
+
+function missedUrlsFor(patcher: (body: Buffer) => Buffer | null): Set<string> {
+  const existing = jsPatchMissedUrls.get(patcher);
+  if (existing !== undefined) return existing;
+  const created = new Set<string>();
+  jsPatchMissedUrls.set(patcher, created);
+  return created;
+}
+
+/**
  * 重写转发头以通过 DSH 围栏（isTrustedApiRequest 要求 Host/Origin 一致且为 loopback）。
  * - Host → 127.0.0.1:<port>（M1 事实：DSH 只信任 loopback/trusted Host）
  * - Origin 同步改写为 http://127.0.0.1:<port>（浏览器视角仍同源，不影响 CORS）
@@ -119,8 +134,13 @@ export function forwardHttp(
         });
         return;
       }
+      const patchUrl = req.url ?? "";
+      const patchMissed = opts?.jsPatch === undefined ? undefined : missedUrlsFor(opts.jsPatch);
       const canPatchJs =
-        opts?.jsPatch !== undefined && typeof contentType === "string" && /javascript/i.test(contentType);
+        opts?.jsPatch !== undefined &&
+        typeof contentType === "string" &&
+        /javascript/i.test(contentType) &&
+        patchMissed?.has(patchUrl) !== true;
       if (canPatchJs) {
         // JS bundle 需缓冲后才能替换目标串；先按 content-encoding 解码（dsh 会 gzip JS），
         // 补丁后按原编码重压（fail-open：未命中/不支持编码 → 原字节原头透传）
@@ -133,6 +153,8 @@ export function forwardHttp(
           const patched = decoded === null ? null : opts!.jsPatch!(decoded);
           const recoded = patched === null ? null : encodeBody(patched, encoding);
           const outBody = recoded ?? raw;
+          // 只有"解码后确实没有目标串"才记住该 URL（编码不支持时没看过明文，保持每次尝试）
+          if (patched === null && decoded !== null) patchMissed?.add(patchUrl);
           const outHeaders: Record<string, string | string[] | undefined> = { ...upstreamRes.headers };
           if (recoded !== null) {
             outHeaders["content-length"] = String(outBody.length);

@@ -23,6 +23,8 @@ const TARGET = "isLoopbackHostname(pageLocation.hostname)";
 const JS = `var loop = ${TARGET};\n`;
 const JSON_BODY = `{"k":"${TARGET}"}`;
 const ZSTD_FAKE = Buffer.from(`FAKE-ZSTD:${JS}`);
+/** 不含补丁目标串的"前端壳"体（模拟 DSH 的 /assets/*.js）；用于 miss→短路流式的验证。 */
+let shellHits = 0;
 
 async function startUpstream(): Promise<{ server: Server; port: number }> {
   const server = createServer((req, res) => {
@@ -48,6 +50,15 @@ async function startUpstream(): Promise<{ server: Server; port: number }> {
       res.end(ZSTD_FAKE);
       return;
     }
+    if (url.startsWith("/plugins/shell.js")) {
+      // 首次：完整体（不含目标串）→ 记录 miss 并进入跳过集合；
+      // 之后：只发头 + 一片、**永不结束** —— 用来确定性区分"仍在缓冲"（永远等不到 OPEN）与"已短路流式"
+      shellHits += 1;
+      res.writeHead(200, { "content-type": "text/javascript; charset=utf-8" });
+      if (shellHits === 1) res.end("var shell = 1;\n");
+      else res.write("var shell = 1;\n");
+      return;
+    }
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON_BODY);
   });
@@ -71,6 +82,7 @@ interface Got {
 }
 
 test("loopback 补丁：identity / gzip / br 命中；未知编码与 JSON 原样透传；content-length 正确", async () => {
+  shellHits = 0;
   const upstream = await startUpstream();
   const wss = new WebSocketServer({ port: 0 });
   await new Promise<void>((r) => wss.on("listening", () => r()));
@@ -141,6 +153,87 @@ test("loopback 补丁：identity / gzip / br 命中；未知编码与 JSON 原�
   } finally {
     await handle.stop();
     await new Promise<void>((r) => wss.close(() => r()));
+    await new Promise<void>((r) => upstream.server.close(() => r()));
+  }
+});
+
+test("补丁日志：miss 与 hit 各留一条（每路径一次）；已 miss 的 URL 之后直接流式", async () => {
+  shellHits = 0;
+  const upstream = await startUpstream();
+  const wss = new WebSocketServer({ port: 0 });
+  await new Promise<void>((r) => wss.on("listening", () => r()));
+  const hubPort = (wss.address() as { port: number }).port;
+
+  const frames = new Map<number, Frame[]>();
+  let hubSocket: WebSocket | undefined;
+  wss.on("connection", (ws) => {
+    hubSocket = ws;
+    const parser = new FrameParser();
+    ws.on("message", (data) => {
+      for (const f of parser.push(Buffer.from(data as ArrayBuffer))) {
+        const list = frames.get(f.streamId) ?? [];
+        list.push(f);
+        frames.set(f.streamId, list);
+      }
+    });
+  });
+
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (...args: unknown[]): void => {
+    logs.push(args.map((a) => String(a)).join(" "));
+  };
+
+  const lockPath = join(await mkdtemp(join(tmpdir(), "rdsh-patch-skip-")), "join.lock");
+  const handle = startJoin({
+    hubUrl: `http://127.0.0.1:${hubPort}`,
+    token: "t".repeat(43),
+    insecure: false,
+    target: { host: "127.0.0.1", port: upstream.port },
+    role: "plugin",
+    lockPath,
+    hooks: {},
+  });
+
+  try {
+    await waitFor(() => hubSocket !== undefined);
+    const hub = hubSocket as WebSocket;
+    const send = (streamId: number, path: string): void => {
+      hub.send(
+        encodeFrame(FRAME_TYPE.OPEN, streamId, jsonPayload({ kind: "http", method: "GET", path, headers: { host: "127.0.0.1" } })),
+      );
+      hub.send(encodeFrame(FRAME_TYPE.CLOSE, streamId, jsonPayload({ code: 0 })));
+    };
+
+    // ① 首次请求不含目标串的"壳"资源（上游完整体）→ 记录一条 miss
+    send(1, "/plugins/shell.js");
+    await waitFor(() => (frames.get(1) ?? []).some((f) => f.type === FRAME_TYPE.CLOSE));
+    assert.equal(logs.filter((l) => l.includes("[patch] miss: /plugins/shell.js")).length, 1, "首次 miss 应留一条日志");
+
+    // ② 命中路径：请求两次，日志只应有一条 hit（旧的实现只在 RDSH_DEBUG_PATCH=1 时打，现场只能看到 miss）
+    send(2, "/plugins/plain.js");
+    await waitFor(() => (frames.get(2) ?? []).some((f) => f.type === FRAME_TYPE.CLOSE));
+    send(3, "/plugins/plain.js");
+    await waitFor(() => (frames.get(3) ?? []).some((f) => f.type === FRAME_TYPE.CLOSE));
+    const hitLogs = logs.filter((l) => l.includes("[patch] hit: /plugins/plain.js"));
+    assert.equal(hitLogs.length, 1, `hit 应留且只留一条日志（实际 ${hitLogs.length}）`);
+
+    // ③ 再次请求同一个壳 URL：上游这次**只发头 + 一片、永不结束**。
+    //    短路生效 ⇒ OPEN 与 DATA 必须立刻到达；若仍在缓冲（旧行为），OPEN 永远不来，下面 waitFor 超时失败。
+    send(4, "/plugins/shell.js");
+    await waitFor(() => (frames.get(4) ?? []).some((f) => f.type === FRAME_TYPE.OPEN), 2000);
+    await waitFor(() => (frames.get(4) ?? []).some((f) => f.type === FRAME_TYPE.DATA), 2000);
+    assert.ok(!(frames.get(4) ?? []).some((f) => f.type === FRAME_TYPE.CLOSE), "上游未结束 ⇒ 不应出现 CLOSE（流式进行中）");
+    assert.equal(
+      logs.filter((l) => l.includes("[patch] miss: /plugins/shell.js")).length,
+      1,
+      "短路后不得再重复尝试/记录",
+    );
+  } finally {
+    console.log = originalLog;
+    await handle.stop();
+    await new Promise<void>((r) => wss.close(() => r()));
+    upstream.server.closeAllConnections?.(); // ③ 留了一个永不结束的响应，必须先断开
     await new Promise<void>((r) => upstream.server.close(() => r()));
   }
 });

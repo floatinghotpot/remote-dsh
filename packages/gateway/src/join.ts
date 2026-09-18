@@ -425,6 +425,14 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
     const gatedHttp = new Map<number, { method: string; path: string; body: Buffer[]; size: number; acceptLanguage?: string }>();
     /** 已报告过"loopback 补丁未命中"的路径（每个路径只报一次，避免日志刷屏）。 */
     const patchMissReported = new Set<string>();
+    /** 已报告过"loopback 补丁命中"的路径（与 miss 对称：只看得到 miss 会让人误判"补丁从未生效"）。 */
+    const patchHitReported = new Set<string>();
+    /**
+     * 已确认**不含**补丁目标串的 URL（键为完整 path，含 query）——命中过一次 miss 后直接走流式，
+     * 不再每次页面加载都缓冲 + 解压 + 全量扫描（DSH 前端壳资源 2 个就 ~1.3 MB）。
+     * 键含 query 且不截断：combo 路由用 query 选内容，资源 URL 由内容决定（rev/hash），内容一变 URL 就变。
+     */
+    const patchSkipped = new Set<string>();
 
     /** 从转发头里取 rdsh_gate cookie（hub D12 白名单透传）。 */
     function gateCookie(headers: Record<string, string | string[]>): string | null {
@@ -597,7 +605,9 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
           responded = true;
           const status = upRes.statusCode ?? 502;
           const baseHeaders = normalizeRespHeaders(upRes.headers);
-          const wantsPatch = dio?.jsPatch?.() === true && isJsContentType(upRes.headers);
+          // 已确认该 URL 不含目标串（DSH 前端壳资源就属此类）→ 直接流式，省掉白解压与全量扫描
+          const wantsPatch =
+            dio?.jsPatch?.() === true && isJsContentType(upRes.headers) && !patchSkipped.has(path);
 
           // 非 JS / 未开补丁：保持原流式路径（OPEN 立即发，body 边到边发）
           if (!wantsPatch) {
@@ -634,8 +644,11 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
             let body: Buffer = raw;
             let outHeaders = baseHeaders;
             let hit = false;
+            /** 解码成功、且明文里确实**没有**目标串 → 该 URL 可以永久短路（换编码回来也一样没有）。 */
+            let targetAbsent = false;
             if (decoded !== null) {
               const patched = patchLoopbackJs(decoded);
+              targetAbsent = patched === null;
               const recoded = patched === null ? null : encodeBody(patched, encoding);
               if (recoded !== null) {
                 body = recoded;
@@ -647,16 +660,30 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
                 outHeaders["cache-control"] = "public, max-age=300";
               }
             }
-            // 未命中必须留痕（每个路径一次）：fail-open 是刻意设计，但"补丁从未生效"不能静默
-            //（2026-09-14 gzip 事故正是因为没有这条日志而排查了很久）
-            if (!hit) {
-              const key = (path.split("?")[0] ?? path).slice(0, 120);
-              if (!patchMissReported.has(key)) {
-                patchMissReported.add(key);
-                console.log(`[patch] miss: ${key} (${raw.length}B, content-encoding=${encoding === "" ? "identity" : encoding})`);
+            // 命中与未命中都必须留痕（每个路径一次）：fail-open 是刻意设计，但"补丁是否生效"不能靠猜。
+            // 两次误判都源于只看得到一半日志：2026-09-14 gzip 事故（只见 miss）、2026-09-17
+            // 「补丁在 0.1.5-rc.2 上永不命中」（把前端壳资源的 miss 当成了判据所在的 bundle）。
+            const logKey = (path.split("?")[0] ?? path).slice(0, 120);
+            if (hit) {
+              if (!patchHitReported.has(logKey) || process.env.RDSH_DEBUG_PATCH === "1") {
+                patchHitReported.add(logKey);
+                console.log(
+                  `[patch] hit: ${logKey} (${raw.length}B → ${body.length}B, ${encoding === "" ? "identity" : encoding})`,
+                );
               }
-            } else if (process.env.RDSH_DEBUG_PATCH === "1") {
-              console.log(`[patch] hit: ${path.slice(0, 120)} (${raw.length}B → ${body.length}B, ${encoding === "" ? "identity" : encoding})`);
+            } else {
+              const firstMiss = !patchMissReported.has(logKey);
+              patchMissReported.add(logKey);
+              // 只有"解码后确实没有目标串"才永久短路；编码不支持（decoded === null）时并没看过明文，
+              // 保持每次尝试（同一 URL 换个编码回来仍能被补丁）；重压失败同理不算。
+              if (targetAbsent) patchSkipped.add(path);
+              if (firstMiss) {
+                console.log(
+                  `[patch] miss: ${logKey} (${raw.length}B, content-encoding=${encoding === "" ? "identity" : encoding}) — fail-open${
+                    targetAbsent ? "；此 URL 后续不再尝试补丁" : ""
+                  }`,
+                );
+              }
             }
             send(
               encodeFrame(
