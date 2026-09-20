@@ -69,6 +69,32 @@ body {
   color: var(--rdsh-fg);
 }
 
+/*
+ * 表单控件字号：桌面 14px，窄屏（≤640px）或触屏设备（pointer: coarse，含 iPad/平板）16px。
+ *
+ * 为什么必须放在 CSS 而不是内联 style：iOS（Safari / WKWebView，含微信等 App 内
+ * 浏览器）对 computed font-size < 16px 的输入框，在获得焦点时会自动放大整个页面
+ * （键盘收起后往往仍保持放大），表现为“点一下输入框，页面突然变大”。16px 是阈值，
+ * 而媒体查询压不过内联样式（除非 !important），故字号统一在此声明、内联不再写字号。
+ * 注：maximum-scale=1 / user-scalable=no 在 iOS 10+ 默认被忽略，不能作为替代方案。
+ * 注：checkbox/radio 的渲染尺寸不受 font-size 影响，但仍排除以免影响行内排版。
+ * 注：`pointer: coarse` 覆盖宽度 > 640px 的触屏设备（iPad 竖屏 768px / 横屏 1024px）——
+ *     它们同样会触发 iOS 自动放大，只看宽度会漏掉。
+ */
+input:not([type="checkbox"]):not([type="radio"]),
+select,
+textarea {
+  font-size: 14px;
+}
+
+@media (max-width: 640px), (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     --rdsh-bg-base: #151517;

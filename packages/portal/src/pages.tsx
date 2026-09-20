@@ -181,7 +181,8 @@ function btnStyle(variant: "primary" | "danger" | "ghost" = "primary"): React.CS
 }
 
 function inputStyle(): React.CSSProperties {
-  return { padding: "8px 10px", borderRadius: 6, border: "1px solid var(--rdsh-border)", fontSize: 14, width: "100%", boxSizing: "border-box" };
+  // 字号由 theme.css 统一声明（窄屏 16px，避免 iOS 聚焦输入框时自动放大整页）
+  return { padding: "8px 10px", borderRadius: 6, border: "1px solid var(--rdsh-border)", width: "100%", boxSizing: "border-box" };
 }
 
 function menuItemStyle(danger = false): React.CSSProperties {
@@ -2059,7 +2060,7 @@ function ActionDialog({ spec, onClose }: { spec: DialogSpec; onClose: () => void
               <select
                 value={values[f.key] ?? f.value ?? f.options[0]?.value ?? ""}
                 onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
-                style={{ width: "100%", padding: "8px 10px", boxSizing: "border-box", fontSize: 14, background: "var(--rdsh-bg-surface)" }}
+                style={{ width: "100%", padding: "8px 10px", boxSizing: "border-box", background: "var(--rdsh-bg-surface)" }}
               >
                 {f.options.map((o) => (
                   <option key={o.value} value={o.value}>{o.label}</option>
@@ -2071,7 +2072,7 @@ function ActionDialog({ spec, onClose }: { spec: DialogSpec; onClose: () => void
                 placeholder={f.placeholder}
                 value={values[f.key] ?? ""}
                 onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
-                style={{ width: "100%", padding: "8px 10px", boxSizing: "border-box", fontSize: 14 }}
+                style={{ width: "100%", padding: "8px 10px", boxSizing: "border-box" }}
               />
             )}
           </div>
@@ -2083,13 +2084,13 @@ function ActionDialog({ spec, onClose }: { spec: DialogSpec; onClose: () => void
               value={confirmInput}
               onChange={(e) => setConfirmInput(e.target.value)}
               placeholder={spec.confirmText}
-              style={{ width: "100%", padding: "8px 10px", boxSizing: "border-box", fontSize: 14 }}
+              style={{ width: "100%", padding: "8px 10px", boxSizing: "border-box" }}
             />
           </div>
         )}
         <div style={{ marginBottom: 12 }}>
           <label style={{ display: "block", fontSize: 12, color: "var(--rdsh-fg-muted)", marginBottom: 4 }}>{t("原因（必填）")}</label>
-          <textarea value={reason} onChange={(e) => { setReason(e.target.value); if (reasonErr !== "") setReasonErr(""); }} rows={2} placeholder={t("请填写操作原因")} style={{ width: "100%", padding: "8px 10px", boxSizing: "border-box", fontSize: 14 }} />
+          <textarea value={reason} onChange={(e) => { setReason(e.target.value); if (reasonErr !== "") setReasonErr(""); }} rows={2} placeholder={t("请填写操作原因")} style={{ width: "100%", padding: "8px 10px", boxSizing: "border-box" }} />
           {reasonErr !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 12, margin: "4px 0 0" }}>{reasonErr}</p>}
         </div>
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
@@ -2542,7 +2543,8 @@ function CreateUserDialog({ isAdmin, onClose, onCreated }: { isAdmin: boolean; o
       {node}
     </div>
   );
-  const inputStyle: React.CSSProperties = { width: "100%", padding: "8px 10px", boxSizing: "border-box", fontSize: 14 };
+  // 字号由 theme.css 统一声明（窄屏 16px，避免 iOS 聚焦输入框时自动放大整页）
+  const inputStyle: React.CSSProperties = { width: "100%", padding: "8px 10px", boxSizing: "border-box" };
   return (
     <div style={{ position: "fixed", inset: 0, background: "var(--rdsh-scrim-soft)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 16, boxSizing: "border-box" }}>
       <div style={{ background: "var(--rdsh-bg-surface)", borderRadius: 12, padding: 20, width: 440, maxWidth: "100%", fontFamily: "system-ui, sans-serif" }}>
