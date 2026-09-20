@@ -47,9 +47,9 @@ export interface RelayOptions {
   injectBackBar?: boolean;
 }
 
-/** 返回按钮：悬浮于 DSH 界面右上角（top:64px 位于 DSH 顶栏/Session Log 下方，避免遮挡）。
+/** 返回按钮：悬浮于 DSH 界面右上角（top:90px 位于 DSH 顶栏/Session Log 下方，避免遮挡）。
  * 目标为主机列表：已登录直达 /portal/hosts；未登录则由会话续期逻辑跳登录并带回跳。 */
-export const BACK_BAR_HTML = `<a href="/portal/hosts" style="position:fixed;top:40px;right:30px;z-index:99999;background:rgba(30,30,30,.88);color:#e2e8f0;padding:6px 14px;border-radius:16px;border:1px solid rgba(255,255,255,.4);text-decoration:none;font:13px system-ui,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.3);">← rdsh · 返回</a>`;
+export const BACK_BAR_HTML = `<a href="/portal/hosts" style="position:fixed;top:90px;right:20px;z-index:99999;background:rgba(30,30,30,.88);color:#e2e8f0;padding:6px 14px;border-radius:16px;border:1px solid rgba(255,255,255,.4);text-decoration:none;font:13px system-ui,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.3);">← rdsh · 返回</a>`;
 
 /**
  * HTTP/SSE 透传。返回是否已处理（false = 路径不属于数据面）。
