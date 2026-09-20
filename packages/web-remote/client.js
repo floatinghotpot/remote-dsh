@@ -127,6 +127,12 @@ window.__ModuleLoader__.load({
       .dsh-web-remote-accesscode input{flex:1;min-width:0}
       .dsh-web-remote-accesscode-badge{flex:0 0 auto;font-size:12px;line-height:22px;padding:0 10px;border-radius:11px;box-shadow:inset 0 0 0 1px var(--dsw-alias-border-l2);color:var(--dsw-alias-label-tertiary)}
       .dsh-web-remote-accesscode-badge.set{box-shadow:inset 0 0 0 1px var(--dsw-alias-state-success-primary);color:var(--dsw-alias-state-success-primary)}
+      /* iOS（Safari / WKWebView，含微信等 App 内浏览器）对 computed font-size < 16px 的
+         输入框，聚焦时会自动放大整页。面板里的字号是 13px，所以在窄屏/触屏下提到 16px；
+         桌面观感保持不变。改这里请同步 test/client-input-font-size.test.ts 的断言。 */
+      @media (max-width: 640px),(pointer: coarse){
+        .dsh-web-remote input,.dsh-web-remote select,.dsh-web-remote textarea{font-size:16px}
+      }
     `;
 
     let styleInjected = false;
