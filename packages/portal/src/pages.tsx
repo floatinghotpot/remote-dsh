@@ -23,7 +23,8 @@ function navigate(path: string): void {
 
 // ---- E2EE pin（localStorage 首次信任/变更告警）----
 const E2EE_PINS_KEY = "rdsh_e2ee_pins";
-function fromBase64url(s: string): Uint8Array {
+// 返回类型显式收窄到 ArrayBuffer 背书（e2ee.ts 的 Bytes 同款）：TS 5.9 起 lib.dom 的 BufferSource 只收这种
+function fromBase64url(s: string): Uint8Array<ArrayBuffer> {
   const b = s.replace(/-/g, "+").replace(/_/g, "/");
   const pad = b.length % 4;
   const bin = atob(pad ? b + "=".repeat(4 - pad) : b);
@@ -2263,16 +2264,28 @@ function AdminLogin({ onSuccess }: { onSuccess: () => void }): React.JSX.Element
   const [totp, setTotp] = useState("");
   const [trustDevice, setTrustDevice] = useState(false);
   const [err, setErr] = useState("");
-  const [portalInfo, setPortalInfo] = useState<AccountInfo | null | undefined>(undefined); // undefined=检查中
+  const [portalInfo, setPortalInfo] = useState<AccountInfo | undefined>(undefined); // undefined=检查中
   useEffect(() => {
-    // 管理台登录依赖门户会话：未登录门户 → 直接跳门户登录
-    void api.accountInfo({ probe: true }).then(setPortalInfo).catch(() => {
-      window.location.assign("/portal/login");
-    });
+    // 管理台登录依赖门户会话：未登录门户 → 直接跳门户登录。
+    // 关于 null/undefined：本仓 hub 的 `/api/account` 只有三种出口 —— 401（未认证）、404（用户已删）、
+    // 200+完整对象，**不会**返回 200+null 或 204。这里的宽松 `== null` 判断纯属防御
+    // （自托管 hub / 反向代理可能不合规，`jsonFetch` 对 204 返回 undefined）；正常链路不可达。
+    void api
+      .accountInfo({ probe: true })
+      .then((info: AccountInfo | null | undefined) => {
+        if (info == null) {
+          window.location.assign("/portal/login");
+          return;
+        }
+        setPortalInfo(info);
+      })
+      .catch(() => {
+        window.location.assign("/portal/login");
+      });
   }, []);
   // 门户会话 30 分钟内验证过 2FA（或可信设备）→ 自动免二次输入；否则落到 TOTP 表单
   useEffect(() => {
-    if (portalInfo === undefined || portalInfo === null || portalInfo.totpEnabled !== true) return;
+    if (portalInfo === undefined || portalInfo.totpEnabled !== true) return;
     let alive = true;
     adminApi
       .login("")

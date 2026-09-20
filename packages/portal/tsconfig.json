@@ -3,7 +3,12 @@
   "compilerOptions": {
     "jsx": "react-jsx",
     "outDir": "dist",
-    "rootDir": "src"
+    "rootDir": "src",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    // 浏览器包：显式清空自动引入的 @types —— 否则根目录的 @types/node 会被自动带上，
+    // portal 里写 Buffer/process/env 也能过 tsc（正是关卡该拦的那类错误）。
+    // 资源导入的类型由 src/vite-env.d.ts 本地声明（刻意不引 vite/client：vite 的类型图会带回 @types/node）。
+    "types": []
   },
   "include": ["src"]
 }

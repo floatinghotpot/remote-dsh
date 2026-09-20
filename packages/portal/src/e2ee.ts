@@ -10,12 +10,19 @@ const NONCE_LEN = 12;
 const TAG_LEN = 16;
 const enc = new TextEncoder();
 
+/**
+ * 本模块所有字节容器都是**新分配、由 ArrayBuffer 背书**的视图。
+ * TS 5.9 起 lib.dom 的 `BufferSource` 要求 `ArrayBufferView<ArrayBuffer>`，而裸 `Uint8Array`
+ * 的默认泛型是 `ArrayBufferLike` ⇒ 显式收窄（纯类型层，运行时零变化）。
+ */
+type Bytes = Uint8Array<ArrayBuffer>;
+
 export interface E2eeKeys {
-  initiatorToResponder: Uint8Array;
-  responderToInitiator: Uint8Array;
+  initiatorToResponder: Bytes;
+  responderToInitiator: Bytes;
 }
 
-function concat(...parts: Uint8Array[]): Uint8Array {
+function concat(...parts: Bytes[]): Bytes {
   const len = parts.reduce((n, p) => n + p.length, 0);
   const out = new Uint8Array(len);
   let off = 0;
@@ -27,24 +34,24 @@ function concat(...parts: Uint8Array[]): Uint8Array {
 }
 
 /** 生成 X25519 密钥对（浏览器临时密钥 / host 静态密钥）。 */
-export async function generateKeyPair(): Promise<{ privateKey: CryptoKey; publicRaw: Uint8Array }> {
+export async function generateKeyPair(): Promise<{ privateKey: CryptoKey; publicRaw: Bytes }> {
   const kp = (await crypto.subtle.generateKey("X25519", true, ["deriveBits"])) as CryptoKeyPair;
   const publicRaw = new Uint8Array(await crypto.subtle.exportKey("raw", kp.publicKey));
   return { privateKey: kp.privateKey, publicRaw };
 }
 
-async function publicFromRaw(raw: Uint8Array): Promise<CryptoKey> {
+async function publicFromRaw(raw: Bytes): Promise<CryptoKey> {
   return crypto.subtle.importKey("raw", raw, "X25519", false, []);
 }
 
-async function ecdh(privateKey: CryptoKey, theirPublicRaw: Uint8Array): Promise<Uint8Array> {
+async function ecdh(privateKey: CryptoKey, theirPublicRaw: Bytes): Promise<Bytes> {
   const pub = await publicFromRaw(theirPublicRaw);
   const bits = await crypto.subtle.deriveBits({ name: "X25519", public: pub }, privateKey, 256);
   return new Uint8Array(bits);
 }
 
 /** HKDF 派生双向密钥（与 Node 端一致：salt=PROTOCOL_LABEL, info="session", 64B）。 */
-export async function deriveKeys(sharedSecret: Uint8Array): Promise<E2eeKeys> {
+export async function deriveKeys(sharedSecret: Bytes): Promise<E2eeKeys> {
   const hkdfKey = await crypto.subtle.importKey("raw", sharedSecret, "HKDF", false, ["deriveBits"]);
   const okm = new Uint8Array(
     await crypto.subtle.deriveBits(
@@ -60,14 +67,14 @@ export async function deriveKeys(sharedSecret: Uint8Array): Promise<E2eeKeys> {
 }
 
 /** 发起方（浏览器）：临时密钥 × host 静态公钥 → 会话密钥；返回要发送的临时公钥。 */
-export async function initiatorHandshake(responderStaticPublicRaw: Uint8Array): Promise<{ ephemeralPublicRaw: Uint8Array; keys: E2eeKeys }> {
+export async function initiatorHandshake(responderStaticPublicRaw: Bytes): Promise<{ ephemeralPublicRaw: Bytes; keys: E2eeKeys }> {
   const eph = await generateKeyPair();
   const ss = await ecdh(eph.privateKey, responderStaticPublicRaw);
   return { ephemeralPublicRaw: eph.publicRaw, keys: await deriveKeys(ss) };
 }
 
 /** 指纹（pinning 展示）：SHA-256 前 8 字节 hex 分组，与 Node 端一致。 */
-export async function fingerprint(publicRaw: Uint8Array): Promise<string> {
+export async function fingerprint(publicRaw: Bytes): Promise<string> {
   const h = new Uint8Array(await crypto.subtle.digest("SHA-256", publicRaw));
   const hex = [...h.subarray(0, 8)].map((b) => b.toString(16).padStart(2, "0")).join("").toUpperCase();
   return `${hex.slice(0, 4)}-${hex.slice(4, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}`;
@@ -75,20 +82,20 @@ export async function fingerprint(publicRaw: Uint8Array): Promise<string> {
 
 /** AES-256-GCM 包：[12B nonce][ciphertext][16B tag]。显式 nonce（每方向独立计数）。 */
 export class Aead {
-  private key: Uint8Array;
+  private key: Bytes;
   private counter = 0n;
-  constructor(key: Uint8Array) {
+  constructor(key: Bytes) {
     this.key = key;
   }
 
-  async encrypt(plaintext: Uint8Array, aad: Uint8Array): Promise<Uint8Array> {
+  async encrypt(plaintext: Bytes, aad: Bytes): Promise<Bytes> {
     const nonce = this.nextNonce();
     const key = await this.aesKey();
     const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce, additionalData: aad }, key, plaintext));
     return concat(nonce, ct);
   }
 
-  async decrypt(packet: Uint8Array, aad: Uint8Array): Promise<Uint8Array> {
+  async decrypt(packet: Bytes, aad: Bytes): Promise<Bytes> {
     if (packet.length < NONCE_LEN + TAG_LEN) throw new Error("e2ee: packet too short");
     const nonce = packet.subarray(0, NONCE_LEN);
     const data = packet.subarray(NONCE_LEN);
@@ -100,7 +107,7 @@ export class Aead {
     return crypto.subtle.importKey("raw", this.key, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
   }
 
-  private nextNonce(): Uint8Array {
+  private nextNonce(): Bytes {
     const n = new Uint8Array(NONCE_LEN);
     new DataView(n.buffer).setBigUint64(4, this.counter);
     this.counter += 1n;

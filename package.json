@@ -9,7 +9,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "pnpm -r build",
+    "build": "pnpm --filter ./packages/portal build && pnpm -r --filter \"!rdsh-portal\" build",
     "test": "pnpm -r test",
     "clean": "pnpm -r exec rm -rf dist",
     "release:publish": "bash scripts/publish.sh"

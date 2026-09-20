@@ -53,12 +53,17 @@ function mdToHtml(md) {
   return html;
 }
 
+const KEYS = ["terms", "privacy", "product"];
+
 const out = {};
-for (const key of ["terms", "privacy", "product"]) {
+for (const key of KEYS) {
   out[key] = mdToHtml(readFileSync(join(mdDir, `${key}.md`), "utf8"));
 }
 
 mkdirSync(dirname(outFile), { recursive: true });
-const content = `// 由 scripts/build-legal.mjs 生成，勿手改。\nexport const LEGAL: Record<string, string> = ${JSON.stringify(out, null, 2)};\n`;
+// 类型必须带**具体键**：`Record<string, string>` 遇上 base 的 noUncheckedIndexedAccess 会让
+// `LEGAL.terms` 变成 `string | undefined`（调用方全部报 TS2322）。键由上面的 KEYS 单一来源生成。
+const typeLiteral = `{ ${KEYS.map((k) => `${k}: string`).join("; ")} }`;
+const content = `// 由 scripts/build-legal.mjs 生成，勿手改。\nexport const LEGAL: ${typeLiteral} = ${JSON.stringify(out, null, 2)};\n`;
 writeFileSync(outFile, content);
-console.log(`build-legal: generated ${outFile} (terms/privacy/product)`);
+console.log(`build-legal: generated ${outFile} (${KEYS.join("/")})`);
