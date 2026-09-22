@@ -7,6 +7,20 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [rdsh-gateway 0.9.0 · rdsh-hub 0.7.4 · remote-dsh 0.11.0 · dsh-web-remote 0.5.6] - 2026-09-22
+
+### 新增
+
+- **服务手动起停/重启**（cli + gateway）：`rdsh host service` / `rdsh hub service` 新增 `start|stop|restart`，手动起停/重启已装服务而不改变开机自启。host 按 `host.json` 的 mode 定位服务（`rdsh-join` / `rdsh-host`），hub 用 `rdsh-hub`。
+
+### 修复
+
+- **portal 构建类型检查**（portal）：构建时 type-check，清除 97 处累积的类型错误（补 DOM lib、portal 优先构建、copy-portal 防陈旧/缺失 dist）。
+- **iOS 表单自动放大**（portal）：手机/平板表单字段 ≥ 16px，避免 iOS 聚焦时自动放大。
+- **iOS 面板输入自动放大**（web-remote）：窄屏/触屏下面板输入字号提到 16px。
+- **返回条遮挡**（hub）：注入的「返回主机列表」悬浮条降到 `top:90px;right:20px`，不再遮挡 DSH 顶栏 / Session Log。
+- **loopback 补丁可观测**（gateway）：记录 loopback 补丁命中日志，不再重扫 shell 资源。
+
 ## [rdsh-gateway 0.8.6 · dsh-web-remote 0.5.5 · remote-dsh 0.10.7] - 2026-09-17
 
 ### 修复

@@ -7,6 +7,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [rdsh-gateway 0.9.0 · rdsh-hub 0.7.4 · remote-dsh 0.11.0 · dsh-web-remote 0.5.6] - 2026-09-22
+
+### Added
+
+- **Service runtime control** (cli + gateway): `rdsh host service` and `rdsh hub service` gain `start|stop|restart` to start/stop/restart the installed service without changing enable-at-boot. Host resolves the unit by `host.json` mode (`rdsh-join` / `rdsh-host`); hub uses `rdsh-hub`.
+
+### Fixed
+
+- **Portal build type-checks** (portal): type-check the build and clear 97 accumulated errors (DOM lib, portal-first build order, copy-portal stale/missing-dist guard).
+- **Form auto-zoom on iOS** (portal): keep form fields ≥ 16px on phones and tablets so iOS stops zooming in on focus.
+- **Panel input auto-zoom on iOS** (web-remote): raise panel input font to 16px on narrow or touch screens.
+- **Back-bar overlap** (hub): lower the injected "back to hosts" bar to `top:90px;right:20px` so it no longer covers the DSH top bar / Session Log.
+- **Loopback patch observability** (gateway): log loopback-patch hits and stop re-scanning shell assets.
+
 ## [rdsh-gateway 0.8.6 · dsh-web-remote 0.5.5 · remote-dsh 0.10.7] - 2026-09-17
 
 ### Fixed
