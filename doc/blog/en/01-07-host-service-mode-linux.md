@@ -59,7 +59,7 @@ After running this once, it starts at boot **without anyone signing in**. Deskto
 
 ## Day to day
 
-- **Restart manually**: `systemctl --user restart rdsh-join`;
+- **Restart manually**: `rdsh host service restart` (equivalent to `systemctl --user restart rdsh-join`);
 - **Remove for good**: run `rdsh host service uninstall` first to stop and delete the service, **then** `rdsh host leave` to unbind — order matters;
 - **Rename**: sign in to rdsh.cn → host list → click "Rename" on this computer and change it right on the page;
 - **After upgrading Node or reinstalling remote-dsh**: paths the service points to may change — just re-run `rdsh host service install`.

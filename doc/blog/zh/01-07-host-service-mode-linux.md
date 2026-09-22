@@ -59,7 +59,7 @@ loginctl enable-linger $USER
 
 ## 日常操作
 
-- **手动重启**：`systemctl --user restart rdsh-join`；
+- **手动重启**：`rdsh host service restart`（等价于 `systemctl --user restart rdsh-join`）；
 - **彻底移除**：先 `rdsh host service uninstall` 停掉并删除服务，再 `rdsh host leave` 解绑——顺序别反；
 - **改名**：登录 rdsh.cn → 主机列表 → 点这台电脑的「改名」，网页上直接改；
 - **升级 Node / 重装 remote-dsh 后**：服务指向的路径可能变化——重新执行一次 `rdsh host service install` 即可。

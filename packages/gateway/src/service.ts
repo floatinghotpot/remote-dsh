@@ -184,3 +184,35 @@ export async function uninstallService(name: string = SERVICE_NAME): Promise<str
   await rm(launchdPlistPath(name), { force: true });
   return `removed ${launchdPlistPath(name)}`;
 }
+
+/** 启动服务（运行时控制，不改变开机自启配置）。 */
+export async function startService(name: string = SERVICE_NAME): Promise<string> {
+  if (isLinux()) {
+    await run("systemctl", ["--user", "start", name]);
+    return `started ${name}`;
+  }
+  // macOS：kickstart -k 确保在跑（已运行则先停再启）。
+  await run("launchctl", ["kickstart", "-k", `com.${name}`]);
+  return `started com.${name}`;
+}
+
+/** 停止服务（运行时控制，不改变开机自启配置）。 */
+export async function stopService(name: string = SERVICE_NAME): Promise<string> {
+  if (isLinux()) {
+    await run("systemctl", ["--user", "stop", name]);
+    return `stopped ${name}`;
+  }
+  // macOS：stop 仅停当前实例；KeepAlive（仅失败退出重启）可能立即拉起 —— 与 systemd stop 语义不同。
+  await run("launchctl", ["stop", `com.${name}`]).catch(() => undefined);
+  return `stopped com.${name}`;
+}
+
+/** 重启服务（运行时控制，不改变开机自启配置）。 */
+export async function restartService(name: string = SERVICE_NAME): Promise<string> {
+  if (isLinux()) {
+    await run("systemctl", ["--user", "restart", name]);
+    return `restarted ${name}`;
+  }
+  await run("launchctl", ["kickstart", "-k", `com.${name}`]);
+  return `restarted com.${name}`;
+}

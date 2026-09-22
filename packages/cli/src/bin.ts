@@ -4,7 +4,7 @@
  *
  *   rdsh host setup lan|cloud
  *   rdsh host join <hub-url> [--token <t>] [--name <n>] [--dsh <p>] [--insecure]
- *   rdsh host serve | service install|status|uninstall | leave | user ...
+ *   rdsh host serve | service install|status|start|stop|restart|uninstall | leave | user ...
  *   rdsh hub serve|user|host|service ... [--config <path>]
  *   rdsh --version | --help
  */
@@ -26,6 +26,9 @@ import {
   installService,
   uninstallService,
   serviceStatus,
+  startService,
+  stopService,
+  restartService,
   HOST_SERVICE_NAME,
   JOIN_SERVICE_NAME,
   HUB_SERVICE_NAME,
@@ -74,7 +77,7 @@ Subcommands:
   setup cloud            Configure a cloud HTTPS gateway (password + TLS + allowFrom)
   join <hub-url>         Connect to a hub (interactive token paste; --token for scripts)
   serve                  Run the configured mode in the foreground
-  service install|status|uninstall   Run as a systemd/launchd service
+  service install|status|start|stop|restart|uninstall   Run as a systemd/launchd service
   leave                  Unregister this machine from the hub
   user add|passwd|ls|rm  Manage gateway users
 
@@ -91,7 +94,7 @@ Subcommands:
   user add|passwd|rm|ls|unlock|reset-2fa|ban|unban   Manage users (admin creates accounts; unlock / reset-2fa / ban / unban)
   audit ls [--user <n>] [--event <e>] [--since 24h|7d]   Query the audit log
   host ls|revoke        List / revoke hosts (revoke drops the tunnel instantly)
-  service install|status|uninstall   Run hub as a systemd/launchd service
+  service install|status|start|stop|restart|uninstall   Run hub as a systemd/launchd service
 
 Options (serve):
   --config <path>       Hub config (default ~/.rdsh/hub.json; also $RDSH_HUB_CONFIG)
@@ -330,34 +333,40 @@ async function handleHostServe(_args: string[], configPath?: string): Promise<vo
   await serve({ configPath: target });
 }
 
-/** `rdsh host service install|status|uninstall`：读 host.json mode 装对应服务（unit 不含 token）。 */
+/** `rdsh host service install|status|start|stop|restart|uninstall`：读 host.json mode 定位服务（unit 不含 token）。 */
 async function handleHostService(args: string[], configPath?: string): Promise<void> {
   const action = args[0];
   const target = resolveConfigPath(configPath);
+  const actions = ["install", "status", "start", "stop", "restart", "uninstall"];
+  if (action === undefined || !actions.includes(action)) {
+    throw new Error(`usage: rdsh host service ${actions.join("|")}`);
+  }
+  if (action === "install") {
+    await maybeRegisterForServiceInstall(args, target);
+  }
+  const config = await loadConfig(target);
+  const name = config.mode === "join" ? JOIN_SERVICE_NAME : HOST_SERVICE_NAME;
   switch (action) {
-    case "install": {
-      await maybeRegisterForServiceInstall(args, target);
-      const config = await loadConfig(target);
-      const name = config.mode === "join" ? JOIN_SERVICE_NAME : HOST_SERVICE_NAME;
+    case "install":
       // host 服务会 spawn dsh（shebang `#!/usr/bin/env node`），nvm/自装 node 下需补 node 目录到 PATH（防 127）
       console.log(await installService({ name, args: ["host", "serve"], configPath: target, pathEnv: nodePathEnv() }));
       console.log(`rdsh: host service installed (${name}) —— 开机自启 + 崩溃重启。`);
       return;
-    }
-    case "status": {
-      const config = await loadConfig(target);
-      const name = config.mode === "join" ? JOIN_SERVICE_NAME : HOST_SERVICE_NAME;
+    case "status":
       console.log(`rdsh host service (${name}): ${await serviceStatus(name)}`);
       return;
-    }
-    case "uninstall": {
-      const config = await loadConfig(target);
-      const name = config.mode === "join" ? JOIN_SERVICE_NAME : HOST_SERVICE_NAME;
+    case "start":
+      console.log(await startService(name));
+      return;
+    case "stop":
+      console.log(await stopService(name));
+      return;
+    case "restart":
+      console.log(await restartService(name));
+      return;
+    case "uninstall":
       console.log(await uninstallService(name));
       return;
-    }
-    default:
-      throw new Error("usage: rdsh host service install|status|uninstall");
   }
 }
 
@@ -532,11 +541,20 @@ async function handleHub(args: string[], configPath?: string): Promise<void> {
         case "status":
           console.log(`rdsh hub service (${HUB_SERVICE_NAME}): ${await serviceStatus(HUB_SERVICE_NAME)}`);
           return;
+        case "start":
+          console.log(await startService(HUB_SERVICE_NAME));
+          return;
+        case "stop":
+          console.log(await stopService(HUB_SERVICE_NAME));
+          return;
+        case "restart":
+          console.log(await restartService(HUB_SERVICE_NAME));
+          return;
         case "uninstall":
           console.log(await uninstallService(HUB_SERVICE_NAME));
           return;
         default:
-          throw new Error("usage: rdsh hub service install|status|uninstall");
+          throw new Error("usage: rdsh hub service install|status|start|stop|restart|uninstall");
       }
     }
     default:

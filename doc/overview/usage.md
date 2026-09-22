@@ -136,7 +136,8 @@ rdsh host user rm admin         # 删除用户
 
 ```bash
 rdsh host service install       # 生成并安装 systemd unit（Linux）/ launchd plist（macOS）
-rdsh host service status
+rdsh host service status        # 运行状态
+rdsh host service start|stop|restart   # 手动起停 / 重启（不影响开机自启）
 rdsh host service uninstall
 ```
 
@@ -271,7 +272,7 @@ rdsh host setup cloud --tls-cert <c> --tls-key <k> [--port <n>] [--allow-from <c
                                                # 配置为云 HTTPS 网关（password + tls + allowFrom）
 rdsh host join https://hub.example.com          # 连 hub：粘贴 join token（--token 脚本）
 rdsh host serve                                # 前台运行（读 host.json，按 mode 分发 join/lan/cloud）
-rdsh host service install|status|uninstall     # 服务化（rdsh-host.service / rdsh-join.service）
+rdsh host service install|status|start|stop|restart|uninstall     # 服务化（rdsh-host.service / rdsh-join.service）
 rdsh host leave                                # 从 hub 注销（self-revoke + 清理，回到未配置）
 rdsh host user add|passwd|ls|rm                # 本机网关用户（写 host.json auth.users）
 
@@ -281,7 +282,7 @@ rdsh hub user add alice [--no-password]        # 管理员建号（注册关闭�
 rdsh hub user passwd|rm|ls|unlock|reset-2fa    # unlock=解锁被锁账户；reset-2fa=重置用户 2FA
 rdsh hub audit ls [--user <n>] [--event <e>] [--since 24h|7d]   # 审计日志查询
 rdsh hub host ls|revoke <hostId>               # revoke = 隧道立即断开、重连被拒
-rdsh hub service install|status|uninstall      # hub 服务化（rdsh-hub.service）
+rdsh hub service install|status|start|stop|restart|uninstall      # hub 服务化（rdsh-hub.service）
 
 # host 配置唯一事实源 ~/.rdsh/host.json（mode: lan|cloud|join；token 只进 session 文件）
 #   { "mode": "lan", "host": "0.0.0.0", "port": 8443, "auth": { "mode": "pair", ... } }
