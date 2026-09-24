@@ -7,6 +7,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **dsh 0.1.7-rc.1 is no longer reported as "out of tested range"** (gateway): the smoke-tested dsh window now reaches `0.1.7-rc.1` (`DSH_COMPAT_MAX`, was `0.1.5-rc.2`), so hosts on it stop printing a misleading startup warning. 0.1.7 changes only the front-end dist shape (`<base href="./">` plus base-relative `plugins/…`), which a same-origin gateway is immune to; auth and RPC are unchanged. The G1–G7 checklist was re-run against the real package — see `doc/review/20260924-dsh-0.1.7-rc.1-compat.md`.
+
+### dsh compatibility matrix
+
+| remote-dsh component | version | compatible dsh (smoke-tested) | mechanism |
+|---|---|---|---|
+| remote-dsh CLI (`host serve` / `join`) | 0.11.0 | dsh `0.1.1-rc.2` ✅<br>dsh `0.1.2-rc.1` ✅<br>dsh `0.1.5-rc.2` ✅<br>dsh `0.1.7-rc.1` ✅ | ready-line behavior detection, adaptive |
+| `dsh-web-remote` plugin | 0.5.6 | dsh `0.1.2-rc.1` ✅<br>dsh `0.1.5-rc.2` ✅<br>(`0.1.7-rc.1` not re-verified) | native `webServer` route, no version fork |
+| rdsh-hub | any | dsh-version agnostic | pure relay, never parses traffic |
+
 ## [rdsh-gateway 0.9.0 · rdsh-hub 0.7.4 · remote-dsh 0.11.0 · dsh-web-remote 0.5.6] - 2026-09-22
 
 ### Added

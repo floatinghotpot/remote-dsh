@@ -310,9 +310,12 @@ export function compareDshVersions(a: string, b: string): number {
  * 2026-09-11：MAX 扩到 `0.1.5-rc.2` —— 真机实测通过（spawn + ready 行 token + 会话 cookie 换发 +
  * `/api` 转发 + HTML 注入 + WS `/api/remote.mux` 桥接 + join 的 `patchLoopbackJs` 命中），
  * 见 doc/review/20260911-dsh-0.1.5-rc.2-plugin-compat.md §5。
+ * 2026-09-24：MAX 扩到 `0.1.7-rc.1` —— 同一份 G1–G7 清单重跑通过。0.1.7 只改前端 dist 形态
+ * （`<base href="./">` + 相对 `plugins/…`），认证/RPC 未变；网关是同源透明代理，相对引用由浏览器
+ * 解析成绝对路径后原样转发，故不受影响，见 doc/review/20260924-dsh-0.1.7-rc.1-compat.md。
  */
 export const DSH_COMPAT_MIN = "0.1.1-rc.2";
-export const DSH_COMPAT_MAX = "0.1.5-rc.2";
+export const DSH_COMPAT_MAX = "0.1.7-rc.1";
 
 /**
  * 版本落在实测窗口外时的提示文案（零文档导向：直接给动作指令，用户不查表）。

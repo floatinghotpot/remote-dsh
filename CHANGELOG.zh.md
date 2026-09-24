@@ -7,6 +7,20 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### 修复
+
+- **dsh 0.1.7-rc.1 不再被误报为"超出实测范围"**（gateway）：实测窗口上界 `DSH_COMPAT_MAX` 由 `0.1.5-rc.2` 扩到 `0.1.7-rc.1`，跑在该版本上的 host 不再打印误导性的启动警告。0.1.7 只改前端 dist 形态（`<base href="./">` + 相对 `plugins/…`），同源网关天然免疫；认证与 RPC 未变。G1–G7 清单已对真实包重跑通过——见 `doc/review/20260924-dsh-0.1.7-rc.1-compat.md`。
+
+### dsh 兼容矩阵
+
+| remote-dsh 组件 | 版本 | 已实测兼容的 dsh | 机制 |
+|---|---|---|---|
+| remote-dsh CLI（`host serve` / `join`） | 0.11.0 | dsh `0.1.1-rc.2` ✅<br>dsh `0.1.2-rc.1` ✅<br>dsh `0.1.5-rc.2` ✅<br>dsh `0.1.7-rc.1` ✅ | 就绪行行为探测，自适应 |
+| `dsh-web-remote` 插件 | 0.5.6 | dsh `0.1.2-rc.1` ✅<br>dsh `0.1.5-rc.2` ✅<br>（`0.1.7-rc.1` 本轮未复验） | 原生 `webServer` 路由，无版本分支 |
+| rdsh-hub | 任意 | 与 dsh 版本无关 | 纯中继，不解析流量 |
+
 ## [rdsh-gateway 0.9.0 · rdsh-hub 0.7.4 · remote-dsh 0.11.0 · dsh-web-remote 0.5.6] - 2026-09-22
 
 ### 新增

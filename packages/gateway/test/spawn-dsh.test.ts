@@ -129,7 +129,7 @@ test("dshVersionWarning：窗口内不提示，越界给动作指令", () => {  
     assert.equal(dshVersionWarning(version), null, `${version} 应在窗口内`);
   }
   // 比 MAX 新 → 提示升级 remote-dsh（含同 core 的后续 rc 与正式版）
-  for (const version of ["0.1.5-rc.3", "0.1.5", "0.2.0-rc.1"]) {
+  for (const version of ["0.1.7-rc.2", "0.1.7", "0.2.0-rc.1"]) {
     const warn = dshVersionWarning(version);
     assert.ok(warn !== null && warn.includes("超出 remote-dsh 已实测范围"), `${version} 应提示超窗`);
   }
