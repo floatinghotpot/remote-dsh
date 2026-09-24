@@ -7,7 +7,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [rdsh-gateway 0.10.0 · remote-dsh 0.12.0 · dsh-web-remote 0.6.0] - 2026-09-25
+
+### Added
+
+- **rdsh WebView API contract** (gateway): the gateway injects `window.__rdshWebViewApi` (version 1: `isDshPage` / `readReply` / `fillAndSend`) into proxied DSH pages, in both lan/cloud and join modes, so WebView clients (e.g. garsync) read/write the DSH page through a stable contract instead of fragile DSH DOM details. The injected script is idempotent, defensive, and uses UTF-8-safe base64.
 
 ### Fixed
 
@@ -17,8 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 | remote-dsh component | version | compatible dsh (smoke-tested) | mechanism |
 |---|---|---|---|
-| remote-dsh CLI (`host serve` / `join`) | 0.11.0 | dsh `0.1.1-rc.2` ✅<br>dsh `0.1.2-rc.1` ✅<br>dsh `0.1.5-rc.2` ✅<br>dsh `0.1.7-rc.1` ✅ | ready-line behavior detection, adaptive |
-| `dsh-web-remote` plugin | 0.5.6 | dsh `0.1.2-rc.1` ✅<br>dsh `0.1.5-rc.2` ✅<br>(`0.1.7-rc.1` not re-verified) | native `webServer` route, no version fork |
+| remote-dsh CLI (`host serve` / `join`) | 0.12.0 | dsh `0.1.1-rc.2` ✅<br>dsh `0.1.2-rc.1` ✅<br>dsh `0.1.5-rc.2` ✅<br>dsh `0.1.7-rc.1` ✅ | ready-line behavior detection, adaptive |
+| `dsh-web-remote` plugin | 0.6.0 | dsh `0.1.2-rc.1` ✅<br>dsh `0.1.5-rc.2` ✅<br>(`0.1.7-rc.1` not re-verified) | native `webServer` route, no version fork |
 | rdsh-hub | any | dsh-version agnostic | pure relay, never parses traffic |
 
 ## [rdsh-gateway 0.9.0 · rdsh-hub 0.7.4 · remote-dsh 0.11.0 · dsh-web-remote 0.5.6] - 2026-09-22

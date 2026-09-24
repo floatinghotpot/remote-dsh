@@ -7,7 +7,11 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [rdsh-gateway 0.10.0 · remote-dsh 0.12.0 · dsh-web-remote 0.6.0] - 2026-09-25
+
+### 新增
+
+- **rdsh WebView API 契约**（gateway）：gateway 现在往反代的 DSH 页面注入 `window.__rdshWebViewApi`（version 1：`isDshPage` / `readReply` / `fillAndSend`），覆盖 lan/cloud 与 join 两种接入模式，让 WebView 客户端（如 garsync）通过稳定契约读写 DSH 页面，而非脆弱的 DSH DOM 细节。注入脚本幂等、防御式、采用 UTF-8 安全 base64。
 
 ### 修复
 
@@ -17,8 +21,8 @@
 
 | remote-dsh 组件 | 版本 | 已实测兼容的 dsh | 机制 |
 |---|---|---|---|
-| remote-dsh CLI（`host serve` / `join`） | 0.11.0 | dsh `0.1.1-rc.2` ✅<br>dsh `0.1.2-rc.1` ✅<br>dsh `0.1.5-rc.2` ✅<br>dsh `0.1.7-rc.1` ✅ | 就绪行行为探测，自适应 |
-| `dsh-web-remote` 插件 | 0.5.6 | dsh `0.1.2-rc.1` ✅<br>dsh `0.1.5-rc.2` ✅<br>（`0.1.7-rc.1` 本轮未复验） | 原生 `webServer` 路由，无版本分支 |
+| remote-dsh CLI（`host serve` / `join`） | 0.12.0 | dsh `0.1.1-rc.2` ✅<br>dsh `0.1.2-rc.1` ✅<br>dsh `0.1.5-rc.2` ✅<br>dsh `0.1.7-rc.1` ✅ | 就绪行行为探测，自适应 |
+| `dsh-web-remote` 插件 | 0.6.0 | dsh `0.1.2-rc.1` ✅<br>dsh `0.1.5-rc.2` ✅<br>（`0.1.7-rc.1` 本轮未复验） | 原生 `webServer` 路由，无版本分支 |
 | rdsh-hub | 任意 | 与 dsh 版本无关 | 纯中继，不解析流量 |
 
 ## [rdsh-gateway 0.9.0 · rdsh-hub 0.7.4 · remote-dsh 0.11.0 · dsh-web-remote 0.5.6] - 2026-09-22
