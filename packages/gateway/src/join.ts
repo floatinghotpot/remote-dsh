@@ -27,6 +27,7 @@ import { responderHandshake, Aead } from "./e2ee.ts";
 import type { KeyPair, E2eeKeys } from "./e2ee.ts";
 import { loadOrCreateE2eeKeyPair } from "./e2ee-key-store.ts";
 import { GATE_COOKIE, signGateCookie, verifyGateCookie, verifyGateCode } from "./access-gate.ts";
+import { RDSH_WEBVIEW_API, injectHtmlScript } from "./rdsh-webview-api.ts";
 
 export interface JoinOptions {
   hubUrl: string;
@@ -261,6 +262,13 @@ export function isJsContentType(headers: IncomingHttpHeaders): boolean {
   return /javascript/i.test(s);
 }
 
+/** HTML 响应判定（content-type 含 text/html）。 */
+export function isHtmlContentType(headers: IncomingHttpHeaders): boolean {
+  const ct = headers["content-type"];
+  const s = Array.isArray(ct) ? ct.join(";") : (ct ?? "");
+  return /text\/html/i.test(s);
+}
+
 /**
  * 最小 patch：把 DSH 客户端 bundle 里的前端 isLoopback 判定替换为 true
  * （持久设置/API key 输入只对 loopback 开放；E2EE 流上信任基础等同 loopback）。
@@ -418,7 +426,7 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
   }
 
   /** 内层帧分发器（plain 与 raw 共用）：OPEN http/ws + DATA → DSH 转发，响应帧经 `send` 回传。 */
-  function makeInnerDispatcher(send: (frame: Buffer) => void, dio?: { jsPatch?: () => boolean; gate?: boolean }) {
+  function makeInnerDispatcher(send: (frame: Buffer) => void, dio?: { jsPatch?: () => boolean; gate?: boolean; htmlInject?: string }) {
     const httpStreams = new Map<number, { up: ReturnType<typeof httpRequest> }>();
     const wsStreams = new Map<number, { upstream: WebSocket; queue: Buffer[] }>();
     // gate 未过、等待 code 提交的 http 流（OPEN 后缓冲 DATA，CLOSE 时校验）
@@ -433,6 +441,8 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
      * 键含 query 且不截断：combo 路由用 query 选内容，资源 URL 由内容决定（rev/hash），内容一变 URL 就变。
      */
     const patchSkipped = new Set<string>();
+    /** rdsh WebView API 是否已注入过（每个进程只打一次日志，避免页面加载刷屏）。 */
+    let adapterInjectionLogged = false;
 
     /** 从转发头里取 rdsh_gate cookie（hub D12 白名单透传）。 */
     function gateCookie(headers: Record<string, string | string[]>): string | null {
@@ -608,6 +618,41 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
           // 已确认该 URL 不含目标串（DSH 前端壳资源就属此类）→ 直接流式，省掉白解压与全量扫描
           const wantsPatch =
             dio?.jsPatch?.() === true && isJsContentType(upRes.headers) && !patchSkipped.has(path);
+          const wantsInject =
+            dio?.htmlInject !== undefined && isHtmlContentType(upRes.headers) && upRes.headers["content-encoding"] === undefined;
+
+          // HTML + 注入：缓冲后注入（htmlInject 会改 body 长度，须先处理再发 OPEN 并重算 content-length）
+          if (wantsInject) {
+            const htmlChunks: Buffer[] = [];
+            upRes.on("data", (chunk: Buffer) => htmlChunks.push(chunk));
+            upRes.on("end", () => {
+              const html = injectHtmlScript(Buffer.concat(htmlChunks).toString("utf8"), dio!.htmlInject!);
+              const outHeaders: Record<string, string | string[]> = {
+                ...baseHeaders,
+                "content-length": String(Buffer.byteLength(html)),
+              };
+              delete outHeaders["transfer-encoding"];
+              if (!adapterInjectionLogged) {
+                adapterInjectionLogged = true;
+                console.log("[rdsh] rdsh webview api injected (window.__rdshWebViewApi v1)");
+              }
+              send(
+                encodeFrame(
+                  FRAME_TYPE.OPEN,
+                  streamId,
+                  jsonPayload({ kind: "http", status, reason: upRes.statusMessage, headers: outHeaders }),
+                ),
+              );
+              sendChunkedBody(send, streamId, Buffer.from(html));
+              send(encodeFrame(FRAME_TYPE.CLOSE, streamId, jsonPayload({ code: 0 })));
+              httpStreams.delete(streamId);
+            });
+            upRes.on("error", () => {
+              send(encodeFrame(FRAME_TYPE.CLOSE, streamId, jsonPayload({ code: 502, message: "upstream error" })));
+              httpStreams.delete(streamId);
+            });
+            return;
+          }
 
           // 非 JS / 未开补丁：保持原流式路径（OPEN 立即发，body 边到边发）
           if (!wantsPatch) {
@@ -777,7 +822,7 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
     return { handleFrame, cleanup };
   }
 
-  const plainDispatcher = makeInnerDispatcher(sendTunnelFrame, { jsPatch: () => uiCompat.trustE2EEAsLoopback, gate: true });
+  const plainDispatcher = makeInnerDispatcher(sendTunnelFrame, { jsPatch: () => uiCompat.trustE2EEAsLoopback, gate: true, htmlInject: RDSH_WEBVIEW_API });
 
   // host 端 E2EE 静态密钥对（持久化 ~/.rdsh/e2ee-key.json；join 注册时上送指纹）
   let hostE2eeKeypair: KeyPair;

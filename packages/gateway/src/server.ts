@@ -25,10 +25,14 @@ import type { ProxyTarget } from "./proxy.ts";
 import { pairPageHtml } from "./pair-page.ts";
 import { loginPageHtml } from "./login-page.ts";
 import { SECURE_CONTEXT_POLYFILL } from "./secure-context-polyfill.ts";
+import { RDSH_WEBVIEW_API } from "./rdsh-webview-api.ts";
 import { loadConfig } from "./config.ts";
 import type { AuthMode } from "./config.ts";
 import { ipInCidrs } from "./cidr.ts";
 import type { TlsMaterial } from "./tls.ts";
+
+/** 注入 DSH 首页的脚本：非 secure context polyfill + rdsh WebView API 契约。两处 forwardHttp 共用，避免漂移。 */
+const HTML_INJECT = SECURE_CONTEXT_POLYFILL + RDSH_WEBVIEW_API;
 
 export interface GatewayOptions {
   host: string;
@@ -239,7 +243,7 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse, ctx: HttpCo
 
   if (ctx.authMode === "none") {
     forwardHttp(req, res, ctx.target, {
-      htmlInject: SECURE_CONTEXT_POLYFILL,
+      htmlInject: HTML_INJECT,
       authCookie: ctx.dshAuthCookieHeader,
       jsPatch: ctx.trustPairedAsLoopback ? patchLoopbackJs : undefined,
     });
@@ -251,7 +255,7 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse, ctx: HttpCo
     return;
   }
   forwardHttp(req, res, ctx.target, {
-    htmlInject: SECURE_CONTEXT_POLYFILL,
+    htmlInject: HTML_INJECT,
     authCookie: ctx.dshAuthCookieHeader,
     // 会话分支同样要打 loopback 补丁：LAN 没有 E2EE shim，设置/API key 唯一依赖这个补丁；
     // 旧实现只在 authMode==="none" 分支传了 jsPatch ⇒ 配对/登录模式下设置页打不开（2026-09-14 复审发现）
