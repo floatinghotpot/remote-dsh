@@ -89,7 +89,19 @@ export const RDSH_WEBVIEW_API = `(function () {
     for (var i = 0; i < drop.length; i++) { if (drop[i].parentNode) drop[i].parentNode.removeChild(drop[i]); }
     return (clone.innerText || clone.textContent || '').trim();
   }
+  // 某个 flow kind 的最大 turn（取不到 = -1）。
+  // 111：App 用 turn / userTurn 判断"用户是否发了新消息"，从而立即停止朗读。
+  function maxTurnOf(kind) {
+    var nodes = document.querySelectorAll('[data-chat-flow-kind="' + kind + '"]');
+    var max = -1;
+    for (var i = 0; i < nodes.length; i++) {
+      var t = parseInt(nodes[i].getAttribute('data-chat-turn'), 10);
+      if (!isNaN(t) && t > max) max = t;
+    }
+    return max;
+  }
   // 最后一轮的答案部分（排除 reasoning，取最大 turn，逐 part 拼接）。
+  // 返回 { text, turn }：turn 与该轮答案对应，供 readReply 回带给 App。
   function latestAnswer() {
     var steps = Array.prototype.slice.call(document.querySelectorAll('[data-chat-flow-kind="assistant-step"]'));
     var answers = steps.filter(function (el) { return el.getAttribute('data-chat-group-part') !== 'reasoning'; });
@@ -104,7 +116,7 @@ export const RDSH_WEBVIEW_API = `(function () {
       var text = answerTextOf(parts[j], true);
       if (text.length) texts.push(text);
     }
-    return texts.join('\\n\\n');
+    return { text: texts.join('\\n\\n'), turn: maxTurn };
   }
 
   window.__rdshWebViewApi = {
@@ -120,14 +132,18 @@ export const RDSH_WEBVIEW_API = `(function () {
       setTimeout(function () { pressEnter(found.el); dismissKeyboard(); }, 80);
       return 'ok';
     },
-    // 105：待朗读内容 + 状态。返回 UTF-8 安全的 base64 JSON {dsh, streaming, text}。
+    // 105/111：待朗读内容 + 状态。返回 UTF-8 安全的 base64 JSON
+    // {dsh, streaming, text, turn, userTurn}（turn / userTurn 取不到时为 -1）。
     readReply: function () {
-      var out = { dsh: false, streaming: 0, text: '' };
+      var out = { dsh: false, streaming: 0, text: '', turn: -1, userTurn: -1 };
       try {
         out.streaming = document.querySelectorAll('[data-streaming]').length;
         if (document.querySelectorAll('[data-chat-flow-kind]').length > 0) {
           out.dsh = true;
-          out.text = latestAnswer();
+          var answer = latestAnswer();
+          out.text = answer.text;
+          out.turn = answer.turn;
+          out.userTurn = maxTurnOf('user');
         } else {
           out.text = document.body ? document.body.innerText : '';
         }

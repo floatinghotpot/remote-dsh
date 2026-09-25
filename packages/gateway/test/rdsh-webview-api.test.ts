@@ -130,7 +130,7 @@ function runAdapter(root: El | null, preSeedApi?: Record<string, unknown>): Reco
   return (window.__rdshWebViewApi as Record<string, unknown>) ?? {};
 }
 
-/** 一个带最后一轮 assistant answer 的 DSH 会话 DOM。 */
+/** 一个带最后一轮 assistant answer 的 DSH 会话 DOM（含一条用户消息，供 turn/userTurn 断言）。 */
 function dshDom(): El {
   return el("BODY", {}, [
     el("DIV", { "data-chat-flow-kind": "assistant-step", "data-chat-group-part": "reasoning", "data-chat-turn": "1" }, [], "思考：不该读"),
@@ -143,6 +143,7 @@ function dshDom(): El {
     el("DIV", { "data-chat-flow-kind": "assistant-step", "data-chat-group-part": "answer", "data-chat-turn": "2" }, [
       el("SPAN", {}, [], "最新一轮的答案"),
     ]),
+    el("DIV", { "data-chat-flow-kind": "user", "data-chat-turn": "3" }, [], "用户发的新消息"),
     el("DIV", { "data-streaming": "true" }),
   ]);
 }
@@ -175,6 +176,29 @@ test("readReply：中文经 UTF-8 安全 base64 往返不坏", () => {
   const api = runAdapter(body) as { readReply: () => string };
   const json = JSON.parse(Buffer.from(api.readReply(), "base64").toString("utf8"));
   assert.equal(json.text, "中文内容，包括 emoji 🚀 和繁体字「國」");
+});
+
+test("readReply：返回 turn / userTurn（111：用户发了新消息即可停读）", () => {
+  const api = runAdapter(dshDom()) as { readReply: () => string };
+  const json = JSON.parse(Buffer.from(api.readReply(), "base64").toString("utf8"));
+  assert.equal(json.turn, 2, "turn = 最后一轮答案的 turn");
+  assert.equal(json.userTurn, 3, "userTurn = 最大用户 turn");
+});
+
+test("readReply：取不到 turn / userTurn 时返回 -1（防御式）", () => {
+  // DSH 页但没有任何用户消息：userTurn 取不到。
+  const noUser = el("BODY", {}, [
+    el("DIV", { "data-chat-flow-kind": "assistant-step", "data-chat-group-part": "answer", "data-chat-turn": "4" }, [], "答案"),
+  ]);
+  const dsh = runAdapter(noUser) as { readReply: () => string };
+  const dshJson = JSON.parse(Buffer.from(dsh.readReply(), "base64").toString("utf8"));
+  assert.equal(dshJson.turn, 4);
+  assert.equal(dshJson.userTurn, -1);
+  // 非 DSH 页：两个都是 -1。
+  const plain = runAdapter(el("BODY", {}, [el("P", {}, [], "你好")])) as { readReply: () => string };
+  const plainJson = JSON.parse(Buffer.from(plain.readReply(), "base64").toString("utf8"));
+  assert.equal(plainJson.turn, -1);
+  assert.equal(plainJson.userTurn, -1);
 });
 
 test("fillAndSend：有 Lexical composer 返回 'ok'，无 composer 返回 'no-composer'", () => {
