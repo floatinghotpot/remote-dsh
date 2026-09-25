@@ -7,6 +7,18 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [rdsh-hub 0.8.0 · remote-dsh 0.13.0] - 2026-09-25
+
+### 修复
+
+- **门户在 WebView 客户端不再被迫重新登录**（hub + portal）：7 天续期令牌从 `sessionStorage`（页面会话级，garsync WKWebView 每次页面实例都会丢弃）改为 **HttpOnly cookie `rdsh_hub_refresh`**（`Path=/api/auth`），1 小时访问票过期后门户经该 cookie 静默续期，不再掉回登录页。续期令牌不再暴露给页面 JS。
+
+### 变更
+
+- **破坏性（cookie）**：hub 会话 cookie 由 `rdsh_session` 改名为 **`rdsh_hub_session`**，避免与 gateway 同名 cookie 冲突。未硬编码 cookie 名的客户端无感。
+- `POST /api/auth/refresh` 改为 cookie 优先、body `refreshToken` 回退（向后兼容，先发 hub 再发 portal）。
+- 微信登录的一次性交接 cookie `rdsh_wechat_refresh` 已移除（改为直接下发续期 cookie）。
+
 ## [rdsh-gateway 0.10.0 · remote-dsh 0.12.0 · dsh-web-remote 0.6.0] - 2026-09-25
 
 ### 新增

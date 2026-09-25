@@ -7,6 +7,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [rdsh-hub 0.8.0 · remote-dsh 0.13.0] - 2026-09-25
+
+### Fixed
+
+- **Portal no longer forces re-login in WebView clients** (hub + portal): the 7-day refresh token moved from `sessionStorage` (page-session scoped, discarded by garsync's WKWebView on every page instance) to an **HttpOnly cookie `rdsh_hub_refresh`** (`Path=/api/auth`), so the portal silently refreshes after the 1h access cookie expires instead of dropping to the login form. The refresh token is no longer exposed to page JS.
+
+### Changed
+
+- **Breaking (cookie):** the hub session cookie is renamed `rdsh_session` → **`rdsh_hub_session`** to stop colliding with the gateway's same-named cookie. Clients that don't hard-code the cookie name are unaffected.
+- `POST /api/auth/refresh` reads the refresh cookie first, with the JSON body `refreshToken` kept as a fallback (backward compatible — deploy hub before portal).
+- WeChat login's one-off `rdsh_wechat_refresh` handoff cookie is removed (the refresh cookie is now set directly).
+
 ## [rdsh-gateway 0.10.0 · remote-dsh 0.12.0 · dsh-web-remote 0.6.0] - 2026-09-25
 
 ### Added
