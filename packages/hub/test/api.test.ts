@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Server } from "node:http";
 import { HubDb } from "../src/db.ts";
-import { HubAuth, hashPassword } from "../src/auth.ts";
+import { HubAuth, hashPassword, REFRESH_TTL_MS } from "../src/auth.ts";
 import { Jwt, randomToken, sha256 } from "../src/jwt.ts";
 import { TunnelRegistry } from "../src/tunnel.ts";
 import { EventHub } from "../src/events.ts";
@@ -86,7 +86,7 @@ test("GET /api/account：绑定状态回显（未认证 401 / 登录 200 含字�
   const unauth = await get("/api/account");
   assert.equal(unauth.status, 401);
   const login = await post("/api/auth/login", { name: "alice", password: "pw123456" });
-  const cookie = `rdsh_session=${login.json.accessToken}`;
+  const cookie = `rdsh_hub_session=${login.json.accessToken}`;
   const r = await get("/api/account", cookie);
   assert.equal(r.status, 200);
   assert.equal(r.json.name, "alice");
@@ -106,7 +106,7 @@ test("未认证访问 host 端点 → 401", async () => {
 
 test("host 列表（含在线状态）", async () => {
   const login = await post("/api/auth/login", { name: "alice", password: "pw123456" });
-  const cookie = `rdsh_session=${login.json.accessToken}`;
+  const cookie = `rdsh_hub_session=${login.json.accessToken}`;
   const r = await get("/api/hosts", cookie);
   assert.equal(r.status, 200);
   const hosts = r.json.hosts as Array<Record<string, unknown>>;
@@ -116,7 +116,7 @@ test("host 列表（含在线状态）", async () => {
 test("改名 / 吊销（owner）", async () => {
   db.createHost("host-rename", 1, "rename-me", sha256(randomToken()));
   const login = await post("/api/auth/login", { name: "alice", password: "pw123456" });
-  const cookie = `rdsh_session=${login.json.accessToken}`;
+  const cookie = `rdsh_hub_session=${login.json.accessToken}`;
   const hosts = await get("/api/hosts", cookie);
   const list = hosts.json.hosts as Array<Record<string, unknown>>;
   const hostId = list[0]!.id as string;
@@ -158,7 +158,7 @@ test("self-revoke：host 持自己的 token 注销（未认证端点）", async 
 
 test("join token 创建/列表/吊销", async () => {
   const login = await post("/api/auth/login", { name: "alice", password: "pw123456" });
-  const cookie = `rdsh_session=${login.json.accessToken}`;
+  const cookie = `rdsh_hub_session=${login.json.accessToken}`;
   const created = await post("/api/hosts/join-token", { label: "my-token" }, cookie);
   assert.equal(created.status, 200);
   const id = created.json.id as string;
@@ -182,7 +182,7 @@ test("join token 创建/列表/吊销", async () => {
 
 test("register：join token → host（多用途）；host token 幂等；无效 401", async () => {
   const login = await post("/api/auth/login", { name: "alice", password: "pw123456" });
-  const cookie = `rdsh_session=${login.json.accessToken}`;
+  const cookie = `rdsh_hub_session=${login.json.accessToken}`;
   const created = await post("/api/hosts/join-token", {}, cookie);
   const joinToken = created.json.token as string;
 
@@ -211,7 +211,7 @@ test("register：join token → host（多用途）；host token 幂等；无效
 
 test("register：吊销的 join token 被拒", async () => {
   const login = await post("/api/auth/login", { name: "alice", password: "pw123456" });
-  const cookie = `rdsh_session=${login.json.accessToken}`;
+  const cookie = `rdsh_hub_session=${login.json.accessToken}`;
   const created = await post("/api/hosts/join-token", {}, cookie);
   const id = created.json.id as string;
   const joinToken = created.json.token as string;
@@ -224,7 +224,7 @@ test("隔离：user B 不能访问 user A 的 host（403）", async () => {
   const hostId = "host-for-alice";
   db.createHost(hostId, 1, "alice-host", sha256(randomToken())); // alice 的 host
   const bobLogin = await post("/api/auth/login", { name: "bob", password: "bobpw123" });
-  const bobCookie = `rdsh_session=${bobLogin.json.accessToken}`;
+  const bobCookie = `rdsh_hub_session=${bobLogin.json.accessToken}`;
   const list = await get("/api/hosts", bobCookie);
   assert.equal((list.json.hosts as Array<Record<string, unknown>>).length, 0); // 看不到
   const patch = await fetch(base + `/api/hosts/${hostId}`, {
@@ -238,13 +238,95 @@ test("隔离：user B 不能访问 user A 的 host（403）", async () => {
 test("改密：旧 cookie 立即失效", async () => {
   db.createUser("carol", await hashPassword("oldpass1"));
   const login = await post("/api/auth/login", { name: "carol", password: "oldpass1" });
-  const cookie = `rdsh_session=${login.json.accessToken}`;
+  const cookie = `rdsh_hub_session=${login.json.accessToken}`;
   const r = await post("/api/auth/password", { currentPassword: "oldpass1", newPassword: "newpass123" }, cookie);
   assert.equal(r.status, 200);
   const after = await get("/api/hosts", cookie); // 旧 access 失效（ver+1）
   assert.equal(after.status, 401);
   const relogin = await post("/api/auth/login", { name: "carol", password: "newpass123" });
   assert.equal(relogin.status, 200);
+});
+
+// ---- 方案①：HttpOnly 续期 cookie（cookie 优先 / body 回退 / 登出改密清 cookie） ----
+
+async function loginRaw(name: string, password: string): Promise<{ status: number; json: { accessToken: string; refreshToken: string }; setCookies: string[] }> {
+  const res = await fetch(base + "/api/auth/login", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name, password }),
+  });
+  return { status: res.status, json: (await res.json()) as { accessToken: string; refreshToken: string }, setCookies: res.headers.getSetCookie() };
+}
+
+test("登录下发续期 cookie：HttpOnly; Path=/api/auth; Max-Age 由 REFRESH_TTL_MS 换算", async () => {
+  db.createUser("dave", await hashPassword("pw123456"));
+  const r = await loginRaw("dave", "pw123456");
+  assert.equal(r.status, 200);
+  const refresh = r.setCookies.find((c) => c.startsWith("rdsh_hub_refresh="));
+  assert.ok(refresh, "登录应下发 rdsh_hub_refresh");
+  assert.match(refresh!, /HttpOnly/);
+  assert.match(refresh!, /Path=\/api\/auth/);
+  assert.match(refresh!, new RegExp(`Max-Age=${Math.floor(REFRESH_TTL_MS / 1000)}`));
+});
+
+test("续期：仅带 cookie（空 body）→ 200 并轮换两枚 cookie", async () => {
+  const login = await loginRaw("dave", "pw123456");
+  const res = await fetch(base + "/api/auth/refresh", {
+    method: "POST",
+    headers: { cookie: `rdsh_hub_refresh=${login.json.refreshToken}` },
+  });
+  assert.equal(res.status, 200);
+  const set = res.headers.getSetCookie();
+  assert.ok(set.some((c) => c.startsWith("rdsh_hub_session=")), "续期应下发新 session cookie");
+  assert.ok(set.some((c) => c.startsWith("rdsh_hub_refresh=")), "续期应轮换续期 cookie");
+  const json = (await res.json()) as { refreshToken: string };
+  assert.equal(typeof json.refreshToken, "string"); // 兼容：body 仍返回 refreshToken
+});
+
+test("续期：body 回退（旧 portal 兼容）→ 200", async () => {
+  const login = await loginRaw("dave", "pw123456");
+  const res = await fetch(base + "/api/auth/refresh", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ refreshToken: login.json.refreshToken }),
+  });
+  assert.equal(res.status, 200);
+});
+
+test("续期：cookie 与 body 皆无 → 401（门户据此判 invalid → 跳登录）", async () => {
+  const res = await fetch(base + "/api/auth/refresh", { method: "POST" });
+  assert.equal(res.status, 401);
+});
+
+test("登出：读 cookie 吊销 + 清 session/refresh 两枚 cookie；旧 refresh 不能再续期", async () => {
+  const login = await loginRaw("dave", "pw123456");
+  const res = await fetch(base + "/api/auth/logout", {
+    method: "POST",
+    headers: { cookie: `rdsh_hub_refresh=${login.json.refreshToken}` },
+  });
+  assert.equal(res.status, 204);
+  const set = res.headers.getSetCookie();
+  assert.ok(set.some((c) => c.includes("rdsh_hub_session=;")), "应清 session cookie");
+  assert.ok(set.some((c) => c.includes("rdsh_hub_refresh=;")), "应清 refresh cookie");
+  const again = await fetch(base + "/api/auth/refresh", {
+    method: "POST",
+    headers: { cookie: `rdsh_hub_refresh=${login.json.refreshToken}` },
+  });
+  assert.equal(again.status, 401); // 已吊销
+});
+
+test("改密：清 session/refresh 两枚 cookie", async () => {
+  db.createUser("erin", await hashPassword("oldpass1"));
+  const login = await loginRaw("erin", "oldpass1");
+  const res = await fetch(base + "/api/auth/password", {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie: `rdsh_hub_session=${login.json.accessToken}` },
+    body: JSON.stringify({ currentPassword: "oldpass1", newPassword: "newpass123" }),
+  });
+  assert.equal(res.status, 200);
+  const set = res.headers.getSetCookie();
+  assert.ok(set.some((c) => c.includes("rdsh_hub_session=;")), "改密应清 session cookie");
+  assert.ok(set.some((c) => c.includes("rdsh_hub_refresh=;")), "改密应清 refresh cookie");
 });
 
 test("登录限流：连续失败 5 次 → 429", async () => {

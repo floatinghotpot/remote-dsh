@@ -1,12 +1,12 @@
 /**
  * portal 页面 + 手写路由（零依赖：不引 react-router）。
  *
- * 会话：httpOnly Cookie（fetch credentials include）；refreshToken 存 sessionStorage
- * 供登出吊销（hub 门户自身代码，无第三方脚本）。
+ * 会话：httpOnly Cookie（fetch credentials include）；续期令牌由 hub 下发 HttpOnly cookie 承载，
+ * 登出由服务端读 cookie 吊销（门户不再经手任何令牌）。
  */
 import { useEffect, useState } from "react";
 import QRCode from "qrcode";
-import { api, ApiError, subscribeEvents, REFRESH_KEY, adminApi } from "./api.ts";
+import { api, ApiError, subscribeEvents, adminApi } from "./api.ts";
 import type { HostInfo, JoinTokenInfo, CaptchaPayload, AccountInfo, Capabilities, WechatPayInfo, AdminMe, AdminUserRow, AdminHostRow, AdminOrderRow, AdminPaymentRow, AdminAuditRow, AdminSubscriptionRow, AdminUserDetail, AdminDashboard, AdminConfig } from "./api.ts";
 import { fingerprint } from "./e2ee.ts";
 import { useT, getLang } from "./i18n.ts";
@@ -484,6 +484,17 @@ function Login(): React.JSX.Element {
     void api.capabilities().then((c) => { if (c.site?.brand !== undefined && c.site.brand !== "") setBrand(c.site.brand); if (c.wechatLoginEnabled === true) setWechatEnabled(true); }).catch(() => undefined);
   }, []);
 
+  // ③：已登录访问 /login 时跳回主机页（避免历史栈/收藏夹里的登录页造成"假掉线"）。
+  // accountInfo 走 probe 模式：401 不触发 redirectToLogin，而是抛 ApiError(401) → 留在登录页。
+  useEffect(() => {
+    let cancelled = false;
+    void api.accountInfo({ probe: true })
+      .then(() => { if (!cancelled) navigate(home); })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const wechatLogin = (): void => {
     // 微信登录统一跳 qrconnect authorize（全端一致，不做自制二维码）：
     // open.weixin.qq.com 页面始终渲染它自己的登录二维码并轮询 —— PC 用户手机微信扫 → 登录落在本页面；
@@ -496,7 +507,6 @@ function Login(): React.JSX.Element {
     void run(async () => {
       if (wechatNew === null || wechatNew === "") return;
       const r = await api.wechatConfirm(wechatNew);
-      sessionStorage.setItem(REFRESH_KEY, r.refreshToken);
       navigate(home);
     });
   };
@@ -522,14 +532,12 @@ function Login(): React.JSX.Element {
     void run(async () => {
       if (totpPending !== null) {
         const r = await api.totpLogin(totpPending, totpCode, trustDevice);
-        sessionStorage.setItem(REFRESH_KEY, r.refreshToken);
         navigate(r.mustChangePassword === true ? "/change-password" : home);
       } else {
         const r = await api.login(name, password);
         if (r.requiresTotp === true && r.pendingToken !== undefined) {
           setTotpPending(r.pendingToken);
         } else {
-          sessionStorage.setItem(REFRESH_KEY, r.refreshToken ?? "");
           navigate(r.mustChangePassword === true ? "/change-password" : home);
         }
       }
@@ -1433,15 +1441,10 @@ function HostsPage(): React.JSX.Element {
 }
 
 function logout(): void {
-  const refresh = sessionStorage.getItem(REFRESH_KEY);
-  sessionStorage.removeItem(REFRESH_KEY);
+  // 续期令牌在 HttpOnly cookie 里；等服务端读 cookie 吊销并清 cookie 完成再跳转。
+  // 失败也先本地跳登录（httpOnly cookie 客户端无法自行删除）。
   const done = (): void => navigate("/login");
-  if (refresh === null) {
-    done();
-    return;
-  }
-  // 等服务端清 cookie 完成再跳转（httpOnly cookie 客户端无法删除）；失败也先本地登出。
-  void api.logout(refresh).catch(() => undefined).finally(done);
+  void api.logout().catch(() => undefined).finally(done);
 }
 
 // ---- 进入 host：整页跳转 /h/<hostId>/（hub 校验归属 → Set-Cookie → 302 根路径，DSH 在根路径运行） ----
@@ -1629,7 +1632,6 @@ function PasswordPage(): React.JSX.Element {
     void run(async () => {
       await api.changePassword(current, next);
       setDone(true);
-      sessionStorage.removeItem(REFRESH_KEY);
       setTimeout(() => navigate("/login"), 1500);
     });
   };
@@ -1726,8 +1728,7 @@ function VerifyPage(): React.JSX.Element {
 
   const submit = (): void => {
     void run(async () => {
-      const r = await api.verifyAccount(channel, identifier, code.trim());
-      sessionStorage.setItem(REFRESH_KEY, r.refreshToken ?? "");
+      await api.verifyAccount(channel, identifier, code.trim());
       navigate("/hosts");
     });
   };

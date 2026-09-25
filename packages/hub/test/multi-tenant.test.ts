@@ -55,7 +55,7 @@ async function get(path: string, cookie?: string): Promise<{ status: number; jso
   return { status: res.status, json: (await res.json().catch(() => ({}))) as Record<string, unknown> };
 }
 
-const cookieOf = (t: { accessToken: string }): string => `rdsh_session=${t.accessToken}`;
+const cookieOf = (t: { accessToken: string }): string => `rdsh_hub_session=${t.accessToken}`;
 
 test.before(start);
 test.after(stop);

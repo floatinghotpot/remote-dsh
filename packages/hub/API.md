@@ -3,7 +3,7 @@
 > **协议先行纪律**：层 1 是 rdsh-app / rdsh-weapp / 第三方接入的依据；任何端点/字段/错误码变更必须先改本文件，再改实现，并补 conformance/单测。
 > 既有端点（login/refresh/logout/password/hosts/join-token/events 等）在 M3 已冻结，见各自实现；本文档记录 **08-saas 新增端点**（注册/验证/手机号/计费/删除）。
 
-约定：请求/响应均 `application/json`；错误统一 `{ "error": { "code", "message" } }`（`retry-after` 秒数用于限流）。认证 = `Authorization: Bearer <access>` 或 Cookie `rdsh_session`。
+约定：请求/响应均 `application/json`；错误统一 `{ "error": { "code", "message" } }`（`retry-after` 秒数用于限流）。认证 = `Authorization: Bearer <access>` 或 Cookie `rdsh_hub_session`。续期凭证 = HttpOnly cookie `rdsh_hub_refresh`（`Path=/api/auth`）；`POST /api/auth/refresh` 支持「cookie 优先、body `refreshToken` 回退」。
 
 ## 1. 注册（S1）
 
@@ -108,7 +108,7 @@ JSAPI 支付需用户 openid（公众号 OAuth2）。门户在微信内浏览器
 
 **认证模型**：
 - 独立管理会话 cookie `rdsh_admin_session`（30 分钟短会话，HttpOnly，JWT 含 `admin` 标记 + ver 绑定）。
-- 登录三步：有效门户会话（`rdsh_session`）→ 角色 ∈ `{readonly, operator, admin}`（`HubAuth.isAdminRole`）→ 2FA（账号必须已开启 TOTP）。
+- 登录三步：有效门户会话（`rdsh_hub_session`）→ 角色 ∈ `{readonly, operator, admin}`（`HubAuth.isAdminRole`）→ 2FA（账号必须已开启 TOTP）。
 - **免二次输入**：可信设备 cookie `rdsh_trusted`（30 天，ver 绑定）或门户 access token 的 `totpVerifiedAt` 距今 < 30 分钟 → 免输 TOTP 直接签发管理会话（仍要求账号已开 2FA）。
 - 所有写操作需请求体 `reason`（原因，必填）+ 写审计（`source='admin'`、actor、reason）。
 - 管理 UI 挂载在 `/portal/admin`（门户 SPA 内），旧 `/admin` 302 重定向。

@@ -1,7 +1,7 @@
 /**
  * api.ts — 层 1 hub 对外 API（契约见 req R5，错误统一 {error:{code,message}}）。
  *
- * 认证：`Authorization: Bearer <access>` 或 Cookie `rdsh_session`（HttpOnly）。
+ * 认证：`Authorization: Bearer <access>` 或 Cookie `rdsh_hub_session`（HttpOnly）。
  * 无开放注册端点（账号由 `rdsh hub user add` 创建，防 bot/垃圾注入）。
  */
 import { randomInt, randomUUID } from "node:crypto";
@@ -11,7 +11,7 @@ import type { HubConfig, PlanSpec, WechatLoginConfig } from "./config.ts";
 import { BILLING_DEFAULTS } from "./config.ts";
 import type { HubDb, UserRow } from "./db.ts";
 import type { HubAuth } from "./auth.ts";
-import { createLoginLimiter, hashPassword, verifyPassword, ADMIN_TTL_MS, RECENT_TOTP_WINDOW_MS } from "./auth.ts";
+import { createLoginLimiter, hashPassword, verifyPassword, ADMIN_TTL_MS, RECENT_TOTP_WINDOW_MS, ACCESS_TTL_MS, REFRESH_TTL_MS } from "./auth.ts";
 import type { TunnelRegistry, TunnelTimings } from "./tunnel.ts";
 import type { EventHub } from "./events.ts";
 import { randomToken, sha256 } from "./jwt.ts";
@@ -30,7 +30,9 @@ import type { AdminCtx, AdminCreateUserInput } from "./admin.ts";
 import * as admin from "./admin.ts";
 import { lastBackupAt } from "./backup.ts";
 
-export const SESSION_COOKIE = "rdsh_session";
+export const SESSION_COOKIE = "rdsh_hub_session";
+/** 续期凭证 cookie（HttpOnly；`Path=/api/auth` 使其只出现在续期/登出/改密请求，普通页面与中继不携带）。 */
+export const REFRESH_COOKIE = "rdsh_hub_refresh";
 /** 可信设备 cookie（30 天免 TOTP；签名含 ver，改密即失效）。 */
 export const TRUSTED_COOKIE = "rdsh_trusted";
 export const OPENID_COOKIE = "rdsh_openid";
@@ -41,7 +43,6 @@ const JOIN_TOKEN_MAX_TTL = 365 * 24 * 3600; // join token 上限 1 年（秒）
 const REGISTER_RATE_LIMIT = { max: 10, windowMs: 60 * 1000 }; // register 未认证端点：10 次/分钟/IP
 const WECHAT_STATE_TTL_MS = 10 * 60 * 1000; // 微信登录 state：一次性、10 分钟
 const WECHAT_TRIAL_LIMIT = { max: 3, windowMs: 24 * 3600 * 1000 }; // 同 IP 自动建号上限（R8）
-const WECHAT_REFRESH_COOKIE = "rdsh_wechat_refresh"; // 302 登录后 refresh 交接（非 HttpOnly、短效）
 
 export interface HubRuntime {
   /** 隧道心跳时序（测试注入；缺省见 PROTOCOL.md） */
@@ -805,10 +806,7 @@ async function handleWechatLoginCallback(req: IncomingMessage, res: ServerRespon
     }
     res.writeHead(302, {
       location: st.next ?? "/hosts",
-      "set-cookie": [
-        sessionCookie(tokens.accessToken),
-        `${WECHAT_REFRESH_COOKIE}=${encodeURIComponent(tokens.refreshToken)}; SameSite=Lax; Path=/; Max-Age=60`,
-      ],
+      "set-cookie": [sessionCookie(tokens.accessToken), refreshCookie(tokens.refreshToken)],
     });
     res.end();
     return;
@@ -879,7 +877,7 @@ async function handleWechatConfirm(req: IncomingMessage, res: ServerResponse, ru
     writeError(res, 403, "FORBIDDEN", "account not active");
     return;
   }
-  res.writeHead(200, { "content-type": "application/json", "set-cookie": sessionCookie(tokens.accessToken) });
+  res.writeHead(200, { "content-type": "application/json", "set-cookie": [sessionCookie(tokens.accessToken), refreshCookie(tokens.refreshToken)] });
   res.end(JSON.stringify({ accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, user: { id: user.id, name: user.name } }));
 }
 
@@ -996,7 +994,7 @@ async function handleLogin(req: IncomingMessage, res: ServerResponse, runtime: H
           runtime.db.recordAudit(user.id, "login.ok", { name: user.name, trustedDevice: true }, ip);
           res.writeHead(200, {
             "content-type": "application/json",
-            "set-cookie": [sessionCookie(tokens.accessToken), trustedDeviceCookie(runtime.auth.signTrustedDevice(user.id))],
+            "set-cookie": [sessionCookie(tokens.accessToken), refreshCookie(tokens.refreshToken), trustedDeviceCookie(runtime.auth.signTrustedDevice(user.id))],
           });
           res.end(
             JSON.stringify({
@@ -1019,7 +1017,7 @@ async function handleLogin(req: IncomingMessage, res: ServerResponse, runtime: H
       runtime.db.recordAudit(user?.id ?? null, "login.ok", {}, ip);
       res.writeHead(200, {
         "content-type": "application/json",
-        "set-cookie": sessionCookie(result.tokens.accessToken),
+        "set-cookie": [sessionCookie(result.tokens.accessToken), refreshCookie(result.tokens.refreshToken)],
       });
       res.end(
         JSON.stringify({
@@ -1195,37 +1193,43 @@ async function handleAccountVerify(req: IncomingMessage, res: ServerResponse, ru
     writeError(res, 403, "FORBIDDEN", "account not active");
     return;
   }
-  res.writeHead(200, { "content-type": "application/json", "set-cookie": sessionCookie(tokens.accessToken) });
+  res.writeHead(200, { "content-type": "application/json", "set-cookie": [sessionCookie(tokens.accessToken), refreshCookie(tokens.refreshToken)] });
   res.end(JSON.stringify({ accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, user: { id: user.id, name: user.name } }));
 }
 
 async function handleRefresh(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
   const body = await readJsonBody(req);
-  if (body === null || typeof body.refreshToken !== "string") {
-    writeError(res, 400, "BAD_REQUEST", "invalid body");
+  const cookies = parseCookies(req.headers.cookie);
+  // 优先从 HttpOnly 续期 cookie 取令牌；body 作兼容回退（旧 portal 仍以 body 传）。
+  const token = cookies[REFRESH_COOKIE] ?? (body !== null && typeof body.refreshToken === "string" ? body.refreshToken : null);
+  if (token === null) {
+    // 无令牌 = 未登录：门户 401 → 静默续期 → 这里 401 → 判 invalid → 跳登录。
+    // （若返回 400，门户会把 !ok 当作 transient「网络错误」，而不是跳登录。）
+    writeError(res, 401, "MISSING_REFRESH", "missing refresh token");
     return;
   }
-  const pair = runtime.auth.refresh(body.refreshToken);
+  const pair = runtime.auth.refresh(token);
   if (pair === null) {
     writeError(res, 401, "INVALID_REFRESH", "refresh token invalid or revoked");
     return;
   }
   res.writeHead(200, {
     "content-type": "application/json",
-    "set-cookie": sessionCookie(pair.accessToken),
+    "set-cookie": [sessionCookie(pair.accessToken), refreshCookie(pair.refreshToken)],
   });
   res.end(JSON.stringify(pair));
 }
 
 async function handleLogout(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
   const body = await readJsonBody(req);
-  if (body !== null && typeof body.refreshToken === "string") {
-    runtime.auth.logout(body.refreshToken);
-  }
-  // 清除访问令牌 cookie（httpOnly，客户端无法自行删除）+ host 转发 cookie：
+  const cookies = parseCookies(req.headers.cookie);
+  // 优先从 HttpOnly 续期 cookie 取令牌吊销；body 作兼容回退。
+  const token = cookies[REFRESH_COOKIE] ?? (body !== null && typeof body.refreshToken === "string" ? body.refreshToken : null);
+  if (token !== null) runtime.auth.logout(token);
+  // 清除访问令牌 cookie + 续期 cookie（httpOnly，客户端无法自行删除）+ host 转发 cookie：
   // 否则登出后 access JWT（1h）仍可认证 /api/*，根路径仍会直接转发进 host。
   res.writeHead(204, {
-    "set-cookie": [`${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`, clearHostCookie()],
+    "set-cookie": [`${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`, clearRefreshCookie(), clearHostCookie()],
   });
   res.end();
 }
@@ -1251,7 +1255,11 @@ async function handlePassword(req: IncomingMessage, res: ServerResponse, runtime
     writeError(res, 400, "BAD_CREDENTIALS", "current password incorrect");
     return;
   }
-  res.writeHead(200, { "content-type": "application/json" });
+  // 改密已吊销全部会话（ver+1 + revokeAllRefresh）；这里顺手清掉会话/续期 cookie，避免死 cookie 残留。
+  res.writeHead(200, {
+    "content-type": "application/json",
+    "set-cookie": [`${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`, clearRefreshCookie()],
+  });
   res.end(JSON.stringify({ ok: true, message: "password updated; all sessions revoked" }));
 }
 
@@ -1471,7 +1479,17 @@ async function handleRegister(req: IncomingMessage, res: ServerResponse, runtime
 }
 
 function sessionCookie(accessToken: string): string {
-  return `${SESSION_COOKIE}=${accessToken}; HttpOnly; SameSite=Lax; Path=/; Max-Age=3600`;
+  return `${SESSION_COOKIE}=${accessToken}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${ACCESS_TTL_MS / 1000}`;
+}
+
+/** 续期凭证 cookie：`Max-Age` 由 `REFRESH_TTL_MS` 换算（禁止写死，避免与常量漂移）。 */
+function refreshCookie(refreshToken: string): string {
+  return `${REFRESH_COOKIE}=${refreshToken}; HttpOnly; SameSite=Lax; Path=/api/auth; Max-Age=${Math.floor(REFRESH_TTL_MS / 1000)}`;
+}
+
+/** 清续期凭证 cookie（登出/改密用）。 */
+function clearRefreshCookie(): string {
+  return `${REFRESH_COOKIE}=; HttpOnly; SameSite=Lax; Path=/api/auth; Max-Age=0`;
 }
 
 function trustedDeviceCookie(token: string): string {
@@ -1678,7 +1696,7 @@ async function handleTotpLogin(req: IncomingMessage, res: ServerResponse, runtim
     writeError(res, 401, "BAD_TOTP", "invalid or expired 2FA code");
     return;
   }
-  const cookies = [sessionCookie(result.tokens.accessToken)];
+  const cookies = [sessionCookie(result.tokens.accessToken), refreshCookie(result.tokens.refreshToken)];
   if (body.trustDevice === true) {
     // 用户勾选「记住此设备」→ 签发 30 天可信设备 cookie（同一次 TOTP 验证即信任）
     cookies.push(trustedDeviceCookie(runtime.auth.signTrustedDevice(result.userId)));

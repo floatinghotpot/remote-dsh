@@ -26,7 +26,7 @@ const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD_LENGTH
 
 /**
  * 授权 host 访问：验 HMAC 签名 host cookie（进入 host 时签发，7 天，绑定会话版本）。
- * 不依赖 rdsh_session —— 进入后 DSH 持续可用；改密（ver+1）或吊销后立即失效。
+ * 不依赖 rdsh_hub_session —— 进入后 DSH 持续可用；改密（ver+1）或吊销后立即失效。
  */
 function authorizeHost(req: IncomingMessage, runtime: HubRuntime): { hostId: string; userId: number } | null {
   const cookies = parseCookies(req.headers.cookie);

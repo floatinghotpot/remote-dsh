@@ -2,36 +2,28 @@
  * api.ts — portal 的 hub API client（同源 fetch，httpOnly Cookie 会话）。
  */
 
-/** sessionStorage 里的 refresh token key（登录时写入，401 静默续期使用）。 */
-export const REFRESH_KEY = "rdsh_refresh";
+/** 静默续期：续期令牌由 hub 下发的 HttpOnly cookie 承载（服务端读取），这里发空 body；cookie 缺失/失效 ⇒ 401。 */
 const REFRESH_TIMEOUT_MS = 8000;
 
 /** 续期结果分级：ok=成功 / invalid=令牌真过期 / transient=网络异常或超时。 */
 type RefreshResult = "ok" | "invalid" | "transient";
 
-/** 单飞静默续期：并发 401 只触发一次 refresh；成功换新 cookie + 轮换 refresh token。 */
+/** 单飞静默续期：并发 401 只触发一次 refresh；成功换新 cookie + 轮换续期令牌。 */
 let refreshPromise: Promise<RefreshResult> | null = null;
 function silentRefresh(): Promise<RefreshResult> {
-  const rt = sessionStorage.getItem(REFRESH_KEY);
-  if (rt === null) return Promise.resolve("invalid");
   if (refreshPromise === null) {
     refreshPromise = (async (): Promise<RefreshResult> => {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), REFRESH_TIMEOUT_MS);
       try {
+        // 续期令牌在 HttpOnly cookie 里（JS 不可读），发空 body，由服务端读 cookie。
         const res = await fetch("/api/auth/refresh", {
           method: "POST",
           credentials: "include",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ refreshToken: rt }),
           signal: ctrl.signal,
         });
         if (res.status === 401 || res.status === 403) return "invalid";
         if (!res.ok) return "transient";
-        const body = (await res.json()) as { refreshToken?: string };
-        if (typeof body.refreshToken === "string" && body.refreshToken !== "") {
-          sessionStorage.setItem(REFRESH_KEY, body.refreshToken);
-        }
         return "ok";
       } catch {
         return "transient"; // 网络失败 / 超时（abort）
@@ -44,9 +36,8 @@ function silentRefresh(): Promise<RefreshResult> {
   return refreshPromise;
 }
 
-/** 续期确认为令牌过期 → 清本地会话，整页跳登录并携带回跳路径（相对 /portal）。 */
+/** 续期确认为令牌过期 → 整页跳登录并携带回跳路径（相对 /portal）。 */
 function redirectToLogin(): void {
-  sessionStorage.removeItem(REFRESH_KEY);
   const full = window.location.pathname + window.location.search;
   const rel = full.startsWith("/portal") ? full.slice("/portal".length) : full;
   const next = rel.length > 1 ? `?next=${encodeURIComponent(rel)}` : "";
@@ -180,8 +171,9 @@ export const api = {
   wechatConfirm(token: string): Promise<{ accessToken: string; refreshToken: string; user: { id: number; name: string } }> {
     return jsonFetch("/api/wechat/confirm", { method: "POST", body: JSON.stringify({ token }) });
   },
-  logout(refreshToken: string): Promise<void> {
-    return jsonFetch("/api/auth/logout", { method: "POST", body: JSON.stringify({ refreshToken }) });
+  logout(): Promise<void> {
+    // 续期令牌在 HttpOnly cookie 里，服务端登出时读 cookie 吊销。
+    return jsonFetch("/api/auth/logout", { method: "POST", body: "{}" });
   },
   refresh(refreshToken: string): Promise<{ accessToken: string; refreshToken: string }> {
     return jsonFetch("/api/auth/refresh", { method: "POST", body: JSON.stringify({ refreshToken }) });
