@@ -6,7 +6,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { HubDb } from "../src/db.ts";
-import { HubAuth } from "../src/auth.ts";
+import { HubAuth, hashPassword } from "../src/auth.ts";
+import { generateSecret, totp } from "../src/totp.ts";
 import { Jwt, sha256 } from "../src/jwt.ts";
 import { TunnelRegistry } from "../src/tunnel.ts";
 import { EventHub } from "../src/events.ts";
@@ -20,6 +21,7 @@ let server: RunningHub | null = null;
 let base = "";
 let db: HubDb;
 let runtime: HubRuntime;
+let adminSession = "";
 
 const config: HubConfig = {
   host: "127.0.0.1",
@@ -84,6 +86,9 @@ async function del(path: string, body: unknown, cookie?: string): Promise<{ stat
 }
 
 test.before(start);
+test.before(async () => {
+  adminSession = await adminCookie();
+});
 test.after(stop);
 
 test("注册（email）→ 建 pending 用户 → 验证激活 → trial + 自动登录", async () => {
@@ -224,6 +229,18 @@ async function loginCookie(identifier: string, password: string): Promise<string
   return setCookie.split(";")[0]!;
 }
 
+/** 直接铸造 admin 会话 cookie（开 2FA + admin 角色）。管理台登录流本身已由 admin.test.ts 覆盖。 */
+async function adminCookie(): Promise<string> {
+  const name = `boss-${Math.random().toString(36).slice(2, 8)}`;
+  const u = db.createUser(name, await hashPassword("pw12345678"));
+  db.setRole(u.id, "admin");
+  const secret = generateSecret();
+  db.setTotpSecret(u.id, secret);
+  const token = runtime.auth.issueAdminSession(u.id, totp(secret));
+  assert.ok(token !== null, "admin session should mint");
+  return `rdsh_admin_session=${token}`;
+}
+
 test("找回密码：email 通道接受 identifier（双通道回归）", async () => {
   await post("/api/auth/register", { channel: "email", identifier: "reset@test.com", password: "pw123456" });
   const u = db.getUserByEmail("reset@test.com");
@@ -277,4 +294,58 @@ test("feature16 last_login：建号不算；touchLastLogin 更新；密码登录
   assert.equal(lr.status, 200);
   const afterLogin = db.getUserByEmail("login-touch@test.com")!;
   assert.ok(afterLogin.lastLoginAt !== null && afterLogin.lastLoginAt > 0);
+});
+
+// ---- feature 23：授权动作化 + 后端强校验（HTTP 级） ----
+
+test("grant-trial：HTTP 成功 + trial 顺延；缺 days → 400", async () => {
+  const u = db.createUser("grant-trial-ee", await hashPassword("pw12345678"));
+  const exp = Date.now() + 24 * 3600 * 1000;
+  db.setPlan(u.id, "trial", exp);
+  const r = await post(`/api/admin/users/${u.id}/grant-trial`, { days: 30, reason: "客服延长" }, adminSession);
+  assert.equal(r.status, 200);
+  const after = db.getUserById(u.id)!;
+  assert.equal(after.planStatus, "trial");
+  assert.ok((after.planExpiresAt ?? 0) >= exp + 30 * 24 * 3600 * 1000 - 1000);
+  const bad = await post(`/api/admin/users/${u.id}/grant-trial`, { reason: "x" }, adminSession);
+  assert.equal(bad.status, 400);
+});
+
+test("plan 收紧：subscribed 无订阅 → 400；null 带到期 → 400", async () => {
+  const u = db.createUser("plan-ee", "hash");
+  const a = await post(`/api/admin/users/${u.id}/plan`, { planStatus: "subscribed", expiresAtMs: Date.now() + 86_400_000, reason: "x" }, adminSession);
+  assert.equal(a.status, 400);
+  const b = await post(`/api/admin/users/${u.id}/plan`, { planStatus: "null", expiresAtMs: Date.now() + 86_400_000, reason: "x" }, adminSession);
+  assert.equal(b.status, 400);
+});
+
+test("建号：trialDays → trial；都不给 → 永久无限；两者同给 → 400", async () => {
+  const a = await post("/api/admin/users", { identifier: "trial-new@test.com", password: "pw12345678", trialDays: 7, reason: "x" }, adminSession);
+  assert.equal(a.status, 200);
+  assert.equal(db.getUserByEmail("trial-new@test.com")!.planStatus, "trial");
+  const b = await post("/api/admin/users", { identifier: "perm-new@test.com", password: "pw12345678", reason: "x" }, adminSession);
+  assert.equal(b.status, 200);
+  assert.equal(db.getUserByEmail("perm-new@test.com")!.planStatus, null);
+  const c = await post("/api/admin/users", { identifier: "both@test.com", password: "pw12345678", trialDays: 7, expiresAtMs: Date.now() + 86_400_000, reason: "x" }, adminSession);
+  assert.equal(c.status, 400);
+});
+
+test("grant-subscription 端到端：trial(1 台) → 赠 pro → 配额升级可接第 2 台", async () => {
+  const r = await post("/api/admin/users", { identifier: "grant-pro@test.com", password: "pw12345678", trialDays: 7, reason: "x" }, adminSession);
+  assert.equal(r.status, 200);
+  const owner = db.getUserByEmail("grant-pro@test.com")!;
+  const token = "grant-pro-join-token-0123456789abcdef";
+  db.createJoinToken("jgrant", null, owner.id, sha256(token), Date.now() + 60_000);
+  const h1 = await post("/api/hosts/register", { token, name: "h1" });
+  assert.equal(h1.status, 200);
+  const h2 = await post("/api/hosts/register", { token, name: "h2" });
+  assert.equal(h2.status, 403); // trial 1 台
+  const g = await post(`/api/admin/users/${owner.id}/grant-subscription`, { planId: "pro", days: 365, reason: "受邀请用户" }, adminSession);
+  assert.equal(g.status, 200);
+  assert.equal(db.getUserByEmail("grant-pro@test.com")!.planStatus, "subscribed");
+  assert.equal(db.getActiveSubscription(owner.id)!.planId, "pro");
+  const h2b = await post("/api/hosts/register", { token, name: "h2" });
+  assert.equal(h2b.status, 200); // 配额升级后成功
+  const badPlan = await post(`/api/admin/users/${owner.id}/grant-subscription`, { planId: "nope", days: 30, reason: "x" }, adminSession);
+  assert.equal(badPlan.status, 400);
 });

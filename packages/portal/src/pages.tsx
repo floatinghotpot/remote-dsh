@@ -2418,6 +2418,7 @@ function AdminUsers({ isWrite, isAdmin }: { isWrite: boolean; isAdmin: boolean }
   const [dialog, setDialog] = useState<DialogSpec | null>(null);
   const [menuUserId, setMenuUserId] = useState<number | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [plans, setPlans] = useState<Array<{ id: string; name: string; hosts: number }>>([]);
   const fetch = (query: string, p: number): void => {
     adminApi
       .users({ q: query !== "" ? query : undefined, limit: PAGE, offset: p * PAGE })
@@ -2425,6 +2426,9 @@ function AdminUsers({ isWrite, isAdmin }: { isWrite: boolean; isAdmin: boolean }
       .catch(() => { setUsers([]); setTotal(0); });
   };
   const reload = (): void => fetch(q, page);
+  useEffect(() => {
+    adminApi.config().then((c) => setPlans(c.plans)).catch(() => setPlans([]));
+  }, []);
   useEffect(() => {
     const timer = setTimeout(() => fetch(q, page), 300);
     return () => clearTimeout(timer);
@@ -2452,39 +2456,50 @@ function AdminUsers({ isWrite, isAdmin }: { isWrite: boolean; isAdmin: boolean }
           .catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed")),
     });
   };
-  /** 日期字段 "YYYY-MM-DD" → 当日 23:59:59.999 本地 ms（E4）；空 → null。 */
-  const dateToMs = (date?: string): number | null => {
-    if (typeof date !== "string" || date.trim() === "") return null;
-    const [y, m, d] = date.split("-").map(Number);
-    if (![y, m, d].every((n) => Number.isFinite(n))) return null;
-    return new Date(y as number, (m as number) - 1, d as number, 23, 59, 59, 999).getTime();
-  };
-  const openPlan = (u: AdminUserRow): void => {
+  /** 延长试用：天数 → grant-trial（顺延，不吞剩余）。 */
+  const grantTrial = (u: AdminUserRow): void => {
     setDialog({
-      title: `${t("改套餐")} · ${u.name}`,
+      title: `${t("延长试用")} · ${u.name}`,
+      fields: [{ key: "days", label: t("天数"), value: "7" }],
+      submit: (reason, values) =>
+        adminApi
+          .userAction(u.id, "grant-trial", { reason, days: Number(values.days) })
+          .then(() => { setMsg("ok"); setDialog(null); reload(); })
+          .catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed")),
+    });
+  };
+  /** 赠送订阅：档位 + 天数 + 金额（0=赠送）→ grant-subscription。 */
+  const grantSubscription = (u: AdminUserRow): void => {
+    setDialog({
+      title: `${t("赠送订阅")} · ${u.name}`,
       fields: [
         {
-          key: "planStatus",
-          label: t("套餐状态"),
-          value: u.planStatus ?? "null",
-          options: [
-            { value: "null", label: t("无期限（null）") },
-            { value: "trial", label: "trial" },
-            { value: "subscribed", label: "subscribed" },
-            { value: "grace", label: "grace" },
-            { value: "free", label: "free" },
-          ],
+          key: "planId",
+          label: t("套餐"),
+          value: plans[0]?.id ?? "pro",
+          options: plans.map((p) => ({ value: p.id, label: `${p.name}（${p.hosts} 台）` })),
         },
-        { key: "expiresAt", label: t("到期时间（留空 = 无期限）"), type: "date", value: u.planExpiresAt !== null ? new Date(u.planExpiresAt).toISOString().slice(0, 10) : "" },
+        { key: "days", label: t("时长（天）"), value: "30" },
+        { key: "amountCny", label: t("金额（元，0=赠送）"), value: "0" },
       ],
       submit: (reason, values) =>
         adminApi
-          .userAction(u.id, "plan", { reason, planStatus: values.planStatus === "null" ? null : values.planStatus, expiresAtMs: dateToMs(values.expiresAt) })
-          .then(() => {
-            setMsg("ok");
-            setDialog(null);
-            reload();
-          })
+          .userAction(u.id, "grant-subscription", { reason, planId: values.planId ?? "", days: Number(values.days), amountCny: Number(values.amountCny) })
+          .then(() => { setMsg("ok"); setDialog(null); reload(); })
+          .catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed")),
+    });
+  };
+  /** 设为永久无限：plan=null（后端校验：null 不得带到期）。 */
+  const grantUnlimited = (u: AdminUserRow): void => {
+    setDialog({
+      title: `${t("设为永久无限")} · ${u.name}`,
+      fields: [],
+      danger: true,
+      confirmText: u.name,
+      submit: (reason) =>
+        adminApi
+          .userAction(u.id, "plan", { reason, planStatus: null })
+          .then(() => { setMsg("ok"); setDialog(null); reload(); })
           .catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed")),
     });
   };
@@ -2540,7 +2555,9 @@ function AdminUsers({ isWrite, isAdmin }: { isWrite: boolean; isAdmin: boolean }
                       {isWrite && u.accountStatus === "banned" && <button style={menuItemStyle()} onClick={() => { setMenuUserId(null); open(u, t("解封"), "unban"); }}>{t("解封")}</button>}
                       {isWrite && <button style={menuItemStyle()} onClick={() => { setMenuUserId(null); open(u, t("重置密码"), "reset-password", [{ key: "password", label: t("新密码（≥8 位）"), type: "password" }]); }}>{t("重置密码")}</button>}
                       {isWrite && <button style={menuItemStyle()} onClick={() => { setMenuUserId(null); open(u, t("重置2FA"), "reset-2fa", [], true); }}>{t("重置2FA")}</button>}
-                      {isWrite && <button style={menuItemStyle()} onClick={() => { setMenuUserId(null); openPlan(u); }}>{t("改套餐")}</button>}
+                      {isWrite && <button style={menuItemStyle()} onClick={() => { setMenuUserId(null); grantTrial(u); }}>{t("延长试用")}</button>}
+                      {isAdmin && <button style={menuItemStyle()} onClick={() => { setMenuUserId(null); grantSubscription(u); }}>{t("赠送订阅")}</button>}
+                      {isWrite && <button style={menuItemStyle(true)} onClick={() => { setMenuUserId(null); grantUnlimited(u); }}>{t("永久无限")}</button>}
                       {isAdmin && <button style={menuItemStyle()} onClick={() => { setMenuUserId(null); open(u, t("改角色"), "set-role", [{ key: "role", label: t("角色"), value: u.role, options: [{ value: "user", label: t("普通用户") }, { value: "readonly", label: t("只读") }, { value: "operator", label: t("运营") }, { value: "admin", label: t("管理员", { en: "Admin" }) }] }]); }}>{t("改角色")}</button>}
                       {isAdmin && <button style={menuItemStyle(true)} onClick={() => { setMenuUserId(null); open(u, t("删除"), "delete", [], true, u.name); }}>{t("删除")}</button>}
                     </div>
@@ -2566,7 +2583,7 @@ function CreateUserDialog({ isAdmin, onClose, onCreated }: { isAdmin: boolean; o
   const [password, setPassword] = useState("");
   const [password2, setPassword2] = useState("");
   const [mustChange, setMustChange] = useState(true);
-  const [expiresAt, setExpiresAt] = useState("");
+  const [trialDays, setTrialDays] = useState("");
   const [reason, setReason] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
@@ -2579,11 +2596,11 @@ function CreateUserDialog({ isAdmin, onClose, onCreated }: { isAdmin: boolean; o
     if (password.length < 8) { setErr(t("密码至少 8 位")); return; }
     if (password !== password2) { setErr(t("两次输入的密码不一致")); return; }
     if (reason.trim() === "") { setErr(t("请填写操作原因")); return; }
+    const days = trialDays.trim() === "" ? null : Number(trialDays);
+    if (days !== null && (!Number.isInteger(days) || days < 1 || days > 3650)) { setErr(t("试用天数须为 1–3650 的整数，或留空表示永久")); return; }
     setBusy(true);
-    const [y, m, d] = expiresAt.trim() === "" ? [] : expiresAt.split("-").map(Number);
-    const expiresAtMs = y !== undefined && m !== undefined && d !== undefined ? new Date(y, m - 1, d, 23, 59, 59, 999).getTime() : null;
     adminApi
-      .createUser({ identifier: identifier.trim(), password, role: role as "user" | "readonly" | "operator" | "admin", mustChange, expiresAtMs, reason: reason.trim() })
+      .createUser({ identifier: identifier.trim(), password, role: role as "user" | "readonly" | "operator" | "admin", mustChange, ...(days !== null ? { trialDays: days } : {}), reason: reason.trim() })
       .then(onCreated)
       .catch((e: unknown) => { setErr(e instanceof Error ? e.message : "create failed"); setBusy(false); });
   };
@@ -2611,7 +2628,7 @@ function CreateUserDialog({ isAdmin, onClose, onCreated }: { isAdmin: boolean; o
           <input type="checkbox" checked={mustChange} onChange={(e) => setMustChange(e.target.checked)} />
           {t("强制首次登录修改密码")}
         </label>
-        {field(t("到期时间（留空 = 无期限）"), <input type="date" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} style={inputStyle} />)}
+        {field(t("试用天数（留空 = 永久无限）"), <input type="text" inputMode="numeric" value={trialDays} onChange={(e) => setTrialDays(e.target.value)} placeholder="7" style={inputStyle} />)}
         {field(t("原因（必填）"), <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} placeholder={t("请填写操作原因")} style={{ ...inputStyle, fontFamily: "inherit" }} />)}
         {err !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 12, margin: "0 0 8px" }}>{err}</p>}
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
@@ -2706,11 +2723,11 @@ function AdminBilling({ isWrite, isAdmin }: { isWrite: boolean; isAdmin: boolean
         { key: "userId", label: t("用户 ID") },
         { key: "planId", label: t("套餐 ID") },
         { key: "amountCny", label: t("金额（元）") },
-        { key: "expiresAtMs", label: t("到期时间戳（ms）") },
+        { key: "days", label: t("时长（天）"), value: "30" },
       ],
       submit: (reason, values) =>
         adminApi
-          .credit({ userId: Number(values.userId), planId: values.planId ?? "", amountCny: Number(values.amountCny), expiresAtMs: Number(values.expiresAtMs), reason })
+          .credit({ userId: Number(values.userId), planId: values.planId ?? "", amountCny: Number(values.amountCny), days: Number(values.days), reason })
           .then(() => { setMsg("ok"); setDialog(null); reload(); })
           .catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed")),
     });

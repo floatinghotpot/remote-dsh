@@ -117,7 +117,7 @@ export interface AdminCreateUserInput {
   role: "user" | "readonly" | "operator" | "admin";
   /** 初始密码是否强制首登改密（默认 true，见 req D2）。 */
   mustChange: boolean;
-  /** 到期时间戳 ms；null = 无期限（默认，req D4）。E1：plan 保持 null + 设 plan_expires_at → 到期由计费状态机降 free。 */
+  /** 试用到该时刻 ms（写 `plan=trial`）；null = 永久无限（默认，req D4）。 */
   expiresAtMs: number | null;
 }
 
@@ -146,7 +146,7 @@ export async function createUser(db: HubDb, ctx: AdminCtx, input: AdminCreateUse
   const user = db.createUser(name, hash, new Date().toISOString(), input.mustChange);
   if (email !== null) db.setEmail(user.id, email);
   if (phone !== null) db.setPhone(user.id, phone);
-  if (input.expiresAtMs !== null) db.setPlan(user.id, null, input.expiresAtMs); // E1：plan null + 到期
+  if (input.expiresAtMs !== null) db.setPlan(user.id, "trial", input.expiresAtMs); // 建号带到期 = 试用（不再写 null+到期）
   audit(db, ctx, user.id, "admin.user.create", { name, role, email, phone, expiresAtMs: input.expiresAtMs }, reason);
   const created = db.getUserById(user.id);
   if (created === null) throw new AdminError("BAD_REQUEST", "create failed");
@@ -171,14 +171,34 @@ export function resetUser2fa(db: HubDb, ctx: AdminCtx, userId: number, reason: s
   audit(db, ctx, userId, "admin.reset-2fa", { name: user.name }, reason);
 }
 
-/** 手动调整套餐（订阅/降级）。planStatus: subscribed|grace|free|null；expiresAtMs 为 null 时立即生效无到期。 */
+/** 手动调整套餐（订阅/降级）。planStatus: subscribed|grace|free|null；expiresAtMs 为 null 时立即生效无到期。
+ * 收紧校验（feature 23）：`subscribed` 必须已有有效订阅；`null` 不得带到期时间。 */
 export function adjustPlan(db: HubDb, ctx: AdminCtx, userId: number, planStatus: string | null, expiresAtMs: number | null, reason: string): void {
   assertRole(ctx, "operator");
   const user = db.getUserById(userId);
   if (user === null) throw new AdminError("NOT_FOUND", "user not found");
+  if (planStatus === "subscribed" && db.getActiveSubscription(userId) === null) {
+    throw new AdminError("BAD_REQUEST", "subscribed requires an active subscription; use grant-subscription instead");
+  }
+  if (planStatus === null && expiresAtMs !== null) {
+    throw new AdminError("BAD_REQUEST", "a null (unlimited) plan cannot carry expiresAtMs; clear the expiry or use grant-trial / grant-subscription");
+  }
   db.setPlan(userId, planStatus, expiresAtMs);
   if (planStatus === "free") db.setFreeSince(userId, Date.now());
   audit(db, ctx, userId, "admin.adjust-plan", { name: user.name, planStatus, expiresAtMs }, reason);
+}
+
+/** 延长试用：`trial` 到期从 `max(now, 当前到期)` 起顺延 `days` 天；已订阅账号拒绝（防误降级，D7）。 */
+export function grantTrial(db: HubDb, ctx: AdminCtx, userId: number, days: number, reason: string): void {
+  assertRole(ctx, "operator");
+  if (!Number.isInteger(days) || days < 1 || days > 3650) throw new AdminError("BAD_REQUEST", "days must be an integer in [1, 3650]");
+  const user = db.getUserById(userId);
+  if (user === null) throw new AdminError("NOT_FOUND", "user not found");
+  if (db.getActiveSubscription(userId) !== null) throw new AdminError("CONFLICT", "user has an active subscription; use grant-subscription instead");
+  const base = Math.max(Date.now(), user.planExpiresAt ?? 0);
+  const expiresAtMs = base + days * 24 * 3600 * 1000;
+  db.setPlan(userId, "trial", expiresAtMs);
+  audit(db, ctx, userId, "admin.grant-trial", { name: user.name, days, expiresAtMs }, reason);
 }
 
 export function revokeHost(db: HubDb, ctx: AdminCtx, hostId: string, reason: string): void {
@@ -234,7 +254,38 @@ export function removeAdmin(db: HubDb, ctx: AdminCtx, userId: number, reason: st
   audit(db, ctx, userId, "admin.remove-admin", { name: user.name }, reason);
 }
 
-/** 补单（人工入账）：建订单 → 标 paid（channel=manual）→ 激活订阅。admin only。 */
+/** 赠送订阅入参：`days` 与 `expiresAtMs` 二选一；`amountCny` 默认 0（赠送）。 */
+export interface GrantSubscriptionInput {
+  userId: number;
+  planId: string;
+  /** 顺延天数（从 `max(now, 当前到期)` 起算）。 */
+  days?: number;
+  /** 明确到期时间戳 ms（未来时刻）。 */
+  expiresAtMs?: number;
+  /** 入账金额，默认 0（manual 渠道，营收口径按 provider 区分）。 */
+  amountCny?: number;
+}
+
+/** 赠送订阅（admin only）：校验后复用 creditOrder（订单 + 停用旧订阅 + 新订阅 + subscribed）。 */
+export function grantSubscription(db: HubDb, ctx: AdminCtx, input: GrantSubscriptionInput, reason: string): string {
+  assertRole(ctx, "admin");
+  if (input.days === undefined && input.expiresAtMs === undefined) {
+    throw new AdminError("BAD_REQUEST", "days or expiresAtMs required");
+  }
+  if (input.days !== undefined && (!Number.isInteger(input.days) || input.days < 1 || input.days > 3650)) {
+    throw new AdminError("BAD_REQUEST", "days must be an integer in [1, 3650]");
+  }
+  if (input.expiresAtMs !== undefined && (!Number.isFinite(input.expiresAtMs) || input.expiresAtMs <= Date.now())) {
+    throw new AdminError("BAD_REQUEST", "expiresAtMs must be a future timestamp");
+  }
+  const user = db.getUserById(input.userId);
+  if (user === null) throw new AdminError("NOT_FOUND", "user not found");
+  const base = Math.max(Date.now(), user.planExpiresAt ?? 0);
+  const expiresAtMs = input.days !== undefined ? base + input.days * 24 * 3600 * 1000 : input.expiresAtMs!;
+  return creditOrder(db, ctx, { userId: input.userId, planId: input.planId, amountCny: input.amountCny ?? 0, expiresAtMs }, reason);
+}
+
+/** 补单（人工入账）：建订单 → 标 paid（channel=manual）→ 停用旧订阅 → 激活新订阅。admin only。 */
 export function creditOrder(
   db: HubDb,
   ctx: AdminCtx,
@@ -244,6 +295,9 @@ export function creditOrder(
   assertRole(ctx, "admin");
   const user = db.getUserById(params.userId);
   if (user === null) throw new AdminError("NOT_FOUND", "user not found");
+  // 单有效订阅（D8）：停用旧 active 订阅，避免 getActiveSubscription 取到脏数据
+  const prior = db.getActiveSubscription(params.userId);
+  if (prior !== null) db.setSubscriptionStatus(prior.id, "canceled");
   const orderId = `manual-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   db.createOrder(orderId, params.userId, params.planId, params.amountCny);
   db.markOrderPaid(orderId, "manual", null);

@@ -254,7 +254,25 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
         return true;
       }
       const role = typeof roleRaw === "string" ? roleRaw : "user";
-      const expiresAtMs = typeof body.expiresAtMs === "number" ? body.expiresAtMs : null;
+      // 试用到期：trialDays（新，服务端算到期）与 expiresAtMs（遗留，直接到期）二选一；都不给 → 永久无限
+      if (body.trialDays !== undefined && typeof body.trialDays !== "number") {
+        writeError(res, 400, "BAD_REQUEST", "trialDays must be an integer in [1, 3650]");
+        return true;
+      }
+      if (typeof body.trialDays === "number" && typeof body.expiresAtMs === "number") {
+        writeError(res, 400, "BAD_REQUEST", "trialDays and expiresAtMs are mutually exclusive");
+        return true;
+      }
+      let expiresAtMs: number | null = null;
+      if (typeof body.trialDays === "number") {
+        if (!Number.isInteger(body.trialDays) || body.trialDays < 1 || body.trialDays > 3650) {
+          writeError(res, 400, "BAD_REQUEST", "trialDays must be an integer in [1, 3650]");
+          return true;
+        }
+        expiresAtMs = Date.now() + body.trialDays * 24 * 3600 * 1000;
+      } else if (typeof body.expiresAtMs === "number") {
+        expiresAtMs = body.expiresAtMs;
+      }
       const input: AdminCreateUserInput = {
         identifier: body.identifier,
         password: body.password,
@@ -376,7 +394,7 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
   }
 
   // ---- 写端点（服务层 RBAC + 审计） ----
-  const userAction = /^\/api\/admin\/users\/([^/]+)\/(ban|unban|reset-password|unlock|reset-2fa|plan|set-role|delete)$/.exec(path);
+  const userAction = /^\/api\/admin\/users\/([^/]+)\/(ban|unban|reset-password|unlock|reset-2fa|plan|grant-trial|grant-subscription|set-role|delete)$/.exec(path);
   if (userAction !== null && method === "POST") {
     const id = Number(decodeURIComponent(userAction[1]!));
     const action = userAction[2]!;
@@ -407,6 +425,46 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
         const planStatus = raw === null || raw === undefined || raw === "null" ? null : raw;
         const expiresAtMs = body === null ? null : typeof body.expiresAtMs === "number" ? body.expiresAtMs : null;
         admin.adjustPlan(db, ctx, id, planStatus, expiresAtMs, requireReason(body) ?? "no reason");
+      } else if (action === "grant-trial") {
+        const days = body === null ? undefined : body.days;
+        if (typeof days !== "number" || !Number.isInteger(days)) {
+          writeError(res, 400, "BAD_REQUEST", "days must be an integer in [1, 3650]");
+          return true;
+        }
+        admin.grantTrial(db, ctx, id, days, requireReason(body) ?? "no reason");
+      } else if (action === "grant-subscription") {
+        if (body === null || typeof body.planId !== "string") {
+          writeError(res, 400, "BAD_REQUEST", "planId required");
+          return true;
+        }
+        if (!(runtime.config.billing?.plans ?? []).some((p) => p.id === body.planId)) {
+          writeError(res, 400, "BAD_REQUEST", `unknown planId '${body.planId}'`);
+          return true;
+        }
+        if (body.days !== undefined && typeof body.days !== "number") {
+          writeError(res, 400, "BAD_REQUEST", "days must be an integer");
+          return true;
+        }
+        if (body.expiresAtMs !== undefined && typeof body.expiresAtMs !== "number") {
+          writeError(res, 400, "BAD_REQUEST", "expiresAtMs must be a number");
+          return true;
+        }
+        if (body.amountCny !== undefined && typeof body.amountCny !== "number") {
+          writeError(res, 400, "BAD_REQUEST", "amountCny must be a number");
+          return true;
+        }
+        admin.grantSubscription(
+          db,
+          ctx,
+          {
+            userId: id,
+            planId: body.planId,
+            ...(typeof body.days === "number" ? { days: body.days } : {}),
+            ...(typeof body.expiresAtMs === "number" ? { expiresAtMs: body.expiresAtMs } : {}),
+            ...(typeof body.amountCny === "number" ? { amountCny: body.amountCny } : {}),
+          },
+          requireReason(body) ?? "no reason",
+        );
       } else if (action === "set-role") {
         if (body === null || typeof body.role !== "string") {
           writeError(res, 400, "BAD_REQUEST", "role required");
@@ -452,11 +510,28 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
   if (path === "/api/admin/credit" && method === "POST") {
     const body = await readJsonBody(req);
     try {
-      if (body === null || typeof body.userId !== "number" || typeof body.planId !== "string" || typeof body.amountCny !== "number" || typeof body.expiresAtMs !== "number") {
-        writeError(res, 400, "BAD_REQUEST", "userId/planId/amountCny/expiresAtMs required");
+      if (body === null || typeof body.userId !== "number" || typeof body.planId !== "string" || typeof body.amountCny !== "number") {
+        writeError(res, 400, "BAD_REQUEST", "userId/planId/amountCny required");
         return true;
       }
-      const orderId = admin.creditOrder(db, ctx, { userId: body.userId, planId: body.planId, amountCny: body.amountCny, expiresAtMs: body.expiresAtMs }, requireReason(body) ?? "no reason");
+      if (!(runtime.config.billing?.plans ?? []).some((p) => p.id === body.planId)) {
+        writeError(res, 400, "BAD_REQUEST", `unknown planId '${body.planId}'`);
+        return true;
+      }
+      if (body.days !== undefined && typeof body.days !== "number") {
+        writeError(res, 400, "BAD_REQUEST", "days must be an integer");
+        return true;
+      }
+      if (body.expiresAtMs !== undefined && typeof body.expiresAtMs !== "number") {
+        writeError(res, 400, "BAD_REQUEST", "expiresAtMs must be a number");
+        return true;
+      }
+      if (typeof body.days !== "number" && typeof body.expiresAtMs !== "number") {
+        writeError(res, 400, "BAD_REQUEST", "days or expiresAtMs required");
+        return true;
+      }
+      const expiresAtMs = typeof body.days === "number" ? Date.now() + body.days * 24 * 3600 * 1000 : body.expiresAtMs!;
+      const orderId = admin.creditOrder(db, ctx, { userId: body.userId, planId: body.planId, amountCny: body.amountCny, expiresAtMs }, requireReason(body) ?? "no reason");
       res.end(JSON.stringify({ ok: true, orderId }));
     } catch (err) {
       writeAdminError(res, err);

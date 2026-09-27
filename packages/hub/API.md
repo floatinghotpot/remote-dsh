@@ -128,10 +128,19 @@ JSAPI 支付需用户 openid（公众号 OAuth2）。门户在微信内浏览器
 分页 + 模糊搜索（name/email/phone）。响应 `{ "users": [{ ...UserRow, hostCount }], "total" }`；`limit` 默认 50、上限 200。
 
 ### POST /api/admin/users/{id}/{action}
-`action` ∈ `ban | unban | reset-password | unlock | reset-2fa | plan | set-role | delete`
-- 均需 `reason`；`reset-password` 另需 `password`（≥8 位）；`plan` 另需 `planStatus`（subscribed/grace/free/null）；`set-role` 另需 `role`（user/readonly/operator/admin）。
-- RBAC：`operator` 可 ban/unban/reset-password/unlock/reset-2fa/plan；`admin` 可 set-role/delete。
+`action` ∈ `ban | unban | reset-password | unlock | reset-2fa | plan | set-role | delete | grant-trial | grant-subscription`
+- 均需 `reason`。
+- `grant-trial`：`{ days: number(1..3650), reason }` → 写 `trial`，到期 = `max(now, 当前到期) + days`；若账号已有有效订阅 → `409 CONFLICT`。RBAC：`operator`。
+- `grant-subscription`：`{ planId: string, days?: number, expiresAtMs?: number, amountCny?: number(默认 0), reason }`（`days` 与 `expiresAtMs` 二选一）→ 建订单(paid/manual) + **停用旧有效订阅** + 建新订阅 + `subscribed`。`planId` 必须在 `billing.plans`。RBAC：`admin`。
+- `plan`（收紧）：`planStatus` ∈ subscribed/grace/free/null + 可选 `expiresAtMs`；`subscribed` 必须已有有效订阅（否则 `400`）；`null` 不得携带 `expiresAtMs`（否则 `400`）。
+- 其余：`reset-password` 另需 `password`（≥8 位）；`set-role` 另需 `role`（user/readonly/operator/admin）。
+- RBAC：`operator` 可 ban/unban/reset-password/unlock/reset-2fa/plan/grant-trial；`admin` 可 set-role/delete/grant-subscription。
 - **自我保护**：不能删除自己 / 修改自己角色 / 移除自己（`403 FORBIDDEN`）。
+
+### POST /api/admin/users —— 管理台建号
+`{ identifier: string, password: string(≥8), role?: user|readonly|operator|admin(默认 user), mustChange?: bool(默认 true), trialDays?: number(1..3650) | expiresAtMs?: number(遗留), reason }`
+- `trialDays` 与 `expiresAtMs` 二选一（同给 → 400）；都不给 → **永久无限**（`plan=null`、无到期）。
+- 带试用时写 `plan=trial` + 到期时间（**不再写 `null`+到期**）；`expiresAtMs` 为遗留字段，等价"试用到该时刻"。
 
 ### GET /api/admin/hosts?q=&limit=&offset=
 分页 + 模糊搜索（主机名/归属用户名，JOIN users）。响应 `{ "hosts": [{ ...HostRow, ownerName, online }], "total" }`。
@@ -143,7 +152,7 @@ JSAPI 支付需用户 openid（公众号 OAuth2）。门户在微信内浏览器
 
 ### POST /api/admin/orders/{id}/refund —— 人工退款（`operator`；仅 `paid` 订单；置 refunded + 取消订阅降免费档）。
 
-### POST /api/admin/credit —— 手动补单入账（`admin` only）：`{ userId, planId, amountCny, expiresAtMs }` + `reason`。
+### POST /api/admin/credit —— 手动补单入账（`admin` only）：`{ userId, planId, amountCny, expiresAtMs }` + `reason`。`planId` 必须在 `billing.plans`；重复补单会停用旧有效订阅（单有效订阅）。
 
 ### GET /api/admin/health —— `{ uptimeSeconds, tunnelCount, onlineHosts, dbSize, version, lastBackupAt }`
 

@@ -307,13 +307,13 @@ export interface AdminUserRow {
   locked: boolean;
   lockedUntil: number | null;
 }
-/** 管理台建号入参（feature 16）。 */
+/** 管理台建号入参（feature 16；feature 23 起 trialDays 替代 expiresAtMs）。 */
 export interface AdminCreateUserInput {
   identifier: string;
   password: string;
   role: "user" | "readonly" | "operator" | "admin";
   mustChange: boolean;
-  expiresAtMs: number | null;
+  trialDays?: number;
 }
 export interface AdminHostRow {
   id: string;
@@ -462,7 +462,7 @@ export const adminApi = {
   refundOrder(id: string, reason: string): Promise<{ ok: boolean }> {
     return adminJson(`/api/admin/orders/${encodeURIComponent(id)}/refund`, { method: "POST", body: JSON.stringify({ reason }) });
   },
-  credit(body: { userId: number; planId: string; amountCny: number; expiresAtMs: number; reason: string }): Promise<{ ok: boolean; orderId: string }> {
+  credit(body: { userId: number; planId: string; amountCny: number; days: number; reason: string }): Promise<{ ok: boolean; orderId: string }> {
     return adminJson("/api/admin/credit", { method: "POST", body: JSON.stringify(body) });
   },
   audit(params?: { userId?: number; event?: string; source?: string }): Promise<{ events: AdminAuditRow[] }> {

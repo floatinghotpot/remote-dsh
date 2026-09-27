@@ -7,7 +7,7 @@ import { HubDb } from "../src/db.ts";
 import { HubAuth } from "../src/auth.ts";
 import { Jwt } from "../src/jwt.ts";
 import { generateSecret, totp } from "../src/totp.ts";
-import { banUser, unbanUser, resetUser2fa, refundOrder, deleteUser, setUserRole, removeAdmin, createUser, listAudit, AdminError } from "../src/admin.ts";
+import { banUser, unbanUser, resetUser2fa, refundOrder, deleteUser, setUserRole, removeAdmin, createUser, adjustPlan, grantTrial, grantSubscription, listAudit, AdminError } from "../src/admin.ts";
 import type { AdminCtx } from "../src/admin.ts";
 
 function makeDb(): HubDb {
@@ -177,12 +177,77 @@ test("createUser：RBAC（operator 建 user 可 / 建 admin 拒绝 / admin 可�
   );
 });
 
-test("createUser：到期（E1）→ plan null + planExpiresAt 落库", async () => {
+test("createUser：带到期 → 试用（trial + 到期，不再写 null+到期）", async () => {
   const db = makeDb();
   const boss = makeUser(db, "boss", "admin");
   const exp = Date.now() + 30 * 24 * 3600 * 1000;
   const u = await createUser(db, ctx(boss, "admin"), { identifier: "term-user", password: "pw12345678", role: "user", mustChange: true, expiresAtMs: exp }, "临时人员 3 个月");
-  assert.equal(u.planStatus, null);
+  assert.equal(u.planStatus, "trial");
   assert.equal(u.planExpiresAt, exp);
   assert.equal(db.getUserById(u.id)!.lastLoginAt, null); // 建号不算登录
+});
+
+test("adjustPlan 收紧：subscribed 无订阅 → BAD_REQUEST；null 带到期 → BAD_REQUEST", () => {
+  const db = makeDb();
+  const boss = makeUser(db, "boss", "admin");
+  const target = makeUser(db, "alice");
+  assert.throws(
+    () => adjustPlan(db, ctx(boss, "admin"), target, "subscribed", Date.now() + 86_400_000, "x"),
+    (e: unknown) => e instanceof AdminError && e.code === "BAD_REQUEST",
+  );
+  assert.throws(
+    () => adjustPlan(db, ctx(boss, "admin"), target, null, Date.now() + 86_400_000, "x"),
+    (e: unknown) => e instanceof AdminError && e.code === "BAD_REQUEST",
+  );
+  // 合法：subscribed 有订阅；null 无到期
+  db.createSubscription(target, "pro", Date.now(), Date.now() + 86_400_000);
+  adjustPlan(db, ctx(boss, "admin"), target, "subscribed", Date.now() + 86_400_000, "x");
+  adjustPlan(db, ctx(boss, "admin"), target, null, null, "x");
+  assert.equal(db.getUserById(target)!.planStatus, null);
+});
+
+test("grantTrial：顺延 + 审计；已订阅 → CONFLICT", () => {
+  const db = makeDb();
+  const boss = makeUser(db, "boss", "admin");
+  const target = makeUser(db, "alice");
+  const exp = Date.now() + 3 * 24 * 3600 * 1000;
+  db.setPlan(target, "trial", exp);
+  grantTrial(db, ctx(boss, "admin"), target, 7, "客服延长");
+  const u = db.getUserById(target)!;
+  assert.equal(u.planStatus, "trial");
+  assert.ok((u.planExpiresAt ?? 0) >= exp + 7 * 24 * 3600 * 1000 - 1000); // 顺延不吞剩余
+  assert.equal(listAudit(db, { source: "admin" })[0]!.event, "admin.grant-trial");
+  // 已订阅 → 拒绝（防误降级付费用户）
+  db.createSubscription(target, "pro", Date.now(), Date.now() + 86_400_000);
+  assert.throws(
+    () => grantTrial(db, ctx(boss, "admin"), target, 7, "x"),
+    (e: unknown) => e instanceof AdminError && e.code === "CONFLICT",
+  );
+});
+
+test("grantSubscription：三表一致 + 停用旧订阅 + 参数校验", () => {
+  const db = makeDb();
+  const boss = makeUser(db, "boss", "admin");
+  const target = makeUser(db, "alice");
+  db.createSubscription(target, "pro", Date.now(), Date.now() + 86_400_000); // 旧订阅
+  grantSubscription(db, ctx(boss, "admin"), { userId: target, planId: "pro", days: 365, amountCny: 0 }, "受邀请用户");
+  const u = db.getUserById(target)!;
+  assert.equal(u.planStatus, "subscribed");
+  const sub = db.getActiveSubscription(target)!;
+  assert.equal(sub.planId, "pro");
+  assert.ok(sub.expiresAt >= Date.now() + 364 * 24 * 3600 * 1000);
+  // 单有效订阅：旧订阅被停用
+  const actives = db.listSubscriptionsByUser(target).filter((s) => s.status === "active");
+  assert.equal(actives.length, 1);
+  assert.equal(db.listOrders().length, 1);
+  assert.equal(listAudit(db, { source: "admin" })[0]!.event, "admin.credit-order");
+  // days 与 expiresAtMs 均缺省 → BAD_REQUEST；过期 expiresAtMs → BAD_REQUEST
+  assert.throws(
+    () => grantSubscription(db, ctx(boss, "admin"), { userId: target, planId: "pro" }, "x"),
+    (e: unknown) => e instanceof AdminError && e.code === "BAD_REQUEST",
+  );
+  assert.throws(
+    () => grantSubscription(db, ctx(boss, "admin"), { userId: target, planId: "pro", expiresAtMs: Date.now() - 1 }, "x"),
+    (e: unknown) => e instanceof AdminError && e.code === "BAD_REQUEST",
+  );
 });
