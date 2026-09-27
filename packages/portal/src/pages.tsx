@@ -257,19 +257,23 @@ function tError(code: string, fallback: string): string {
   return ERROR_ZH[code] ?? fallback;
 }
 
-function useError(): { err: string; clear: () => void; run: (fn: () => Promise<void>) => Promise<boolean> } {
+function useError(): { err: string; pending: boolean; clear: () => void; run: (fn: () => Promise<void>) => Promise<boolean> } {
   const [err, setErr] = useState("");
+  const [pending, setPending] = useState(false);
   const run = async (fn: () => Promise<void>): Promise<boolean> => {
     try {
       setErr("");
+      setPending(true);
       await fn();
       return true;
     } catch (e) {
       setErr(e instanceof ApiError ? tError(e.code, e.message) : e instanceof Error ? e.message : String(e));
       return false;
+    } finally {
+      setPending(false);
     }
   };
-  return { err, clear: () => setErr(""), run };
+  return { err, pending, clear: () => setErr(""), run };
 }
 
 // ---- 验证码（arithmetic 零依赖 / aliyun 2.0 前端 SDK / none）----
@@ -298,14 +302,21 @@ function loadScript(src: string): Promise<void> {
 
 const ALIYUN_CAPTCHA_SDK = "https://o.alicdn.com/captcha-frontend/aliyunCaptcha/AliyunCaptcha.js";
 
-/** 按后端 /api/captcha/config 渲染对应验证码；完成后回调 captcha 载荷（arithmetic → token+answer；aliyun → captchaVerifyParam；none → {}）。 */
-function CaptchaGate({ onCaptcha }: { onCaptcha: (captcha: CaptchaPayload) => void }): React.JSX.Element | null {
+/** 按后端 /api/captcha/config 渲染对应验证码；完成后回调 captcha 载荷（arithmetic → token+answer；aliyun → captchaVerifyParam；none → {}）。
+ *
+ * 票据是**一次性**的（阿里云 captchaVerifyParam 验一次即失效；算术题 token 命中即删），因此：
+ *  - 票据由父组件持有，父组件消费/失败后清空 → 这里自动回到"待验证"，杜绝重放旧票；
+ *  - 阿里云 SDK 官方要求**不要重复调用 initAliyunCaptcha**（重复初始化会多次注册事件，
+ *    表现为"滑块第一次总失败、第二次才通过"），所以验证成功后也不卸载组件、不重新初始化；
+ *    滑块没过时 SDK 会自行刷新，用户再点一次按钮即可拿到新票据。 */
+function CaptchaGate({ captcha, onCaptcha }: { captcha: CaptchaPayload; onCaptcha: (captcha: CaptchaPayload) => void }): React.JSX.Element | null {
   const { t } = useT();
   const [mode, setMode] = useState<"loading" | "none" | "arithmetic" | "aliyun">("loading");
   const [challenge, setChallenge] = useState<{ token: string; question: string } | null>(null);
   const [answer, setAnswer] = useState("");
   const [captchaFail, setCaptchaFail] = useState("");
   const { err, run } = useError();
+  const hasTicket = Object.keys(captcha).length > 0;
 
   useEffect(() => {
     void run(async () => {
@@ -329,7 +340,6 @@ function CaptchaGate({ onCaptcha }: { onCaptcha: (captcha: CaptchaPayload) => vo
           button: "#rdsh-captcha-btn",
           success: (param: string) => {
             onCaptcha({ captchaVerifyParam: param });
-            setMode("none");
           },
           fail: (result: unknown) => {
             const msg =
@@ -340,11 +350,16 @@ function CaptchaGate({ onCaptcha }: { onCaptcha: (captcha: CaptchaPayload) => vo
           },
         });
       } else {
-        setMode("arithmetic");
-        setChallenge(await api.captchaChallenge());
+        setMode("arithmetic"); // 题目由下面的 effect 取（清票后它也会换一道）
       }
     });
   }, []);
+
+  // 算术验证码：题目 token 一次性，票据被清空（已消费/失败）后换一道新题
+  useEffect(() => {
+    if (mode !== "arithmetic" || hasTicket) return;
+    void run(async () => setChallenge(await api.captchaChallenge()));
+  }, [mode, hasTicket]);
 
   if (mode === "loading" || mode === "none") return null;
   if (mode === "aliyun") {
@@ -352,11 +367,13 @@ function CaptchaGate({ onCaptcha }: { onCaptcha: (captcha: CaptchaPayload) => vo
       <div style={{ marginBottom: 12 }}>
         <div id="rdsh-captcha-element" />
         <button id="rdsh-captcha-btn" type="button" style={btnStyle("ghost")}>{t("完成滑块验证")}</button>
+        {hasTicket && <p style={{ color: "var(--rdsh-success)", fontSize: 13 }}>{t("人机验证已完成")}</p>}
         {captchaFail !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{captchaFail}</p>}
         {err !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{err}</p>}
       </div>
     );
   }
+  if (hasTicket) return <p style={{ color: "var(--rdsh-success)", fontSize: 13 }}>{t("人机验证已完成")}</p>;
   if (challenge === null) return null;
   return (
     <>
@@ -1138,7 +1155,7 @@ function ResetPasswordPage(): React.JSX.Element {
   const [newPassword, setNewPassword] = useState("");
   const [sent, setSent] = useState(false);
   const [cap, setCap] = useState<Capabilities | null>(null);
-  const { err, run } = useError();
+  const { err, run, pending } = useError();
 
   // sms 未配置 → 隐藏手机号通道（未登录，走公开 /api/capabilities）
   useEffect(() => {
@@ -1163,9 +1180,23 @@ function ResetPasswordPage(): React.JSX.Element {
       {!sent ? (
         <>
           {field(channel === "email" ? t("注册邮箱") : t("手机号（+86）"), identifier, setIdentifier)}
-          <CaptchaGate onCaptcha={setCaptchaPayload} />
+          <CaptchaGate captcha={captchaPayload} onCaptcha={setCaptchaPayload} />
           {err !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{err}</p>}
-          <button onClick={() => void run(async () => { await api.resetRequest(channel, identifier.trim(), captchaPayload); setSent(true); })} style={{ ...btnStyle(), width: "100%" }}>{t("发送重置码")}</button>
+          <button
+            onClick={() =>
+              void run(async () => {
+                try {
+                  await api.resetRequest(channel, identifier.trim(), captchaPayload);
+                } catch (e) {
+                  setCaptchaPayload({}); // 一次性票据已消费/失效 → 清票，强制重新过人机验证
+                  throw e;
+                }
+                setSent(true);
+              })
+            }
+            disabled={pending}
+            style={{ ...btnStyle(), width: "100%", opacity: pending ? 0.5 : 1 }}
+          >{t("发送重置码")}</button>
         </>
       ) : (
         <>
@@ -1665,7 +1696,7 @@ function RegisterPage(): React.JSX.Element {
   const [captchaPayload, setCaptchaPayload] = useState<CaptchaPayload>({});
   const [cap, setCap] = useState<Capabilities | null>(null);
   const [agreed, setAgreed] = useState(false);
-  const { err, run } = useError();
+  const { err, run, pending } = useError();
 
   // sms 未配置 → 隐藏手机号 tab（注册页未登录，走公开 /api/capabilities）
   useEffect(() => {
@@ -1678,7 +1709,12 @@ function RegisterPage(): React.JSX.Element {
   const submit = (): void => {
     if (!agreed) return;
     void run(async () => {
-      await api.register(channel, identifier.trim(), password, captchaPayload);
+      try {
+        await api.register(channel, identifier.trim(), password, captchaPayload);
+      } catch (e) {
+        setCaptchaPayload({}); // 一次性票据已消费/失效 → 清票，强制重新过人机验证
+        throw e;
+      }
       navigate(`/verify?channel=${channel}&identifier=${encodeURIComponent(identifier.trim())}`);
     });
   };
@@ -1698,7 +1734,7 @@ function RegisterPage(): React.JSX.Element {
       </div>
       {field(channel === "email" ? t("邮箱地址") : t("手机号（+86，11 位）"), identifier, setIdentifier)}
       {field(t("密码（至少 8 位）"), password, setPassword, "password")}
-      <CaptchaGate onCaptcha={setCaptchaPayload} />
+      <CaptchaGate captcha={captchaPayload} onCaptcha={setCaptchaPayload} />
       <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 13, marginBottom: 12, lineHeight: 1.6 }}>
         <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} style={{ marginTop: 2 }} />
         <span>
@@ -1709,7 +1745,7 @@ function RegisterPage(): React.JSX.Element {
         </span>
       </label>
       {err !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{err}</p>}
-      <button onClick={submit} disabled={!agreed} style={{ ...btnStyle(), width: "100%", marginTop: 8, opacity: agreed ? 1 : 0.5 }}>{t("获取验证码并注册")}</button>
+      <button onClick={submit} disabled={!agreed || pending} style={{ ...btnStyle(), width: "100%", marginTop: 8, opacity: agreed && !pending ? 1 : 0.5 }}>{t("获取验证码并注册")}</button>
       <p style={{ marginTop: 12, textAlign: "center" }}>
         <a href="#" onClick={(e) => { e.preventDefault(); navigate("/login"); }} style={{ color: "var(--rdsh-link)", fontSize: 13 }}>{t("已有账号？登录")}</a>
       </p>

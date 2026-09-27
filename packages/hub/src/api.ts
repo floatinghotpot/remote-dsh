@@ -1060,7 +1060,7 @@ async function handleAccountRegister(req: IncomingMessage, res: ServerResponse, 
     return;
   }
   const body = await readJsonBody(req);
-  if (!(await verifyCaptchaBody(runtime, body))) {
+  if (!(await verifyCaptchaBody(runtime, body, { route: "auth.register", ip, userAgent: userAgentOf(req) }))) {
     writeError(res, 400, "BAD_CAPTCHA", "captcha failed");
     return;
   }
@@ -1117,7 +1117,7 @@ async function handleAccountResend(req: IncomingMessage, res: ServerResponse, ru
   }
   const ip = clientIp(req, runtime);
   const body = await readJsonBody(req);
-  if (!(await verifyCaptchaBody(runtime, body))) {
+  if (!(await verifyCaptchaBody(runtime, body, { route: "auth.register.resend", ip, userAgent: userAgentOf(req) }))) {
     writeError(res, 400, "BAD_CAPTCHA", "captcha failed");
     return;
   }
@@ -1667,22 +1667,68 @@ function hostQuota(runtime: HubRuntime, user: UserRow): number | null {
   return spec?.hosts ?? 0;
 }
 
-/** 验证码校验（按 provider 分发）：none 跳过；aliyun VerifyCaptcha 验签；arithmetic token+answer。 */
-async function verifyCaptchaBody(runtime: HubRuntime, body: Record<string, unknown> | null): Promise<boolean> {
+/** 验证码校验（按 provider 分发）：none 跳过；aliyun VerifyCaptcha 验签；arithmetic token+answer。
+ *
+ * 每次结果都写日志（route/ip/ua + 失败分类 + 阿里云 RequestId）：票据是一次性的，
+ * "偶发验证失败"只能靠这些字段区分"阿里云判未过""票据被复用/过期""压根没带票据""调用出错"。
+ * 绝不记录票据原文，只记 sha256 指纹，便于把前端拿到的票与后端验签结果对上。 */
+async function verifyCaptchaBody(
+  runtime: HubRuntime,
+  body: Record<string, unknown> | null,
+  meta: { route: string; ip: string; userAgent: string },
+): Promise<boolean> {
   const provider = runtime.config.captcha?.provider;
   if (provider === "none") return true;
   if (provider === "aliyun") {
     const cfg = runtime.config.captcha?.aliyun;
-    if (cfg === undefined || body === null || typeof body.captchaVerifyParam !== "string") return false;
-    try {
-      return await verifyCaptchaParam(cfg, body.captchaVerifyParam);
-    } catch {
+    const param = body === null ? undefined : body.captchaVerifyParam;
+    if (cfg === undefined) {
+      logCaptcha(meta, { outcome: "config-missing" });
       return false;
     }
+    if (typeof param !== "string" || param.length === 0) {
+      logCaptcha(meta, { outcome: "missing-param" });
+      return false;
+    }
+    const r = await verifyCaptchaParam(cfg, param);
+    logCaptcha(meta, {
+      outcome: r.ok ? "verified" : r.error === null ? "rejected" : "error",
+      ticket: param,
+      requestId: r.requestId,
+      code: r.code,
+      error: r.error,
+    });
+    return r.ok;
   }
-  // arithmetic（缺省）
-  if (body === null || typeof body.captchaToken !== "string" || typeof body.captchaAnswer !== "string") return false;
-  return verifyChallenge(body.captchaToken, body.captchaAnswer);
+  // arithmetic（缺省）：题目 token 一次性（verifyChallenge 命中即删）
+  if (body === null || typeof body.captchaToken !== "string" || typeof body.captchaAnswer !== "string") {
+    logCaptcha(meta, { outcome: "missing-param" });
+    return false;
+  }
+  const ok = verifyChallenge(body.captchaToken, body.captchaAnswer);
+  logCaptcha(meta, { outcome: ok ? "verified" : "rejected", ticket: body.captchaToken });
+  return ok;
+}
+
+/** 验证码结果落日志：成功走 stdout、失败走 stderr（journalctl 里可按 `rdsh hub captcha:` 筛）。 */
+function logCaptcha(
+  meta: { route: string; ip: string; userAgent: string },
+  info: { outcome: string; ticket?: string; requestId?: string | null; code?: string | null; error?: string | null },
+): void {
+  const parts = [`route=${meta.route}`, `outcome=${info.outcome}`, `ip=${meta.ip}`];
+  if (info.ticket !== undefined && info.ticket !== "") parts.push(`ticket=${sha256(info.ticket).slice(0, 8)}/${info.ticket.length}`);
+  if (info.code !== undefined && info.code !== null) parts.push(`code=${info.code}`);
+  if (info.requestId !== undefined && info.requestId !== null) parts.push(`requestId=${info.requestId}`);
+  if (info.error !== undefined && info.error !== null) parts.push(`error=${info.error.replace(/\s+/g, " ").slice(0, 120)}`);
+  if (meta.userAgent !== "") parts.push(`ua=${meta.userAgent.slice(0, 60)}`);
+  const line = `rdsh hub captcha: ${parts.join(" ")}`;
+  if (info.outcome === "verified") console.log(line);
+  else console.warn(line);
+}
+
+/** 日志用 UA（长度在 logCaptcha 内截断）。 */
+function userAgentOf(req: IncomingMessage): string {
+  return String(req.headers["user-agent"] ?? "");
 }
 
 async function handleTotpLogin(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
@@ -1722,7 +1768,7 @@ async function handleResetRequest(req: IncomingMessage, res: ServerResponse, run
     writeError(res, 400, "BAD_REQUEST", channel === "phone" ? "invalid phone (+86, 11 digits)" : "invalid email");
     return;
   }
-  if (!(await verifyCaptchaBody(runtime, body))) {
+  if (!(await verifyCaptchaBody(runtime, body, { route: "auth.reset", ip, userAgent: userAgentOf(req) }))) {
     writeError(res, 400, "BAD_CAPTCHA", "captcha failed");
     return;
   }

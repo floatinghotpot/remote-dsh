@@ -20,8 +20,20 @@ export interface AliyunCaptchaConfig {
 
 const DEFAULT_ENDPOINT = "https://captcha.aliyuncs.com/";
 
-/** 调用 VerifyCaptcha 验签；通过返回 true。 */
-export async function verifyCaptchaParam(config: AliyunCaptchaConfig, captchaVerifyParam: string): Promise<boolean> {
+/** 验签结果：ok=false 既可能是"用户没过"，也可能是"调用出错"，靠 error 区分——排查"随机失败"的关键。 */
+export interface CaptchaVerifyOutcome {
+  /** 是否验签通过。 */
+  ok: boolean;
+  /** 阿里云 RequestId（对账/提工单用）。 */
+  requestId: string | null;
+  /** 阿里云返回码（成功为 "Success"；未返回为 null）。 */
+  code: string | null;
+  /** 调用层面的失败原因（HTTP 状态 / 网络异常 / 阿里云错误码）；"用户没过"时为 null。 */
+  error: string | null;
+}
+
+/** 调用 VerifyCaptcha 验签。**不抛异常**：所有失败都体现在返回值里，便于调用方分类记日志。 */
+export async function verifyCaptchaParam(config: AliyunCaptchaConfig, captchaVerifyParam: string): Promise<CaptchaVerifyOutcome> {
   const endpoint = config.endpoint ?? DEFAULT_ENDPOINT;
   const params: Record<string, string> = {
     Action: "VerifyCaptcha",
@@ -37,13 +49,23 @@ export async function verifyCaptchaParam(config: AliyunCaptchaConfig, captchaVer
   };
   params.Signature = rpcSignature(params, config.accessKeySecret, "POST");
 
-  const res = await fetch(endpoint, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams(params).toString(),
-  });
-  if (!res.ok) throw new Error(`aliyun captcha HTTP ${res.status}`);
-  const json = (await res.json()) as { Code?: string; Result?: { VerifyResult?: boolean } };
-  if (json.Code !== undefined && json.Code !== "OK") throw new Error(`aliyun captcha error: ${json.Code}`);
-  return json.Result?.VerifyResult === true;
+  let res: Response;
+  try {
+    res = await fetch(endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams(params).toString(),
+    });
+  } catch (err) {
+    return { ok: false, requestId: null, code: null, error: `network: ${err instanceof Error ? err.message : String(err)}` };
+  }
+  if (!res.ok) return { ok: false, requestId: null, code: null, error: `http ${res.status}` };
+  const json = (await res.json().catch(() => null)) as { RequestId?: string; Code?: string; Result?: { VerifyResult?: boolean } } | null;
+  if (json === null) return { ok: false, requestId: null, code: null, error: "invalid json response" };
+  const requestId = json.RequestId ?? null;
+  const code = json.Code ?? null;
+  // VerifyCaptcha（2023-03-05）成功响应的 Code 是 "Success"（非老式 RPC 的 "OK"）；
+  // 验签不通过时同样是 Success + Result.VerifyResult=false，因此这里只拦截真正的错误响应。
+  if (code !== null && code !== "Success") return { ok: false, requestId, code, error: `aliyun code ${code}` };
+  return { ok: json.Result?.VerifyResult === true, requestId, code, error: null };
 }
