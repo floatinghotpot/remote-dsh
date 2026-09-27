@@ -50,7 +50,7 @@
               ▼
 ┌───────────────────────────┐
 │    rdsh-gateway（开发机）    │
-│ 认证网关：配对码 → 会话 Cookie │
+│ 认证网关：访问口令 → 会话 Cookie │
 │   （此模式下即"代理"角色）    │
 └─────────────┬─────────────┘
               │  127.0.0.1:<port>（Host/Origin 改写）
@@ -60,7 +60,7 @@
 └───────────────────────────┘
 ```
 
-> 同一 gateway 进程、两种模式：**直连模式（LAN / Cloud）**直接对客户端提供认证与转发（LAN 配对码 / Cloud 密码认证）；公网模式经 hub 出站隧道（gateway 角色变为隧道端点，认证职责移交 hub）。转发内核（Host/Origin 改写、全双工透传）两者共用。
+> 同一 gateway 进程、两种模式：**直连模式（LAN / Cloud）**直接对客户端提供认证与转发（LAN 访问口令 / Cloud 密码认证）；公网模式经 hub 出站隧道（gateway 角色变为隧道端点，认证职责移交 hub）。转发内核（Host/Origin 改写、全双工透传）两者共用。
 
 | 组件 | 职责 | 里程碑 |
 |---|---|---|
@@ -75,14 +75,14 @@
 
 | 场景 | 部署位置 | 特点 | 模式与要点 |
 |---|---|---|---|
-| **开发机**（M1 主场景） | 开发者工作站 | 有人值守、有显示器 | `mode: "lan"`：终端显示配对码 |
+| **开发机**（M1 主场景） | 开发者工作站 | 有人值守、有显示器 | `mode: "lan"`：终端显示访问口令 |
 | **云服务器（阿里云等租用实例）** | VPS / ECS | **headless**、有公网 IP | `mode: "cloud"`：HTTPS + 密码认证（M2）；或 `rdsh host join <hub>`（join 模式，经 hub 汇聚，推荐） |
 | **团队 / 企业（自托管 hub）** | 自有机器 / 云主机 | 多用户、需统一账号与审计 | `rdsh hub serve` 自建 hub（内置 TLS 或反代）；成员经 DSH 插件 / `rdsh host join` 接入 |
 
 **云服务器（headless）的认证策略**（无人看终端）：
 
 1. **密码认证（推荐）**：`rdsh host setup cloud --tls-cert <p> --tls-key <p>` + `rdsh host user add <name>` —— headless HTTPS 主认证（M2；部署见 `usage.md` §7）；
-2. **预置配对码**：`rdsh host setup lan --pair-code <code>`（LAN/可信网络，提前通过安全通道下发）；
+2. **访问口令**：`rdsh host setup lan` 自动生成并在终端显示一次（LAN/可信网络；`rdsh host gate set` 可重设）；
 3. **免认证**：`auth.mode: "none"`（仅完全可信网络，启动警告）。
 
 **云服务器公网直连的安全要求**（cloud 模式监听 `0.0.0.0` 时公网可达）：
@@ -125,10 +125,10 @@
 
 ```
         浏览器（另一台笔记本）
-              │  http://<IP>:8443
+              │  http://<IP>:8442
               ▼
-    rdsh-gateway (0.0.0.0:8443)
-              │  认证中间件：无会话 → 配对页 / 有会话 → 转发
+    rdsh-gateway (0.0.0.0:8442)
+              │  认证中间件：无会话 → 访问口令页 / 有会话 → 转发
               ▼
      转发（Host 重写为 127.0.0.1:<dshPort>）
               │
@@ -136,8 +136,8 @@
       dsh web (127.0.0.1:<dshPort>)
 ```
 
-- 认证：配对码（终端显示，物理信任锚点）+ 签名会话 Cookie（HttpOnly/SameSite=Lax，HMAC-SHA256）
-- 未认证 → 配对页；已认证 → 全双工透传（HTTP/SSE/WS upgrade）
+- 认证：访问口令（终端显示一次，物理信任锚点）+ 签名会话 Cookie（HttpOnly/SameSite=Lax，HMAC-SHA256）
+- 未认证 → 访问口令页；已认证 → 全双工透传（HTTP/SSE/WS upgrade）
 
 ### 公网模式明文路径（M3+；老 host / optional 未信任时）
 
@@ -197,7 +197,7 @@
 | 层 | 机制 |
 |---|---|
 | 传输 | TLS 1.3（公网）；LAN http + SameSite + Origin 校验兜底（威胁模型低） |
-| 认证 | 配对码（物理锚点，LAN）/ 密码认证（cloud，改密失效会话）/ 账号 JWT + 2FA + 邮箱验证（hub，M5）/ host token 可吊销 |
+| 认证 | 访问口令（物理锚点，LAN）/ 密码认证（cloud，改密失效会话）/ 账号 JWT + 2FA + 邮箱验证（hub，M5）/ host token 可吊销 |
 | 授权 | 用户↔host 多对多；owner/member 共享（M5）；整实例授权（Q4 决策） |
 | Host 访问口令 | 网关侧独立于 hub 的 access code（host.json 0600，hub 不持有）；`rdsh_gate` cookie（HMAC key=sha256(code)，7d，改 code 全失效）+ challenge + 恒定时间比对 + 全局失败锁定；本机 127.0.0.1 永远放行（feature 15） |
 | 数据面 | **E2EE（09）**：raw stream + 内层 Noise NK + TOFU pin；hub `e2ee.mode: off\|optional\|required`（默认 optional，老 host 明文降级） |

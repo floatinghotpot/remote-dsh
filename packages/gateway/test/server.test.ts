@@ -7,7 +7,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startGateway } from "../src/server.ts";
 
-/** mock 上游（模拟 dsh web）。 */
 /** 强制关闭 http server（含 keep-alive/undici 连接）。 */
 function closeServer(server: ReturnType<typeof createServer>): void {
   server.closeAllConnections?.();
@@ -23,105 +22,99 @@ async function startUpstream() {
   return { server, port: (server.address() as AddressInfo).port };
 }
 
-async function startTestGateway(pairCode: string, sessionTtlSeconds = 3600) {
+/** 以 accessCode 门禁启动测试网关。 */
+async function startGateGateway(accessCode: string) {
   const upstream = await startUpstream();
   const keyDir = await mkdtemp(join(tmpdir(), "rdsh-gw-"));
   const gw = await startGateway({
     host: "127.0.0.1",
     port: 0,
-    pairCode,
-    sessionTtlSeconds,
+    sessionTtlSeconds: 3600,
     dshPort: upstream.port,
     keyDir,
+    accessCode,
   });
   const base = `http://127.0.0.1:${gw.actualPort}`;
   return { gw, upstream, base, keyDir };
 }
 
-test("GET /pair 返回配对页 HTML", async () => {
-  const t = await startTestGateway("123456");
+/** 提交 accessCode 门禁口令（form-urlencoded，与 challenge 页一致）。 */
+function postGate(base: string, code: string) {
+  return fetch(`${base}/`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded", "accept-language": "zh" },
+    body: `gate_code=${encodeURIComponent(code)}`,
+    redirect: "manual",
+  });
+}
+
+test("accessCode 门禁：无 cookie 访问 → challenge 页（不触达 dsh）", async () => {
+  const t = await startGateGateway("abcd1234");
   try {
-    const res = await fetch(`${t.base}/pair`);
+    const res = await fetch(`${t.base}/`, { headers: { "accept-language": "zh" } });
     assert.equal(res.status, 200);
     const html = await res.text();
-    assert.ok(html.includes("配对码"));
-    assert.ok(html.includes("<form"));
+    assert.ok(html.includes("访问密码"), "应返回访问密码 challenge 页");
+    assert.ok(html.includes('type="password"'));
   } finally {
-    closeServer(t.gw.server); closeServer(t.upstream.server);
-    
+    closeServer(t.gw.server);
+    closeServer(t.upstream.server);
   }
 });
 
-test("无会话访问任意路径 → 307 /pair（不触达 dsh）", async () => {
-  const t = await startTestGateway("123456");
+test("accessCode 门禁：错误口令 → challenge 错误态；正确口令 → 302 + rdsh_gate cookie", async () => {
+  const t = await startGateGateway("abcd1234");
   try {
-    const res = await fetch(`${t.base}/api/sessions`, { redirect: "manual" });
-    assert.equal(res.status, 307);
-    assert.equal(res.headers.get("location"), "/pair");
-  } finally {
-    closeServer(t.gw.server); closeServer(t.upstream.server);
-    
-  }
-});
+    const bad = await postGate(t.base, "wrong");
+    assert.equal(bad.status, 200);
+    assert.ok((await bad.text()).includes("访问密码错误"));
 
-test("错误配对码 → 401；正确配对码 → 302 + Set-Cookie", async () => {
-  const t = await startTestGateway("123456");
-  try {
-    const bad = await fetch(`${t.base}/pair`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ code: "000000" }),
-      redirect: "manual",
-    });
-    assert.equal(bad.status, 401);
-
-    const ok = await fetch(`${t.base}/pair`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ code: "123456" }),
-      redirect: "manual",
-    });
+    const ok = await postGate(t.base, "abcd1234");
     assert.equal(ok.status, 302);
     assert.equal(ok.headers.get("location"), "/");
     const cookie = ok.headers.get("set-cookie");
-    assert.ok(cookie, "应设置会话 Cookie");
-    assert.ok(cookie!.includes("HttpOnly"));
-    assert.ok(cookie!.includes("SameSite=Lax"));
+    assert.ok(cookie?.includes("rdsh_gate="), "应下发 rdsh_gate cookie");
+    assert.ok(cookie?.includes("HttpOnly"));
+    assert.ok(cookie?.includes("SameSite=Lax"));
   } finally {
-    closeServer(t.gw.server); closeServer(t.upstream.server);
-    
+    closeServer(t.gw.server);
+    closeServer(t.upstream.server);
   }
 });
 
-test("带有效 Cookie 访问 → 转发到 dsh；Cookie 无效 → 307", async () => {
-  const t = await startTestGateway("123456");
+test("accessCode 门禁：有效 cookie → 转发 dsh；无效 cookie → 回 challenge（非 307）", async () => {
+  const t = await startGateGateway("abcd1234");
   try {
-    // 先配对拿 Cookie
-    const pair = await fetch(`${t.base}/pair`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ code: "123456" }),
-      redirect: "manual",
-    });
-    const cookie = pair.headers.get("set-cookie")!.split(";")[0]!;
+    const ok = await postGate(t.base, "abcd1234");
+    const cookie = ok.headers.get("set-cookie")!.split(";")[0]!;
 
-    const ok = await fetch(`${t.base}/api/whatever`, { headers: { cookie } });
-    assert.equal(ok.status, 200);
-    assert.equal(await ok.text(), "dsh-ok");
+    const res = await fetch(`${t.base}/api/whatever`, { headers: { cookie } });
+    assert.equal(res.status, 200);
+    assert.equal(await res.text(), "dsh-ok");
 
-    const invalid = await fetch(`${t.base}/api/whatever`, {
-      headers: { cookie: "rdsh_session=broken.token" },
-      redirect: "manual",
-    });
-    assert.equal(invalid.status, 307);
+    const invalid = await fetch(`${t.base}/api/whatever`, { headers: { cookie: "rdsh_gate=broken.sig" }, redirect: "manual" });
+    assert.equal(invalid.status, 200);
+    assert.ok((await invalid.text()).includes("type=\"password\""));
   } finally {
-    closeServer(t.gw.server); closeServer(t.upstream.server);
-    
+    closeServer(t.gw.server);
+    closeServer(t.upstream.server);
   }
 });
 
-test("配对/会话分支也必须打 loopback 补丁（jsPatch 接线回归）", async () => {
-  // 自建上游：JS 路由返回带目标串的脚本（其余 text/plain）
+test("accessCode 门禁：连续错误 → 锁定（locked 态，即使口令正确）", async () => {
+  const t = await startGateGateway("abcd1234");
+  try {
+    for (let i = 0; i < 10; i++) await postGate(t.base, "wrong");
+    const locked = await postGate(t.base, "abcd1234");
+    assert.equal(locked.status, 200);
+    assert.ok((await locked.text()).includes("尝试次数过多"));
+  } finally {
+    closeServer(t.gw.server);
+    closeServer(t.upstream.server);
+  }
+});
+
+test("accessCode 门禁下也必须打 loopback 补丁（jsPatch 接线回归）", async () => {
   const upstream = createServer((req, res) => {
     if (req.url?.startsWith("/js/")) {
       res.writeHead(200, { "content-type": "text/javascript; charset=utf-8" });
@@ -136,24 +129,17 @@ test("配对/会话分支也必须打 loopback 补丁（jsPatch 接线回归）"
   const gw = await startGateway({
     host: "127.0.0.1",
     port: 0,
-    pairCode: "123456",
     sessionTtlSeconds: 3600,
     dshPort: (upstream.address() as AddressInfo).port,
     keyDir,
+    accessCode: "abcd1234",
   });
   const base = `http://127.0.0.1:${gw.actualPort}`;
   try {
-    const pair = await fetch(`${base}/pair`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ code: "123456" }),
-      redirect: "manual",
-    });
-    const cookie = pair.headers.get("set-cookie")!.split(";")[0]!;
-
-    // 会话分支（已配对）：JS 必须被补丁替换（旧实现漏传 jsPatch ⇒ 原样透传）
+    const ok = await postGate(base, "abcd1234");
+    const cookie = ok.headers.get("set-cookie")!.split(";")[0]!;
     const js = await (await fetch(`${base}/js/plain.js`, { headers: { cookie } })).text();
-    assert.ok(js.includes("var loop = true;"), "配对会话下 JS 补丁必须生效（旧实现未接线）");
+    assert.ok(js.includes("var loop = true;"), "门禁会话下 JS 补丁必须生效");
     assert.ok(!js.includes("isLoopbackHostname"), "不应残留原始判定");
   } finally {
     closeServer(gw.server);
@@ -161,37 +147,12 @@ test("配对/会话分支也必须打 loopback 补丁（jsPatch 接线回归）"
   }
 });
 
-test("连续 5 次错误码 → 429 锁定（即使后续码正确）", async () => {
-  const t = await startTestGateway("123456");
-  try {
-    for (let i = 0; i < 5; i++) {
-      await fetch(`${t.base}/pair`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ code: "000000" }),
-      });
-    }
-    const locked = await fetch(`${t.base}/pair`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ code: "123456" }),
-    });
-    assert.equal(locked.status, 429);
-    const retryAfter = Number(locked.headers.get("retry-after"));
-    assert.ok(retryAfter >= 1);
-  } finally {
-    closeServer(t.gw.server); closeServer(t.upstream.server);
-    
-  }
-});
-
-test("noCode=true 时无会话直接转发（跳过配对）", async () => {
+test("noCode=true（无 accessCode、authMode none）→ 无会话直接转发 + WS 放行", async () => {
   const upstream = await startUpstream();
   const keyDir = await mkdtemp(join(tmpdir(), "rdsh-gw-nocode-"));
   const gw = await startGateway({
     host: "127.0.0.1",
     port: 0,
-    pairCode: "123456",
     sessionTtlSeconds: 3600,
     dshPort: upstream.port,
     keyDir,
@@ -199,7 +160,6 @@ test("noCode=true 时无会话直接转发（跳过配对）", async () => {
   });
   const base = `http://127.0.0.1:${gw.actualPort}`;
   try {
-    // 无 Cookie 直接转发（不 307）
     const res = await fetch(`${base}/api/session.list`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -208,56 +168,25 @@ test("noCode=true 时无会话直接转发（跳过配对）", async () => {
     });
     assert.equal(res.status, 200);
     assert.equal(await res.text(), "dsh-ok");
-    // WS upgrade 也应放行
+
     const { WebSocket } = await import("ws");
     const opened = await new Promise<boolean>((resolve, reject) => {
       const ws = new WebSocket(`ws://127.0.0.1:${gw.actualPort}/api/events.mux`);
-      const t = setTimeout(() => reject(new Error("timeout")), 3000);
-      ws.on("open", () => { clearTimeout(t); resolve(true); });
-      ws.on("error", (e) => { clearTimeout(t); reject(e); });
+      const timer = setTimeout(() => reject(new Error("timeout")), 3000);
+      ws.on("open", () => {
+        clearTimeout(timer);
+        resolve(true);
+      });
+      ws.on("error", (e) => {
+        clearTimeout(timer);
+        reject(e);
+      });
     });
     assert.equal(opened, true);
   } finally {
     closeServer(gw.server);
     closeServer(upstream.server);
   }
-});
-
-test("reset=true 时旧会话全部失效", async () => {
-  const upstream = await startUpstream();
-  const keyDir = await mkdtemp(join(tmpdir(), "rdsh-gw-reset-"));
-  const gw1 = await startGateway({
-    host: "127.0.0.1",
-    port: 0,
-    pairCode: "123456",
-    sessionTtlSeconds: 3600,
-    dshPort: upstream.port,
-    keyDir,
-  });
-  const base1 = `http://127.0.0.1:${gw1.actualPort}`;
-  const pair = await fetch(`${base1}/pair`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ code: "123456" }),
-    redirect: "manual",
-  });
-  const cookie = pair.headers.get("set-cookie")!.split(";")[0]!;
-  // 同一密钥目录下重启（reset）→ 旧 cookie 失效
-  const gw2 = await startGateway({
-    host: "127.0.0.1",
-    port: 0,
-    pairCode: "123456",
-    sessionTtlSeconds: 3600,
-    dshPort: upstream.port,
-    reset: true,
-    keyDir,
-  });
-  const base2 = `http://127.0.0.1:${gw2.actualPort}`;
-  const after = await fetch(`${base2}/api/x`, { headers: { cookie }, redirect: "manual" });
-  assert.equal(after.status, 307);
-  closeServer(gw1.server);
-  closeServer(gw2.server);
-  closeServer(upstream.server);
 });
 
 test("dshAuthCookieHeader 透传到上游转发请求（auth none）", async () => {

@@ -23,6 +23,7 @@ import {
   resolveConfigPath,
   loadConfig,
   saveConfig,
+  generateAccessCode,
   installService,
   uninstallService,
   serviceStatus,
@@ -53,6 +54,7 @@ Usage:
   rdsh host service ...       Run as a systemd/launchd service
   rdsh host leave             Unregister this machine from the hub
   rdsh host user ...          Manage gateway users (LAN/cloud password auth)
+  rdsh host gate ...          Set / clear the access code (LAN + tunnel gate)
   rdsh hub serve              Start the hub server (cloud, multi-host)
   rdsh hub user add|passwd|rm|ls|unlock|reset-2fa|ban|unban
   rdsh hub audit ls           Audit log (login/2FA/sharing/email events)
@@ -73,15 +75,16 @@ const SUB_HELP: Record<string, string> = {
 Configure and run this machine (the DSH host).
 
 Subcommands:
-  setup lan              Configure a LAN gateway (pair auth, plain http)
+  setup lan              Configure a LAN gateway (access-code auth, plain http)
   setup cloud            Configure a cloud HTTPS gateway (password + TLS + allowFrom)
   join <hub-url>         Connect to a hub (interactive token paste; --token for scripts)
   serve                  Run the configured mode in the foreground
   service install|status|start|stop|restart|uninstall   Run as a systemd/launchd service
   leave                  Unregister this machine from the hub
   user add|passwd|ls|rm  Manage gateway users
+  gate set|clear|status  Set / clear the access code (LAN + tunnel gate)
 
-Options (setup lan):   --port <n> [--pair-code <code>]
+Options (setup lan):   --port <n>
 Options (setup cloud):  --tls-cert <path> --tls-key <path> [--port <n>] [--allow-from <cidr,...>]
 Options (join):         --token <t> --name <n> --dsh <path> --insecure
 `,
@@ -210,8 +213,11 @@ async function handleHost(args: string[], configPath?: string): Promise<void> {
     case "user":
       await handleHostUser(rest, configPath);
       return;
+    case "gate":
+      await handleHostGate(rest, configPath);
+      return;
     default:
-      throw new Error("usage: rdsh host setup|join|serve|service|leave|user");
+      throw new Error("usage: rdsh host setup|join|serve|service|leave|user|gate");
   }
 }
 
@@ -223,11 +229,9 @@ async function handleHostSetup(args: string[], configPath?: string): Promise<voi
 
   if (which === "lan") {
     let port = config.port;
-    let pairCode = config.auth.pairCode;
     for (let i = 1; i < args.length; i++) {
       const flag = args[i];
       if (flag === "--port") port = parsePort(args[++i]);
-      else if (flag === "--pair-code") pairCode = args[++i];
       else throw new Error(`unknown option '${flag}'`);
     }
     config.mode = "lan";
@@ -235,11 +239,14 @@ async function handleHostSetup(args: string[], configPath?: string): Promise<voi
     config.tls = undefined;
     config.behindProxy = false;
     config.allowFrom = [];
-    config.auth.mode = "pair";
-    config.auth.pairCode = pairCode;
+    config.auth.mode = "none";
+    // 统一固定口令：LAN 直连的门禁（取代旧动态配对码）
+    const code = config.gateway?.accessCode ?? generateAccessCode();
+    config.gateway = { accessCode: code };
     config.dshPath = config.dshPath ?? findDsh() ?? undefined;
     await saveConfig(target, config);
-    console.log(`rdsh: host 配置为 LAN 网关（pair，端口 ${port}）→ ${target}`);
+    console.log(`rdsh: host 配置为 LAN 网关（访问口令，端口 ${port}）→ ${target}`);
+    console.log(`rdsh: 访问口令（请记录，可用 \`rdsh host gate set\` 修改）：${code}`);
     console.log("rdsh: 运行 `rdsh host serve` 前台启动，或 `rdsh host service install` 常驻。");
     return;
   }
@@ -327,7 +334,7 @@ async function handleHostServe(_args: string[], configPath?: string): Promise<vo
   const config = await loadConfig(target);
   if (config.mode === "join") {
     if (config.hub === undefined) throw new Error("host.json 缺 hub（join 模式）；先 `rdsh host join <hub>`");
-    await join({ hubUrl: config.hub, name: config.name, insecure: config.insecure, dshPath: config.dshPath, dshUiCompat: config.dshUiCompat, gateway: config.gateway });
+    await join({ hubUrl: config.hub, name: config.name, insecure: config.insecure, dshPath: config.dshPath, dshUiCompat: config.dshUiCompat, gateway: config.gateway, direct: { host: config.host, port: config.port } });
     return;
   }
   await serve({ configPath: target });
@@ -391,6 +398,34 @@ async function maybeRegisterForServiceInstall(args: string[], target: string): P
   cfg.insecure = outcome.insecure;
   cfg.dshPath = joinOpts.dshPath ?? findDsh() ?? cfg.dshPath;
   await saveConfig(target, cfg);
+}
+
+/** `rdsh host gate set|clear|status`：访问口令（gateway.accessCode）——隧道与直连两条通道共用的门禁。 */
+async function handleHostGate(args: string[], configPath?: string): Promise<void> {
+  const action = args[0];
+  const target = resolveConfigPath(configPath);
+  const config = await loadConfig(target);
+  if (action === "set") {
+    const code = await promptPassword("访问口令（≥4 位，留空取消）: ");
+    if (code.trim() === "") return;
+    if (code.length < 4) throw new Error("访问口令至少 4 位");
+    config.gateway = { accessCode: code };
+    await saveConfig(target, config);
+    console.log("rdsh: 访问口令已设置（重启 host 生效；插件面板设置即时生效）。");
+    return;
+  }
+  if (action === "clear") {
+    config.gateway = { accessCode: null };
+    await saveConfig(target, config);
+    console.log("rdsh: 访问口令已清除——注意：清除后直连口将关闭（无口令不监听），隧道也不再要求口令。");
+    return;
+  }
+  if (action === "status") {
+    const code = config.gateway?.accessCode ?? null;
+    console.log(code === null ? "rdsh: 未设置访问口令（直连口关闭，隧道无门禁）。" : "rdsh: 访问口令已设置（两条通道均需口令）。");
+    return;
+  }
+  throw new Error("usage: rdsh host gate set|clear|status");
 }
 
 /** `rdsh host leave`：self-revoke + 清 session + 删 host.json → 未配置。 */

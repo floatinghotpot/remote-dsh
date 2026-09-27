@@ -51,7 +51,7 @@ rdsh host service install       # join 过即可装服务；或一步到位：rd
 npm install -g remote-dsh
 rdsh host setup lan             # 或 setup cloud（云服务器，需 --tls-cert/--tls-key）
 rdsh host serve                 # 前台运行（自动拉起 dsh web）
-# 同网络浏览器打开 http://<IP>:<port>，输终端显示的配对码
+# 同网络浏览器打开 http://<IP>:<port>，输终端显示的访问口令
 ```
 
 ### ③ 企业自建（自托管 Hub · 完全自控）
@@ -121,7 +121,7 @@ rdsh hub serve                  # 自建 hub（内置 TLS 或反代部署）
 
 **可选：其他接入方式与进阶**：
 - [一条命令，在哪都能安全连回你的 DSH](doc/blog/zh/01-06-cli-mode.md)——命令行版，能力相同
-- [局域网配对码直连：同一网络内遥控 DSH](doc/blog/zh/01-01-lan-access.md)
+- [局域网访问口令直连：同一网络内遥控 DSH](doc/blog/zh/01-01-lan-access.md)
 - [账号安全：平台给你的保护，和你自己可以再加的几道锁](doc/blog/zh/01-08-account-security.md)
 - [把 DSH 搬上云服务器：HTTPS + 密码直连（证书自备）](doc/blog/zh/02-01-cloud-single-tls.md)
 - [自建 hub 转发服务：ECS 内置 TLS 部署（最快）](doc/blog/zh/03-01-hub-public.md)

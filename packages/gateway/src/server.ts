@@ -1,14 +1,11 @@
 /**
  * server.ts — HTTP(S) 服务器 + 认证中间件 + 路由。
  *
- * 路由：
- *   GET  /pair         → 配对页（auth.mode=pair）
- *   POST /pair         → 校验配对码（成功 Set-Cookie + 302 /；失败 401/429）
- *   GET  /login        → 登录页（auth.mode=password）
- *   POST /login        → 校验用户名/密码（成功 Set-Cookie + 302 /；失败 401/429）
- *   其余路径（含 upgrade）→ 有有效会话转发 dsh；无 → 307 /pair 或 /login
+ * 认证（优先级从高到低）：
+ *   accessCode 门禁（gateway.accessCode 非空）→ challenge 页 + rdsh_gate cookie；
+ *   否则 auth.mode=password → /login（用户名/密码）；否则 none → 直接转发。
  *
- * M2：TLS（node:https）、auth.mode（pair/password/none）、IP 白名单（allowFrom）、
+ * 其余：TLS（node:https）、IP 白名单（allowFrom）、
  * 反代适配（behindProxy：X-Forwarded-For/Proto）、改密版本化会话（auth.version）。
  */
 import { createServer as createHttpServer } from "node:http";
@@ -17,33 +14,32 @@ import { watch } from "node:fs";
 import { basename, dirname } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { SessionManager, sessionTokenFromCookie } from "./session.ts";
-import { PairManager } from "./pair.ts";
 import { UserManager } from "./auth.ts";
 import { createUpgradeProxy, forwardHttp } from "./proxy.ts";
 import { patchLoopbackJs } from "./join.ts";
 import type { ProxyTarget } from "./proxy.ts";
-import { pairPageHtml } from "./pair-page.ts";
 import { loginPageHtml } from "./login-page.ts";
-import { SECURE_CONTEXT_POLYFILL } from "./secure-context-polyfill.ts";
+import { SECURE_CONTEXT_POLYFILL, CLIPBOARD_POLYFILL } from "./secure-context-polyfill.ts";
 import { RDSH_WEBVIEW_API } from "./rdsh-webview-api.ts";
 import { loadConfig } from "./config.ts";
 import type { AuthMode } from "./config.ts";
 import { ipInCidrs } from "./cidr.ts";
 import type { TlsMaterial } from "./tls.ts";
+import { GATE_COOKIE, GATE_COOKIE_TTL_MS, gateChallengeHtml, gateCookieFromHeader, headerAcceptLanguage, signGateCookie, verifyGateCode, verifyGateCookie, createGateLimiter, directForbiddenHtml } from "./gate.ts";
+import type { GateError, GateLimiter } from "./gate.ts";
 
-/** 注入 DSH 首页的脚本：非 secure context polyfill + rdsh WebView API 契约。两处 forwardHttp 共用，避免漂移。 */
-const HTML_INJECT = SECURE_CONTEXT_POLYFILL + RDSH_WEBVIEW_API;
+/** 注入 DSH 首页的脚本：非 secure context polyfill + 剪贴板 polyfill + rdsh WebView API 契约。 */
+const HTML_INJECT = SECURE_CONTEXT_POLYFILL + CLIPBOARD_POLYFILL + RDSH_WEBVIEW_API;
 
 export interface GatewayOptions {
   host: string;
   port: number;
-  pairCode?: string;
   sessionTtlSeconds: number;
   dshPort: number;
   /** 宿主代持的 dsh 浏览器会话 cookie（`dsh-auth-*`，0.1.2+）；有值时注入转发 */
   dshAuthCookieHeader?: string | null;
   /**
-   * DSH UI 兼容（LAN 路径）：`trustPairedAsLoopback` 默认 true —— 把已通过本机配对/登录的
+   * DSH UI 兼容（LAN 路径）：`trustPairedAsLoopback` 默认 true —— 把已通过本机口令/登录的
    * LAN 会话视同 loopback，使 DSH 的设置与"持久化凭据"界面可用（否则 LAN 用户无法在界面里输入 API key）。
    */
   dshUiCompat?: { trustPairedAsLoopback?: boolean };
@@ -53,26 +49,31 @@ export interface GatewayOptions {
   keyDir?: string;
   /** true = 跳过认证（--no-code / auth.mode=none） */
   noCode?: boolean;
-  /** M2：认证模式（pair | password | none）；默认 noCode? none : pair */
+  /** 认证模式（password | none）；默认 none */
   authMode?: AuthMode;
-  /** M2：改密版本号（会话校验绑定）；默认 1 */
+  /** 访问口令（gateway.accessCode）；非空时启用 accessCode 门禁（替代 password/none） */
+  accessCode?: string | null;
+  /** 直连密钥（direct-secret，per-host 随机）：直连口门禁的 cookie 签名密钥（ticket 门禁，方案 B） */
+  directSecret?: string;
+  /** 一次性直连票校验（R4）：返回 true 表示该票有效且已消费（单次） */
+  consumeTicket?: (ticket: string) => boolean;
+  /** 改密版本号（会话校验绑定）；默认 1 */
   authVersion?: number;
-  /** M2：IP 白名单（CIDR）；空 = 不限制 */
+  /** IP 白名单（CIDR）；空 = 不限制 */
   allowFrom?: string[];
-  /** M2：反代终止 TLS（信任 XFF，允许 password+http） */
+  /** 反代终止 TLS（信任 XFF，允许 password+http） */
   behindProxy?: boolean;
-  /** M2：TLS 材料；提供则 https */
+  /** TLS 材料；提供则 https */
   tlsMaterial?: TlsMaterial | null;
-  /** M2：password 模式验证用户 */
+  /** password 模式验证用户 */
   userManager?: UserManager;
-  /** M2：配置文件路径（fs.watch 热更新 auth.version/allowFrom） */
+  /** 配置文件路径（fs.watch 热更新 auth.version/allowFrom） */
   configPath?: string;
 }
 
 export interface RunningGateway {
   server: ReturnType<typeof createHttpServer> | ReturnType<typeof createHttpsServer>;
   sessions: SessionManager;
-  pair: PairManager;
   /** 实际监听端口（port 0 → OS 分配） */
   actualPort: number;
   /** 关闭 fs.watch 等资源 */
@@ -81,10 +82,16 @@ export interface RunningGateway {
 
 interface HttpContext {
   sessions: SessionManager;
-  pair: PairManager;
   target: ProxyTarget;
   sessionTtlSeconds: number;
   authMode: AuthMode;
+  /** 访问口令（null = 门禁关闭） */
+  accessCode: string | null;
+  /** 直连密钥（null = 非直连口） */
+  directSecret: string | null;
+  /** 一次性直连票校验（R4） */
+  consumeTicket?: (ticket: string) => boolean;
+  gateLimiter: GateLimiter;
   behindProxy: boolean;
   dshAuthCookieHeader: string | null;
   /** LAN 会话是否视同 loopback（DSH 设置/凭据界面可用性；默认 true） */
@@ -104,10 +111,11 @@ export async function startGateway(opts: GatewayOptions): Promise<RunningGateway
   } else {
     await sessions.init();
   }
-  const pair = new PairManager(opts.pairCode);
   const target: ProxyTarget = { host: "127.0.0.1", port: opts.dshPort };
 
-  const authMode: AuthMode = opts.noCode ? "none" : (opts.authMode ?? "pair");
+  const authMode: AuthMode = opts.noCode ? "none" : (opts.authMode ?? "none");
+  const accessCode = opts.accessCode ?? null;
+  const directSecret = opts.directSecret ?? null;
   const behindProxy = opts.behindProxy === true;
 
   // 安全硬约束：password 模式必须 TLS（反代除外）
@@ -138,10 +146,13 @@ export async function startGateway(opts: GatewayOptions): Promise<RunningGateway
 
   const ctx: HttpContext = {
     sessions,
-    pair,
     target,
     sessionTtlSeconds: opts.sessionTtlSeconds,
     authMode,
+    accessCode,
+    directSecret,
+    consumeTicket: opts.consumeTicket,
+    gateLimiter: createGateLimiter(),
     behindProxy,
     dshAuthCookieHeader: opts.dshAuthCookieHeader ?? null,
     trustPairedAsLoopback: opts.dshUiCompat?.trustPairedAsLoopback !== false,
@@ -163,7 +174,12 @@ export async function startGateway(opts: GatewayOptions): Promise<RunningGateway
       : createHttpsServer({ key: opts.tlsMaterial.key, cert: opts.tlsMaterial.cert }, requestHandler);
 
   server.on("upgrade", (req, socket, head) => {
-    if (ctx.authMode !== "none" && !hasValidSession(req, ctx)) {
+    if ((ctx.directSecret !== null || ctx.accessCode !== null) && !hasValidGate(req, ctx)) {
+      socket.write(`HTTP/1.1 403 Forbidden\r\n\r\n`);
+      socket.destroy();
+      return;
+    }
+    if (ctx.directSecret === null && ctx.accessCode === null && ctx.authMode !== "none" && !hasValidSession(req, ctx)) {
       socket.write(`HTTP/1.1 307 Temporary Redirect\r\nLocation: ${pairOrLogin(ctx)}\r\n\r\n`);
       socket.destroy();
       return;
@@ -182,7 +198,6 @@ export async function startGateway(opts: GatewayOptions): Promise<RunningGateway
   return {
     server,
     sessions,
-    pair,
     actualPort,
     dispose: () => {
       configWatcher?.close();
@@ -191,12 +206,24 @@ export async function startGateway(opts: GatewayOptions): Promise<RunningGateway
 }
 
 function pairOrLogin(ctx: HttpContext): string {
-  return ctx.authMode === "password" ? "/login" : "/pair";
+  return "/login";
 }
 
 function hasValidSession(req: IncomingMessage, ctx: HttpContext): boolean {
   const token = sessionTokenFromCookie(req.headers.cookie);
   return token !== null && ctx.sessions.verify(token, ctx.getVersion()) !== null;
+}
+
+/** 门禁签名密钥：直连口用 direct-secret，lan/cloud 用 accessCode。 */
+function gateSecret(ctx: HttpContext): string | null {
+  return ctx.directSecret ?? ctx.accessCode;
+}
+
+/** 门禁 cookie 校验（门禁关闭恒真）。 */
+function hasValidGate(req: IncomingMessage, ctx: HttpContext): boolean {
+  const secret = gateSecret(ctx);
+  if (secret === null) return true;
+  return verifyGateCookie(secret, gateCookieFromHeader(req.headers.cookie) ?? "");
 }
 
 /** 客户端真实 IP（behindProxy 时取 XFF，仅当连接来自回环 —— 防伪造）。 */
@@ -220,17 +247,15 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse, ctx: HttpCo
   }
 
   const pathname = new URL(req.url ?? "/", "http://rdsh.local").pathname;
+
+  // 门禁（直连口 ticket 门禁 / accessCode 门禁）优先于 password/none
+  if (ctx.directSecret !== null || ctx.accessCode !== null) {
+    await handleGateHttp(req, res, ctx, pathname);
+    return;
+  }
+
   const isLoginMode = ctx.authMode === "password";
 
-  if (req.method === "GET" && pathname === "/pair" && !isLoginMode) {
-    res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
-    res.end(pairPageHtml());
-    return;
-  }
-  if (req.method === "POST" && pathname === "/pair" && !isLoginMode) {
-    await handlePairPost(req, res, ctx);
-    return;
-  }
   if (req.method === "GET" && pathname === "/login" && isLoginMode) {
     res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
     res.end(loginPageHtml());
@@ -258,42 +283,67 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse, ctx: HttpCo
     htmlInject: HTML_INJECT,
     authCookie: ctx.dshAuthCookieHeader,
     // 会话分支同样要打 loopback 补丁：LAN 没有 E2EE shim，设置/API key 唯一依赖这个补丁；
-    // 旧实现只在 authMode==="none" 分支传了 jsPatch ⇒ 配对/登录模式下设置页打不开（2026-09-14 复审发现）
+    // 旧实现只在 authMode==="none" 分支传了 jsPatch ⇒ 登录模式下设置页打不开（2026-09-14 复审发现）
     jsPatch: ctx.trustPairedAsLoopback ? patchLoopbackJs : undefined,
   });
 }
 
-async function handlePairPost(req: IncomingMessage, res: ServerResponse, ctx: HttpContext): Promise<void> {
-  const ip = req.socket.remoteAddress ?? "unknown";
-  const body = await readJsonBody(req);
-  if (body === null) {
-    res.writeHead(400, { "content-type": "application/json" });
-    res.end(JSON.stringify({ error: { code: "BAD_REQUEST", message: "invalid body" } }));
-    return;
+/** 门禁 HTTP 处理：有效 cookie → 转发；直连票 → 发 cookie；有口令 → challenge；无口令无票 → 403。 */
+async function handleGateHttp(req: IncomingMessage, res: ServerResponse, ctx: HttpContext, pathname: string): Promise<void> {
+  const secret = gateSecret(ctx);
+  // 一次性直连票：?ticket=<t> → 校验通过发门禁 cookie + 302（免重输口令，R4）
+  if (ctx.consumeTicket !== undefined && req.method === "GET") {
+    const ticket = new URL(req.url ?? "/", "http://rdsh.local").searchParams.get("ticket");
+    if (ticket !== null && ticket !== "" && ctx.consumeTicket(ticket)) {
+      res.writeHead(302, {
+        location: "/",
+        "set-cookie": `${GATE_COOKIE}=${signGateCookie(secret as string).value}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor(GATE_COOKIE_TTL_MS / 1000)}`,
+      });
+      res.end();
+      return;
+    }
   }
-  const code = body.code;
-  if (typeof code !== "string" || code.length > 16) {
-    res.writeHead(400, { "content-type": "application/json" });
-    res.end(JSON.stringify({ error: { code: "BAD_REQUEST", message: "invalid code" } }));
-    return;
-  }
-  const result = ctx.pair.check(code, ip);
-  if (result.ok) {
-    res.writeHead(302, {
-      location: "/",
-      "set-cookie": ctx.sessions.cookieHeader(ctx.sessionTtlSeconds, ctx.getVersion()),
+  if (hasValidGate(req, ctx)) {
+    forwardHttp(req, res, ctx.target, {
+      htmlInject: HTML_INJECT,
+      authCookie: ctx.dshAuthCookieHeader,
+      jsPatch: ctx.trustPairedAsLoopback ? patchLoopbackJs : undefined,
     });
-    res.end();
     return;
   }
-  if (result.locked) {
-    const retryAfter = Math.max(1, Math.ceil(result.retryAfterMs / 1000));
-    res.writeHead(429, { "content-type": "application/json", "retry-after": String(retryAfter) });
-    res.end(JSON.stringify({ error: { code: "RATE_LIMITED", message: "too many attempts" } }));
+  // 无口令的直连口：无票/无 cookie 一律 403（告知两条手动访问路径）
+  if (ctx.accessCode === null) {
+    res.writeHead(403, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+    res.end(directForbiddenHtml(headerAcceptLanguage(req.headers)));
     return;
   }
-  res.writeHead(401, { "content-type": "application/json" });
-  res.end(JSON.stringify({ error: { code: "BAD_CODE", message: "invalid pair code" } }));
+  const ip = clientIp(req, ctx);
+  if (req.method === "POST") {
+    const form = await readFormBody(req);
+    const input = form?.get("gate_code") ?? null;
+    if (ctx.gateLimiter.blocked(ip)) {
+      sendGateChallenge(req, res, pathname, "locked");
+      return;
+    }
+    if (input !== null && verifyGateCode(input, ctx.accessCode)) {
+      ctx.gateLimiter.clear(ip);
+      res.writeHead(302, {
+        location: pathname,
+        "set-cookie": `${GATE_COOKIE}=${signGateCookie(secret as string).value}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor(GATE_COOKIE_TTL_MS / 1000)}`,
+      });
+      res.end();
+      return;
+    }
+    ctx.gateLimiter.fail(ip);
+    sendGateChallenge(req, res, pathname, "wrong");
+    return;
+  }
+  sendGateChallenge(req, res, pathname, null);
+}
+
+function sendGateChallenge(req: IncomingMessage, res: ServerResponse, pathname: string, error: GateError): void {
+  res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+  res.end(gateChallengeHtml("本主机", pathname, error, headerAcceptLanguage(req.headers)));
 }
 
 async function handleLoginPost(req: IncomingMessage, res: ServerResponse, ctx: HttpContext, loginLimiter: ReturnType<typeof createLoginLimiter>): Promise<void> {
@@ -333,6 +383,20 @@ async function handleLoginPost(req: IncomingMessage, res: ServerResponse, ctx: H
     "set-cookie": ctx.sessions.cookieHeader(ctx.sessionTtlSeconds, ctx.getVersion()),
   });
   res.end();
+}
+
+/** 读 form-urlencoded 请求体（gate challenge 提交用；超限返回 null）。 */
+async function readFormBody(req: IncomingMessage): Promise<URLSearchParams | null> {
+  let body = "";
+  for await (const chunk of req) {
+    body += chunk;
+    if (body.length > 4096) return null;
+  }
+  try {
+    return new URLSearchParams(body);
+  } catch {
+    return null;
+  }
 }
 
 async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown> | null> {

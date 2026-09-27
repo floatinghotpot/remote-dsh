@@ -18,7 +18,7 @@ This series covers exactly that (three cloud-server deployment options). This po
 ## Architecture
 
 ```
-Your browser ──https──► cloud server:8443 (rdsh) ──auth──► 127.0.0.1:<port> (dsh web)
+Your browser ──https──► cloud server:8442 (rdsh) ──auth──► 127.0.0.1:<port> (dsh web)
                               ▲
                     host.json + systemd service
 ```
@@ -80,7 +80,7 @@ openssl req -x509 -newkey rsa:2048 -nodes \
 ```jsonc
 {
   "mode": "cloud",                                 // cloud HTTPS gateway
-  "port": 8443,                                  // public port (open in security group)
+  "port": 8442,                                  // public port (open in security group)
   "tls": {                                       // cert paths (from one of the three options above)
     "cert": "/root/.rdsh/cert.pem",
     "key": "/root/.rdsh/key.pem"
@@ -109,8 +109,8 @@ rdsh host service status     # "active" = running
 
 ### ⑥ Open the port + browse
 
-- Cloud security group (Alibaba Cloud console → Security Groups → inbound): allow **TCP 8443** (or the port you configured)
-- Open `https://<server-public-IP>:8443` in the browser
+- Cloud security group (Alibaba Cloud console → Security Groups → inbound): allow **TCP 8442** (or the port you configured)
+- Open `https://<server-public-IP>:8442` in the browser
   - Self-signed cert: the browser warns "certificate not trusted" → trust it manually and continue
   - Real cert: straight in
 - Enter **admin + password** → **DSH agent UI** → full remote control

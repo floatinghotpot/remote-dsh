@@ -11,7 +11,7 @@
 
 > **不知道怎么选？最省事的一条路**：电脑上**已经在跑 DSH 网页版** → 直接走 [插件接入](zh/01-05-plugin-mode.md)（先[注册账号](zh/01-03-rdsh-account.md) → 再按[接入令牌](zh/01-04-join-token.md)拿令牌 → 装插件，三步搞定）；连 DSH 网页版都还没装的，就从[注册账号](zh/01-03-rdsh-account.md)开始，装好 DSH 再回来。
 
-- **同一网络、免 hub**——同一 WiFi 下任意设备浏览器打开 `http://<开发机IP>:8443`，输一次终端显示的配对码即可 —— [局域网 IP 直连（配对码）](zh/01-01-lan-access.md)；出差在外先 VPN 回内网 —— [VPN 回连局域网](zh/01-02-vpn-lan.md)。
+- **同一网络、免 hub**——同一 WiFi 下任意设备浏览器打开 `http://<开发机IP>:8442`，输一次访问口令即可 —— [局域网 IP 直连（访问口令）](zh/01-01-lan-access.md)；出差在外先 VPN 回内网 —— [VPN 回连局域网](zh/01-02-vpn-lan.md)。
 - **没有公网 IP？用 rdsh 云 hub（推荐）**——机器只**出站**连 hub（不开任何端口），你从任何地方都能访问它：
   - [注册 rdsh.cn 账号](zh/01-03-rdsh-account.md)（邮箱验证，可开 2FA）；
   - [获取 join token](zh/01-04-join-token.md)——portal 生成一次，之后用它把机器接进来；

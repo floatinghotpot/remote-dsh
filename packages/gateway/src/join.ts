@@ -27,6 +27,10 @@ import { responderHandshake, Aead } from "./e2ee.ts";
 import type { KeyPair, E2eeKeys } from "./e2ee.ts";
 import { loadOrCreateE2eeKeyPair } from "./e2ee-key-store.ts";
 import { GATE_COOKIE, signGateCookie, verifyGateCookie, verifyGateCode } from "./access-gate.ts";
+import { startDirect, directBootstrapScript } from "./direct.ts";
+import type { DirectHandle } from "./direct.ts";
+import { createDirectTicketManager } from "./direct-ticket.ts";
+import { loadOrCreateDirectSecret } from "./direct-secret.ts";
 import { RDSH_WEBVIEW_API, injectHtmlScript } from "./rdsh-webview-api.ts";
 
 export interface JoinOptions {
@@ -44,6 +48,8 @@ export interface JoinOptions {
   dshUiCompat?: { trustE2EEAsLoopback?: boolean };
   /** 网关访问口令（feature 15；accessCode null = 关闭） */
   gateway?: { accessCode?: string | null };
+  /** 直连口（24-direct-first，A 案）：host/port 来自 host.json；缺省不监听 */
+  direct?: { host?: string; port?: number };
 }
 
 /** 注册/接入结果：解析出的 host token + 是否需 insecure + 生效的主机名（缺省=机器 hostname）。 */
@@ -79,6 +85,11 @@ export interface StartJoinOptions {
   dshUiCompat?: { trustE2EEAsLoopback?: boolean };
   /** 网关访问口令（feature 15；accessCode null = 关闭） */
   gateway?: { accessCode?: string | null };
+  /** 直连相关回调（24-direct-first；提供时启用 raw 门禁 + 候选/直连票端点） */
+  direct?: {
+    candidates: () => { host: string; port: number }[];
+    mintTicket: () => string;
+  };
   /** 主机名（challenge 页展示；缺省「本主机」） */
   name?: string;
   /** 宿主代持的 dsh 浏览器会话 cookie（`dsh-auth-*`，0.1.2+）；有值时注入隧道→本地转发 */
@@ -374,6 +385,11 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
   const uiCompat = { trustE2EEAsLoopback: opts.dshUiCompat?.trustE2EEAsLoopback !== false };
   // 访问口令（feature 15）：可变引用 → setAccessCode 运行中切换；null = gate off
   const gate = { accessCode: opts.gateway?.accessCode ?? null };
+  // raw 门禁 + 候选（24-direct-first）：提供 direct 回调即启用候选端点；raw 门禁（authorize）仅设口令时生效
+  const rawGate =
+    opts.direct !== undefined
+      ? { candidates: opts.direct.candidates, mintTicket: opts.direct.mintTicket }
+      : undefined;
   const hostName = opts.name ?? "本主机";
   const gateFailures = { count: 0, lockedUntil: 0 };
   const log = (level: "info" | "warn" | "error", message: string): void => {
@@ -426,7 +442,16 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
   }
 
   /** 内层帧分发器（plain 与 raw 共用）：OPEN http/ws + DATA → DSH 转发，响应帧经 `send` 回传。 */
-  function makeInnerDispatcher(send: (frame: Buffer) => void, dio?: { jsPatch?: () => boolean; gate?: boolean; htmlInject?: string }) {
+  function makeInnerDispatcher(
+    send: (frame: Buffer) => void,
+    dio?: {
+      jsPatch?: () => boolean;
+      gate?: boolean;
+      htmlInject?: string | (() => string);
+      /** raw 门禁 + 候选/直连票（仅 raw inner dispatcher 传入；定义即启用 raw 门禁） */
+      rawGate?: { candidates: () => { host: string; port: number }[]; mintTicket: () => string };
+    },
+  ) {
     const httpStreams = new Map<number, { up: ReturnType<typeof httpRequest> }>();
     const wsStreams = new Map<number, { upstream: WebSocket; queue: Buffer[] }>();
     // gate 未过、等待 code 提交的 http 流（OPEN 后缓冲 DATA，CLOSE 时校验）
@@ -443,6 +468,8 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
     const patchSkipped = new Set<string>();
     /** rdsh WebView API 是否已注入过（每个进程只打一次日志，避免页面加载刷屏）。 */
     let adapterInjectionLogged = false;
+    /** raw 门禁：当前 raw 流是否已被页面授权（动态判定：见 handleOpen 的条件，含运行中 gate 开关） */
+    let rawAuthorized = false;
 
     /** 从转发头里取 rdsh_gate cookie（hub D12 白名单透传）。 */
     function gateCookie(headers: Record<string, string | string[]>): string | null {
@@ -568,6 +595,29 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
         return;
       }
 
+      // ---- raw 门禁 + 候选端点（仅 raw inner dispatcher：dio.rawGate 定义时）----
+      if (dio?.rawGate !== undefined) {
+        // raw 门禁（仅设口令时）：授权前只接受 authorize 请求，否则 fail-closed 关流（修 raw 绕过，R7）
+        if (gate.accessCode !== null && !rawAuthorized) {
+          if (path.startsWith("/__rdsh/authorize")) {
+            const token = new URL(path, "http://rdsh.local").searchParams.get("token") ?? "";
+            if (token !== "" && verifyGateCookie(gate.accessCode, token)) {
+              rawAuthorized = true;
+              sendSyntheticHttp(send, frame.streamId, 204, {}, Buffer.alloc(0));
+              return;
+            }
+          }
+          send(encodeFrame(FRAME_TYPE.CLOSE, frame.streamId, jsonPayload({ code: 403, message: "raw stream not authorized" })));
+          return;
+        }
+        // 候选 + 一次性直连票（无论是否设口令都提供；经 E2EE，hub 不可见，R3/R4）
+        if (path === "/__rdsh/direct-candidates" || path.startsWith("/__rdsh/direct-candidates?")) {
+          const body = Buffer.from(JSON.stringify({ candidates: dio.rawGate.candidates(), ticket: dio.rawGate.mintTicket() }));
+          sendSyntheticHttp(send, frame.streamId, 200, { "content-type": "application/json" }, body);
+          return;
+        }
+      }
+
       // ---- 访问口令 gate（仅 plain dispatcher：dio.gate=true 且已设 accessCode）----
       if (dio?.gate === true && gate.accessCode !== null) {
         const code = gate.accessCode;
@@ -626,7 +676,8 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
             const htmlChunks: Buffer[] = [];
             upRes.on("data", (chunk: Buffer) => htmlChunks.push(chunk));
             upRes.on("end", () => {
-              const html = injectHtmlScript(Buffer.concat(htmlChunks).toString("utf8"), dio!.htmlInject!);
+              const inject = typeof dio!.htmlInject === "function" ? dio!.htmlInject() : dio!.htmlInject!;
+              const html = injectHtmlScript(Buffer.concat(htmlChunks).toString("utf8"), inject);
               const outHeaders: Record<string, string | string[]> = {
                 ...baseHeaders,
                 "content-length": String(Buffer.byteLength(html)),
@@ -822,7 +873,15 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
     return { handleFrame, cleanup };
   }
 
-  const plainDispatcher = makeInnerDispatcher(sendTunnelFrame, { jsPatch: () => uiCompat.trustE2EEAsLoopback, gate: true, htmlInject: RDSH_WEBVIEW_API });
+  const plainDispatcher = makeInnerDispatcher(sendTunnelFrame, {
+    jsPatch: () => uiCompat.trustE2EEAsLoopback,
+    gate: true,
+    htmlInject: () => {
+      // 直连 bootstrap 始终注入（join 模式）；页面授权 token 仅设口令时生成（无口令则跳过 raw 授权、只取候选）
+      const token = gate.accessCode === null ? null : signGateCookie(gate.accessCode).value;
+      return RDSH_WEBVIEW_API + directBootstrapScript(token);
+    },
+  });
 
   // host 端 E2EE 静态密钥对（持久化 ~/.rdsh/e2ee-key.json；join 注册时上送指纹）
   let hostE2eeKeypair: KeyPair;
@@ -868,7 +927,7 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
           console.error(`[join] e2ee send failed: ${err instanceof Error ? err.message : String(err)}`);
         }
       },
-      { jsPatch: () => uiCompat.trustE2EEAsLoopback },
+      { jsPatch: () => uiCompat.trustE2EEAsLoopback, rawGate },
     );
     rawStreams.set(streamId, {
       handshakeBuf: Buffer.alloc(0),
@@ -1134,6 +1193,13 @@ export async function join(opts: JoinOptions): Promise<void> {
   console.log(`rdsh join: dsh web on 127.0.0.1:${dsh.port}`);
   console.log(`rdsh join: connecting to ${opts.hubUrl}...`);
 
+  const accessCode = opts.gateway?.accessCode ?? null;
+  // 直连密钥（per-host 随机，自动生成）+ 一次性直连票管理器（R4）：密钥独立于口令（方案 B）
+  const directSecret = loadOrCreateDirectSecret();
+  const ticketManager = createDirectTicketManager(directSecret);
+  // 直连口句柄引用（candidates 回调在 startJoin 内被调用；直连口稍后才启动，故用可变引用）
+  let directHandle: DirectHandle | undefined;
+
   const handle = startJoin({
     hubUrl: opts.hubUrl,
     token,
@@ -1142,6 +1208,10 @@ export async function join(opts: JoinOptions): Promise<void> {
     role: "cli",
     dshUiCompat: opts.dshUiCompat,
     gateway: opts.gateway,
+    direct:
+      opts.direct !== undefined
+        ? { candidates: () => directHandle?.candidates() ?? [], mintTicket: () => ticketManager.mint() }
+        : undefined,
     dshAuthCookieHeader,
     name,
     hooks: {
@@ -1156,11 +1226,33 @@ export async function join(opts: JoinOptions): Promise<void> {
     },
   });
 
+  // 直连口（24-direct-first，方案 B）：join 模式**始终监听**，门禁 = ticket（可选口令为增强层）
+  if (opts.direct !== undefined) {
+    try {
+      directHandle = await startDirect({
+        dshPort: dsh.port,
+        dshAuthCookieHeader,
+        secret: directSecret,
+        accessCode,
+        consumeTicket: (t) => ticketManager.consume(t),
+        host: opts.direct.host,
+        port: opts.direct.port,
+        dshUiCompat: { trustPairedAsLoopback: opts.dshUiCompat?.trustE2EEAsLoopback !== false },
+      });
+      const cands = directHandle.candidates();
+      console.log(`rdsh join: direct on :${directHandle.actualPort}（${accessCode === null ? "ticket 门禁" : "ticket + 口令门禁"}）—— ${cands.map((c) => `http://${c.host}:${c.port}`).join(", ") || "(无内网网卡)"}`);
+    } catch (err) {
+      // 直连口监听失败（端口占用等）不阻断隧道：隧道照常，仅直连不可用
+      console.error(`rdsh join: direct listener failed to start: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   let shuttingDown = false;
   const shutdown = async (signal: string, code = 0): Promise<void> => {
     if (shuttingDown) return;
     shuttingDown = true;
     if (signal !== "") console.log(`\nrdsh: received ${signal}, shutting down...`);
+    if (directHandle !== undefined) await directHandle.stop().catch(() => undefined);
     await handle.stop();
     await dsh.stop();
     process.exit(code);

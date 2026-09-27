@@ -18,6 +18,9 @@ import { existsSync } from "node:fs";
 import {
   registerJoin,
   startJoin,
+  startDirect,
+  createDirectTicketManager,
+  loadOrCreateDirectSecret,
   selfRevoke,
   clearPersistedToken,
   readPersistedToken,
@@ -27,7 +30,7 @@ import {
   exchangeDshSessionCookie,
   DEFAULT_HOST_CONFIG_PATH,
 } from "rdsh-gateway";
-import type { JoinHandle, JoinState, RdshConfig } from "rdsh-gateway";
+import type { DirectHandle, DirectTicketManager, JoinHandle, JoinState, RdshConfig } from "rdsh-gateway";
 import { RPC_CHANNEL, handleRpcRoute } from "./rpc-route.ts";
 import type { ConnectionService, RpcDispatch, RpcResult, WebServerService } from "./rpc-route.ts";
 
@@ -107,6 +110,10 @@ export function apply(ctx: Ctx): void {
   let liveAccessCode: string | null | undefined; // 运行中切换的访问密码（undefined=未初始化；null=关闭）
   let currentConfig: RdshConfig | null = null; // 最近一次读到的 host.json
   let dshAuthCookieHeader: string | null = null; // 0.1.2+ 进程内换发的 dsh 会话 cookie
+  let directHandle: DirectHandle | null = null; // 直连口（24-direct-first，A 案；与隧道共用同一 dsh）
+  let directTicketManager: DirectTicketManager | null = null; // 一次性直连票管理器（R4）
+  let directSecret: string | null = null; // 直连密钥（per-host 随机，自动生成）
+  let directAccessCode: string | null | undefined = undefined; // 直连口当前应用的口令（undefined=未启动）
 
   // 0.1.2+ 进程内换发：能力探测 authenticatedUrl → 换发浏览器会话 cookie（0.1.1 无此方法 → 跳过）
   const authConn = ctx.connection;
@@ -209,6 +216,8 @@ export function apply(ctx: Ctx): void {
     currentHub = hub;
     currentName = name;
     lastMessage = undefined;
+    directSecret = loadOrCreateDirectSecret();
+    directTicketManager = createDirectTicketManager(directSecret);
     handle = startJoin({
       hubUrl: hub,
       token,
@@ -217,10 +226,51 @@ export function apply(ctx: Ctx): void {
       role: "plugin",
       dshUiCompat: config.dshUiCompat,
       gateway: config.gateway,
+      direct: { candidates: () => directHandle?.candidates() ?? [], mintTicket: () => directTicketManager!.mint() },
       dshAuthCookieHeader,
       name,
       hooks,
     });
+    void syncDirect(config);
+  }
+
+  /** 直连口同步（方案 B）：join 模式**始终监听**，门禁 = ticket；口令（accessCode）为可选增强层。 */
+  async function syncDirect(config: RdshConfig): Promise<void> {
+    if (directSecret === null) directSecret = loadOrCreateDirectSecret();
+    const code = config.gateway?.accessCode ?? null;
+    // 口令变化 → 重启直连口（口令层即时生效/移除）
+    if (directHandle !== null && directAccessCode !== undefined && directAccessCode !== code) {
+      await stopDirect();
+    }
+    directTicketManager = createDirectTicketManager(directSecret);
+    if (directHandle === null) {
+      try {
+        directHandle = await startDirect({
+          dshPort: ctx.webServer.port,
+          dshAuthCookieHeader,
+          secret: directSecret,
+          accessCode: code,
+          consumeTicket: (t) => directTicketManager!.consume(t),
+          host: config.host,
+          port: config.port,
+          dshUiCompat: { trustPairedAsLoopback: config.dshUiCompat?.trustE2EEAsLoopback !== false },
+        });
+        directAccessCode = code;
+      } catch {
+        // 直连口监听失败不阻断隧道
+        directHandle = null;
+        directAccessCode = undefined;
+      }
+    }
+  }
+
+  async function stopDirect(): Promise<void> {
+    if (directHandle !== null) {
+      await directHandle.stop().catch(() => undefined);
+      directHandle = null;
+    }
+    directTicketManager = null;
+    directAccessCode = undefined;
   }
 
   /**
@@ -256,6 +306,7 @@ export function apply(ctx: Ctx): void {
       handle = null;
       liveState = null;
     }
+    await stopDirect();
     return ok({ status: "disconnected", hub: currentHub, name: currentName });
   }
 
@@ -266,6 +317,7 @@ export function apply(ctx: Ctx): void {
         handle = null;
         liveState = null;
       }
+      await stopDirect();
       const config = await loadConfig(DEFAULT_HOST_CONFIG_PATH);
       if (config.mode === "join" && config.hub !== undefined) {
         const token = readPersistedToken(config.hub);
@@ -362,6 +414,8 @@ export function apply(ctx: Ctx): void {
       config.gateway = { accessCode: code };
       await saveConfig(DEFAULT_HOST_CONFIG_PATH, config);
       currentConfig = config;
+      // ③ 直连口随口令开关同步（R14：清除口令 → 关直连口）
+      await syncDirect(config);
       return ok({ hasAccessCode: code !== null });
     } catch (e) {
       return err("internal", e instanceof Error ? e.message : String(e));

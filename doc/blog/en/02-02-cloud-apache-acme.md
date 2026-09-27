@@ -11,7 +11,7 @@
 
 The previous post ([② standalone + built-in TLS](../en/02-01-cloud-single-tls.md)) is the fastest path, but production use has a few pain points:
 
-- You want the standard **443 port** (no `:8443` suffix)
+- You want the standard **443 port** (no `:8442` suffix)
 - The server may host **other sites/services** — share one 443 and manage them together
 - You want **fully automatic cert renewal** (Let's Encrypt certs expire every 90 days; manual rotation is tedious)
 
@@ -20,7 +20,7 @@ The fix: **Apache2 in front handles HTTPS and certs; rdsh steps back to 127.0.0.
 ## Architecture
 
 ```
-Browser ──https://example.com──► apache2:443 (TLS + certs) ──http──► 127.0.0.1:8443 (rdsh)
+Browser ──https://example.com──► apache2:443 (TLS + certs) ──http──► 127.0.0.1:8442 (rdsh)
                                        │                                ▲
                          acme.sh renewal → apache2 reload     behindProxy + password auth
 ```
@@ -50,7 +50,7 @@ Write `~/.rdsh/host.json`:
 {
   "mode": "cloud",                  // cloud HTTPS gateway
   "host": "127.0.0.1",          // localhost only — never exposed directly
-  "port": 8443,
+  "port": 8442,
   "behindProxy": true,          // trust TLS terminated by the proxy (allows password + http)
   "auth": {
     "mode": "password",
@@ -78,7 +78,7 @@ acme.sh --install-cert -d example.com \
 
 acme.sh ships its own cron (checks daily) and renews before expiry, then runs `reloadcmd` — **zero manual work for the 90-day renewal cycle**.
 
-### ④ Apache vhost: 443 → 127.0.0.1:8443 (incl. WebSocket)
+### ④ Apache vhost: 443 → 127.0.0.1:8442 (incl. WebSocket)
 
 Write `/etc/apache2/sites-available/rdsh.conf`:
 
@@ -90,13 +90,13 @@ Write `/etc/apache2/sites-available/rdsh.conf`:
     SSLCertificateKeyFile   /etc/letsencrypt/live/example.com/privkey.pem
 
     ProxyPreserveHost On
-    ProxyPass        / http://127.0.0.1:8443/
-    ProxyPassReverse / http://127.0.0.1:8443/
+    ProxyPass        / http://127.0.0.1:8442/
+    ProxyPassReverse / http://127.0.0.1:8442/
 
     # WebSocket (DSH live event stream):
     RewriteEngine On
     RewriteCond %{HTTP:Upgrade} =websocket [NC]
-    RewriteRule /(.*) ws://127.0.0.1:8443/$1 [P,L]
+    RewriteRule /(.*) ws://127.0.0.1:8442/$1 [P,L]
 </VirtualHost>
 ```
 
@@ -107,7 +107,7 @@ systemctl reload apache2
 
 ### ⑤ Open port 443 + browse
 
-- Cloud security group: allow **TCP 443** only (no need to open 8443 — rdsh listens on localhost)
+- Cloud security group: allow **TCP 443** only (no need to open 8442 — rdsh listens on localhost)
 - Open `https://example.com` → enter **admin + password** → full DSH agent UI
 
 ## Verify WebSocket is intact
@@ -132,7 +132,7 @@ systemctl status apache2      # proxy status
 acme.sh --list                # cert expiry dates
 ```
 
-- **X-Forwarded-For trusted from loopback only**: rdsh only honors XFF when the connection comes from 127.0.0.1; forging XFF directly on 8443 is useless (and 8443 isn't publicly open anyway)
+- **X-Forwarded-For trusted from loopback only**: rdsh only honors XFF when the connection comes from 127.0.0.1; forging XFF directly on 8442 is useless (and 8442 isn't publicly open anyway)
 - Firewall: 443 only; `host: 127.0.0.1` guarantees rdsh can't be reached around the proxy
 - Login rate limiting (5 attempts / 10 min lock) counts the **real XFF IP** — anti brute-force
 - Cert renewal never touches rdsh — the proxy reloads config; only when you actually change cert paths do you edit host.json and `rdsh host service restart`

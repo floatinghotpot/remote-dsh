@@ -6,11 +6,11 @@ test("默认值（空对象）→ mode 推断为 lan", () => {
   const c = normalizeConfig({});
   assert.equal(c.mode, "lan");
   assert.equal(c.host, "0.0.0.0");
-  assert.equal(c.port, 8443);
+  assert.equal(c.port, 8442);
   assert.equal(c.sessionTtlSeconds, 12 * 3600);
   assert.equal(c.behindProxy, false);
   assert.deepEqual(c.allowFrom, []);
-  assert.equal(c.auth.mode, "pair");
+  assert.equal(c.auth.mode, "none");
   assert.equal(c.auth.version, 1);
 });
 
@@ -49,8 +49,13 @@ test("三模式显式解析 + join 字段", () => {
 test("mode 推断：tls 存在 → cloud；password → cloud；其余 → lan", () => {
   assert.equal(normalizeConfig({ tls: { cert: "/c", key: "/k" } }).mode, "cloud");
   assert.equal(normalizeConfig({ auth: { mode: "password" } }).mode, "cloud");
-  assert.equal(normalizeConfig({ auth: { mode: "pair" } }).mode, "lan");
   assert.equal(normalizeConfig({ auth: { mode: "none" } }).mode, "lan");
+});
+
+test("旧配对码配置（auth.mode=pair）→ 规整为 none（不抛错，供 loadConfig 迁移）", () => {
+  const c = normalizeConfig({ auth: { mode: "pair" } });
+  assert.equal(c.auth.mode, "none");
+  assert.equal(c.mode, "lan");
 });
 
 test("非法字段报错", () => {

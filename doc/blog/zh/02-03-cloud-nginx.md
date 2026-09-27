@@ -14,7 +14,7 @@
 ## 架构
 
 ```
-浏览器 ──https://example.com──► nginx:443 (TLS + 证书) ──http──► 127.0.0.1:8443 (rdsh)
+浏览器 ──https://example.com──► nginx:443 (TLS + 证书) ──http──► 127.0.0.1:8442 (rdsh)
                                        │                            ▲
                          certbot/acme.sh 续期 → nginx reload  behindProxy + password 认证
 ```
@@ -43,7 +43,7 @@ rdsh host user add admin
 {
   "mode": "cloud",                  // 云服务器 HTTPS 网关
   "host": "127.0.0.1",          // 只监听本机
-  "port": 8443,
+  "port": 8442,
   "behindProxy": true,          // 信任 nginx 终止的 TLS（允许 password + http）
   "auth": {
     "mode": "password",
@@ -78,7 +78,7 @@ acme.sh --install-cert -d example.com \
   --reloadcmd     "systemctl reload nginx"
 ```
 
-### ④ nginx server 块：443 → 127.0.0.1:8443
+### ④ nginx server 块：443 → 127.0.0.1:8442
 
 写 `/etc/nginx/sites-available/rdsh`：
 
@@ -91,7 +91,7 @@ server {
     ssl_certificate_key /etc/letsencrypt/live/example.com/privkey.pem;
 
     location / {
-        proxy_pass http://127.0.0.1:8443;
+        proxy_pass http://127.0.0.1:8442;
 
         # 真实客户端 IP / 协议（rdsh 端 behindProxy 才信任）：
         proxy_set_header X-Forwarded-For  $proxy_add_x_forwarded_for;

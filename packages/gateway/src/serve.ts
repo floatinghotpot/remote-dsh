@@ -14,7 +14,6 @@ import { loadTls } from "./tls.ts";
 export interface ServeOptions {
   host?: string;
   port?: number;
-  pairCode?: string;
   sessionTtlSeconds?: number;
   dshPath?: string;
   reset?: boolean;
@@ -37,7 +36,7 @@ export async function serve(opts: ServeOptions): Promise<void> {
   const sessionTtlSeconds = opts.sessionTtlSeconds ?? config.sessionTtlSeconds;
   const dshPath = opts.dshPath ?? config.dshPath;
   const authMode = opts.noCode ? "none" : config.auth.mode;
-  const pairCode = opts.pairCode ?? config.auth.pairCode;
+  const accessCode = config.gateway?.accessCode ?? null;
 
   const foundDsh = findDsh(dshPath);
   if (foundDsh === null) {
@@ -70,10 +69,10 @@ export async function serve(opts: ServeOptions): Promise<void> {
   const tlsMaterial = await loadTls(config.tls, config.behindProxy);
   const userManager = authMode === "password" ? new UserManager(configPath) : undefined;
 
-  if (opts.noCode || authMode === "none") {
+  if (accessCode === null && authMode !== "password") {
     console.warn(
-      "\n⚠  rdsh: 认证已禁用（auth.mode=none / --no-code）—— 任何能访问该端口的设备将直接操作 DSH！\n" +
-        "     仅限完全可信网络！\n",
+      "\n⚠  rdsh: 认证已禁用（未设访问口令且 auth.mode=none）—— 任何能访问该端口的设备将直接操作 DSH！\n" +
+        "     仅限完全可信网络！用 `rdsh host gate set <口令>` 开启访问口令。\n",
     );
   }
 
@@ -82,13 +81,13 @@ export async function serve(opts: ServeOptions): Promise<void> {
     gateway = await startGateway({
       host,
       port,
-      pairCode,
       sessionTtlSeconds,
       dshPort: dsh.port,
       dshAuthCookieHeader,
       reset: opts.reset,
       noCode: opts.noCode,
       authMode,
+      accessCode,
       authVersion: config.auth.version,
       allowFrom: config.allowFrom,
       behindProxy: config.behindProxy,
@@ -111,12 +110,12 @@ export async function serve(opts: ServeOptions): Promise<void> {
     console.log(`rdsh serve: LAN: ${lan.map((ip) => `${scheme}://${ip}:${gateway.actualPort}`).join(", ")}`);
   }
   console.log(`rdsh serve: dsh web on 127.0.0.1:${dsh.port}`);
-  console.log(`rdsh serve: auth mode: ${authMode}${authMode === "password" ? ` (config: ${configPath})` : authMode === "pair" ? ` (pair code: ${gateway.pair.codeValue()})` : ""}`);
+  console.log(`rdsh serve: auth mode: ${accessCode !== null ? "accessCode" : authMode}${authMode === "password" ? ` (config: ${configPath})` : ""}`);
   if (config.allowFrom.length > 0) console.log(`rdsh serve: allow_from: ${config.allowFrom.join(", ")}`);
   if (tlsMaterial !== null) console.log(`rdsh serve: TLS: custom cert (${config.tls!.cert})`);
   if (config.behindProxy) console.log("rdsh serve: behind_proxy: true (TLS terminated by reverse proxy)");
   if (authMode === "password") console.log("rdsh serve: sign in with `rdsh user` credentials in the browser login page.");
-  else if (authMode === "pair") console.log("rdsh serve: enter the pair code in the browser on your other device.");
+  else if (accessCode !== null) console.log("rdsh serve: 访问口令已启用（经隧道或直连访问都需先输入口令）。");
 
   let shuttingDown = false;
   const shutdown = async (signal: string): Promise<void> => {

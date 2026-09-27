@@ -21,7 +21,7 @@
 
 ## 和前面几篇的关系
 
-- **[① 局域网遥控](../zh/01-01-lan-access.md)**：单台机器、同一 WiFi；`rdsh host serve` 配对码
+- **[① 局域网遥控](../zh/01-01-lan-access.md)**：单台机器、同一 WiFi；`rdsh host serve` 访问口令
 - **[②③④ 云服务器直连](../zh/02-01-cloud-single-tls.md)**：单台、有公网 IP 的机器；`rdsh host serve` + HTTPS/反代
 - **⑤ 公网 hub（本文）**：**多台、无公网 IP**；`rdsh host join` 出站隧道 + hub 门户
 

@@ -15,46 +15,42 @@ rdsh --version                # 验证
 
 要求：Node.js ≥ 22；已安装 `dsh`（DeepSeek Harness CLI，须在 PATH 中）。
 
-## 2. 快速开始（LAN，M1 现状）
+## 2. 快速开始（LAN，固定口令）
 
 ```bash
-rdsh host setup lan           # 写 ~/.rdsh/host.json（mode: lan，默认 0.0.0.0:8443）
+rdsh host setup lan           # 写 ~/.rdsh/host.json（mode: lan，默认 0.0.0.0:8442）+ 生成访问口令
 rdsh host serve               # 前台常驻，自动拉起 dsh web
 ```
 
 终端显示：
 
 ```
-rdsh serve: gateway on http://172.20.6.203:8443
-rdsh serve: LAN: http://172.20.6.203:8443, ...
-rdsh serve: dsh web on 127.0.0.1:57067
-rdsh serve: pair code: 815858
-rdsh serve: enter the pair code in the browser on your other device.
+rdsh: host 配置为 LAN 网关（访问口令，端口 8442）→ ~/.rdsh/host.json
+rdsh: 访问口令（请记录，可用 `rdsh host gate set` 修改）：<随机口令>
 ```
 
-同一 WiFi 的另一台设备浏览器打开 `http://<开发机IP>:8443` → 输入配对码 → 进入 DSH。
+同一 WiFi 的另一台设备浏览器打开 `http://<开发机IP>:8442` → 输入访问口令 → 进入 DSH。
 
 ### host setup 参数（0.5.0 起）
 
 | 命令 | 参数 | 说明 |
 |---|---|---|
-| `rdsh host setup lan` | `--port <n>` | 监听端口（默认 8443；0 = OS 分配） |
-| | `--pair-code <code>` | 预置配对码（默认随机生成） |
+| `rdsh host setup lan` | `--port <n>` | 监听端口（默认 8442；0 = OS 分配） |
 | `rdsh host setup cloud` | `--tls-cert <path>` / `--tls-key <path>` | TLS 证书与私钥（必填） |
-| | `--port <n>` | 监听端口（默认 8443；0 = OS 分配） |
+| | `--port <n>` | 监听端口（默认 8442；0 = OS 分配） |
 | | `--allow-from <cidr,...>` | IP 白名单（默认空） |
 
-> 其余参数直接写 `~/.rdsh/host.json`（如 `host` 绑定地址、`sessionTtlSeconds` 会话时长、`dshPath`、`auth.mode: none`）。
+> 访问口令用 `rdsh host gate set|clear|status` 管理；其余参数直接写 `~/.rdsh/host.json`（如 `host` 绑定地址、`sessionTtlSeconds` 会话时长、`dshPath`、`auth.mode: none`）。
 
 ## 3. 认证模式（M2 现状）
 
-`~/.rdsh/host.json` 的 `auth.mode` 决定：
+`~/.rdsh/host.json` 决定认证方式：
 
-| mode | 说明 | 适用 |
+| 配置 | 说明 | 适用 |
 |---|---|---|
-| `pair` | 配对码（M1 现状，终端显示） | LAN / 可信网络 |
-| `password` | 用户名 + 密码（M2 默认） | HTTPS 服务 / 公网 |
-| `none` | 免认证 | 完全可信网络 |
+| `gateway.accessCode`（访问口令） | 单一口令（LAN 直连与 join 隧道两条通道共用，challenge 页 + 签名 cookie） | LAN / 可信网络 / join 主机 |
+| `auth.mode: password` + `auth.users` | 用户名 + 密码（多用户） | HTTPS 服务 / 公网 |
+| `auth.mode: none` | 免认证 | 完全可信网络 |
 
 > ⚠ **安全提示**：密码认证必须配合 HTTPS（TLS）使用 —— 明文 http 下输密码可被同网段嗅探。
 
@@ -62,17 +58,18 @@ rdsh serve: enter the pair code in the browser on your other device.
 
 默认 `~/.rdsh/host.json`（`mode: lan|cloud|join`；旧 `config.json` 自动迁移）；可用 `--config <path>` 或 `$RDSH_CONFIG` 指定（全局参数，host serve/user/service 共享）。
 
+> **端口约定**：**host 默认 `8442`，hub 默认 `8443`** —— 两者在不同端口，同一台机器上同时跑 `rdsh hub serve` + `rdsh host serve` 不会冲突（本地全栈测试免改配置）。`host` 的端口冲突时可用 `"port": 0`（OS 自动分配，候选列表会带实际端口）。
+
 ```json
 {
   "mode": "cloud",
   "host": "0.0.0.0",
-  "port": 8443,
+  "port": 8442,
   "sessionTtlSeconds": 43200,
   "tls": { "cert": "/root/.acme.sh/example.com/fullchain.cer", "key": "/root/.acme.sh/example.com/example.com.key" },
   "allowFrom": ["192.168.1.0/24"],
   "auth": {
     "mode": "password",
-    "pairCode": "",
     "users": [{ "name": "admin", "passwordHash": "scrypt:..." }]
   }
 }
@@ -156,7 +153,7 @@ rdsh host service uninstall
 // ~/.rdsh/host.json
 {
   "mode": "cloud",
-  "port": 8443,
+  "port": 8442,
   "tls": { "cert": "/etc/rdsh/cert.pem", "key": "/etc/rdsh/key.pem" },   // 证书：acme.sh/云厂商/手动 openssl 自签
   "auth": { "mode": "password", "users": [{ "name": "admin", "passwordHash": "..." }] }
 }
@@ -177,7 +174,7 @@ rdsh host service status
 {
   "mode": "cloud",
   "host": "127.0.0.1",               // 只监听本机，由 apache2 转发
-  "port": 8443,
+  "port": 8442,
   "behindProxy": true,               // 信任外部 TLS + X-Forwarded-For
   "auth": { "mode": "password", "users": [{ "name": "admin", "passwordHash": "..." }] }
 }
@@ -192,12 +189,12 @@ rdsh host service status
     SSLCertificateKeyFile   /etc/letsencrypt/live/example.com/privkey.pem
 
     ProxyPreserveHost On
-    ProxyPass        / http://127.0.0.1:8443/
-    ProxyPassReverse / http://127.0.0.1:8443/
+    ProxyPass        / http://127.0.0.1:8442/
+    ProxyPassReverse / http://127.0.0.1:8442/
     # WebSocket（DSH 依赖）：
     RewriteEngine On
     RewriteCond %{HTTP:Upgrade} =websocket [NC]
-    RewriteRule /(.*) ws://127.0.0.1:8443/$1 [P,L]
+    RewriteRule /(.*) ws://127.0.0.1:8442/$1 [P,L]
 </VirtualHost>
 ```
 
@@ -226,7 +223,7 @@ server {
     ssl_certificate_key /etc/letsencrypt/live/example.com/privkey.pem;
 
     location / {
-        proxy_pass http://127.0.0.1:8443;
+        proxy_pass http://127.0.0.1:8442;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_http_version 1.1;
@@ -267,7 +264,7 @@ server {
 
 ```bash
 # ---- 本机（DSH 主机）：rdsh host ----
-rdsh host setup lan                            # 配置为 LAN 网关（pair + http）
+rdsh host setup lan                            # 配置为 LAN 网关（访问口令 + http）
 rdsh host setup cloud --tls-cert <c> --tls-key <k> [--port <n>] [--allow-from <cidr,...>]
                                                # 配置为云 HTTPS 网关（password + tls + allowFrom）
 rdsh host join https://hub.example.com          # 连 hub：粘贴 join token（--token 脚本）
@@ -285,7 +282,7 @@ rdsh hub host ls|revoke <hostId>               # revoke = 隧道立即断开、�
 rdsh hub service install|status|start|stop|restart|uninstall      # hub 服务化（rdsh-hub.service）
 
 # host 配置唯一事实源 ~/.rdsh/host.json（mode: lan|cloud|join；token 只进 session 文件）
-#   { "mode": "lan", "host": "0.0.0.0", "port": 8443, "auth": { "mode": "pair", ... } }
+#   { "mode": "lan", "host": "0.0.0.0", "port": 8442, "gateway": { "accessCode": "..." } }
 #   { "mode": "cloud", "tls": {...}, "auth": { "mode": "password" }, "allowFrom": [...] }
 #   { "mode": "join", "hub": "https://...", "name": "my-ecs", "insecure": false }
 # 旧 ~/.rdsh/config.json 自动迁移到 host.json（按 tls/password 推断 mode）；--config <path> 可指定。
@@ -297,7 +294,7 @@ rdsh hub service install|status|start|stop|restart|uninstall      # hub 服务�
 ```jsonc
 {
   "host": "0.0.0.0",
-  "port": 8443,
+  "port": 8442,
   "tls": { "cert": "/etc/letsencrypt/live/example.com/fullchain.pem",
             "key": "/etc/letsencrypt/live/example.com/privkey.pem" },
   // dbPath / jwtKeyPath 省略时默认 ~/.rdsh/hub.db、~/.rdsh/hub-jwt.key（node:sqlite；自动生成，0600）
@@ -349,7 +346,7 @@ rdsh hub service install|status|start|stop|restart|uninstall      # hub 服务�
 `DELETE /api/hosts/join-tokens/:id`、`PATCH/DELETE /api/hosts/:id`、`WSS /api/events`（在线推送）、
 `/h/<hostId>/...` 进入 host（校验归属 → Set-Cookie → 302 根路径；之后根路径流量按 `rdsh_host` cookie 路由）。错误统一 `{error:{code,message}}`。
 
-其中 `join-token`（需登录，生成用户级 join token，明文只显示一次）、`register`（gateway 持 join token 注册换 host token，未认证+限流）、`self-revoke`（host 持自己的 token 注销）为 05-join-easy 新增；**join 的配对码（pending/bind）流程已移除**——join 只走 join token，配对码仅保留给 LAN/cloud 网关的 pair 认证。
+其中 `join-token`（需登录，生成用户级 join token，明文只显示一次）、`register`（gateway 持 join token 注册换 host token，未认证+限流）、`self-revoke`（host 持自己的 token 注销）为 05-join-easy 新增；**join 的配对码（pending/bind）流程已移除**——join 只走 join token；主机门禁统一为 `gateway.accessCode` 访问口令（LAN 直连与 join 隧道共用）。
 
 **M5 多租户新增端点**：`POST /api/auth/totp`（2FA 二次校验）、`POST /api/captcha/arithmetic`（算术验证码）、`POST /api/auth/password/reset{/confirm}`（找回密码，反枚举）、`POST /api/account/email{/verify,/unbind}`（邮箱绑定）、`POST /api/account/2fa/{enable,verify,disable}`（TOTP 管理）、`POST /api/hosts/:id/share` + `GET/DELETE /api/hosts/:id/share[/:userId]`（host 共享）。完整契约见 `doc/feature/07-multi-tenant/solution.md` §6。
 
@@ -442,7 +439,7 @@ rdsh hub service install|status|start|stop|restart|uninstall      # hub 服务�
 | Ctrl+C 后 dsh 残留 | 0.2.0 已修复（SIGINT/SIGTERM/SIGHUP 优雅退出） | 升级 |
 | 端口被占 | — | `--port` 换端口 |
 | 手机打不开 | AP 隔离 / 防火墙 | 确认同一 WiFi、允许传入连接 |
-| 配对码在哪里 | 终端 `pair code:` 行 | 重启会生成新码 |
+| 访问口令在哪里 | `rdsh host setup lan` / `rdsh host gate set` 的终端输出；`rdsh host gate status` 查询 | 重启不变（存 host.json，0600） |
 | 上传/请求报 `UPSTREAM_ABORTED: upstream closed before responding (ECONNRESET)` | **不是网络不通**：dsh 已接受连接、但在读请求体阶段就断开（常见于鉴权失败、体积限制） | 看主机侧 dsh 日志确认真实原因（旧版网关会把这类错误误报成 `UPSTREAM_UNREACHABLE: dsh not reachable`，升级到当前版本后文案已修正） |
 | 报 `UPSTREAM_UNREACHABLE: dsh not reachable (ECONNREFUSED/ENOTFOUND…)` | 主机侧 dsh 真的没在监听 / DNS 不对 | 确认 `dsh web` 在跑、`target` 主机端口正确 |
 | E2EE 下预览空白/内容错乱（旧版） | 旧版 shim 把响应整体缓冲并按文本解码 | 升级（当前版本响应按字节流式透传） |

@@ -11,7 +11,7 @@ First try the direct routes on your own network; no public IP? relay through the
 
 > **Not sure which way? The easiest route**: if the **DSH web UI is already running** on your computer, go straight to [plugin access](en/01-05-plugin-mode.md) (create an [account](en/01-03-rdsh-account.md) → get an [access token](en/01-04-join-token.md) → install the plugin — three steps). If DSH isn't installed at all, start with [creating an account](en/01-03-rdsh-account.md) and come back once DSH is set up.
 
-- **Same network, no hub** — on the same Wi-Fi, open `http://<dev-machine-ip>:8443` in any browser and type the pair code once — [LAN direct access (pair code)](en/01-01-lan-access.md). On the road? VPN back into the LAN first — [VPN back into the LAN](en/01-02-vpn-lan.md).
+- **Same network, no hub** — on the same Wi-Fi, open `http://<dev-machine-ip>:8442` in any browser and type the access code once — [LAN direct access (access code)](en/01-01-lan-access.md). On the road? VPN back into the LAN first — [VPN back into the LAN](en/01-02-vpn-lan.md).
 - **No public IP? Use the rdsh cloud hub (recommended)** — machines only connect outbound to the hub (no open ports), and you reach them from anywhere:
   - [Create an rdsh.cn account](en/01-03-rdsh-account.md) (email-verified, 2FA optional);
   - [Get a join token](en/01-04-join-token.md) — generate it in the portal once, then bring machines online with it;

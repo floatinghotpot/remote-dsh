@@ -9,8 +9,9 @@
 import { readFile, writeFile, rename } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { randomBytes } from "node:crypto";
 
-export type AuthMode = "pair" | "password" | "none";
+export type AuthMode = "password" | "none";
 export type HostMode = "lan" | "cloud" | "join";
 
 export interface TlsConfig {
@@ -25,7 +26,6 @@ export interface AuthUser {
 
 export interface AuthConfig {
   mode: AuthMode;
-  pairCode?: string;
   /** 改密时 +1，用于使旧会话失效 */
   version: number;
   users: AuthUser[];
@@ -74,12 +74,13 @@ export const DEFAULT_HOST_CONFIG_PATH = join(homedir(), ".rdsh", "host.json");
 /** 旧版 serve 配置（迁移源，保留不删）。 */
 const LEGACY_CONFIG_PATH = join(homedir(), ".rdsh", "config.json");
 
-const DEFAULT_AUTH: AuthConfig = { mode: "pair", version: 1, users: [] };
+const DEFAULT_AUTH: AuthConfig = { mode: "none", version: 1, users: [] };
 
 const DEFAULTS: RdshConfig = {
   mode: "lan",
   host: "0.0.0.0",
-  port: 8443,
+  // host 默认端口 = 8442（hub 默认 8443，同机跑 hub+host 不冲突；8443 是 Tomcat/HTTPS 备用口热门号）
+  port: 8442,
   sessionTtlSeconds: 12 * 3600,
   behindProxy: false,
   allowFrom: [],
@@ -98,6 +99,17 @@ export async function saveConfig(path: string, config: RdshConfig): Promise<void
   const tmp = `${path}.tmp`;
   await writeFile(tmp, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
   await rename(tmp, path);
+}
+
+/** 生成随机访问口令（base64url，8 字节 ≈ 11 字符，满足 feature 15 的 ≥4 位约束）。 */
+export function generateAccessCode(): string {
+  return randomBytes(8).toString("base64url");
+}
+
+/** 旧配置是否使用了已废弃的动态配对码（`auth.mode: "pair"`）。 */
+function isLegacyPairAuth(raw: unknown): boolean {
+  const auth = (raw as { auth?: { mode?: unknown } } | null)?.auth;
+  return auth?.mode === "pair";
 }
 
 /** 加载并校验配置；默认路径下文件不存在时尝试迁移旧 config.json，否则返回默认值。 */
@@ -119,7 +131,15 @@ export async function loadConfig(path: string): Promise<RdshConfig> {
       }
     }
   }
-  return normalizeConfig(raw, path);
+  const config = normalizeConfig(raw, path);
+  // 迁移：旧 `auth.mode: "pair"` → 生成访问口令并写回（幂等：写回后下次不再命中）
+  if (isLegacyPairAuth(raw) && (config.gateway?.accessCode ?? null) === null) {
+    const code = generateAccessCode();
+    config.gateway = { accessCode: code };
+    await saveConfig(path, config);
+    console.log(`rdsh: 检测到旧配对码配置，已迁移为访问口令（请记录，可用 \`rdsh host gate set\` 修改）：${code}`);
+  }
+  return config;
 }
 
 /** 读取旧 ~/.rdsh/config.json（不存在 → null；坏 JSON → 抛错）。 */
@@ -193,14 +213,14 @@ export function normalizeConfig(raw: unknown, source = "config"): RdshConfig {
     if (typeof cfg.auth !== "object" || cfg.auth === null) throw new Error(`${source}: "auth" must be an object`);
     const auth = cfg.auth as Record<string, unknown>;
     if (auth.mode !== undefined) {
-      if (auth.mode !== "pair" && auth.mode !== "password" && auth.mode !== "none") {
-        throw new Error(`${source}: "auth.mode" must be pair|password|none`);
+      // 兼容旧配置：`pair`（动态配对码）已废弃，规整为 `none`（无会话认证；直连口门禁由 gateway.accessCode 承担）
+      if (auth.mode === "pair") {
+        out.auth.mode = "none";
+      } else if (auth.mode === "password" || auth.mode === "none") {
+        out.auth.mode = auth.mode;
+      } else {
+        throw new Error(`${source}: "auth.mode" must be password|none`);
       }
-      out.auth.mode = auth.mode;
-    }
-    if (auth.pairCode !== undefined) {
-      assertString(auth.pairCode, "auth.pairCode", source);
-      out.auth.pairCode = auth.pairCode;
     }
     if (auth.version !== undefined) {
       if (!Number.isInteger(auth.version) || (auth.version as number) < 1) {

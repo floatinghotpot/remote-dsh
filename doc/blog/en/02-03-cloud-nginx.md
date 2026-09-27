@@ -14,7 +14,7 @@ Same goal as the previous post ([③ Apache2 reverse proxy](../en/02-02-cloud-ap
 ## Architecture
 
 ```
-Browser ──https://example.com──► nginx:443 (TLS + certs) ──http──► 127.0.0.1:8443 (rdsh)
+Browser ──https://example.com──► nginx:443 (TLS + certs) ──http──► 127.0.0.1:8442 (rdsh)
                                        │                             ▲
                          certbot/acme.sh renewal → nginx reload  behindProxy + password auth
 ```
@@ -43,7 +43,7 @@ rdsh host user add admin
 {
   "mode": "cloud",                  // cloud HTTPS gateway
   "host": "127.0.0.1",          // localhost only
-  "port": 8443,
+  "port": 8442,
   "behindProxy": true,          // trust TLS terminated by nginx (allows password + http)
   "auth": {
     "mode": "password",
@@ -78,7 +78,7 @@ acme.sh --install-cert -d example.com \
   --reloadcmd     "systemctl reload nginx"
 ```
 
-### ④ nginx server block: 443 → 127.0.0.1:8443
+### ④ nginx server block: 443 → 127.0.0.1:8442
 
 Write `/etc/nginx/sites-available/rdsh`:
 
@@ -91,7 +91,7 @@ server {
     ssl_certificate_key /etc/letsencrypt/live/example.com/privkey.pem;
 
     location / {
-        proxy_pass http://127.0.0.1:8443;
+        proxy_pass http://127.0.0.1:8442;
 
         # Real client IP / protocol (rdsh trusts these only with behindProxy):
         proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;

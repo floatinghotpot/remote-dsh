@@ -11,7 +11,7 @@
 
 上一篇（[② 单独 + 内置 TLS](../zh/02-01-cloud-single-tls.md)）是最快路径，但正式使用有几个痛点：
 
-- 想在标准的 **443 端口**（不用带 `:8443` 后缀）
+- 想在标准的 **443 端口**（不用带 `:8442` 后缀）
 - 服务器上可能**还有其他网站/服务**，想共用一个 443 统一管理
 - 证书想**全自动续期**（Let's Encrypt 90 天有效期，手动换太烦）
 
@@ -20,7 +20,7 @@
 ## 架构
 
 ```
-浏览器 ──https://example.com──► apache2:443 (TLS + 证书) ──http──► 127.0.0.1:8443 (rdsh)
+浏览器 ──https://example.com──► apache2:443 (TLS + 证书) ──http──► 127.0.0.1:8442 (rdsh)
                                       │                              ▲
                         acme.sh 续期 → apache2 reload       behindProxy + password 认证
 ```
@@ -50,7 +50,7 @@ rdsh host user add admin
 {
   "mode": "cloud",                  // 云服务器 HTTPS 网关
   "host": "127.0.0.1",          // 只监听本机，绝不直接暴露公网
-  "port": 8443,
+  "port": 8442,
   "behindProxy": true,          // 信任反代终止的 TLS（允许 password + http）
   "auth": {
     "mode": "password",
@@ -78,7 +78,7 @@ acme.sh --install-cert -d example.com \
 
 acme.sh 自带 cron（每天检查），到期前自动续期并执行 `reloadcmd` —— **证书 90 天续期全程零手动**。
 
-### ④ apache vhost：443 → 127.0.0.1:8443（含 WebSocket）
+### ④ apache vhost：443 → 127.0.0.1:8442（含 WebSocket）
 
 写 `/etc/apache2/sites-available/rdsh.conf`：
 
@@ -90,13 +90,13 @@ acme.sh 自带 cron（每天检查），到期前自动续期并执行 `reloadcm
     SSLCertificateKeyFile   /etc/letsencrypt/live/example.com/privkey.pem
 
     ProxyPreserveHost On
-    ProxyPass        / http://127.0.0.1:8443/
-    ProxyPassReverse / http://127.0.0.1:8443/
+    ProxyPass        / http://127.0.0.1:8442/
+    ProxyPassReverse / http://127.0.0.1:8442/
 
     # WebSocket（DSH 实时事件流依赖）：
     RewriteEngine On
     RewriteCond %{HTTP:Upgrade} =websocket [NC]
-    RewriteRule /(.*) ws://127.0.0.1:8443/$1 [P,L]
+    RewriteRule /(.*) ws://127.0.0.1:8442/$1 [P,L]
 </VirtualHost>
 ```
 
@@ -107,7 +107,7 @@ systemctl reload apache2
 
 ### ⑤ 放行 443 + 访问
 
-- 云安全组放行 **TCP 443**（8443 不用放 —— rdsh 只听本机）
+- 云安全组放行 **TCP 443**（8442 不用放 —— rdsh 只听本机）
 - 浏览器打开 `https://example.com` → 输入 **admin + 密码** → 进入 DSH 智能体界面
 
 ## 验证 WebSocket 没断
@@ -132,7 +132,7 @@ systemctl status apache2      # 反代状态
 acme.sh --list                # 证书到期时间
 ```
 
-- **X-Forwarded-For 只信回环**：rdsh 只有确认连接来自 127.0.0.1 才采信 XFF，公网直连 8443 时伪造 XFF 无效（何况 8443 本来就没对外开）
+- **X-Forwarded-For 只信回环**：rdsh 只有确认连接来自 127.0.0.1 才采信 XFF，公网直连 8442 时伪造 XFF 无效（何况 8442 本来就没对外开）
 - 防火墙只开 443；`host: 127.0.0.1` 保证 rdsh 不能被绕过反代直接访问
 - 登录失败限流（5 次/10 分钟锁定）按 **XFF 真实 IP** 计数，防爆破
 - 证书续期不需要碰 rdsh —— 反代重载配置即可；真要换证书路径才改 host.json 并 `rdsh host service restart`

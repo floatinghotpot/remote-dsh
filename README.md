@@ -43,7 +43,7 @@ rdsh host service install       # after join; or all-in-one: rdsh host service i
 ```
 
 ### ② Direct connection (no hub)
-- **LAN**: on the same network, `rdsh host serve` then connect by IP after pairing;
+- **LAN**: on the same network, `rdsh host serve` then connect by IP with the access code;
 - **Cloud server**: a host with a public IP/domain, `rdsh host serve` + TLS password auth, connect by IP/domain;
 - **For**: technical users who want full control and no third-party hub.
 
@@ -51,7 +51,7 @@ rdsh host service install       # after join; or all-in-one: rdsh host service i
 npm install -g remote-dsh
 rdsh host setup lan             # or setup cloud (needs --tls-cert/--tls-key)
 rdsh host serve                 # run it (spawns dsh web)
-# open http://<ip>:<port> in a browser on the same network, enter the pairing code
+# open http://<ip>:<port> in a browser on the same network, enter the access code
 ```
 
 ### ③ Self-hosted (self-hosted hub · full control)
@@ -124,7 +124,7 @@ Scenario guides, from simple to complex — full index: [English](doc/blog/READM
 
 **Optional: other access routes & going further**:
 - [One command: reach your DSH securely from anywhere](doc/blog/en/01-06-cli-mode.md) — the CLI equivalent, same capability
-- [LAN direct access with a pair code: control your DSH on the same network](doc/blog/en/01-01-lan-access.md)
+- [LAN direct access with an access code: control your DSH on the same network](doc/blog/en/01-01-lan-access.md)
 - [Account security: protections the platform gives you, plus locks you can add](doc/blog/en/01-08-account-security.md)
 - [Put your DSH on a cloud server: HTTPS + password sign-in (own cert)](doc/blog/en/02-01-cloud-single-tls.md)
 - [Run your own hub relay: ECS deploy with built-in TLS (fastest)](doc/blog/en/03-01-hub-public.md)

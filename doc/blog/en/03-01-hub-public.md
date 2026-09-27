@@ -21,7 +21,7 @@ You want: **from anywhere, open one URL in the browser, sign in once, and switch
 
 ## How it relates to the earlier posts
 
-- **[① LAN control](../en/01-01-lan-access.md)**: Single machine, same Wi-Fi; `rdsh host serve` pairing code
+- **[① LAN control](../en/01-01-lan-access.md)**: Single machine, same Wi-Fi; `rdsh host serve` access code
 - **[②③④ Cloud-server direct](../en/02-01-cloud-single-tls.md)**: Single machine with a public IP; `rdsh host serve` + HTTPS / reverse proxy
 - **⑤ Public hub (this post)**: **Multiple machines, no public IP**; `rdsh host join` outbound tunnel + hub portal
 
