@@ -33,6 +33,20 @@ import { createDirectTicketManager } from "./direct-ticket.ts";
 import { loadOrCreateDirectSecret } from "./direct-secret.ts";
 import { RDSH_WEBVIEW_API, injectHtmlScript } from "./rdsh-webview-api.ts";
 
+/**
+ * 页面授权脚本（plain 与 raw 两条 inner dispatcher 共用，禁止各写一份）：
+ * 直连 bootstrap + （设了口令时）raw 门禁解锁 token。
+ *
+ * 为什么 raw 通道也**必须**注入：raw（E2EE）流按设计不向 host 转发任何 cookie，
+ * 页面只能靠这段脚本带 token 请求 `/__rdsh/authorize` 才能把 rawAuthorized 置真；
+ * 漏注入 ⇒ raw 门禁（accessCode 非空时为 fail-closed）永远无法满足 ⇒ 经 E2EE 的
+ * 客户端每个请求都被 CLOSE 403、表现为"一直 connecting"。
+ * （24-direct-first 首版只在 plain 注入，E2EE 客户端因此被锁死；本函数即该回归的单一来源。）
+ */
+export function pageAuthorizeScript(accessCode: string | null): string {
+  return directBootstrapScript(accessCode === null ? null : signGateCookie(accessCode).value);
+}
+
 export interface JoinOptions {
   hubUrl: string;
   /** join token（用户级，register 换 host token） */
@@ -878,8 +892,7 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
     gate: true,
     htmlInject: () => {
       // 直连 bootstrap 始终注入（join 模式）；页面授权 token 仅设口令时生成（无口令则跳过 raw 授权、只取候选）
-      const token = gate.accessCode === null ? null : signGateCookie(gate.accessCode).value;
-      return RDSH_WEBVIEW_API + directBootstrapScript(token);
+      return RDSH_WEBVIEW_API + pageAuthorizeScript(gate.accessCode);
     },
   });
 
@@ -927,7 +940,13 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
           console.error(`[join] e2ee send failed: ${err instanceof Error ? err.message : String(err)}`);
         }
       },
-      { jsPatch: () => uiCompat.trustE2EEAsLoopback, rawGate },
+      {
+        jsPatch: () => uiCompat.trustE2EEAsLoopback,
+        rawGate,
+        // raw 门禁的解锁脚本：与 plain 同一来源（pageAuthorizeScript）。
+        // raw 流不转发 cookie，这里是页面唯一的授权入口；缺了它 raw 门禁必然 fail-closed。
+        htmlInject: () => pageAuthorizeScript(gate.accessCode),
+      },
     );
     rawStreams.set(streamId, {
       handshakeBuf: Buffer.alloc(0),
