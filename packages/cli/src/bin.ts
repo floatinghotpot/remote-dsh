@@ -417,12 +417,12 @@ async function handleHostGate(args: string[], configPath?: string): Promise<void
   if (action === "clear") {
     config.gateway = { accessCode: null };
     await saveConfig(target, config);
-    console.log("rdsh: 访问口令已清除——注意：清除后直连口将关闭（无口令不监听），隧道也不再要求口令。");
+    console.log("rdsh: 访问口令已清除——直连口仍会监听，但只认一次性直连票（无票一律 403，不再有口令挑战页）；隧道两条通道不再要求口令。");
     return;
   }
   if (action === "status") {
     const code = config.gateway?.accessCode ?? null;
-    console.log(code === null ? "rdsh: 未设置访问口令（直连口关闭，隧道无门禁）。" : "rdsh: 访问口令已设置（两条通道均需口令）。");
+    console.log(code === null ? "rdsh: 未设置访问口令（直连口仍监听，仅认一次性直连票；隧道无门禁）。" : "rdsh: 访问口令已设置（两条通道均需口令）。");
     return;
   }
   throw new Error("usage: rdsh host gate set|clear|status");
