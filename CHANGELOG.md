@@ -7,6 +7,29 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [rdsh-gateway 0.11.0 · rdsh-hub 0.9.0 · remote-dsh 0.14.0 · dsh-web-remote 0.7.0] - 2026-09-28
+
+### Added
+
+- **Direct-first LAN access** (gateway + cli + web-remote): in join mode the host also listens on a LAN port (default **8442**, host config) that forwards to the *same* dsh instance. Over the E2EE channel the gateway hands the page a list of private-IPv4 candidates plus a **one-time direct ticket** (`window.__rdshDirectInfo`), so a client on the same network can skip the public hub round-trip; `?ticket=` bootstraps a session and redirects, and a consumed/forged/expired ticket is rejected. The hub is unchanged and never sees LAN topology.
+- **Unified host gate on an access code** (gateway + cli): the gate now covers the LAN/cloud gateway, the join tunnel and the direct listener. `rdsh host setup lan` generates the code; `rdsh host gate set|clear|status` manages it.
+- **Admin entitlement actions** (hub + portal): grant-trial and grant-subscription actions; `adjustPlan` rejects *subscribed-without-subscription* and *unlimited-with-expiry*; `creditOrder` keeps a single active subscription; the portal user menu offers extend-trial / gift-subscription / unlimited-forever instead of raw plan fields; a read-only `inspect-entitlements.mjs` ops script was added.
+- **`readReply` carries `turn` / `userTurn`** (gateway): the injected WebView contract can now fire its stop-immediately rule; absent values default to `-1`.
+- **Clipboard polyfill for plain-http pages** (gateway): `navigator.clipboard` is shimmed via `document.execCommand('copy')` so copying works on the http direct page.
+
+### Changed
+
+- **Breaking: the dynamic pair code is removed** (gateway + cli). Legacy `auth.mode: "pair"` migrates to `"none"` and `pairCode` to an access code on load; `--pair-code` is gone.
+- **Breaking: the host default port is now 8442** (was 8443; the hub keeps 8443) so `rdsh hub serve` and `rdsh host serve` can share a machine without colliding.
+- Gate, direct-ticket and login redirects now use **303** (Post/Redirect/Get) instead of 302.
+- **dsh-web-remote always starts the direct listener** in join mode and restarts it when the access code changes.
+
+### Fixed
+
+- **Hosts with an access code no longer dead-lock E2EE clients** (gateway): the page-authorize script was injected on the plain dispatcher only, so an E2EE (raw) client could never satisfy the fail-closed raw gate and the DSH UI stayed on "connecting" forever. The script now comes from one shared helper used by both dispatchers.
+- **Alibaba Cloud captcha verification** (hub + portal): `VerifyCaptcha` returns `"Success"` (not the legacy `"OK"`), so every verification raised and was swallowed as `BAD_CAPTCHA`; the one-time ticket is no longer replayed (cleared on submit failure, button disabled while submitting).
+- **`rdsh host gate clear|status` messages** (cli) no longer claim the direct port stops listening without a code — it always listens and only accepts a one-time ticket.
+
 ## [rdsh-hub 0.8.0 · remote-dsh 0.13.0] - 2026-09-25
 
 ### Fixed

@@ -7,6 +7,29 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [rdsh-gateway 0.11.0 · rdsh-hub 0.9.0 · remote-dsh 0.14.0 · dsh-web-remote 0.7.0] - 2026-09-28
+
+### 新增
+
+- **内网直连优先**（gateway + cli + web-remote）：join 模式下 host 额外监听一个内网端口（默认 **8442**，host 配置），转发到**同一个** dsh 实例。gateway 经 E2EE 通道把私网 IPv4 候选 + **一次性直连票**下发给页面（`window.__rdshDirectInfo`），同网段客户端可绕开公网 hub 一圈；`?ticket=` 换取会话并跳转，已消费/伪造/过期的票一律拒绝。**hub 零改动**，且永远看不到内网拓扑。
+- **统一访问口令门禁**（gateway + cli）：门禁覆盖 LAN/cloud 网关、join 隧道与直连口三条路径。`rdsh host setup lan` 自动生成口令；`rdsh host gate set|clear|status` 管理口令。
+- **管理端权益操作**（hub + portal）：新增 grant-trial / grant-subscription；`adjustPlan` 拒绝"已订阅却无订阅记录"与"无限套餐却带到期时间"；`creditOrder` 保证同时只有一条有效订阅；门户用户菜单改为"延长试用 / 赠送订阅 / 永久无限"，不再手改原始 plan 字段；新增只读运维脚本 `inspect-entitlements.mjs`。
+- **`readReply` 增加 `turn` / `userTurn`**（gateway）：注入的 WebView 契约可据此触发"立即停止朗读"；缺省为 `-1`。
+- **明文 http 页面的剪贴板 polyfill**（gateway）：用 `document.execCommand('copy')` 垫 `navigator.clipboard`，使 http 直连页的复制可用。
+
+### 变更
+
+- **破坏性：动态配对码移除**（gateway + cli）。旧 `auth.mode: "pair"` 载入时迁移为 `"none"`、`pairCode` 迁移为访问口令；`--pair-code` 参数删除。
+- **破坏性：host 默认端口改为 8442**（原 8443；hub 仍为 8443），使 `rdsh hub serve` 与 `rdsh host serve` 可同机共存不冲突。
+- 门禁、直连票与登录的跳转码统一为 **303**（Post/Redirect/Get），此前为 302。
+- **dsh-web-remote 在 join 模式下始终启动直连口**，并在访问口令变化时重启它。
+
+### 修复
+
+- **设了口令的 host 不再把 E2EE 客户端锁死**（gateway）：页面授权脚本此前只在 plain dispatcher 注入，导致 E2EE（raw）客户端永远无法满足 fail-closed 的 raw 门禁、DSH 界面一直停在 "connecting"。现改为两条 dispatcher 共用同一个 helper。
+- **阿里云验证码校验**（hub + portal）：`VerifyCaptcha` 成功码是 `"Success"`（非旧式 `"OK"`），此前每次验签都抛错并被吞成 `BAD_CAPTCHA`；票据不再被重复使用（提交失败即清票、提交中禁用按钮）。
+- **`rdsh host gate clear|status` 文案**（cli）不再声称"无口令则直连口关闭"——按现行设计它始终监听、只认一次性直连票。
+
 ## [rdsh-hub 0.8.0 · remote-dsh 0.13.0] - 2026-09-25
 
 ### 修复
