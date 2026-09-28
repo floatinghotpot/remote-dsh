@@ -510,11 +510,11 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
       sendSyntheticHttp(send, streamId, 200, { "content-type": "text/html; charset=utf-8" }, Buffer.from(html));
     }
 
-    /** 校验 code 提交（POST gate_code）→ 302 回跳 + 发 cookie，或回 challenge 错误。 */
+    /** 校验 code 提交（POST gate_code）→ 303 回跳 + 发 cookie，或回 challenge 错误。 */
     function handleGateSubmit(streamId: number, state: { method: string; path: string; body: Buffer[]; acceptLanguage?: string }): void {
       const code = gate.accessCode;
       if (code === null) {
-        sendSyntheticHttp(send, streamId, 302, { location: state.path }, Buffer.alloc(0));
+        sendSyntheticHttp(send, streamId, 303, { location: state.path }, Buffer.alloc(0));
         return;
       }
       if (gateBlocked()) {
@@ -532,7 +532,7 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
       if (input !== null && verifyGateCode(input, code)) {
         gateFailures.count = 0;
         const { value } = signGateCookie(code);
-        sendSyntheticHttp(send, streamId, 302, { location: state.path, "set-cookie": `${GATE_COOKIE}=${value}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${7 * 24 * 3600}` }, Buffer.alloc(0));
+        sendSyntheticHttp(send, streamId, 303, { location: state.path, "set-cookie": `${GATE_COOKIE}=${value}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${7 * 24 * 3600}` }, Buffer.alloc(0));
       } else {
         gateFailures.count += 1;
         if (gateFailures.count >= 10) gateFailures.lockedUntil = Date.now() + 60_000;

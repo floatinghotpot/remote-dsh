@@ -26,7 +26,7 @@
 
 ## 2. 已验证的关键行为（自动化）
 
-- **门禁统一**：`server.test.ts` 改写为 accessCode 门禁（challenge 页 / 错误口令 / 正确口令 302+`rdsh_gate` / 锁定 / loopback 补丁 / `noCode` / dshAuthCookie 透传）；`server-m2.test.ts`（password 模式）原样全绿。
+- **门禁统一**：`server.test.ts` 改写为 accessCode 门禁（challenge 页 / 错误口令 / 正确口令 303+`rdsh_gate` / 锁定 / loopback 补丁 / `noCode` / dshAuthCookie 透传）；`server-m2.test.ts`（password 模式）原样全绿。
 - **直连口 + 直连票**：`direct.test.ts` —— accessCode 门禁 + `?ticket=` 一次性消费（重放被拒）。
 - **直连票单测**：`direct-ticket.test.ts` —— 单次消费 / 篡改拒绝 / TTL 过期 / 换 secret 吊销。
 - **配置迁移**：`config.test.ts` —— 旧 `auth.mode:"pair"` → `none`（供 loadConfig 迁移）。

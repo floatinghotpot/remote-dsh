@@ -86,14 +86,14 @@ async function setup(accessCode: string | null, name?: string): Promise<GateCtx>
   };
 }
 
-test("gate 拦截：无 cookie challenge → ws 403 → 错误 code 提示 → 正确 code 302+cookie → 带 cookie 放行", async () => {
+test("gate 拦截：无 cookie challenge → ws 403 → 错误 code 提示 → 正确 code 303+cookie → 带 cookie 放行", async () => {
   const ctx = await setup("secret");
 
-  // 1) GET / 无 cookie → challenge 页（HTML 含「受访问密码保护」），非 302
+  // 1) GET / 无 cookie → challenge 页（HTML 含「受访问密码保护」），非 303
   ctx.send(FRAME_TYPE.OPEN, 1, { kind: "http", method: "GET", path: "/", headers: { "accept-language": "zh-CN" } });
   const chal = await ctx.waitFrame(1, FRAME_TYPE.DATA, (f) => f.payload.toString("utf8").includes("受访问密码保护"), "challenge html");
   assert.ok(chal.payload.toString("utf8").includes("secret") === false, "challenge 不回显 code");
-  assert.equal(ctx.frames.some((f) => f.streamId === 1 && f.type === FRAME_TYPE.OPEN && parseJsonPayload(f).status === 302), false);
+  assert.equal(ctx.frames.some((f) => f.streamId === 1 && f.type === FRAME_TYPE.OPEN && parseJsonPayload(f).status === 303), false);
 
   // 2) ws 无 cookie → CLOSE 403
   ctx.send(FRAME_TYPE.OPEN, 2, { kind: "ws", path: "/", headers: {} });
@@ -104,10 +104,10 @@ test("gate 拦截：无 cookie challenge → ws 403 → 错误 code 提示 → �
   ctx.sendPost(3, "/", "gate_code=wrong");
   await ctx.waitFrame(3, FRAME_TYPE.DATA, (f) => f.payload.toString("utf8").includes("访问密码错误"), "wrong code error");
 
-  // 4) POST 正确 code → 302 + Set-Cookie rdsh_gate
+  // 4) POST 正确 code → 303 + Set-Cookie rdsh_gate
   ctx.sendPost(4, "/", "gate_code=secret");
-  const ok302 = await ctx.waitFrame(4, FRAME_TYPE.OPEN, (f) => parseJsonPayload(f).status === 302, "302 redirect");
-  const hdrs = parseJsonPayload(ok302).headers as Record<string, string>;
+  const ok303 = await ctx.waitFrame(4, FRAME_TYPE.OPEN, (f) => parseJsonPayload(f).status === 303, "303 redirect");
+  const hdrs = parseJsonPayload(ok303).headers as Record<string, string>;
   assert.match(hdrs["set-cookie"] ?? "", new RegExp(`${GATE_COOKIE}=`));
   const cookieVal = hdrs["set-cookie"].split(";")[0].split("=").slice(1).join("=");
 
@@ -155,8 +155,8 @@ test("改 code → 旧 cookie 失效（R3）", async () => {
 
   // 用 abcd 领 cookie
   ctx.sendPost(1, "/", "gate_code=abcd");
-  const ok302 = await ctx.waitFrame(1, FRAME_TYPE.OPEN, (f) => parseJsonPayload(f).status === 302, "302");
-  const hdrs = parseJsonPayload(ok302).headers as Record<string, string>;
+  const ok303 = await ctx.waitFrame(1, FRAME_TYPE.OPEN, (f) => parseJsonPayload(f).status === 303, "303");
+  const hdrs = parseJsonPayload(ok303).headers as Record<string, string>;
   const oldCookie = hdrs["set-cookie"].split(";")[0].split("=").slice(1).join("=");
 
   // 改 code → 旧 cookie 失效：带旧 cookie 访问被 challenge（非转发）

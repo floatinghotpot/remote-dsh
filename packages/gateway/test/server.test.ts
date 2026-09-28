@@ -62,7 +62,7 @@ test("accessCode 门禁：无 cookie 访问 → challenge 页（不触达 dsh）
   }
 });
 
-test("accessCode 门禁：错误口令 → challenge 错误态；正确口令 → 302 + rdsh_gate cookie", async () => {
+test("accessCode 门禁：错误口令 → challenge 错误态；正确口令 → 303 + rdsh_gate cookie", async () => {
   const t = await startGateGateway("abcd1234");
   try {
     const bad = await postGate(t.base, "wrong");
@@ -70,7 +70,7 @@ test("accessCode 门禁：错误口令 → challenge 错误态；正确口令 �
     assert.ok((await bad.text()).includes("访问密码错误"));
 
     const ok = await postGate(t.base, "abcd1234");
-    assert.equal(ok.status, 302);
+    assert.equal(ok.status, 303);
     assert.equal(ok.headers.get("location"), "/");
     const cookie = ok.headers.get("set-cookie");
     assert.ok(cookie?.includes("rdsh_gate="), "应下发 rdsh_gate cookie");

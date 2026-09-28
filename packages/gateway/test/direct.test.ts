@@ -61,10 +61,10 @@ test("startDirect：设口令时 = ticket + 口令门禁（?ticket= → 发 cook
     assert.equal(anon.status, 200);
     assert.ok((await anon.text()).includes('type="password"'));
 
-    // 一次性直连票 → 302 + rdsh_gate cookie
+    // 一次性直连票 → 303 + rdsh_gate cookie
     const ticket = tm.mint();
     const withTicket = await fetch(`${base}/?ticket=${ticket}`, { redirect: "manual" });
-    assert.equal(withTicket.status, 302);
+    assert.equal(withTicket.status, 303);
     assert.equal(withTicket.headers.get("location"), "/");
     const cookie = withTicket.headers.get("set-cookie")!;
     assert.ok(cookie.includes("rdsh_gate="));
@@ -75,7 +75,7 @@ test("startDirect：设口令时 = ticket + 口令门禁（?ticket= → 发 cook
     assert.equal(ok.status, 200);
     assert.equal(await ok.text(), "dsh-ok");
 
-    // 票已消费：重放 → 回 challenge（不再 302）
+    // 票已消费：重放 → 回 challenge（不再 303）
     const replay = await fetch(`${base}/?ticket=${ticket}`, { redirect: "manual" });
     assert.equal(replay.status, 200);
     assert.ok((await replay.text()).includes('type="password"'));
@@ -112,10 +112,10 @@ test("startDirect：不设口令时 = 纯 ticket 门禁（无票 → 403，不�
     assert.ok(anonHtml.includes("gate set"), "应提示 CLI 设口令命令");
     assert.ok(anonHtml.includes("Remote Access"), "应提示插件面板设口令");
 
-    // 有票 → 302 + cookie → 转发
+    // 有票 → 303 + cookie → 转发
     const ticket = tm.mint();
     const withTicket = await fetch(`${base}/?ticket=${ticket}`, { redirect: "manual" });
-    assert.equal(withTicket.status, 302);
+    assert.equal(withTicket.status, 303);
     const gate = withTicket.headers.get("set-cookie")!.split(";")[0]!;
     const ok = await fetch(`${base}/api/whatever`, { headers: { cookie: gate } });
     assert.equal(ok.status, 200);

@@ -291,11 +291,11 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse, ctx: HttpCo
 /** 门禁 HTTP 处理：有效 cookie → 转发；直连票 → 发 cookie；有口令 → challenge；无口令无票 → 403。 */
 async function handleGateHttp(req: IncomingMessage, res: ServerResponse, ctx: HttpContext, pathname: string): Promise<void> {
   const secret = gateSecret(ctx);
-  // 一次性直连票：?ticket=<t> → 校验通过发门禁 cookie + 302（免重输口令，R4）
+  // 一次性直连票：?ticket=<t> → 校验通过发门禁 cookie + 303（免重输口令，R4）
   if (ctx.consumeTicket !== undefined && req.method === "GET") {
     const ticket = new URL(req.url ?? "/", "http://rdsh.local").searchParams.get("ticket");
     if (ticket !== null && ticket !== "" && ctx.consumeTicket(ticket)) {
-      res.writeHead(302, {
+      res.writeHead(303, {
         location: "/",
         "set-cookie": `${GATE_COOKIE}=${signGateCookie(secret as string).value}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor(GATE_COOKIE_TTL_MS / 1000)}`,
       });
@@ -327,7 +327,7 @@ async function handleGateHttp(req: IncomingMessage, res: ServerResponse, ctx: Ht
     }
     if (input !== null && verifyGateCode(input, ctx.accessCode)) {
       ctx.gateLimiter.clear(ip);
-      res.writeHead(302, {
+      res.writeHead(303, {
         location: pathname,
         "set-cookie": `${GATE_COOKIE}=${signGateCookie(secret as string).value}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor(GATE_COOKIE_TTL_MS / 1000)}`,
       });
@@ -378,7 +378,7 @@ async function handleLoginPost(req: IncomingMessage, res: ServerResponse, ctx: H
     return;
   }
   loginLimiter.clear(ip);
-  res.writeHead(302, {
+  res.writeHead(303, {
     location: "/",
     "set-cookie": ctx.sessions.cookieHeader(ctx.sessionTtlSeconds, ctx.getVersion()),
   });

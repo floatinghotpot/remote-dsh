@@ -80,13 +80,13 @@ test("password 模式：无会话 → 307 /login；登录页可访问", async ()
   }
 });
 
-test("password 模式：登录成功 302+Cookie；错误密码 401；5 次锁定 429", async () => {
+test("password 模式：登录成功 303+Cookie；错误密码 401；5 次锁定 429", async () => {
   const upstream = await startUpstream();
   const { cfg } = await makePasswordConfig();
   const t = await startPasswordGateway(cfg, upstream.port);
   try {
     const ok = await login(t.base, "admin", "pw123");
-    assert.equal(ok.status, 302);
+    assert.equal(ok.status, 303);
     assert.equal(ok.headers.get("location"), "/");
     const cookie = ok.headers.get("set-cookie");
     assert.ok(cookie?.includes("HttpOnly"));
@@ -125,7 +125,7 @@ test("password 模式：带会话访问转发；改密后旧 Cookie 失效（307
 
     // 新密码可登录
     const relogin = await login(t.base, "admin", "newpw");
-    assert.equal(relogin.status, 302);
+    assert.equal(relogin.status, 303);
   } finally {
     t.gw.dispose();
     closeServer(t.gw.server);
@@ -210,7 +210,7 @@ test("预置哈希用户可登录（部署场景）", async () => {
   const t = await startPasswordGateway(cfg, upstream.port);
   try {
     const ok = await login(t.base, "admin", "preset");
-    assert.equal(ok.status, 302);
+    assert.equal(ok.status, 303);
   } finally {
     t.gw.dispose();
     closeServer(t.gw.server);
