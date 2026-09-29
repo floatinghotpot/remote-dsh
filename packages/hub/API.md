@@ -39,7 +39,7 @@
 ## 3. 计费（S2）
 
 ### GET /api/billing/plans —— 套餐列表
-响应：`{ "plans": [ { "id", "name", "hosts", "priceCny", "intervalDays" } ] }`（来源 `config.billing.plans`）
+响应：`{ "plans": [ { "id", "name", "hosts", "priceCny", "priceUsd?", "intervalDays" } ] }`（来源 `config.billing.plans`；`priceUsd` 可选，美元，缺省时客户端按人民币展示）
 
 ### POST /api/billing/subscribe —— 订阅
 认证：需要。请求 `{ "planId", "form"?: "native" | "h5" | "jsapi" }`（`form` 缺省 `native`；`jsapi` 需先经 OAuth 取 openid 存于签名 Cookie，见 §9）→ 建 order（`status=created`）→ PaymentProvider 按 form 下单 → 回调/mock 支付 → `status=paid` → 激活 `plan_status=subscribed` + `plan_expires_at`。
