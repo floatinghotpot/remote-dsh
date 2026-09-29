@@ -372,6 +372,7 @@ function normalizeBilling(raw: unknown, source: string): BillingConfig {
       if (!Number.isInteger(plan.hosts) || (plan.hosts as number) < 1) throw new Error(`${source}: "billing.plans[].hosts" must be a positive integer`);
       if (typeof plan.priceCny !== "number" || plan.priceCny < 0) throw new Error(`${source}: "billing.plans[].priceCny" must be a non-negative number`);
       if (plan.priceUsd !== undefined && (typeof plan.priceUsd !== "number" || plan.priceUsd < 0)) throw new Error(`${source}: "billing.plans[].priceUsd" must be a non-negative number`);
+      if ("intervalDays" in plan) throw new Error(`${source}: "billing.plans[].intervalDays" was removed — rename it to "intervalMonths" and set the month count (e.g. intervalDays: 30 → intervalMonths: 1)`);
       if (!Number.isInteger(plan.intervalMonths) || (plan.intervalMonths as number) < 1) throw new Error(`${source}: "billing.plans[].intervalMonths" must be a positive integer`);
       plans.push({ id: plan.id, name: plan.name, hosts: plan.hosts as number, priceCny: plan.priceCny, priceUsd: typeof plan.priceUsd === "number" ? plan.priceUsd : undefined, intervalMonths: plan.intervalMonths as number });
     }

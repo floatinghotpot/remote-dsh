@@ -7,6 +7,12 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Breaking: billing plan `intervalDays` renamed to `intervalMonths`** (hub). Subscriptions now bill by calendar month instead of a fixed day count (`intervalDays: 30` → `intervalMonths: 1`). If the old `intervalDays` field is still present, the hub fails fast at startup with a migration hint.
+
 ## [rdsh-gateway 0.11.0 · rdsh-hub 0.9.0 · remote-dsh 0.14.0 · dsh-web-remote 0.7.0] - 2026-09-28
 
 ### Added

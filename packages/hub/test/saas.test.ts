@@ -13,7 +13,7 @@ import { TunnelRegistry } from "../src/tunnel.ts";
 import { EventHub } from "../src/events.ts";
 import { startHubServer } from "../src/server.ts";
 import type { RunningHub } from "../src/server.ts";
-import { sweepBilling } from "../src/api.ts";
+import { sweepBilling, addMonths } from "../src/api.ts";
 import type { HubRuntime } from "../src/api.ts";
 import type { HubConfig } from "../src/config.ts";
 
@@ -348,4 +348,24 @@ test("grant-subscription 端到端：trial(1 台) → 赠 pro → 配额升级�
   assert.equal(h2b.status, 200); // 配额升级后成功
   const badPlan = await post(`/api/admin/users/${owner.id}/grant-subscription`, { planId: "nope", days: 30, reason: "x" }, adminSession);
   assert.equal(badPlan.status, 400);
+});
+
+// ---- 日历月顺延（addMonths）边界 ----
+
+test("addMonths：月末收敛 + 闰年 + 跨年 + 普通日期不漂移", () => {
+  const iso = (ts: number) => new Date(ts).toISOString().slice(0, 10);
+  // 2026-01-31 +1 月 → 2026-02-28（月末收敛到 2 月最后一天）
+  assert.equal(iso(addMonths(Date.UTC(2026, 0, 31), 1)), "2026-02-28");
+  // 2024-01-31 +1 月 → 2024-02-29（闰年）
+  assert.equal(iso(addMonths(Date.UTC(2024, 0, 31), 1)), "2024-02-29");
+  // 2026-01-15 +1 月 → 2026-02-15（普通日期不漂移）
+  assert.equal(iso(addMonths(Date.UTC(2026, 0, 15), 1)), "2026-02-15");
+  // 2026-12-31 +1 月 → 2027-01-31（跨年）
+  assert.equal(iso(addMonths(Date.UTC(2026, 11, 31), 1)), "2027-01-31");
+  // 2026-03-31 +1 月 → 2026-04-30（30 天月）
+  assert.equal(iso(addMonths(Date.UTC(2026, 2, 31), 1)), "2026-04-30");
+  // 2026-08-31 +1 月 → 2026-09-30
+  assert.equal(iso(addMonths(Date.UTC(2026, 7, 31), 1)), "2026-09-30");
+  // 多个月：2026-01-31 +3 月 → 2026-04-30
+  assert.equal(iso(addMonths(Date.UTC(2026, 0, 31), 3)), "2026-04-30");
 });

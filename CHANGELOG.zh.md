@@ -7,6 +7,12 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 变更
+
+- **破坏性变更：billing 套餐的 `intervalDays` 更名为 `intervalMonths`**（hub）。订阅改为按日历月计费（`intervalDays: 30` → `intervalMonths: 1`）。若仍残留旧字段 `intervalDays`，hub 启动时快速失败并给出迁移提示。
+
 ## [rdsh-gateway 0.11.0 · rdsh-hub 0.9.0 · remote-dsh 0.14.0 · dsh-web-remote 0.7.0] - 2026-09-28
 
 ### 新增

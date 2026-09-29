@@ -2023,7 +2023,7 @@ async function handleUnbindPhone(req: IncomingMessage, res: ServerResponse, runt
 // ---- 08-saas：计费 / 订阅 / 账号删除（S2）----
 
 /** 日历月顺延：1月31 → 2月28/29，1月15 → 2月15（对齐商店「按月订阅」语义）。 */
-function addMonths(ts: number, months: number): number {
+export function addMonths(ts: number, months: number): number {
   const d = new Date(ts);
   const day = d.getDate();
   d.setDate(1);
