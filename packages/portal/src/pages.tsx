@@ -1809,7 +1809,7 @@ interface PlanInfo {
   hosts: number;
   priceCny: number;
   priceUsd?: number;
-  intervalDays: number;
+  intervalMonths: number;
 }
 
 /** 是否微信内置浏览器。 */
@@ -1970,7 +1970,7 @@ function BillingPage(): React.JSX.Element {
                       <span style={{ fontWeight: 600, fontSize: 14 }}>{p.name}</span>
                       {current && <span style={{ fontSize: 11, padding: "1px 8px", borderRadius: 999, background: "var(--rdsh-success-soft)", color: "var(--rdsh-success-strong)" }}>{t("当前套餐")}</span>}
                     </div>
-                    <div style={{ fontSize: 13, color: "var(--rdsh-fg-muted)", marginTop: 2 }}>{lang === "en" ? t("{hosts} hosts · ${price}/{interval} days", { params: { hosts: p.hosts, price: p.priceUsd ?? p.priceCny, interval: p.intervalDays } }) : t("{hosts} 台 host · ¥{price}/{interval} 天", { params: { hosts: p.hosts, price: p.priceCny, interval: p.intervalDays } })}</div>
+                    <div style={{ fontSize: 13, color: "var(--rdsh-fg-muted)", marginTop: 2 }}>{lang === "en" ? t("{hosts} hosts · ${price}/{interval} months", { params: { hosts: p.hosts, price: p.priceUsd ?? p.priceCny, interval: p.intervalMonths } }) : t("{hosts} 台 host · ¥{price}/{interval} 月", { params: { hosts: p.hosts, price: p.priceCny, interval: p.intervalMonths } })}</div>
                   </div>
                   <button disabled={current} onClick={() => subscribe(p.id)} style={btnStyle()}>
                     {current ? t("当前套餐") : t("订阅")}

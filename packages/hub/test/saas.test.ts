@@ -33,7 +33,7 @@ const config: HubConfig = {
   sms: { provider: "log" },
   captcha: { provider: "none" },
   registration: "open",
-  billing: { plans: [{ id: "pro", name: "Pro", hosts: 5, priceCny: 39, intervalDays: 30 }] },
+  billing: { plans: [{ id: "pro", name: "Pro", hosts: 5, priceCny: 39, intervalMonths: 1 }] },
 };
 
 async function start(): Promise<void> {

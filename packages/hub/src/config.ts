@@ -36,12 +36,12 @@ export interface PlanSpec {
   name: string;
   /** host 数配额 */
   hosts: number;
-  /** 人民币元 / intervalDays 天 */
+  /** 人民币元 / 周期 */
   priceCny: number;
-  /** 美元 / intervalDays 天（可选；缺省时客户端按人民币展示） */
+  /** 美元 / 周期（可选；缺省时客户端按人民币展示） */
   priceUsd?: number;
-  /** 周期天数（如 30 = 月付） */
-  intervalDays: number;
+  /** 周期月数（如 1 = 月付；到期按日历月顺延） */
+  intervalMonths: number;
 }
 
 export interface BillingConfig {
@@ -372,8 +372,8 @@ function normalizeBilling(raw: unknown, source: string): BillingConfig {
       if (!Number.isInteger(plan.hosts) || (plan.hosts as number) < 1) throw new Error(`${source}: "billing.plans[].hosts" must be a positive integer`);
       if (typeof plan.priceCny !== "number" || plan.priceCny < 0) throw new Error(`${source}: "billing.plans[].priceCny" must be a non-negative number`);
       if (plan.priceUsd !== undefined && (typeof plan.priceUsd !== "number" || plan.priceUsd < 0)) throw new Error(`${source}: "billing.plans[].priceUsd" must be a non-negative number`);
-      if (!Number.isInteger(plan.intervalDays) || (plan.intervalDays as number) < 1) throw new Error(`${source}: "billing.plans[].intervalDays" must be a positive integer`);
-      plans.push({ id: plan.id, name: plan.name, hosts: plan.hosts as number, priceCny: plan.priceCny, priceUsd: typeof plan.priceUsd === "number" ? plan.priceUsd : undefined, intervalDays: plan.intervalDays as number });
+      if (!Number.isInteger(plan.intervalMonths) || (plan.intervalMonths as number) < 1) throw new Error(`${source}: "billing.plans[].intervalMonths" must be a positive integer`);
+      plans.push({ id: plan.id, name: plan.name, hosts: plan.hosts as number, priceCny: plan.priceCny, priceUsd: typeof plan.priceUsd === "number" ? plan.priceUsd : undefined, intervalMonths: plan.intervalMonths as number });
     }
   }
   const out: BillingConfig = { plans };

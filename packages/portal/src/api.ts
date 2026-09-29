@@ -260,7 +260,7 @@ export const api = {
   unbindPhone(): Promise<{ ok: boolean }> {
     return jsonFetch("/api/account/phone/unbind", { method: "POST", body: "{}" });
   },
-  listPlans(): Promise<{ plans: Array<{ id: string; name: string; hosts: number; priceCny: number; intervalDays: number }> }> {
+  listPlans(): Promise<{ plans: Array<{ id: string; name: string; hosts: number; priceCny: number; intervalMonths: number }> }> {
     return jsonFetch("/api/billing/plans");
   },
   subscribe(planId: string, form?: "native" | "h5" | "jsapi"): Promise<{ orderId: string; paid: boolean; payInfo?: WechatPayInfo }> {
@@ -387,7 +387,7 @@ export interface AdminConfig {
   smsEnabled: boolean;
   captchaProvider: string;
   e2eeMode: string;
-  plans: Array<{ id: string; name: string; hosts: number; priceCny: number; intervalDays: number }>;
+  plans: Array<{ id: string; name: string; hosts: number; priceCny: number; intervalMonths: number }>;
   site: Record<string, unknown>;
 }
 

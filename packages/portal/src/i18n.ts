@@ -371,7 +371,7 @@ const EN: Record<string, string> = {
   "运营方在 hub.json 配置 billing.plans 后，此处将展示套餐与订阅入口。":
     "Once the operator configures billing.plans in hub.json, plans will appear here.",
   "选择套餐": "Choose a plan",
-  "{hosts} 台 host · ¥{price}/{interval} 天": "{hosts} hosts · ¥{price}/{interval} days",
+  "{hosts} 台 host · ¥{price}/{interval} 月": "{hosts} hosts · ${price}/{interval} months",
   "当前套餐": "Current plan",
   "订阅": "Subscribe",
   "订阅成功，配额已升级": "Subscribed — quota upgraded",

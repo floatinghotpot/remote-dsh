@@ -2022,10 +2022,21 @@ async function handleUnbindPhone(req: IncomingMessage, res: ServerResponse, runt
 
 // ---- 08-saas：计费 / 订阅 / 账号删除（S2）----
 
+/** 日历月顺延：1月31 → 2月28/29，1月15 → 2月15（对齐商店「按月订阅」语义）。 */
+function addMonths(ts: number, months: number): number {
+  const d = new Date(ts);
+  const day = d.getDate();
+  d.setDate(1);
+  d.setMonth(d.getMonth() + months);
+  const daysInTarget = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  d.setDate(Math.min(day, daysInTarget));
+  return d.getTime();
+}
+
 /** 激活订阅：建订阅行 + plan_status=subscribed + 到期时间。 */
 function activateSubscription(runtime: HubRuntime, userId: number, plan: PlanSpec): void {
   const now = Date.now();
-  const expiresAt = now + plan.intervalDays * 24 * 3600 * 1000;
+  const expiresAt = addMonths(now, plan.intervalMonths);
   runtime.db.createSubscription(userId, plan.id, now, expiresAt);
   runtime.db.setPlan(userId, "subscribed", expiresAt);
 }
