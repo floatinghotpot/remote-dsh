@@ -69,6 +69,7 @@ export function App(): React.JSX.Element {
   if (path === "/terms") return <TermsPage />;
   if (path === "/privacy") return <PrivacyPage />;
   if (path === "/product") return <ProductPage />;
+  if (path === "/captcha") return <CaptchaPage />;
   if (path === "/verify") return <VerifyPage />;
   if (path === "/reset-password") return <ResetPasswordPage />;
   if (path === "/change-password") return <PasswordPage />;
@@ -283,6 +284,8 @@ declare global {
     initAliyunCaptcha?: (config: Record<string, unknown>) => void;
     /** V3 架构（Web/H5）：必须在加载 SDK 前设置的全局变量（region + 身份标 prefix）。 */
     AliyunCaptchaConfig?: { region: string; prefix: string };
+    /** App WebView 注入的 JS bridge（验证码结果回传）。 */
+    CaptchaResult?: { postMessage?: (message: string) => void };
   }
 }
 
@@ -381,6 +384,23 @@ function CaptchaGate({ captcha, onCaptcha }: { captcha: CaptchaPayload; onCaptch
       {field(t("答案"), answer, setAnswer)}
       <button type="button" onClick={() => onCaptcha({ captchaToken: challenge.token, captchaAnswer: answer.trim() })} style={btnStyle()}>{t("确认验证")}</button>
     </>
+  );
+}
+
+/** 验证码独立页（App WebView 内嵌用）：渲染滑块并在成功后经 JS bridge 回传 captchaVerifyParam。 */
+function CaptchaPage(): React.JSX.Element {
+  const [payload, setPayload] = useState<CaptchaPayload>({});
+  return (
+    <div style={{ padding: "48px 24px", maxWidth: 420, margin: "0 auto" }}>
+      <CaptchaGate
+        captcha={payload}
+        onCaptcha={(p) => {
+          setPayload(p);
+          const param = p.captchaVerifyParam;
+          if (param) window.CaptchaResult?.postMessage?.(param);
+        }}
+      />
+    </div>
   );
 }
 
