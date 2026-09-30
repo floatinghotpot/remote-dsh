@@ -1,0 +1,21 @@
+{
+  "name": "dsh-whale-link",
+  "version": "0.0.1",
+  "description": "WhaleLink branded name for the DSH remote-access plugin (name reservation; implementation pending)",
+  "license": "MIT",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": {
+      "default": "./index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  }
+}
