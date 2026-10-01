@@ -266,6 +266,10 @@ export const api = {
   subscribe(planId: string, form?: "native" | "h5" | "jsapi"): Promise<{ orderId: string; paid: boolean; payInfo?: WechatPayInfo }> {
     return jsonFetch("/api/billing/subscribe", { method: "POST", body: JSON.stringify(form === undefined ? { planId } : { planId, form }) });
   },
+  /** 经 hub 代理向 unicpay 下单（feature 121）。返回 { appOrderId, payParams }，payParams 形如 { kind, nativeUrl }。 */
+  unicpayInitiate(planId: string, scene: "app" | "native" | "miniapp" | "alipay"): Promise<{ appOrderId: string; payParams?: { kind?: string; nativeUrl?: string } }> {
+    return jsonFetch("/api/billing/unicpay/initiate", { method: "POST", body: JSON.stringify({ goodsId: planId, scene }) });
+  },
   subscription(): Promise<{ planStatus: string | null; planId: string | null; planExpiresAt: number | null; hostQuota: number | null; hostsInUse: number }> {
     return jsonFetch("/api/billing/subscription");
   },

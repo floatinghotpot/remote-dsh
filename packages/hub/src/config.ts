@@ -10,6 +10,7 @@ import { join } from "node:path";
 import type { EmailConfig } from "./email/types.ts";
 import type { SmsConfig } from "./sms/types.ts";
 import type { PaymentConfig } from "./billing/types.ts";
+import type { UnicPayConfig } from "./billing/unicpay.ts";
 import type { AliyunCaptchaConfig } from "./captcha/aliyun.ts";
 
 export interface CaptchaConfig {
@@ -56,6 +57,8 @@ export interface BillingConfig {
   retentionDays?: number;
   /** 支付通道；缺省 → mock（立即成功） */
   payment?: PaymentConfig;
+  /** unicpay 平台（feature 121 订阅/内购接入）；缺省 → 不使用 unicpay */
+  unicpay?: UnicPayConfig;
 }
 
 /** 计费默认值（config.billing 未提供时消费方取此）。 */
@@ -396,6 +399,13 @@ function normalizeBilling(raw: unknown, source: string): BillingConfig {
       if (w.appSecret !== undefined && (typeof w.appSecret !== "string" || w.appSecret === "")) throw new Error(`${source}: "billing.payment.wechatpay.appSecret" must be a non-empty string`);
     }
     out.payment = b.payment as PaymentConfig;
+  }
+  if (b.unicpay !== undefined) {
+    const u = b.unicpay as Record<string, unknown>;
+    for (const key of ["appId", "baseUrl", "authSecret", "webhookSecret"] as const) {
+      if (typeof u[key] !== "string" || u[key] === "") throw new Error(`${source}: "billing.unicpay.${key}" must be a non-empty string`);
+    }
+    out.unicpay = b.unicpay as UnicPayConfig;
   }
   return out;
 }

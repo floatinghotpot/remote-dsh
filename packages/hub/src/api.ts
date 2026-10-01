@@ -20,6 +20,7 @@ import type { EmailSender } from "./email/index.ts";
 import { createSmsSender } from "./sms/index.ts";
 import type { SmsSender } from "./sms/index.ts";
 import { createPaymentProvider, verifyWechatCallback, decryptWechatResource, getWechatOpenid } from "./billing/index.ts";
+import { UnicPayClient, verifyWebhookSignature } from "./billing/unicpay.ts";
 import { exchangeWechatLoginCode, wechatLoginUrl } from "./wechat-login.ts";
 import { createChallenge, verifyChallenge } from "./captcha.ts";
 import { verifyCaptchaParam } from "./captcha/aliyun.ts";
@@ -700,6 +701,22 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, runti
   }
   if (path === "/api/billing/callback" && method === "POST") {
     await handleBillingCallback(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/billing/unicpay/initiate" && method === "POST") {
+    await handleUnicpayInitiate(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/billing/unicpay/prepay" && method === "POST") {
+    await handleUnicpayPrepay(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/billing/unicpay/store/verify" && method === "POST") {
+    await handleUnicpayStoreVerify(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/billing/unicpay/webhook" && method === "POST") {
+    await handleUnicpayWebhook(req, res, runtime);
     return true;
   }
   if (path === "/api/wechat/oauth/authorize" && method === "GET") {
@@ -2041,6 +2058,263 @@ function activateSubscription(runtime: HubRuntime, userId: number, plan: PlanSpe
   runtime.db.setPlan(userId, "subscribed", expiresAt);
 }
 
+/** 取 unicpay 客户端；未配置时返回 null。 */
+function getUnicpayClient(runtime: HubRuntime): UnicPayClient | null {
+  const cfg = runtime.config.billing?.unicpay;
+  return cfg === undefined ? null : new UnicPayClient(cfg);
+}
+
+/** RFC3339 字符串 → 毫秒时间戳；无效/缺省返回 null。 */
+function parseRfc3339Ms(v: unknown): number | null {
+  if (typeof v !== "string" || v === "") return null;
+  const t = Date.parse(v);
+  return Number.isNaN(t) ? null : t;
+}
+
+/** A 类下单代理：登录态下单 → unicpay initiate + prepay → 返回支付参数（SDK `pay()` 用）。 */
+async function handleUnicpayInitiate(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const client = getUnicpayClient(runtime);
+  if (client === null) {
+    writeError(res, 404, "NOT_CONFIGURED", "unicpay not configured");
+    return;
+  }
+  const auth = authenticate(req, runtime);
+  if (auth === null) {
+    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
+    return;
+  }
+  const body = await readJsonBody(req);
+  if (body === null) {
+    writeError(res, 400, "BAD_REQUEST", "invalid JSON");
+    return;
+  }
+  const goodsId = typeof body.goodsId === "string" ? body.goodsId : "";
+  const plan = (runtime.config.billing?.plans ?? []).find((p) => p.id === goodsId);
+  if (plan === undefined) {
+    writeError(res, 400, "BAD_REQUEST", "unknown goodsId");
+    return;
+  }
+  // scene：App 微信唤起（app）；portal 网页扫码（native）。缺省 app。
+  const sceneRaw = typeof body.scene === "string" ? body.scene : "app";
+  if (sceneRaw !== "app" && sceneRaw !== "native" && sceneRaw !== "miniapp" && sceneRaw !== "alipay") {
+    writeError(res, 400, "BAD_REQUEST", "unknown scene");
+    return;
+  }
+  const scene = sceneRaw as "app" | "native" | "miniapp" | "alipay";
+  const appOrderId = randomUUID().replaceAll("-", "");
+  runtime.db.createOrder(appOrderId, auth.userId, plan.id, plan.priceCny);
+
+  const initiated = await client.initiate({
+    scene,
+    appOrderId,
+    goodsId: plan.id,
+    orderType: "subscription",
+    userId: auth.name,
+  });
+  if (initiated.status !== 200) {
+    writeError(res, 502, "UPSTREAM_ERROR", "unicpay initiate failed");
+    return;
+  }
+  const initiatedData = initiated.data as Record<string, unknown>;
+  const ticketRaw = initiatedData.ticket;
+  const ticket = typeof ticketRaw === "string" ? ticketRaw : "";
+  if (ticket === "") {
+    writeError(res, 502, "UPSTREAM_ERROR", "unicpay initiate returned no ticket");
+    return;
+  }
+  const prepaid = await client.prepay(ticket);
+  if (prepaid.status !== 200) {
+    writeError(res, 502, "UPSTREAM_ERROR", "unicpay prepay failed");
+    return;
+  }
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ appOrderId, payParams: prepaid.data }));
+}
+
+/** prepay 代理（重取支付参数，登录态）。 */
+async function handleUnicpayPrepay(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const client = getUnicpayClient(runtime);
+  if (client === null) {
+    writeError(res, 404, "NOT_CONFIGURED", "unicpay not configured");
+    return;
+  }
+  const auth = authenticate(req, runtime);
+  if (auth === null) {
+    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
+    return;
+  }
+  const body = await readJsonBody(req);
+  const ticket = body !== null && typeof body.ticket === "string" ? body.ticket : "";
+  if (ticket === "") {
+    writeError(res, 400, "BAD_REQUEST", "ticket required");
+    return;
+  }
+  const prepaid = await client.prepay(ticket);
+  if (prepaid.status !== 200) {
+    writeError(res, 502, "UPSTREAM_ERROR", "unicpay prepay failed");
+    return;
+  }
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify(prepaid.data));
+}
+
+/** B 类（商店）校验代签代理：SDK 把收据 POST 到这里，hub 验登录态后补 HMAC 转发 unicpay。 */
+async function handleUnicpayStoreVerify(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const client = getUnicpayClient(runtime);
+  if (client === null) {
+    writeError(res, 404, "NOT_CONFIGURED", "unicpay not configured");
+    return;
+  }
+  const auth = authenticate(req, runtime);
+  if (auth === null) {
+    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
+    return;
+  }
+  const body = await readJsonBody(req);
+  if (body === null) {
+    writeError(res, 400, "BAD_REQUEST", "invalid JSON");
+    return;
+  }
+  const store = typeof body.store === "string" ? body.store : "";
+  const storeProductId = typeof body.storeProductId === "string" ? body.storeProductId : "";
+  const receipt = typeof body.receipt === "string" ? body.receipt : "";
+  if (store !== "apple" && store !== "google") {
+    writeError(res, 400, "BAD_REQUEST", "unknown store");
+    return;
+  }
+  if (storeProductId === "" || receipt === "") {
+    writeError(res, 400, "BAD_REQUEST", "storeProductId and receipt required");
+    return;
+  }
+  const environment = typeof body.environment === "string" && body.environment === "sandbox" ? "sandbox" : "production";
+  // userId 用鉴权结果（authoritative），不信任客户端声称的 body.userId。
+  const result = await client.storeVerify({
+    userId: auth.name,
+    store,
+    storeProductId,
+    receipt,
+    environment,
+  });
+  if (result.status !== 200) {
+    writeError(res, 502, "UPSTREAM_ERROR", "unicpay store/verify failed");
+    return;
+  }
+  const data = result.data as Record<string, unknown>;
+  // 映射 unicpay 响应 { goodsId, orderType, purchase, subscription } → SDK 期望的 { purchase }。
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ purchase: typeof data.purchase === "string" ? data.purchase : null }));
+}
+
+/** 入站 webhook：验签 + 幂等 + 落订阅事实/入账；退款只记录 + 告警，不撤权益（req R5）。 */
+async function handleUnicpayWebhook(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const cfg = runtime.config.billing?.unicpay;
+  if (cfg === undefined) {
+    writeError(res, 404, "NOT_CONFIGURED", "unicpay not configured");
+    return;
+  }
+  const rawBody = await readRawBody(req);
+  const ts = req.headers["x-webhook-timestamp"];
+  const nonce = req.headers["x-webhook-nonce"];
+  const sig = req.headers["x-webhook-signature"];
+  if (typeof ts !== "string" || typeof nonce !== "string" || typeof sig !== "string" ||
+      !verifyWebhookSignature(cfg.webhookSecret, ts, nonce, rawBody, sig)) {
+    writeError(res, 401, "BAD_SIGNATURE", "webhook signature verification failed");
+    return;
+  }
+  let body: Record<string, unknown>;
+  try {
+    body = JSON.parse(rawBody) as Record<string, unknown>;
+  } catch {
+    writeError(res, 400, "BAD_REQUEST", "invalid JSON");
+    return;
+  }
+  const eventType = typeof body.eventType === "string" ? body.eventType : "";
+  const ip = clientIp(req, runtime);
+
+  if (eventType.startsWith("subscription.")) {
+    const subscriptionId = typeof body.subscriptionId === "string" ? body.subscriptionId : "";
+    const name = typeof body.userId === "string" ? body.userId : "";
+    if (subscriptionId === "" || name === "") {
+      writeError(res, 400, "BAD_REQUEST", "subscriptionId and userId required");
+      return;
+    }
+    const user = runtime.db.getUserByName(name);
+    if (user === null) {
+      writeError(res, 400, "BAD_REQUEST", "unknown userId");
+      return;
+    }
+    const userId = user.id;
+    const status = typeof body.status === "string" ? body.status : "active";
+    const channel = typeof body.store === "string" ? body.store : "unicpay";
+    const goodsId = typeof body.goodsId === "string" ? body.goodsId : "";
+    const plan = (runtime.config.billing?.plans ?? []).find((p) => p.id === goodsId);
+    const expiresAt = parseRfc3339Ms(body.expiresAt) ?? Date.now();
+    const now = Date.now();
+    const willRenew = body.willRenew === true;
+    const existing = runtime.db.getSubscriptionBySubscriptionId(subscriptionId);
+    runtime.db.db.exec("BEGIN");
+    try {
+      if (existing === null) {
+        runtime.db.createSubscription(userId, plan?.id ?? goodsId, now, expiresAt, now, { channel, subscriptionId, willRenew });
+      } else {
+        // 同一订阅实体：续订/宽限/到期复用同一行，更新状态与渠道权威到期
+        runtime.db.updateSubscriptionBySubscriptionId(subscriptionId, status, expiresAt, willRenew);
+      }
+      if (status === "active" || status === "grace") {
+        runtime.db.setPlan(userId, "subscribed", expiresAt);
+      } else if (status === "expired") {
+        runtime.db.setPlan(userId, null, null);
+      }
+      // revoked / refunded：只记录，不撤权益
+      runtime.db.db.exec("COMMIT");
+    } catch (e) {
+      runtime.db.db.exec("ROLLBACK");
+      throw e;
+    }
+    runtime.db.recordAudit(userId, "billing.unicpay.subscription", { eventType, subscriptionId, status, channel }, ip);
+  } else if (eventType === "payment.succeeded") {
+    const paymentId = typeof body.paymentId === "string" ? body.paymentId : "";
+    const appOrderId = typeof body.appOrderId === "string" ? body.appOrderId : "";
+    if (paymentId === "" || appOrderId === "") {
+      writeError(res, 400, "BAD_REQUEST", "paymentId and appOrderId required");
+      return;
+    }
+    if (runtime.db.getPaymentByChannelOrderId("unicpay", paymentId) !== null) {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, duplicate: true }));
+      return;
+    }
+    const order = runtime.db.getOrder(appOrderId);
+    if (order === null || order.status !== "created") {
+      writeError(res, 400, "BAD_REQUEST", "unknown or already-closed order");
+      return;
+    }
+    runtime.db.db.exec("BEGIN");
+    try {
+      runtime.db.markOrderPaid(appOrderId, "unicpay", paymentId);
+      runtime.db.createPayment(randomUUID(), appOrderId, order.userId, "unicpay", paymentId, order.amountCny, Date.now(), rawBody);
+      const plan = (runtime.config.billing?.plans ?? []).find((p) => p.id === order.planId);
+      if (plan !== undefined) activateSubscription(runtime, order.userId, plan);
+      runtime.db.db.exec("COMMIT");
+    } catch (e) {
+      runtime.db.db.exec("ROLLBACK");
+      throw e;
+    }
+    runtime.db.recordAudit(order.userId, "billing.unicpay.payment", { paymentId, appOrderId }, ip);
+  } else if (eventType === "payment.refunded") {
+    const paymentId = typeof body.paymentId === "string" ? body.paymentId : "";
+    runtime.db.recordAudit(null, "billing.unicpay.refunded", { paymentId, appOrderId: body.appOrderId ?? null }, ip);
+    console.error(`[unicpay] refunded: paymentId=${paymentId} appOrderId=${String(body.appOrderId ?? "")}`);
+  } else {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ ok: true, ignored: eventType }));
+    return;
+  }
+
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ ok: true }));
+}
+
 async function handleBillingPlans(_req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({ plans: runtime.config.billing?.plans ?? [] }));
@@ -2173,13 +2447,17 @@ async function handleSubscription(req: IncomingMessage, res: ServerResponse, run
     return;
   }
   const user = runtime.db.getUserById(auth.userId);
-  const sub = runtime.db.getActiveSubscription(auth.userId);
+  const subs = runtime.db.listSubscriptionsByUser(auth.userId);
+  const sub = subs.length > 0 ? subs[0] : null;
   res.writeHead(200, { "content-type": "application/json" });
   res.end(
     JSON.stringify({
       planStatus: user?.planStatus ?? null,
       planId: sub?.planId ?? null,
       planExpiresAt: user?.planExpiresAt ?? null,
+      channel: sub?.channel ?? null,
+      willRenew: sub?.willRenew ?? false,
+      status: sub?.status ?? null,
       hostQuota: user === null ? null : hostQuota(runtime, user),
       hostsInUse: user === null ? 0 : runtime.db.listHostsByOwner(user.id).length,
     }),

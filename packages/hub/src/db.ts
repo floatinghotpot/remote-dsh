@@ -134,6 +134,12 @@ export interface SubscriptionRow {
   startedAt: number;
   expiresAt: number;
   createdAt: number;
+  /** 支付来源渠道（apple / google / wechatpay），旧数据为 null */
+  channel: string | null;
+  /** 平台订阅实体 ID（unicpay subscriptionId），用于 webhook 幂等；旧数据为 null */
+  subscriptionId: string | null;
+  /** 是否自动续订 */
+  willRenew: boolean;
 }
 
 export interface OrderRow {
@@ -268,7 +274,10 @@ export class HubDb {
         status TEXT NOT NULL DEFAULT 'active',
         started_at INTEGER NOT NULL,
         expires_at INTEGER NOT NULL,
-        created_at INTEGER NOT NULL
+        created_at INTEGER NOT NULL,
+        channel TEXT,
+        subscription_id TEXT,
+        will_renew INTEGER NOT NULL DEFAULT 0
       );
       CREATE TABLE IF NOT EXISTS orders (
         id TEXT PRIMARY KEY,
@@ -332,6 +341,13 @@ export class HubDb {
     );
     if (!auditCols.has("source")) this.db.exec(`ALTER TABLE audit_events ADD COLUMN source TEXT NOT NULL DEFAULT 'user'`);
     if (!auditCols.has("actor_user_id")) this.db.exec(`ALTER TABLE audit_events ADD COLUMN actor_user_id INTEGER`);
+    // 121 订阅支付接入 unicpay：subscriptions 补渠道/平台订阅 ID/自动续订三列
+    const subCols = new Set(
+      (this.db.prepare("PRAGMA table_info(subscriptions)").all() as unknown as Array<{ name: string }>).map((c) => c.name),
+    );
+    if (!subCols.has("channel")) this.db.exec(`ALTER TABLE subscriptions ADD COLUMN channel TEXT`);
+    if (!subCols.has("subscription_id")) this.db.exec(`ALTER TABLE subscriptions ADD COLUMN subscription_id TEXT`);
+    if (!subCols.has("will_renew")) this.db.exec(`ALTER TABLE subscriptions ADD COLUMN will_renew INTEGER NOT NULL DEFAULT 0`);
   }
 
 
@@ -457,6 +473,9 @@ export class HubDb {
       startedAt: Number(row.started_at),
       expiresAt: Number(row.expires_at),
       createdAt: Number(row.created_at),
+      channel: row.channel === null || row.channel === undefined ? null : String(row.channel),
+      subscriptionId: row.subscription_id === null || row.subscription_id === undefined ? null : String(row.subscription_id),
+      willRenew: Number(row.will_renew ?? 0) === 1,
     };
   }
 
@@ -981,10 +1000,17 @@ export class HubDb {
 
   // ---- 订阅 / 订单 / 支付（S2）----
 
-  createSubscription(userId: number, planId: string, startedAt: number, expiresAt: number, now = Date.now()): SubscriptionRow {
+  createSubscription(
+    userId: number,
+    planId: string,
+    startedAt: number,
+    expiresAt: number,
+    now = Date.now(),
+    opts?: { channel?: string | null; subscriptionId?: string | null; willRenew?: boolean },
+  ): SubscriptionRow {
     const info = this.db
-      .prepare("INSERT INTO subscriptions (user_id, plan_id, status, started_at, expires_at, created_at) VALUES (?, ?, 'active', ?, ?, ?)")
-      .run(userId, planId, startedAt, expiresAt, now);
+      .prepare("INSERT INTO subscriptions (user_id, plan_id, status, started_at, expires_at, created_at, channel, subscription_id, will_renew) VALUES (?, ?, 'active', ?, ?, ?, ?, ?, ?)")
+      .run(userId, planId, startedAt, expiresAt, now, opts?.channel ?? null, opts?.subscriptionId ?? null, opts?.willRenew ? 1 : 0);
     const row = this.db.prepare("SELECT * FROM subscriptions WHERE id = ?").get(Number(info.lastInsertRowid));
     return this.mapSubscription(row as unknown as Record<string, unknown>);
   }
@@ -996,6 +1022,17 @@ export class HubDb {
 
   setSubscriptionStatus(id: number, status: string): void {
     this.db.prepare("UPDATE subscriptions SET status = ? WHERE id = ?").run(status, id);
+  }
+
+  /** 按平台订阅实体 ID（unicpay subscriptionId）查订阅，用于 webhook 幂等去重。 */
+  getSubscriptionBySubscriptionId(subscriptionId: string): SubscriptionRow | null {
+    const row = this.db.prepare("SELECT * FROM subscriptions WHERE subscription_id = ? LIMIT 1").get(subscriptionId);
+    return row === undefined ? null : this.mapSubscription(row as unknown as Record<string, unknown>);
+  }
+
+  /** 按 subscriptionId 更新订阅状态（生命周期事件同实体，续订/宽限/到期复用同一行）。 */
+  updateSubscriptionBySubscriptionId(subscriptionId: string, status: string, expiresAt: number, willRenew: boolean): void {
+    this.db.prepare("UPDATE subscriptions SET status = ?, expires_at = ?, will_renew = ? WHERE subscription_id = ?").run(status, expiresAt, willRenew ? 1 : 0, subscriptionId);
   }
 
   createOrder(id: string, userId: number, planId: string, amountCny: number, now = Date.now()): OrderRow {

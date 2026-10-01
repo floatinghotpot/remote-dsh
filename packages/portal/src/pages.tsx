@@ -1906,6 +1906,19 @@ function BillingPage(): React.JSX.Element {
 
   const doSubscribe = async (planId: string, form: "native" | "h5" | "jsapi"): Promise<void> => {
     const ok = await run(async () => {
+      // feature 121：native（桌面扫码）改走 unicpay（经 hub 代理）；h5/jsapi 暂留旧链路（待乙方补齐）。
+      if (form === "native") {
+        const r = await api.unicpayInitiate(planId, "native");
+        const nativeUrl = r.payParams?.nativeUrl;
+        if (typeof nativeUrl === "string") {
+          const dataUrl = await QRCode.toDataURL(nativeUrl, { width: 220, margin: 1 });
+          setQrDataUrl(dataUrl);
+          pollUntilPaid();
+        } else {
+          show("err", t("支付已取消或失败"));
+        }
+        return;
+      }
       const r = await api.subscribe(planId, form);
       if (r.paid) {
         show("ok", t("订阅成功，配额已升级"));
@@ -1913,11 +1926,7 @@ function BillingPage(): React.JSX.Element {
         return;
       }
       const payInfo = r.payInfo;
-      if (form === "native" && typeof payInfo?.codeUrl === "string") {
-        const dataUrl = await QRCode.toDataURL(payInfo.codeUrl, { width: 220, margin: 1 });
-        setQrDataUrl(dataUrl);
-        pollUntilPaid();
-      } else if (form === "h5" && typeof payInfo?.h5Url === "string") {
+      if (form === "h5" && typeof payInfo?.h5Url === "string") {
         window.location.href = payInfo.h5Url;
       } else if (form === "jsapi" && typeof payInfo?.appId === "string") {
         invokeWechatJsapi(payInfo);
