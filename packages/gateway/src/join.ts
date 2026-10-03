@@ -64,6 +64,8 @@ export interface JoinOptions {
   gateway?: { accessCode?: string | null };
   /** 直连口（24-direct-first，A 案）：host/port 来自 host.json；缺省不监听 */
   direct?: { host?: string; port?: number };
+  /** host E2EE 静态密钥对目录（缺省 ~/.rdsh；**仅供测试注入**，生产不要传 —— 见 e2ee-key-store.ts） */
+  e2eeKeyDir?: string;
 }
 
 /** 注册/接入结果：解析出的 host token + 是否需 insecure + 生效的主机名（缺省=机器 hostname）。 */
@@ -94,6 +96,8 @@ export interface StartJoinOptions {
   role: JoinLockRole;
   /** 锁文件路径（缺省 ~/.rdsh/join.lock；测试可注入临时路径） */
   lockPath?: string;
+  /** E2EE 静态密钥对目录（缺省 ~/.rdsh；**仅供测试注入**，见 e2ee-key-store.ts） */
+  e2eeKeyDir?: string;
   hooks?: JoinHooks;
   /** DSH UI 兼容（缺省 trustE2EEAsLoopback=true；false 关闭 JS patch） */
   dshUiCompat?: { trustE2EEAsLoopback?: boolean };
@@ -212,7 +216,7 @@ export async function registerJoin(opts: JoinOptions): Promise<RegisterOutcome> 
   let token: string;
   if (opts.token !== undefined) {
     // --token = join token（或旧 host token）→ register 端点换 host token
-    const e2eeKeyPair = loadOrCreateE2eeKeyPair();
+    const e2eeKeyPair = loadOrCreateE2eeKeyPair(opts.e2eeKeyDir);
     const { hostToken } = await register(opts.hubUrl, opts.token, name, insecure, e2eeKeyPair.publicRaw.toString("base64url"));
     token = hostToken;
     persistToken(opts.hubUrl, token);
@@ -399,6 +403,19 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
   const uiCompat = { trustE2EEAsLoopback: opts.dshUiCompat?.trustE2EEAsLoopback !== false };
   // 访问口令（feature 15）：可变引用 → setAccessCode 运行中切换；null = gate off
   const gate = { accessCode: opts.gateway?.accessCode ?? null };
+  /**
+   * raw 门禁：页面是否已授权。**实例级共享**（原为 per-raw-stream）。
+   *
+   * authorize 证明的是"**页面**知道口令"，不是"某条 raw 流知道"——而页面注入脚本每页只跑一次
+   * （`direct.ts` 的 `__rdshDirectBootstrapped` 守卫）。原先声明在 `makeInnerDispatcher()` 内，
+   * 该方法**每条 raw 流都会调用一次**（`startRawStream`），于是新建流标志被重置为 false、
+   * 页面又不会重新 authorize ⇒ 该流上所有请求被 CLOSE 403 `raw stream not authorized`。
+   *
+   * 放在 `startJoin` 作用域 = **每个网关进程一份**：同一进程内共享（**含隧道重连**——`connect()`
+   * 嵌在 `startJoin` 内、重连不重建该作用域），跨进程仍隔离。
+   * 2026-10-04 修复，详见 `doc/fix/20261004-raw-authorize-per-stream/`。
+   */
+  let rawAuthorized = false;
   // raw 门禁 + 候选（24-direct-first）：提供 direct 回调即启用候选端点；raw 门禁（authorize）仅设口令时生效
   const rawGate =
     opts.direct !== undefined
@@ -482,8 +499,6 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
     const patchSkipped = new Set<string>();
     /** rdsh WebView API 是否已注入过（每个进程只打一次日志，避免页面加载刷屏）。 */
     let adapterInjectionLogged = false;
-    /** raw 门禁：当前 raw 流是否已被页面授权（动态判定：见 handleOpen 的条件，含运行中 gate 开关） */
-    let rawAuthorized = false;
 
     /** 从转发头里取 rdsh_gate cookie（hub D12 白名单透传）。 */
     function gateCookie(headers: Record<string, string | string[]>): string | null {
@@ -899,7 +914,7 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
   // host 端 E2EE 静态密钥对（持久化 ~/.rdsh/e2ee-key.json；join 注册时上送指纹）
   let hostE2eeKeypair: KeyPair;
   try {
-    hostE2eeKeypair = loadOrCreateE2eeKeyPair();
+    hostE2eeKeypair = loadOrCreateE2eeKeyPair(opts.e2eeKeyDir);
   } catch (err) {
     releaseLockAndRethrow(err);
   }
