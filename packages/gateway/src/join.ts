@@ -479,8 +479,14 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
       jsPatch?: () => boolean;
       gate?: boolean;
       htmlInject?: string | (() => string);
-      /** raw 门禁 + 候选/直连票（仅 raw inner dispatcher 传入；定义即启用 raw 门禁） */
+      /** raw 门禁（仅 raw inner dispatcher 传入；定义即启用 raw 门禁） */
       rawGate?: { candidates: () => { host: string; port: number }[]; mintTicket: () => string };
+      /**
+       * 直连候选 + 一次性票回调（24-direct-first）。**两条路径都要传**：
+       * raw 在 raw 门禁之后、plain 在访问口令 gate 之后，由下方统一端点提供。
+       * 缺省则不提供该端点（未配置 direct 时）。
+       */
+      directCandidates?: { candidates: () => { host: string; port: number }[]; mintTicket: () => string };
     },
   ) {
     const httpStreams = new Map<number, { up: ReturnType<typeof httpRequest> }>();
@@ -624,27 +630,19 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
         return;
       }
 
-      // ---- raw 门禁 + 候选端点（仅 raw inner dispatcher：dio.rawGate 定义时）----
-      if (dio?.rawGate !== undefined) {
-        // raw 门禁（仅设口令时）：授权前只接受 authorize 请求，否则 fail-closed 关流（修 raw 绕过，R7）
-        if (gate.accessCode !== null && !rawAuthorized) {
-          if (path.startsWith("/__rdsh/authorize")) {
-            const token = new URL(path, "http://rdsh.local").searchParams.get("token") ?? "";
-            if (token !== "" && verifyGateCookie(gate.accessCode, token)) {
-              rawAuthorized = true;
-              sendSyntheticHttp(send, frame.streamId, 204, {}, Buffer.alloc(0));
-              return;
-            }
+      // ---- raw 门禁（仅 raw inner dispatcher：dio.rawGate 定义时）----
+      if (dio?.rawGate !== undefined && gate.accessCode !== null && !rawAuthorized) {
+        // 授权前只接受 authorize 请求，否则 fail-closed 关流（修 raw 绕过，R7）
+        if (path.startsWith("/__rdsh/authorize")) {
+          const token = new URL(path, "http://rdsh.local").searchParams.get("token") ?? "";
+          if (token !== "" && verifyGateCookie(gate.accessCode, token)) {
+            rawAuthorized = true;
+            sendSyntheticHttp(send, frame.streamId, 204, {}, Buffer.alloc(0));
+            return;
           }
-          send(encodeFrame(FRAME_TYPE.CLOSE, frame.streamId, jsonPayload({ code: 403, message: "raw stream not authorized" })));
-          return;
         }
-        // 候选 + 一次性直连票（无论是否设口令都提供；经 E2EE，hub 不可见，R3/R4）
-        if (path === "/__rdsh/direct-candidates" || path.startsWith("/__rdsh/direct-candidates?")) {
-          const body = Buffer.from(JSON.stringify({ candidates: dio.rawGate.candidates(), ticket: dio.rawGate.mintTicket() }));
-          sendSyntheticHttp(send, frame.streamId, 200, { "content-type": "application/json" }, body);
-          return;
-        }
+        send(encodeFrame(FRAME_TYPE.CLOSE, frame.streamId, jsonPayload({ code: 403, message: "raw stream not authorized" })));
+        return;
       }
 
       // ---- 访问口令 gate（仅 plain dispatcher：dio.gate=true 且已设 accessCode）----
@@ -668,6 +666,26 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
           sendChallenge(frame.streamId, path, null, headerAcceptLanguage(headers));
           return;
         }
+      }
+
+      // ---- 直连候选 + 一次性票（**raw 与 plain 两条路径都要提供**）----
+      // 位置在**两道门禁之后**：raw 已过 rawGate，plain 已过访问口令（未过则上面已 return），
+      // 因此既不会泄露内网候选地址、也不会在未授权时签发直连票（R3/R4/R7）。
+      // 为什么 plain 也要提供：plain 页同样注入了直连 bootstrap（见 plainDispatcher 的 htmlInject），
+      // 缺了这个端点，页面里的 fetch("/__rdsh/direct-candidates") 会被转发给 dsh web → 404，
+      // 于是 window.__rdshDirectInfo 永不赋值 —— 即 2026-10-04 真机 "no __rdshDirectInfo" 的根因。
+      if (
+        dio?.directCandidates !== undefined &&
+        (path === "/__rdsh/direct-candidates" || path.startsWith("/__rdsh/direct-candidates?"))
+      ) {
+        const body = Buffer.from(
+          JSON.stringify({
+            candidates: dio.directCandidates.candidates(),
+            ticket: dio.directCandidates.mintTicket(),
+          }),
+        );
+        sendSyntheticHttp(send, frame.streamId, 200, { "content-type": "application/json" }, body);
+        return;
       }
 
       if (kind === "ws") {
@@ -714,7 +732,13 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
               delete outHeaders["transfer-encoding"];
               if (!adapterInjectionLogged) {
                 adapterInjectionLogged = true;
-                console.log("[rdsh] rdsh webview api injected (window.__rdshWebViewApi v1)");
+                // 按**实际注入的内容**打日志：raw 路径只注入直连 bootstrap，不含 WebView API。
+                // （旧文案一律说 "webview api injected"，在 raw 路径上是假的，曾误导排查。）
+                console.log(
+                  inject.includes("__rdshWebViewApi")
+                    ? "[rdsh] html inject: webview api + direct bootstrap (plain path)"
+                    : "[rdsh] html inject: direct bootstrap only (raw/E2EE path)",
+                );
               }
               send(
                 encodeFrame(
@@ -905,6 +929,8 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
   const plainDispatcher = makeInnerDispatcher(sendTunnelFrame, {
     jsPatch: () => uiCompat.trustE2EEAsLoopback,
     gate: true,
+    // plain 页也要能取直连候选：它同样注入了直连 bootstrap，端点由下方统一提供
+    directCandidates: rawGate,
     htmlInject: () => {
       // 直连 bootstrap 始终注入（join 模式）；页面授权 token 仅设口令时生成（无口令则跳过 raw 授权、只取候选）
       return RDSH_WEBVIEW_API + pageAuthorizeScript(gate.accessCode);
@@ -958,6 +984,7 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
       {
         jsPatch: () => uiCompat.trustE2EEAsLoopback,
         rawGate,
+        directCandidates: rawGate,
         // raw 门禁的解锁脚本：与 plain 同一来源（pageAuthorizeScript）。
         // raw 流不转发 cookie，这里是页面唯一的授权入口；缺了它 raw 门禁必然 fail-closed。
         htmlInject: () => pageAuthorizeScript(gate.accessCode),
