@@ -65,7 +65,6 @@ export interface StoreVerifyParams {
   storeProductId: string;
   /** Apple：StoreKit 2 JWS；Google：purchaseToken */
   receipt: string;
-  environment?: "production" | "sandbox";
 }
 
 /** unicpay 响应：HTTP 状态 + 解析后的 JSON（解析失败时返回原始文本）。 */
@@ -76,11 +75,12 @@ export interface UnicPayResponse {
 
 export class UnicPayClient {
   private readonly baseUrl: string;
+  private readonly cfg: UnicPayConfig;
+  private readonly fetchImpl: typeof fetch;
 
-  constructor(
-    private readonly cfg: UnicPayConfig,
-    private readonly fetchImpl: typeof fetch = fetch,
-  ) {
+  constructor(cfg: UnicPayConfig, fetchImpl: typeof fetch = fetch) {
+    this.cfg = cfg;
+    this.fetchImpl = fetchImpl;
     this.baseUrl = cfg.baseUrl.replace(/\/+$/, "");
   }
 

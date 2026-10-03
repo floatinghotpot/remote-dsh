@@ -1030,9 +1030,9 @@ export class HubDb {
     return row === undefined ? null : this.mapSubscription(row as unknown as Record<string, unknown>);
   }
 
-  /** 按 subscriptionId 更新订阅状态（生命周期事件同实体，续订/宽限/到期复用同一行）。 */
-  updateSubscriptionBySubscriptionId(subscriptionId: string, status: string, expiresAt: number, willRenew: boolean): void {
-    this.db.prepare("UPDATE subscriptions SET status = ?, expires_at = ?, will_renew = ? WHERE subscription_id = ?").run(status, expiresAt, willRenew ? 1 : 0, subscriptionId);
+  /** 按 subscriptionId 更新订阅状态（生命周期事件同实体，续订/宽限/到期/换档复用同一行）。 */
+  updateSubscriptionBySubscriptionId(subscriptionId: string, planId: string, status: string, expiresAt: number, willRenew: boolean): void {
+    this.db.prepare("UPDATE subscriptions SET plan_id = ?, status = ?, expires_at = ?, will_renew = ? WHERE subscription_id = ?").run(planId, status, expiresAt, willRenew ? 1 : 0, subscriptionId);
   }
 
   createOrder(id: string, userId: number, planId: string, amountCny: number, now = Date.now()): OrderRow {

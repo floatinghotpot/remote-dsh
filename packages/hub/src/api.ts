@@ -2109,7 +2109,7 @@ async function handleUnicpayInitiate(req: IncomingMessage, res: ServerResponse, 
     appOrderId,
     goodsId: plan.id,
     orderType: "subscription",
-    userId: auth.name,
+    userId: String(auth.userId),
   });
   if (initiated.status !== 200) {
     writeError(res, 502, "UPSTREAM_ERROR", "unicpay initiate failed");
@@ -2186,14 +2186,13 @@ async function handleUnicpayStoreVerify(req: IncomingMessage, res: ServerRespons
     writeError(res, 400, "BAD_REQUEST", "storeProductId and receipt required");
     return;
   }
-  const environment = typeof body.environment === "string" && body.environment === "sandbox" ? "sandbox" : "production";
-  // userId 用鉴权结果（authoritative），不信任客户端声称的 body.userId。
+  // userId 用鉴权结果（authoritative，改用不可变 users.id），不信任客户端声称的 body.userId。
+  // 平台已废弃 environment 字段（H6a：不再转发）。
   const result = await client.storeVerify({
-    userId: auth.name,
+    userId: String(auth.userId),
     store,
     storeProductId,
     receipt,
-    environment,
   });
   if (result.status !== 200) {
     writeError(res, 502, "UPSTREAM_ERROR", "unicpay store/verify failed");
@@ -2221,6 +2220,12 @@ async function handleUnicpayWebhook(req: IncomingMessage, res: ServerResponse, r
     writeError(res, 401, "BAD_SIGNATURE", "webhook signature verification failed");
     return;
   }
+  // H3：校验时间戳新鲜度（±5 分钟）。签名只覆盖 ts.nonce.body，不含新鲜度，故必须显式拒绝陈旧请求以防重放。
+  const tsSeconds = Number(ts);
+  if (!Number.isFinite(tsSeconds) || Math.abs(Date.now() / 1000 - tsSeconds) > 300) {
+    writeError(res, 401, "BAD_SIGNATURE", "webhook timestamp is stale");
+    return;
+  }
   let body: Record<string, unknown>;
   try {
     body = JSON.parse(rawBody) as Record<string, unknown>;
@@ -2233,14 +2238,18 @@ async function handleUnicpayWebhook(req: IncomingMessage, res: ServerResponse, r
 
   if (eventType.startsWith("subscription.")) {
     const subscriptionId = typeof body.subscriptionId === "string" ? body.subscriptionId : "";
-    const name = typeof body.userId === "string" ? body.userId : "";
-    if (subscriptionId === "" || name === "") {
+    const userIdRaw = typeof body.userId === "string" ? body.userId : "";
+    if (subscriptionId === "" || userIdRaw === "") {
       writeError(res, 400, "BAD_REQUEST", "subscriptionId and userId required");
       return;
     }
-    const user = runtime.db.getUserByName(name);
+    const userIdNum = Number(userIdRaw);
+    const user = Number.isInteger(userIdNum) && userIdNum > 0 ? runtime.db.getUserById(userIdNum) : null;
     if (user === null) {
-      writeError(res, 400, "BAD_REQUEST", "unknown userId");
+      // H5：未知用户不再 4xx（环境差异/DB 重建/用户已删等重试无效），改 ack + 审计，避免平台 6 次重试→死信告警。
+      runtime.db.recordAudit(null, "billing.unicpay.subscription_unknown_user", { eventType, subscriptionId, userId: userIdRaw }, ip);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, ignored: "unknown userId" }));
       return;
     }
     const userId = user.id;
@@ -2252,26 +2261,32 @@ async function handleUnicpayWebhook(req: IncomingMessage, res: ServerResponse, r
     const now = Date.now();
     const willRenew = body.willRenew === true;
     const existing = runtime.db.getSubscriptionBySubscriptionId(subscriptionId);
+    // H6b 乱序守卫：revoked 对同一 subscriptionId 是终态（再购买会新建 subscriptionId），
+    // 任何迟到的非 revoked 事件（active/grace/expired）整条忽略，不改订阅行、不改 plan —— 尤其防止退款后一条迟到的 expired 走 setPlan(null) 撤权。
+    // 其余更新到期时间只延长（防旧 renewed 把 expires_at 改短）。
+    const staleRevival = existing !== null && existing.status === "revoked" && status !== "revoked";
+    const nextStatus = staleRevival ? "revoked" : status;
+    const nextExpiresAt = existing === null ? expiresAt : Math.max(existing.expiresAt, expiresAt);
     runtime.db.db.exec("BEGIN");
     try {
       if (existing === null) {
-        runtime.db.createSubscription(userId, plan?.id ?? goodsId, now, expiresAt, now, { channel, subscriptionId, willRenew });
-      } else {
-        // 同一订阅实体：续订/宽限/到期复用同一行，更新状态与渠道权威到期
-        runtime.db.updateSubscriptionBySubscriptionId(subscriptionId, status, expiresAt, willRenew);
+        runtime.db.createSubscription(userId, plan?.id ?? goodsId, now, nextExpiresAt, now, { channel, subscriptionId, willRenew });
+      } else if (!staleRevival) {
+        // 同一订阅实体：续订/宽限/到期/换档复用同一行，更新档位、状态与渠道权威到期。
+        runtime.db.updateSubscriptionBySubscriptionId(subscriptionId, plan?.id ?? goodsId, nextStatus, nextExpiresAt, willRenew);
       }
-      if (status === "active" || status === "grace") {
-        runtime.db.setPlan(userId, "subscribed", expiresAt);
-      } else if (status === "expired") {
+      if (nextStatus === "active" || nextStatus === "grace") {
+        runtime.db.setPlan(userId, "subscribed", nextExpiresAt);
+      } else if (nextStatus === "expired") {
         runtime.db.setPlan(userId, null, null);
       }
-      // revoked / refunded：只记录，不撤权益
+      // revoked / refunded / staleRevival：只记录，不撤权益
       runtime.db.db.exec("COMMIT");
     } catch (e) {
       runtime.db.db.exec("ROLLBACK");
       throw e;
     }
-    runtime.db.recordAudit(userId, "billing.unicpay.subscription", { eventType, subscriptionId, status, channel }, ip);
+    runtime.db.recordAudit(userId, "billing.unicpay.subscription", { eventType, subscriptionId, status: nextStatus, channel }, ip);
   } else if (eventType === "payment.succeeded") {
     const paymentId = typeof body.paymentId === "string" ? body.paymentId : "";
     const appOrderId = typeof body.appOrderId === "string" ? body.appOrderId : "";
@@ -2286,7 +2301,19 @@ async function handleUnicpayWebhook(req: IncomingMessage, res: ServerResponse, r
     }
     const order = runtime.db.getOrder(appOrderId);
     if (order === null || order.status !== "created") {
-      writeError(res, 400, "BAD_REQUEST", "unknown or already-closed order");
+      // H5：未知/已关闭订单 ack 化（环境差异/DB 重建等重试无效），改 200 + 审计，避免死信告警。
+      runtime.db.recordAudit(null, "billing.unicpay.payment_unknown_order", { paymentId, appOrderId }, ip);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, ignored: "unknown or closed order" }));
+      return;
+    }
+    // H4：金额比对 —— 平台 `amount` 为「分」（最小单位整数），本地 `order.amountCny` 为「元」。
+    // 金额不符是真实的完整性故障（hub 套餐价与平台商品价漂移），保留 4xx 触发平台重试→告警，区别于 H5 的静默 ack。
+    const amountMinor = typeof body.amount === "number" ? body.amount : null;
+    const expectedMinor = Math.round(order.amountCny * 100);
+    if (amountMinor === null || amountMinor !== expectedMinor) {
+      runtime.db.recordAudit(order.userId, "billing.unicpay.payment_amount_mismatch", { paymentId, appOrderId, expectedMinor, amount: body.amount }, ip);
+      writeError(res, 422, "AMOUNT_MISMATCH", "amount does not match the order");
       return;
     }
     runtime.db.db.exec("BEGIN");
