@@ -14,8 +14,10 @@
  * Function-plugin form (export `inject` + `apply`) — no `@deepseek-ai/cordis`
  * runtime import, only a minimal local `Ctx` type.
  */
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { hostname } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   registerJoin,
   startJoin,
@@ -26,6 +28,7 @@ import {
   detectInsecure,
   hubRequest,
   selfRevoke,
+  persistToken,
   clearPersistedToken,
   readPersistedToken,
   readJoinLock,
@@ -40,6 +43,23 @@ import type { ConnectionService, RpcDispatch, RpcResult, WebServerService } from
 
 /** 面板状态（client 半 §2 五态 + 断开后态） */
 export type Status = "unconfigured" | "disconnected" | "connecting" | "connected" | "reconnecting" | "external";
+
+/** 本插件的包名 + 版本号（读自身的 package.json）；读不到时回落默认值。 */
+const PLUGIN_META: { name: string; version: string } = (() => {
+  try {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const pkg = JSON.parse(readFileSync(join(here, "..", "package.json"), "utf8")) as {
+      name?: string;
+      version?: string;
+    };
+    return {
+      name: typeof pkg.name === "string" ? pkg.name : "dsh-web-remote",
+      version: typeof pkg.version === "string" ? pkg.version : "unknown",
+    };
+  } catch {
+    return { name: "dsh-web-remote", version: "unknown" };
+  }
+})();
 
 interface Ctx {
   connection: ConnectionService;
@@ -258,6 +278,8 @@ export function apply(ctx: Ctx): void {
           return ok({ status: "expired" });
         }
         const cj = consumeRes.body as { hostId: string; hostToken: string };
+        // 持久化 host token（与 registerJoin 一致）→ 断开后「接入」才能复用已存令牌
+        persistToken(hub, cj.hostToken);
         const config = await loadConfig(DEFAULT_HOST_CONFIG_PATH);
         config.mode = "join";
         config.hub = hub;
@@ -306,15 +328,17 @@ export function apply(ctx: Ctx): void {
 
   /** 直连口同步（方案 B）：join 模式**始终监听**，门禁 = ticket；口令（accessCode）为可选增强层。 */
   async function syncDirect(config: RdshConfig): Promise<void> {
-    if (directSecret === null) directSecret = loadOrCreateDirectSecret();
-    const code = config.gateway?.accessCode ?? null;
-    // 口令变化 → 重启直连口（口令层即时生效/移除）
-    if (directHandle !== null && directAccessCode !== undefined && directAccessCode !== code) {
-      await stopDirect();
-    }
-    directTicketManager = createDirectTicketManager(directSecret);
-    if (directHandle === null) {
-      try {
+    // 整函数包 try：本函数由 `void syncDirect(...)` 触发，任何漏出的异常都会变成未捕获
+    // rejection（宿主可能静默吞掉）→ 直连口永远起不来且毫无线索。
+    try {
+      if (directSecret === null) directSecret = loadOrCreateDirectSecret();
+      const code = config.gateway?.accessCode ?? null;
+      // 口令变化 → 重启直连口（口令层即时生效/移除）
+      if (directHandle !== null && directAccessCode !== undefined && directAccessCode !== code) {
+        await stopDirect();
+      }
+      directTicketManager = createDirectTicketManager(directSecret);
+      if (directHandle === null) {
         directHandle = await startDirect({
           dshPort: ctx.webServer.port,
           dshAuthCookieHeader,
@@ -326,11 +350,13 @@ export function apply(ctx: Ctx): void {
           dshUiCompat: { trustPairedAsLoopback: config.dshUiCompat?.trustE2EEAsLoopback !== false },
         });
         directAccessCode = code;
-      } catch {
-        // 直连口监听失败不阻断隧道
-        directHandle = null;
-        directAccessCode = undefined;
       }
+    } catch (err) {
+      console.error(
+        `rdsh: direct gateway sync failed on ${config.host ?? "0.0.0.0"}:${config.port ?? 8442} — ${err instanceof Error ? err.message : String(err)}`,
+      );
+      directHandle = null;
+      directAccessCode = undefined;
     }
   }
 
@@ -376,7 +402,8 @@ export function apply(ctx: Ctx): void {
       handle = null;
       liveState = null;
     }
-    await stopDirect();
+    // 只停隧道，**不停直连口**：join 模式下直连口始终监听（见 gateway/direct.ts 设计），
+    // 停掉它会让同网段的 APP 退化成走公网隧道、且断开期间完全不可用。
     return ok({ status: "disconnected", hub: currentHub, name: currentName });
   }
 
@@ -416,6 +443,12 @@ export function apply(ctx: Ctx): void {
       const compat = uiCompatEnabled();
       // 只读诊断：每个分支都带上，面板据此显示/告警当前目录选择器形态
       const picker = pickerDiagnostics(ctx);
+      // 面板页脚/信息行：插件身份（包名 + 版本）+ 内网直连口状态（未启动时 port 为 null）
+      const meta = {
+        pluginName: PLUGIN_META.name,
+        pluginVersion: PLUGIN_META.version,
+        direct: { active: directHandle !== null, port: directHandle?.actualPort ?? null },
+      };
       if (handle !== null && liveState !== null) {
         return ok({
           status: mapState(liveState),
@@ -426,11 +459,12 @@ export function apply(ctx: Ctx): void {
           uiCompat: compat,
           hasAccessCode: accessCodeEnabled(),
           ...picker,
+          ...meta,
         });
       }
       const held = readJoinLock();
       if (held !== null && held.role === "cli") {
-        return ok({ status: "external", uiCompat: compat, hasAccessCode: accessCodeEnabled(), ...picker });
+        return ok({ status: "external", uiCompat: compat, hasAccessCode: accessCodeEnabled(), ...picker, ...meta });
       }
       const config = await loadConfig(DEFAULT_HOST_CONFIG_PATH);
       const hasAccessCode = config.gateway?.accessCode != null;
@@ -444,9 +478,10 @@ export function apply(ctx: Ctx): void {
           uiCompat: compat,
           hasAccessCode,
           ...picker,
+          ...meta,
         });
       }
-      return ok({ status: "unconfigured", uiCompat: compat, hasAccessCode, ...picker });
+      return ok({ status: "unconfigured", uiCompat: compat, hasAccessCode, ...picker, ...meta });
     } catch (e) {
       return err("internal", e instanceof Error ? e.message : String(e));
     }

@@ -46,19 +46,28 @@ window.__ModuleLoader__.load({
       disconnect: "断开",
       revoke: "注销",
       confirmOverwrite: "将覆盖现有 host 配置，再次点击接入确认",
+      rpcTimeout: "请求超时，请重试",
+      pluginLabel: "插件",
+      directLabel: "内网直连",
+      directOn: "已开启 · 端口 {port}",
+      directOff: "未开启",
+      directHintSame: "同一网络下，自动优先走内网直连：延迟更低、速度更快。",
+      directHintOther: "不在同一网络时，自动回落到云端中转。",
       tip_unconfigured: "在 hub 门户「添加主机」获取授权令牌，粘贴到下方后点击接入。",
       tip_connecting: "正在注册并建立隧道…",
-      tip_connected_pre: "现在可从任何地方，使用浏览器访问：",
-      tip_connected_post: "登录 hub 门户，在主机列表中找到这台主机；或用鲸语通 App 打开主机列表点它。",
+      accessBrowserLabel: "浏览器登录",
+      accessBrowserHint: "，在主机列表中点击进入",
+      accessAppLabel: "登录「鲸语通」App",
+      accessAppHint: "，在主机列表里点击进入",
       tip_reconnecting: "隧道断开，正在自动重连，无需操作。",
-      tip_disconnected: "已断开，配置与授权已保留，点击接入即可恢复。",
+      tip_disconnected: "已断开，配置与授权已保留，点击接入即可恢复。如需更换服务器或主机名，请先注销。",
       tip_external: "该主机由 rdsh CLI / 服务托管，请用 rdsh 命令管理。",
       uiCompatLabel: "端到端加密时，信任为本地访问（兼容模式）",
-      uiCompatDesc: "（默认开启；共享主机可关闭）",
+      securityTitle: "安全保护",
       accessCodeLabel: "访问密码",
       accessCodeBadgeSet: "已设置",
       accessCodeBadgeUnset: "未设置",
-      accessCodePlaceholder: "输入新密码（至少 4 位）",
+      accessCodePlaceholder: "新密码（≥4 位）",
       accessCodeSet: "设置",
       accessCodeClear: "清除",
       pickerLabel: "目录选择",
@@ -97,19 +106,28 @@ window.__ModuleLoader__.load({
       disconnect: "Disconnect",
       revoke: "Revoke",
       confirmOverwrite: "Will overwrite existing host config — click Connect again to confirm",
+      rpcTimeout: "Request timed out — please retry",
+      pluginLabel: "Plugin",
+      directLabel: "LAN direct",
+      directOn: "enabled · port {port}",
+      directOff: "disabled",
+      directHintSame: "On the same network, access automatically prefers the LAN direct path for lower latency and higher speed.",
+      directHintOther: "On a different network, it falls back to the cloud relay.",
       tip_unconfigured: "Get an auth token from the hub portal (Add host), paste it below, then click Connect.",
       tip_connecting: "Registering and establishing the tunnel…",
-      tip_connected_pre: "You can now access it from anywhere via your browser:",
-      tip_connected_post: "Sign in to the hub portal and find this host in the host list; or open the WhaleLink app and tap it in the host list.",
+      accessBrowserLabel: "Browser:",
+      accessBrowserHint: " — sign in, then tap this host in the host list",
+      accessAppLabel: "App:",
+      accessAppHint: " sign in to the WhaleLink app, then tap this host in the host list",
       tip_reconnecting: "The tunnel dropped; it is reconnecting automatically — no action needed.",
-      tip_disconnected: "Disconnected — config and auth are kept. Click Connect to resume.",
+      tip_disconnected: "Disconnected — config and auth are kept. Click Connect to resume. To change the server or host name, revoke first.",
       tip_external: "This host is managed by the rdsh CLI/service; manage it with rdsh commands.",
       uiCompatLabel: "Trust as local access when E2EE (compatibility)",
-      uiCompatDesc: "(on by default; disable for shared hosts)",
+      securityTitle: "Security",
       accessCodeLabel: "Access code",
       accessCodeBadgeSet: "Set",
       accessCodeBadgeUnset: "Not set",
-      accessCodePlaceholder: "New code (min 4 chars)",
+      accessCodePlaceholder: "New code (≥4)",
       accessCodeSet: "Set",
       accessCodeClear: "Clear",
       pickerLabel: "Directory picker",
@@ -128,9 +146,17 @@ window.__ModuleLoader__.load({
       .dsh-web-remote-dot.reconnecting{background:var(--dsw-alias-state-error-primary);animation:dwr-pulse 1s ease-in-out infinite}
       @keyframes dwr-pulse{0%,100%{opacity:1}50%{opacity:.35}}
       .dsh-web-remote-msg{margin:0;color:var(--dsw-alias-state-error-primary);font-size:12px;line-height:1.5}
+      .dsh-web-remote-access-list{display:flex;flex-direction:column;gap:4px}
       .dsh-web-remote-tip{margin:0;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:1.5}
       .dsh-web-remote-tip-url{color:var(--dsw-alias-brand-primary);word-break:break-all;text-decoration:none}
       .dsh-web-remote-tip-url:hover{text-decoration:underline}
+      .dsh-web-remote-direct-block{display:flex;flex-direction:column;gap:4px}
+      .dsh-web-remote-direct{display:flex;align-items:center;gap:8px;color:var(--dsw-alias-label-tertiary);font-size:13px;line-height:1.5}
+      .dsh-web-remote-direct.on{color:var(--dsw-alias-label-secondary)}
+      .dsh-web-remote-direct.on .dsh-web-remote-dot{background:var(--dsw-alias-state-success-primary)}
+      .dsh-web-remote-footer{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:1.5;padding-top:8px;border-top:1px solid var(--dsw-alias-border-l2)}
+      .dsh-web-remote-section{display:flex;flex-direction:column;gap:10px;padding-top:12px;border-top:1px solid var(--dsw-alias-border-l2)}
+      .dsh-web-remote-section-title{color:var(--dsw-alias-label-primary);font-size:13px;font-weight:600;line-height:1.5}
       .dsh-web-remote-field{display:flex;flex-direction:column;gap:6px;padding:12px 0}
       .dsh-web-remote-field+.dsh-web-remote-field{border-top:1px solid var(--dsw-alias-border-l2)}
       .dsh-web-remote-field label{color:var(--dsw-alias-label-primary);font-size:13px;font-weight:500;line-height:1.5}
@@ -146,7 +172,8 @@ window.__ModuleLoader__.load({
       .dsh-web-remote-btn-danger{color:var(--dsw-alias-state-error-primary);box-shadow:inset 0 0 0 1px var(--dsw-alias-state-error-primary)}
       .dsh-web-remote-btn-danger:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-danger)}
       .dsh-web-remote-accesscode{display:flex;align-items:center;gap:8px}
-      .dsh-web-remote-accesscode input{flex:1;min-width:0}
+      /* 访问密码：短口令而已，固定窄宽度（16 位绰绰有余），不占满整行 */
+      .dsh-web-remote-accesscode input{flex:0 0 auto;width:170px;min-width:0}
       .dsh-web-remote-accesscode-badge{flex:0 0 auto;font-size:12px;line-height:22px;padding:0 10px;border-radius:11px;box-shadow:inset 0 0 0 1px var(--dsw-alias-border-l2);color:var(--dsw-alias-label-tertiary)}
       .dsh-web-remote-scan{display:flex;flex-direction:column;align-items:center;gap:10px;padding:12px 0}
       .dsh-web-remote-qr{width:180px;height:180px;border-radius:12px;box-shadow:0 2px 10px rgba(0,0,0,.15)}
@@ -202,6 +229,9 @@ window.__ModuleLoader__.load({
       const [codeBusy, setCodeBusy] = React.useState(false);
       const [pickerKind, setPickerKind] = React.useState(undefined);
       const [pickerOk, setPickerOk] = React.useState(undefined);
+      const [pluginVersion, setPluginVersion] = React.useState(undefined);
+      const [pluginName, setPluginName] = React.useState(undefined);
+      const [direct, setDirect] = React.useState(undefined);
 
       React.useEffect(() => {
         let alive = true;
@@ -218,6 +248,9 @@ window.__ModuleLoader__.load({
             if (typeof v.uiCompat === "boolean") setUiCompat(v.uiCompat);
             if (typeof v.hasAccessCode === "boolean") setHasAccessCode(v.hasAccessCode);
             if (typeof v.pickerKind === "string") setPickerKind(v.pickerKind);
+            if (typeof v.pluginVersion === "string") setPluginVersion(v.pluginVersion);
+            if (typeof v.pluginName === "string") setPluginName(v.pluginName);
+            if (v.direct !== null && typeof v.direct === "object") setDirect(v.direct);
             if (typeof v.pickerOk === "boolean") setPickerOk(v.pickerOk);
           } catch {
             /* 瞬时错误忽略，下一轮重试 */
@@ -236,12 +269,28 @@ window.__ModuleLoader__.load({
       const showDisconnect = status === "connecting" || status === "connected" || status === "reconnecting";
       const showRevoke = status === "disconnected" || showDisconnect;
 
+      // 带超时的 RPC：服务端偶发不回包时，按钮也不会永久卡在 loading（15s 后按失败处理）。
+      const callRpc = async (endpoint, args = {}, ms = 15000) => {
+        let timer;
+        try {
+          return await Promise.race([
+            rpc.call("/remote-access", endpoint, { args }),
+            new Promise((resolve) => {
+              timer = setTimeout(
+                () => resolve({ ok: false, error: { code: "timeout", message: t("rpcTimeout") } }),
+                ms,
+              );
+            }),
+          ]);
+        } finally {
+          clearTimeout(timer);
+        }
+      };
+
       const connect = async () => {
         setBusy(true);
         try {
-          const res = await rpc.call("/remote-access", "connect", {
-            args: { hub, token, name, confirmOverwrite: confirmOverwrite || undefined },
-          });
+          const res = await callRpc("connect", { hub, token, name, confirmOverwrite: confirmOverwrite || undefined });
           if (!res.ok) {
             if (res.error && res.error.code === "mode-conflict") {
               setConfirmOverwrite(true);
@@ -262,7 +311,7 @@ window.__ModuleLoader__.load({
       const disconnect = async () => {
         setBusy(true);
         try {
-          await rpc.call("/remote-access", "disconnect", { args: {} });
+          await callRpc("disconnect");
         } finally {
           setBusy(false);
         }
@@ -271,9 +320,9 @@ window.__ModuleLoader__.load({
       const revoke = async () => {
         setBusy(true);
         try {
-          await rpc.call("/remote-access", "revoke", { args: {} });
-          setHub("");
-          setName("");
+          await callRpc("revoke");
+          // 保留服务器地址/主机名，方便直接重新绑定（清空会导致"缺少服务器地址"）
+          setHub((h) => (h.trim() === "" ? DEFAULT_HUB : h));
         } finally {
           setBusy(false);
         }
@@ -381,6 +430,9 @@ window.__ModuleLoader__.load({
       const disabled = busy || external;
       // 未接入态需要令牌；断开态可留空（复用已保存授权）
       const canConnect = !disabled && hub.trim() !== "" && (status !== "unconfigured" || token.trim() !== "");
+      const isUnconfigured = status === "unconfigured";
+      // 断开且配置保留：地址/主机名已由持久化 host token 绑定，改动会导致接入失败 → 锁成只读
+      const fieldsLocked = status === "disconnected";
 
       const statusLine = React.createElement(
         "div",
@@ -398,7 +450,7 @@ window.__ModuleLoader__.load({
             React.createElement(Field, {
               label: t("hubUrl"),
               value: hub,
-              disabled,
+              disabled: disabled || fieldsLocked,
               placeholder: t("hubPlaceholder"),
               hint: t("hubHint"),
               onChange: setHub,
@@ -406,7 +458,7 @@ window.__ModuleLoader__.load({
             React.createElement(Field, {
               label: t("name"),
               value: name,
-              disabled,
+              disabled: disabled || fieldsLocked,
               placeholder: t("namePlaceholder"),
               hint: t("nameHint"),
               onChange: setName,
@@ -453,49 +505,60 @@ window.__ModuleLoader__.load({
           )
         : null;
 
+      // 未配置 → 扫码/令牌两条绑定通路；已配置但断开 → 接入（复用已存令牌）+ 注销。
       const actions = external
         ? null
-        : showForm && !scanning
-          ? tokenMode
-            ? React.createElement(
-                "div",
-                { className: "dsh-web-remote-actions" },
-                React.createElement("button", { className: "dsh-web-remote-btn dsh-web-remote-btn-primary", disabled: !canConnect, onClick: connect }, busy ? "…" : t("tokenConnect")),
-                React.createElement("button", { className: "dsh-web-remote-btn", onClick: () => setTokenMode(false) }, t("scanConnect")),
-              )
+        : scanning
+          ? null // 扫码屏自带按钮
+          : isUnconfigured
+            ? tokenMode
+              ? React.createElement(
+                  "div",
+                  { className: "dsh-web-remote-actions" },
+                  React.createElement("button", { className: "dsh-web-remote-btn dsh-web-remote-btn-primary", disabled: !canConnect, onClick: connect }, busy ? "…" : t("tokenConnect")),
+                  React.createElement("button", { className: "dsh-web-remote-btn", onClick: () => setTokenMode(false) }, t("scanConnect")),
+                )
+              : React.createElement(
+                  "div",
+                  { className: "dsh-web-remote-actions" },
+                  React.createElement("button", { className: "dsh-web-remote-btn dsh-web-remote-btn-primary", disabled, onClick: beginScan }, busy ? "…" : t("scanConnect")),
+                  React.createElement("button", { className: "dsh-web-remote-btn", onClick: () => setTokenMode(true) }, t("tokenConnect")),
+                )
             : React.createElement(
                 "div",
                 { className: "dsh-web-remote-actions" },
-                React.createElement("button", { className: "dsh-web-remote-btn dsh-web-remote-btn-primary", disabled, onClick: beginScan }, busy ? "…" : t("scanConnect")),
-                React.createElement("button", { className: "dsh-web-remote-btn", onClick: () => setTokenMode(true) }, t("tokenConnect")),
-              )
-          : showDisconnect || showRevoke
-            ? React.createElement(
-                "div",
-                { className: "dsh-web-remote-actions" },
+                showForm
+                  ? React.createElement("button", { className: "dsh-web-remote-btn dsh-web-remote-btn-primary", disabled: !canConnect, onClick: connect }, busy ? "…" : t("connect"))
+                  : null,
                 showDisconnect
                   ? React.createElement("button", { className: "dsh-web-remote-btn", disabled, onClick: disconnect }, t("disconnect"))
                   : null,
                 showRevoke
                   ? React.createElement("button", { className: "dsh-web-remote-btn dsh-web-remote-btn-danger", disabled, onClick: revoke }, t("revoke"))
                   : null,
-              )
-            : null;
+              );
 
       const tip =
         status === "connected"
           ? React.createElement(
-              "p",
-              { className: "dsh-web-remote-tip" },
-              t("tip_connected_pre"),
-              " ",
+              "div",
+              { className: "dsh-web-remote-access-list" },
               React.createElement(
-                "a",
-                { className: "dsh-web-remote-tip-url", href: hub, target: "_blank", rel: "noreferrer" },
-                hub,
+                "p",
+                { className: "dsh-web-remote-tip" },
+                "1. " + t("accessBrowserLabel") + " ",
+                React.createElement(
+                  "a",
+                  { className: "dsh-web-remote-tip-url", href: hub, target: "_blank", rel: "noreferrer" },
+                  hub,
+                ),
+                t("accessBrowserHint"),
               ),
-              " ",
-              t("tip_connected_post"),
+              React.createElement(
+                "p",
+                { className: "dsh-web-remote-tip" },
+                "2. " + t("accessAppLabel") + t("accessAppHint"),
+              ),
             )
           : React.createElement("p", { className: "dsh-web-remote-tip" }, t("tip_" + status));
 
@@ -516,7 +579,6 @@ window.__ModuleLoader__.load({
             }),
             " ",
             t("uiCompatLabel"),
-            React.createElement("span", { className: "dsh-web-remote-compat-desc" }, " ", t("uiCompatDesc")),
           );
 
       const accessCodeRow = external
@@ -586,18 +648,63 @@ window.__ModuleLoader__.load({
           : null,
       );
 
+      // 内网直连：放在「可从何处访问」那句之后，并自带优势说明（自动优先、延迟更低）。
+      const directOn = direct !== null && typeof direct === "object" && direct.active === true;
+      const directBlock =
+        scanning === true
+          ? null
+          : React.createElement(
+              "div",
+              { className: "dsh-web-remote-direct-block" },
+              React.createElement(
+                "div",
+                { className: "dsh-web-remote-direct" + (directOn ? " on" : "") },
+                React.createElement("span", { className: "dsh-web-remote-dot" }),
+                React.createElement(
+                  "span",
+                  null,
+                  t("directLabel") +
+                    " · " +
+                    (directOn ? t("directOn").replace("{port}", String(direct.port)) : t("directOff")),
+                ),
+              ),
+              React.createElement("p", { className: "dsh-web-remote-tip" }, t("directHintSame")),
+              React.createElement("p", { className: "dsh-web-remote-tip" }, t("directHintOther")),
+            );
+
+      // 页脚：插件身份（包名 + 版本）—— 让用户知道"远程访问"由哪个插件提供。
+      const footerRow = React.createElement(
+        "div",
+        { className: "dsh-web-remote-footer" },
+        t("pluginLabel") + " " + (pluginName || "dsh-web-remote") + (pluginVersion ? " v" + pluginVersion : ""),
+      );
+
+      // 安全保护分组：端到端加密兼容 + 访问密码（都是安全相关，统一加小标题）
+      const securitySection =
+        external === true
+          ? null
+          : React.createElement(
+              "div",
+              { className: "dsh-web-remote-section" },
+              React.createElement("div", { className: "dsh-web-remote-section-title" }, t("securityTitle")),
+              compatToggle,
+              accessCodeRow,
+            );
+
       return React.createElement(
         "div",
         { className: "dsh-web-remote" },
         statusLine,
         scanning ? null : tip,
-        pickerRow,
+        directBlock,
+        // 目录选择器诊断：只在异常（宿主原生对话框 → 远程不可用）时显示，正常态不打扰用户
+        pickerOk === false ? pickerRow : null,
         message ? React.createElement("p", { className: "dsh-web-remote-msg" }, message) : null,
         scanScreen,
         form,
-        compatToggle,
-        accessCodeRow,
+        securitySection,
         actions,
+        footerRow,
       );
     }
 
