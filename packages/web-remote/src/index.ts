@@ -15,12 +15,16 @@
  * runtime import, only a minimal local `Ctx` type.
  */
 import { existsSync } from "node:fs";
+import { hostname } from "node:os";
 import {
   registerJoin,
   startJoin,
   startDirect,
   createDirectTicketManager,
   loadOrCreateDirectSecret,
+  loadOrCreateE2eeKeyPair,
+  detectInsecure,
+  hubRequest,
   selfRevoke,
   clearPersistedToken,
   readPersistedToken,
@@ -113,6 +117,7 @@ export function apply(ctx: Ctx): void {
   let directHandle: DirectHandle | null = null; // 直连口（24-direct-first，A 案；与隧道共用同一 dsh）
   let directTicketManager: DirectTicketManager | null = null; // 一次性直连票管理器（R4）
   let directSecret: string | null = null; // 直连密钥（per-host 随机，自动生成）
+  let bindSession: { bindId: string; consumeToken: string; hub: string; name: string; insecure: boolean; expiresAt: number } | null = null; // 扫码绑定会话（26）
   let directAccessCode: string | null | undefined = undefined; // 直连口当前应用的口令（undefined=未启动）
 
   // 0.1.2+ 进程内换发：能力探测 authenticatedUrl → 换发浏览器会话 cookie（0.1.1 无此方法 → 跳过）
@@ -205,6 +210,71 @@ export function apply(ctx: Ctx): void {
       return ok({ status: "connecting", hub, name });
     } catch (e) {
       return err("register-failed", e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  /** 扫码绑定：向 hub 申请一次性绑定会话，返回二维码与 consumeToken（26）。 */
+  async function beginScan(args: Record<string, unknown>): Promise<RpcResult> {
+    try {
+      if (typeof args.hub !== "string" || args.hub.trim() === "") {
+        return err("bad-request", "hub (string) required");
+      }
+      const hub = args.hub.trim().replace(/\/+$/, "");
+      if (!/^https?:\/\//.test(hub)) return err("bad-request", "hub must be an http(s) URL");
+      const name = typeof args.name === "string" && args.name.trim() !== "" ? args.name.trim() : hostname();
+      const insecure = await detectInsecure(hub);
+      const keys = loadOrCreateE2eeKeyPair();
+      const res = await hubRequest(hub, "/api/bind-sessions", {
+        method: "POST",
+        insecure,
+        body: { name, e2eePublicKey: keys.publicRaw.toString("base64url") },
+      });
+      if (!res.ok) return err("begin-scan-failed", `bind session create failed: ${res.status}`);
+      const j = res.body as { bindId: string; consumeToken: string; expiresAt: number; qrDataUri: string | null };
+      bindSession = { bindId: j.bindId, consumeToken: j.consumeToken, hub, name, insecure, expiresAt: j.expiresAt };
+      return ok({ bindId: j.bindId, qrDataUri: j.qrDataUri, expiresAt: j.expiresAt });
+    } catch (e) {
+      return err("begin-scan-failed", e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  /** 扫码绑定：轮询会话状态；approved 后 consume 换 host token 并复用 startTunnel（26）。 */
+  async function scanState(): Promise<RpcResult> {
+    try {
+      if (bindSession === null) return ok({ status: "none" });
+      const { hub, name, bindId, consumeToken, insecure } = bindSession;
+      const res = await hubRequest(hub, `/api/bind-sessions/${bindId}`, { method: "GET", insecure });
+      if (!res.ok) return ok({ status: "pending" }); // 瞬时错误，面板下一轮重试
+      const j = res.body as { status: string };
+      if (j.status === "approved") {
+        const consumeRes = await hubRequest(hub, `/api/bind-sessions/${bindId}/consume`, {
+          method: "POST",
+          insecure,
+          body: { consumeToken },
+        });
+        if (!consumeRes.ok) {
+          // 领取失败（罕见：会话已过期/已被消费）→ 终止扫码，面板显示"已过期"+刷新
+          bindSession = null;
+          return ok({ status: "expired" });
+        }
+        const cj = consumeRes.body as { hostId: string; hostToken: string };
+        const config = await loadConfig(DEFAULT_HOST_CONFIG_PATH);
+        config.mode = "join";
+        config.hub = hub;
+        config.name = name;
+        config.insecure = insecure;
+        await saveConfig(DEFAULT_HOST_CONFIG_PATH, config);
+        bindSession = null;
+        startTunnel(config, hub, cj.hostToken, name, insecure);
+        return ok({ status: "connecting", hub, name });
+      }
+      if (j.status === "expired") {
+        bindSession = null;
+        return ok({ status: "expired" });
+      }
+      return ok({ status: j.status }); // pending / consumed
+    } catch (e) {
+      return err("scan-state-failed", e instanceof Error ? e.message : String(e));
     }
   }
 
@@ -455,6 +525,10 @@ export function apply(ctx: Ctx): void {
         return await setUiCompat(args);
       case "set-access-code":
         return await setAccessCode(args);
+      case "begin-scan":
+        return await beginScan(args);
+      case "scan-state":
+        return await scanState();
       default:
         return err("bad-request", `unknown endpoint ${endpoint}`);
     }

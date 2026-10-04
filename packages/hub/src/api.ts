@@ -30,6 +30,7 @@ import { AdminError } from "./admin.ts";
 import type { AdminCtx, AdminCreateUserInput } from "./admin.ts";
 import * as admin from "./admin.ts";
 import { lastBackupAt } from "./backup.ts";
+import QRCode from "qrcode";
 
 export const SESSION_COOKIE = "rdsh_hub_session";
 /** 续期凭证 cookie（HttpOnly；`Path=/api/auth` 使其只出现在续期/登出/改密请求，普通页面与中继不携带）。 */
@@ -761,6 +762,25 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, runti
     await handleRegister(req, res, runtime);
     return true;
   }
+  if (path === "/api/bind-sessions" && method === "POST") {
+    await handleCreateBindSession(req, res, runtime);
+    return true;
+  }
+  const bindApproveMatch = /^\/api\/bind-sessions\/([^/]+)\/approve$/.exec(path);
+  if (bindApproveMatch !== null && method === "POST") {
+    await handleApproveBindSession(req, res, runtime, decodeURIComponent(bindApproveMatch[1]!));
+    return true;
+  }
+  const bindConsumeMatch = /^\/api\/bind-sessions\/([^/]+)\/consume$/.exec(path);
+  if (bindConsumeMatch !== null && method === "POST") {
+    await handleConsumeBindSession(req, res, runtime, decodeURIComponent(bindConsumeMatch[1]!));
+    return true;
+  }
+  const bindMatch = /^\/api\/bind-sessions\/([^/]+)$/.exec(path);
+  if (bindMatch !== null && method === "GET") {
+    await handleGetBindSession(req, res, runtime, decodeURIComponent(bindMatch[1]!));
+    return true;
+  }
   if (path === "/api/hosts/join-token" && method === "POST") {
     await handleCreateJoinToken(req, res, runtime);
     return true;
@@ -1456,6 +1476,130 @@ async function handleSelfRevoke(req: IncomingMessage, res: ServerResponse, runti
   revokeHost(runtime, host.id, host.ownerId);
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({ ok: true, revoked: host.id }));
+}
+
+/** 绑定会话有效期（毫秒）。二维码一次性短码，行业惯例 5 分钟。 */
+const BIND_SESSION_TTL_MS = 5 * 60 * 1000;
+
+/** 创建绑定会话（未认证，限流）：插件面板「扫码接入」调用。返回一次性 consumeToken + 二维码 data URI。 */
+async function handleCreateBindSession(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const ip = clientIp(req, runtime);
+  const now = Date.now();
+  const hit = registerRate.get(ip);
+  if (hit !== undefined && now - hit.windowStart < REGISTER_RATE_LIMIT.windowMs) {
+    if (hit.count >= REGISTER_RATE_LIMIT.max) {
+      writeError(res, 429, "RATE_LIMITED", "too many bind-session requests");
+      return;
+    }
+    hit.count += 1;
+  } else {
+    registerRate.set(ip, { count: 1, windowStart: now });
+  }
+  const body = await readJsonBody(req);
+  const name = typeof body?.name === "string" && body.name.length > 0 ? body.name.slice(0, 64) : null;
+  const e2eePublicKey = typeof body?.e2eePublicKey === "string" && body.e2eePublicKey.length > 0 ? body.e2eePublicKey.slice(0, 256) : null;
+  const id = randomUUID();
+  const consumeToken = randomToken();
+  const expiresAt = now + BIND_SESSION_TTL_MS;
+  runtime.db.createBindSession(id, sha256(consumeToken), e2eePublicKey, name, expiresAt);
+  runtime.db.recordAudit(null, "bind.session.create", { bindId: id, name }, ip, now);
+  let qrDataUri: string | null = null;
+  try {
+    qrDataUri = await QRCode.toDataURL(`rdsh://bind?code=${id}`);
+  } catch {
+    qrDataUri = null; // 面板可回退为展示明文 rdsh://bind?code=...
+  }
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ bindId: id, consumeToken, expiresAt, qrDataUri }));
+}
+
+/** 查询绑定会话状态（未认证；面板轮询）。过期为懒判定。 */
+async function handleGetBindSession(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime, id: string): Promise<void> {
+  const session = runtime.db.getBindSession(id);
+  if (session === null) {
+    writeError(res, 404, "NOT_FOUND", "bind session not found");
+    return;
+  }
+  const status = session.status === "pending" && session.expiresAt <= Date.now() ? "expired" : session.status;
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ status }));
+}
+
+/** 批准绑定会话（登录态）：把会话归属到当前账号并置 approved。重复批准幂等。 */
+async function handleApproveBindSession(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime, id: string): Promise<void> {
+  const auth = authenticate(req, runtime);
+  if (auth === null) {
+    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
+    return;
+  }
+  const session = runtime.db.getBindSession(id);
+  if (session === null) {
+    writeError(res, 404, "NOT_FOUND", "bind session not found");
+    return;
+  }
+  if (session.status === "consumed") {
+    writeError(res, 409, "CONSUMED", "bind session already consumed");
+    return;
+  }
+  if (session.status === "approved") {
+    // 已批准：同一账号重复扫幂等返回；他人扫应明确拒绝（否则会误以为绑定成功）
+    if (session.ownerId === auth.userId) {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ name: session.name }));
+      return;
+    }
+    writeError(res, 409, "CONFLICT", "bind session already approved by another account");
+    return;
+  }
+  if (session.expiresAt <= Date.now()) {
+    writeError(res, 410, "EXPIRED", "bind session expired");
+    return;
+  }
+  const user = runtime.db.getUserById(auth.userId);
+  if (user !== null) {
+    const quota = hostQuota(runtime, user);
+    if (quota !== null && runtime.db.listHostsByOwner(user.id).length >= quota) {
+      writeError(res, 403, "QUOTA_EXCEEDED", "host quota exceeded for current plan");
+      return;
+    }
+  }
+  if (!runtime.db.approveBindSession(id, auth.userId)) {
+    writeError(res, 409, "CONFLICT", "bind session state changed");
+    return;
+  }
+  runtime.db.recordAudit(auth.userId, "bind.session.approve", { bindId: id, name: session.name }, clientIp(req, runtime), Date.now());
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ name: session.name }));
+}
+
+/** 领取（消费）：面板凭 consumeToken 换取 host token，会话置 consumed。 */
+async function handleConsumeBindSession(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime, id: string): Promise<void> {
+  const body = await readJsonBody(req);
+  if (body === null || typeof body.consumeToken !== "string" || body.consumeToken.length < 16) {
+    writeError(res, 400, "BAD_REQUEST", "consumeToken required");
+    return;
+  }
+  const session = runtime.db.getBindSessionByConsumeTokenHash(sha256(body.consumeToken));
+  if (session === null || session.id !== id) {
+    writeError(res, 401, "UNAUTHORIZED", "invalid consume token");
+    return;
+  }
+  if (session.status === "consumed") {
+    writeError(res, 409, "CONSUMED", "bind session already consumed");
+    return;
+  }
+  if (session.status !== "approved" || session.expiresAt <= Date.now()) {
+    writeError(res, 409, "NOT_APPROVED", "bind session not approved or expired");
+    return;
+  }
+  const hostId = randomUUID();
+  const hostToken = randomToken();
+  const ownerId = session.ownerId as number;
+  runtime.db.createHost(hostId, ownerId, session.name ?? `host-${hostId.slice(0, 8)}`, sha256(hostToken), session.e2eePublicKey ?? undefined);
+  runtime.db.consumeBindSession(id);
+  runtime.db.recordAudit(ownerId, "bind.session.consume", { bindId: id, hostId, name: session.name }, clientIp(req, runtime), Date.now());
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ hostId, hostToken }));
 }
 
 /** 创建用户级 join token（需登录）：{label?, ttlSeconds?} → 返回明文一次，服务端只存 SHA-256。 */

@@ -44,6 +44,9 @@ importers:
       nodemailer:
         specifier: ^6.10.1
         version: 6.10.1
+      qrcode:
+        specifier: ^1.5.4
+        version: 1.5.4
       rdsh-tunnel:
         specifier: workspace:*
         version: link:../tunnel
@@ -57,6 +60,9 @@ importers:
       '@types/nodemailer':
         specifier: ^6.4.24
         version: 6.4.24
+      '@types/qrcode':
+        specifier: ^1.5.5
+        version: 1.5.6
       '@types/sm-crypto':
         specifier: ^0.3.4
         version: 0.3.4
@@ -102,6 +108,8 @@ importers:
       rdsh-gateway:
         specifier: workspace:*
         version: link:../gateway
+
+  packages/whale-link: {}
 
 packages:
 
@@ -543,6 +551,9 @@ packages:
 
   '@types/prop-types@15.7.15':
     resolution: {integrity: sha512-F6bEyamV9jKGAFBEmlQnesRPGOQqS2+Uwi0Em15xenOxHaf2hv6L8YCVn3rPdPJOiJfPiCnLIRyvwVaqMY3MIw==}
+
+  '@types/qrcode@1.5.6':
+    resolution: {integrity: sha512-te7NQcV2BOvdj2b1hCAHzAoMNuj65kNBMz0KBaxM6c3VGBOhU0dURQKOtH8CFNI/dsKkwlv32p26qYQTWoB5bw==}
 
   '@types/react-dom@18.3.7':
     resolution: {integrity: sha512-MEe3UeoENYVFXzoXEWsvcpg6ZvlrFNlOQ7EOsvhI3CfAXwzPfO8Qwuxd40nepsYKqyyVQnTdEfv68q91yLcKrQ==}
@@ -1343,6 +1354,10 @@ snapshots:
       '@types/node': 22.20.1
 
   '@types/prop-types@15.7.15': {}
+
+  '@types/qrcode@1.5.6':
+    dependencies:
+      '@types/node': 22.20.1
 
   '@types/react-dom@18.3.7(@types/react@18.3.31)':
     dependencies:

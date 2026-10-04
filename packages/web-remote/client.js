@@ -25,9 +25,20 @@ window.__ModuleLoader__.load({
       status_connected: "已连接",
       status_reconnecting: "断线重连…",
       status_external: "已接入（由 rdsh CLI / 服务托管）",
-      hubUrl: "Hub 地址",
+      hubUrl: "云端中转服务器",
       joinToken: "授权令牌",
-      name: "主机名",
+      name: "这台主机的名称",
+      hubHint: "这台主机要接入的服务器地址，接入后即可在任意设备访问；默认已填好，无需修改；只有自己部署服务器时才需改。",
+      nameHint: "给这台主机起的名称，方便在主机列表里认出它；默认取本机名称，可改。",
+      scanConnect: "扫码接入",
+      tokenConnect: "令牌接入",
+      scanWaiting: "等待手机确认",
+      scanTip: "打开「鲸语通」App，用「地址列表」右上角的扫码，扫描下方二维码。",
+      scanExpiresIn: "有效期剩余 {s}",
+      scanRefresh: "刷新二维码",
+      scanExpired: "二维码已过期",
+      scanSwitchToken: "改用令牌接入",
+      tokenHint: "用浏览器打开上面的服务器地址，在「添加主机」里复制「授权令牌」，粘贴到上方后点「令牌接入」。",
       hubPlaceholder: "https://hub.example.com",
       tokenPlaceholder: "一次性授权令牌",
       namePlaceholder: "my-mac",
@@ -38,7 +49,7 @@ window.__ModuleLoader__.load({
       tip_unconfigured: "在 hub 门户「添加主机」获取授权令牌，粘贴到下方后点击接入。",
       tip_connecting: "正在注册并建立隧道…",
       tip_connected_pre: "现在可从任何地方，使用浏览器访问：",
-      tip_connected_post: "登录 hub 门户，在主机列表中，找到这台主机，即可访问它。",
+      tip_connected_post: "登录 hub 门户，在主机列表中找到这台主机；或用鲸语通 App 打开主机列表点它。",
       tip_reconnecting: "隧道断开，正在自动重连，无需操作。",
       tip_disconnected: "已断开，配置与授权已保留，点击接入即可恢复。",
       tip_external: "该主机由 rdsh CLI / 服务托管，请用 rdsh 命令管理。",
@@ -65,9 +76,20 @@ window.__ModuleLoader__.load({
       status_connected: "Connected",
       status_reconnecting: "Reconnecting…",
       status_external: "Managed by rdsh CLI/service",
-      hubUrl: "Hub URL",
+      hubUrl: "Cloud relay server",
       joinToken: "Auth Token",
-      name: "Name",
+      name: "This host's name",
+      hubHint: "The server this host connects to, so you can reach it from anywhere. Already filled in — change it only if you run your own server.",
+      nameHint: "A name for this host, shown in the host list. Defaults to the machine name.",
+      scanConnect: "Scan to connect",
+      tokenConnect: "Token connect",
+      scanWaiting: "Waiting for phone",
+      scanTip: "Open the WhaleLink app and scan this QR with the scanner at the top-right of the host list.",
+      scanExpiresIn: "expires in {s}",
+      scanRefresh: "Refresh QR",
+      scanExpired: "QR code expired",
+      scanSwitchToken: "Use token instead",
+      tokenHint: "Open the server URL above in a browser, copy the auth token from \"Add host\", paste it above, then click Token connect.",
       hubPlaceholder: "https://hub.example.com",
       tokenPlaceholder: "One-time auth token",
       namePlaceholder: "my-mac",
@@ -78,7 +100,7 @@ window.__ModuleLoader__.load({
       tip_unconfigured: "Get an auth token from the hub portal (Add host), paste it below, then click Connect.",
       tip_connecting: "Registering and establishing the tunnel…",
       tip_connected_pre: "You can now access it from anywhere via your browser:",
-      tip_connected_post: "Sign in to the hub portal, find this host in the host list, and open it.",
+      tip_connected_post: "Sign in to the hub portal and find this host in the host list; or open the WhaleLink app and tap it in the host list.",
       tip_reconnecting: "The tunnel dropped; it is reconnecting automatically — no action needed.",
       tip_disconnected: "Disconnected — config and auth are kept. Click Connect to resume.",
       tip_external: "This host is managed by the rdsh CLI/service; manage it with rdsh commands.",
@@ -126,6 +148,8 @@ window.__ModuleLoader__.load({
       .dsh-web-remote-accesscode{display:flex;align-items:center;gap:8px}
       .dsh-web-remote-accesscode input{flex:1;min-width:0}
       .dsh-web-remote-accesscode-badge{flex:0 0 auto;font-size:12px;line-height:22px;padding:0 10px;border-radius:11px;box-shadow:inset 0 0 0 1px var(--dsw-alias-border-l2);color:var(--dsw-alias-label-tertiary)}
+      .dsh-web-remote-scan{display:flex;flex-direction:column;align-items:center;gap:10px;padding:12px 0}
+      .dsh-web-remote-qr{width:180px;height:180px;border-radius:12px;box-shadow:0 2px 10px rgba(0,0,0,.15)}
       .dsh-web-remote-accesscode-badge.set{box-shadow:inset 0 0 0 1px var(--dsw-alias-state-success-primary);color:var(--dsw-alias-state-success-primary)}
       /* iOS（Safari / WKWebView，含微信等 App 内浏览器）对 computed font-size < 16px 的
          输入框，聚焦时会自动放大整页。面板里的字号是 13px，所以在窄屏/触屏下提到 16px；
@@ -145,7 +169,9 @@ window.__ModuleLoader__.load({
       document.head.appendChild(el);
     }
 
-    function Field({ label, value, disabled, placeholder, onChange, onFocus }) {
+    const DEFAULT_HUB = "https://rdsh.cn"; // R10④：构建期常量，自建分发时替换
+
+    function Field({ label, value, disabled, placeholder, onChange, onFocus, hint }) {
       return React.createElement(
         "div",
         { className: "dsh-web-remote-field" },
@@ -157,12 +183,13 @@ window.__ModuleLoader__.load({
           onChange: (e) => onChange(e.target.value),
           onFocus,
         }),
+        hint ? React.createElement("span", { className: "dsh-web-remote-tip" }, hint) : null,
       );
     }
 
     function Panel({ rpc, t }) {
       const [status, setStatus] = React.useState("unconfigured");
-      const [hub, setHub] = React.useState("");
+      const [hub, setHub] = React.useState(DEFAULT_HUB);
       const [name, setName] = React.useState("");
       const [token, setToken] = React.useState("");
       const [message, setMessage] = React.useState(undefined);
@@ -284,6 +311,73 @@ window.__ModuleLoader__.load({
         }
       };
 
+      const [scan, setScan] = React.useState(undefined); // { bindId, qrDataUri, expiresAt }
+      const [scanStatus, setScanStatus] = React.useState("idle"); // idle | showing | expired
+      const [tokenMode, setTokenMode] = React.useState(false); // 令牌接入是否展开
+      const [remaining, setRemaining] = React.useState(0);
+
+      const beginScan = async () => {
+        setBusy(true);
+        setMessage(undefined);
+        setTokenMode(false);
+        try {
+          const res = await rpc.call("/remote-access", "begin-scan", { args: { hub, name } });
+          if (!res.ok) {
+            setMessage(res.error ? res.error.message : "begin-scan failed");
+            return;
+          }
+          const v = res.value || {};
+          setScan(v);
+          setScanStatus("showing");
+          setRemaining(Math.max(0, Math.round(((v.expiresAt ?? 0) - Date.now()) / 1000)));
+        } finally {
+          setBusy(false);
+        }
+      };
+
+      const resetScan = () => {
+        setScan(undefined);
+        setScanStatus("idle");
+        setRemaining(0);
+        setMessage(undefined);
+      };
+
+      // 显示二维码期间：每 2s 轮询 scan-state，每秒倒计时
+      React.useEffect(() => {
+        if (scanStatus !== "showing") return;
+        let alive = true;
+        const tick = async () => {
+          try {
+            const res = await rpc.call("/remote-access", "scan-state", { args: {} });
+            if (!alive || !res.ok) return;
+            const st = res.value && res.value.status;
+            if (st === "expired") {
+              setScanStatus("expired");
+            } else if (st === "connecting" || st === "connected") {
+              resetScan();
+            }
+          } catch {
+            /* 瞬时错误忽略 */
+          }
+        };
+        void tick();
+        const poll = setInterval(() => void tick(), 2000);
+        const countdown = setInterval(() => {
+          setRemaining((r) => {
+            if (r <= 1) {
+              setScanStatus("expired");
+              return 0;
+            }
+            return r - 1;
+          });
+        }, 1000);
+        return () => {
+          alive = false;
+          clearInterval(poll);
+          clearInterval(countdown);
+        };
+      }, [scanStatus]);
+
       const disabled = busy || external;
       // 未接入态需要令牌；断开态可留空（复用已保存授权）
       const canConnect = !disabled && hub.trim() !== "" && (status !== "unconfigured" || token.trim() !== "");
@@ -295,7 +389,9 @@ window.__ModuleLoader__.load({
         React.createElement("span", null, t("status_" + status)),
       );
 
-      const form = showForm
+      const scanning = showForm && (scanStatus === "showing" || scanStatus === "expired");
+
+      const form = showForm && !scanning
         ? React.createElement(
             React.Fragment,
             null,
@@ -304,55 +400,87 @@ window.__ModuleLoader__.load({
               value: hub,
               disabled,
               placeholder: t("hubPlaceholder"),
+              hint: t("hubHint"),
               onChange: setHub,
-            }),
-            React.createElement(Field, {
-              label: t("joinToken"),
-              value: token !== "" ? token : savedToken ? "••••••••" : "",
-              disabled,
-              placeholder: t("tokenPlaceholder"),
-              onFocus: (e) => {
-                if (token === "" && savedToken) e.target.select();
-              },
-              onChange: setToken,
             }),
             React.createElement(Field, {
               label: t("name"),
               value: name,
               disabled,
               placeholder: t("namePlaceholder"),
+              hint: t("nameHint"),
               onChange: setName,
             }),
+            tokenMode
+              ? React.createElement(Field, {
+                  label: t("joinToken"),
+                  value: token !== "" ? token : savedToken ? "••••••••" : "",
+                  disabled,
+                  placeholder: t("tokenPlaceholder"),
+                  hint: t("tokenHint"),
+                  onFocus: (e) => {
+                    if (token === "" && savedToken) e.target.select();
+                  },
+                  onChange: setToken,
+                })
+              : null,
+          )
+        : null;
+
+      const scanScreen = scanning
+        ? React.createElement(
+            "div",
+            { className: "dsh-web-remote-scan" },
+            React.createElement("p", { className: "dsh-web-remote-tip" }, scanStatus === "expired" ? t("scanExpired") : t("scanTip")),
+            scan && scan.qrDataUri
+              ? React.createElement("img", { className: "dsh-web-remote-qr", src: scan.qrDataUri, alt: "QR" })
+              : scan && scan.bindId
+                ? React.createElement("p", { className: "dsh-web-remote-tip" }, "rdsh://bind?code=" + scan.bindId)
+                : null,
+            scanStatus === "showing"
+              ? React.createElement("p", { className: "dsh-web-remote-tip" }, t("scanExpiresIn").replace("{s}", String(remaining)))
+              : null,
+            React.createElement(
+              "div",
+              { className: "dsh-web-remote-actions" },
+              React.createElement("button", { className: "dsh-web-remote-btn dsh-web-remote-btn-primary", onClick: beginScan }, t("scanRefresh")),
+              React.createElement(
+                "button",
+                { className: "dsh-web-remote-btn", onClick: () => { resetScan(); setTokenMode(true); } },
+                t("scanSwitchToken"),
+              ),
+            ),
           )
         : null;
 
       const actions = external
         ? null
-        : React.createElement(
-            "div",
-            { className: "dsh-web-remote-actions" },
-            showForm
-              ? React.createElement(
-                  "button",
-                  { className: "dsh-web-remote-btn dsh-web-remote-btn-primary", disabled: !canConnect, onClick: connect },
-                  busy ? "…" : t("connect"),
-                )
-              : null,
-            showDisconnect
-              ? React.createElement(
-                  "button",
-                  { className: "dsh-web-remote-btn", disabled, onClick: disconnect },
-                  t("disconnect"),
-                )
-              : null,
-            showRevoke
-              ? React.createElement(
-                  "button",
-                  { className: "dsh-web-remote-btn dsh-web-remote-btn-danger", disabled, onClick: revoke },
-                  t("revoke"),
-                )
-              : null,
-          );
+        : showForm && !scanning
+          ? tokenMode
+            ? React.createElement(
+                "div",
+                { className: "dsh-web-remote-actions" },
+                React.createElement("button", { className: "dsh-web-remote-btn dsh-web-remote-btn-primary", disabled: !canConnect, onClick: connect }, busy ? "…" : t("tokenConnect")),
+                React.createElement("button", { className: "dsh-web-remote-btn", onClick: () => setTokenMode(false) }, t("scanConnect")),
+              )
+            : React.createElement(
+                "div",
+                { className: "dsh-web-remote-actions" },
+                React.createElement("button", { className: "dsh-web-remote-btn dsh-web-remote-btn-primary", disabled, onClick: beginScan }, busy ? "…" : t("scanConnect")),
+                React.createElement("button", { className: "dsh-web-remote-btn", onClick: () => setTokenMode(true) }, t("tokenConnect")),
+              )
+          : showDisconnect || showRevoke
+            ? React.createElement(
+                "div",
+                { className: "dsh-web-remote-actions" },
+                showDisconnect
+                  ? React.createElement("button", { className: "dsh-web-remote-btn", disabled, onClick: disconnect }, t("disconnect"))
+                  : null,
+                showRevoke
+                  ? React.createElement("button", { className: "dsh-web-remote-btn dsh-web-remote-btn-danger", disabled, onClick: revoke }, t("revoke"))
+                  : null,
+              )
+            : null;
 
       const tip =
         status === "connected"
@@ -462,9 +590,10 @@ window.__ModuleLoader__.load({
         "div",
         { className: "dsh-web-remote" },
         statusLine,
-        tip,
+        scanning ? null : tip,
         pickerRow,
         message ? React.createElement("p", { className: "dsh-web-remote-msg" }, message) : null,
+        scanScreen,
         form,
         compatToggle,
         accessCodeRow,

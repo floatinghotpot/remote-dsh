@@ -24,7 +24,7 @@ export { installService, uninstallService, serviceStatus, startService, stopServ
 export type { ServiceSpec } from "./service.ts";
 
 export const NAME = "rdsh-gateway";
-export { join, startJoin, registerJoin, detectInsecure, selfRevoke, patchLoopbackJs } from "./join.ts";
+export { join, startJoin, registerJoin, detectInsecure, selfRevoke, patchLoopbackJs, hubRequest } from "./join.ts";
 export type { JoinOptions, RegisterOutcome, JoinState, JoinHooks, StartJoinOptions, JoinHandle } from "./join.ts";
 export { startDirect, lanCandidates, isPrivateIpv4 } from "./direct.ts";
 export type { DirectOptions, DirectHandle } from "./direct.ts";
@@ -34,3 +34,4 @@ export { loadOrCreateDirectSecret, directSecretPath } from "./direct-secret.ts";
 export { readPersistedToken, clearPersistedToken } from "./token-store.ts";
 export { acquireJoinLock, releaseJoinLock, readJoinLock, JOIN_LOCK_PATH } from "./lock.ts";
 export type { JoinLock, JoinLockRole } from "./lock.ts";
+export { loadOrCreateE2eeKeyPair, e2eeKeyFilePath } from "./e2ee-key-store.ts";

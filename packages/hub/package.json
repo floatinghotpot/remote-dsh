@@ -22,12 +22,14 @@
   },
   "dependencies": {
     "nodemailer": "^6.10.1",
+    "qrcode": "^1.5.4",
     "rdsh-tunnel": "workspace:*",
     "sm-crypto": "^0.5.7",
     "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/nodemailer": "^6.4.24",
+    "@types/qrcode": "^1.5.5",
     "@types/sm-crypto": "^0.3.4",
     "@types/ws": "^8.5.10"
   },

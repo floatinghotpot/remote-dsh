@@ -83,6 +83,17 @@ export interface JoinTokenRow {
   createdAt: string;
 }
 
+export interface BindSessionRow {
+  id: string;
+  consumeTokenHash: string;
+  e2eePublicKey: string | null;
+  name: string | null;
+  ownerId: number | null;
+  status: "pending" | "approved" | "consumed";
+  createdAt: string;
+  expiresAt: number;
+}
+
 export interface HostShareRow {
   hostId: string;
   userId: number;
@@ -229,6 +240,16 @@ export class HubDb {
         expires_at INTEGER NOT NULL,
         revoked INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS bind_sessions (
+        id TEXT PRIMARY KEY,
+        consume_token_hash TEXT UNIQUE NOT NULL,
+        e2ee_public_key TEXT,
+        name TEXT,
+        owner_id INTEGER REFERENCES users(id),
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at TEXT NOT NULL,
+        expires_at INTEGER NOT NULL
       );
       CREATE TABLE IF NOT EXISTS host_share (
         host_id TEXT NOT NULL REFERENCES hosts(id),
@@ -413,6 +434,19 @@ export class HubDb {
       expiresAt: Number(row.expires_at),
       revoked: Number(row.revoked),
       createdAt: String(row.created_at),
+    };
+  }
+
+  private mapBindSession(row: Record<string, unknown>): BindSessionRow {
+    return {
+      id: String(row.id),
+      consumeTokenHash: String(row.consume_token_hash),
+      e2eePublicKey: row.e2ee_public_key === null || row.e2ee_public_key === undefined ? null : String(row.e2ee_public_key),
+      name: row.name === null || row.name === undefined ? null : String(row.name),
+      ownerId: row.owner_id === null || row.owner_id === undefined ? null : Number(row.owner_id),
+      status: String(row.status) as BindSessionRow["status"],
+      createdAt: String(row.created_at),
+      expiresAt: Number(row.expires_at),
     };
   }
 
@@ -730,6 +764,35 @@ export class HubDb {
   revokeJoinToken(id: string): boolean {
     const info = this.db.prepare("UPDATE join_tokens SET revoked = 1 WHERE id = ?").run(id);
     return info.changes > 0;
+  }
+
+  createBindSession(id: string, consumeTokenHash: string, e2eePublicKey: string | null, name: string | null, expiresAt: number, now = new Date().toISOString()): BindSessionRow {
+    this.db
+      .prepare("INSERT INTO bind_sessions (id, consume_token_hash, e2ee_public_key, name, status, created_at, expires_at) VALUES (?, ?, ?, ?, 'pending', ?, ?)")
+      .run(id, consumeTokenHash, e2eePublicKey, name, now, expiresAt);
+    return this.getBindSession(id) as BindSessionRow;
+  }
+
+  getBindSession(id: string): BindSessionRow | null {
+    const row = this.db.prepare("SELECT * FROM bind_sessions WHERE id = ?").get(id);
+    return row === undefined ? null : this.mapBindSession(row as unknown as Record<string, unknown>);
+  }
+
+  getBindSessionByConsumeTokenHash(hash: string): BindSessionRow | null {
+    const row = this.db.prepare("SELECT * FROM bind_sessions WHERE consume_token_hash = ?").get(hash);
+    return row === undefined ? null : this.mapBindSession(row as unknown as Record<string, unknown>);
+  }
+
+  approveBindSession(id: string, ownerId: number): boolean {
+    return this.db.prepare("UPDATE bind_sessions SET owner_id = ?, status = 'approved' WHERE id = ? AND status = 'pending'").run(ownerId, id).changes > 0;
+  }
+
+  consumeBindSession(id: string): boolean {
+    return this.db.prepare("UPDATE bind_sessions SET status = 'consumed' WHERE id = ? AND status = 'approved'").run(id).changes > 0;
+  }
+
+  pruneExpiredBindSessions(now = Date.now()): void {
+    this.db.prepare("DELETE FROM bind_sessions WHERE expires_at < ?").run(now);
   }
 
   pruneExpiredJoinTokens(now = Date.now()): void {

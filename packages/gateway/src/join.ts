@@ -162,7 +162,7 @@ const RECONNECT_BASE_MS = 1_000;
 const RECONNECT_MAX_MS = 60_000;
 
 /** hub HTTP 调用（node:https 支持自签跳过校验 —— undici fetch 不受 NODE_TLS_REJECT_UNAUTHORIZED 影响）。 */
-function hubRequest(
+export function hubRequest(
   baseUrl: string,
   path: string,
   opts: { method: string; insecure: boolean; body?: unknown },
