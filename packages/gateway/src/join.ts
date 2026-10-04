@@ -1150,7 +1150,14 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
         client.terminate();
         return;
       }
-      for (const frame of frames) handleFrame(frame);
+      for (const frame of frames) {
+        // 单帧处理异常不能崩宿主进程：对端（含旧版客户端）可能发来不完整/不兼容的帧。
+        try {
+          handleFrame(frame);
+        } catch (err) {
+          log("error", `frame handling failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
     });
 
     client.on("close", () => {
@@ -1169,7 +1176,14 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
       }
       setState("reconnecting", { delayMs: reconnectDelay });
       log("info", `tunnel lost — reconnecting in ${Math.round(reconnectDelay / 1000)}s...`);
-      setTimeout(connect, reconnectDelay + Math.random() * 500);
+      // 定时器里的异常不会被上层捕获 —— 必须自己兜住，否则一次重连失败就崩掉宿主进程。
+      setTimeout(() => {
+        try {
+          connect();
+        } catch (err) {
+          log("error", `reconnect failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }, reconnectDelay + Math.random() * 500);
       reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS);
     });
     client.on("error", () => {

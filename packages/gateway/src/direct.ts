@@ -62,6 +62,9 @@ export async function startDirect(opts: DirectOptions): Promise<DirectHandle> {
     actualPort,
     candidates: () => lanCandidates(actualPort),
     stop: async () => {
+      // 先强制断开所有连接（含 keep-alive）：否则有活跃连接时 server.close() 的回调
+      // 永不触发，面板「断开」的 RPC 会一直挂住、按钮卡在 loading。
+      gateway.server.closeAllConnections();
       await new Promise<void>((resolve) => gateway.server.close(() => resolve()));
       gateway.dispose();
     },

@@ -31,7 +31,7 @@ export type { DirectOptions, DirectHandle } from "./direct.ts";
 export { createDirectTicketManager } from "./direct-ticket.ts";
 export type { DirectTicketManager } from "./direct-ticket.ts";
 export { loadOrCreateDirectSecret, directSecretPath } from "./direct-secret.ts";
-export { readPersistedToken, clearPersistedToken } from "./token-store.ts";
+export { readPersistedToken, persistToken, clearPersistedToken } from "./token-store.ts";
 export { acquireJoinLock, releaseJoinLock, readJoinLock, JOIN_LOCK_PATH } from "./lock.ts";
 export type { JoinLock, JoinLockRole } from "./lock.ts";
 export { loadOrCreateE2eeKeyPair, e2eeKeyFilePath } from "./e2ee-key-store.ts";
