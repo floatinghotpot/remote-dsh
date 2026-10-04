@@ -341,3 +341,14 @@ test("登录限流：连续失败 5 次 → 429", async () => {
   const locked = await post("/api/auth/login", { name: "alice", password: "pw123456" });
   assert.equal(locked.status, 429);
 });
+
+test("周期清理：pruneExpiredJoinTokens 只删过期 join token", async () => {
+  const owner = db.createUser("irene", await hashPassword("pw123456"));
+  db.createJoinToken("jt-expired", null, owner.id, sha256(randomToken()), Date.now() - 1000);
+  db.createJoinToken("jt-valid", null, owner.id, sha256(randomToken()), Date.now() + 3600_000);
+
+  db.pruneExpiredJoinTokens();
+
+  assert.equal(db.getJoinTokenById("jt-expired"), null, "过期 join token 应被清理");
+  assert.notEqual(db.getJoinTokenById("jt-valid"), null, "未过期 join token 应保留");
+});

@@ -52,6 +52,10 @@ export async function serveHub(opts: HubServeOptions): Promise<void> {
   const pruneBindSessions = (): void => db.pruneExpiredBindSessions();
   pruneBindSessions();
   setInterval(pruneBindSessions, 10 * 60 * 1000).unref();
+  // join token（授权令牌）清理：启动清一次 + 每天清（默认 30 天 TTL）
+  const pruneJoinTokens = (): void => db.pruneExpiredJoinTokens();
+  pruneJoinTokens();
+  setInterval(pruneJoinTokens, 24 * 3600 * 1000).unref();
   // 每日快照备份：VACUUM INTO（默认 <hub.json 同目录>/backups，保留 7 天）
   const backupDir = config.backup?.dir ?? join(dirname(config.dbPath), "backups");
   const backupKeepDays = config.backup?.keepDays ?? 7;
