@@ -641,6 +641,10 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, runti
     await handleAppleLogin(req, res, runtime);
     return true;
   }
+  if (path === "/api/app/apple/bind" && method === "POST") {
+    await handleAppleBind(req, res, runtime);
+    return true;
+  }
   // ---- App 微信登录（/api/app/wechat/*，JSON 会话 + scheme 回跳）----
   if (path === "/api/app/wechat/login" && method === "POST") {
     await handleAppWechatLogin(req, res, runtime);
@@ -725,6 +729,14 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, runti
   }
   if (path === "/api/account/phone/unbind" && method === "POST") {
     await handleUnbindPhone(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/account/wechat/unbind" && method === "POST") {
+    await handleUnbindWechat(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/account/apple/unbind" && method === "POST") {
+    await handleUnbindApple(req, res, runtime);
     return true;
   }
   if (path === "/api/billing/plans" && method === "GET") {
@@ -1023,6 +1035,86 @@ async function handleAppleLogin(req: IncomingMessage, res: ServerResponse, runti
   appleLoginLimiter.clear(ip);
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({ accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, user: { id: user.id, name: user.name } }));
+}
+
+/** 已登录用户绑定 Apple：验 identityToken → 越权检测 → 绑 apple_sub（+ 存令牌供删号吊销）。 */
+async function handleAppleBind(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const cfg = appleLoginConfig(runtime);
+  if (cfg === null) {
+    appleLoginError(res);
+    return;
+  }
+  const auth = authenticate(req, runtime);
+  if (auth === null) {
+    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
+    return;
+  }
+  const currentUser = runtime.db.getUserById(auth.userId);
+  if (currentUser === null || currentUser.accountStatus !== "active") {
+    writeError(res, 403, "FORBIDDEN", "account not active");
+    return;
+  }
+  const body = await readJsonBody(req);
+  const identityToken = typeof body?.identity_token === "string" ? body.identity_token : "";
+  const nonce = typeof body?.nonce === "string" ? body.nonce : "";
+  const code = typeof body?.authorization_code === "string" ? body.authorization_code : "";
+  const fullName = typeof body?.full_name === "string" && body.full_name !== "" ? body.full_name : null;
+  if (identityToken === "" || nonce === "") {
+    writeError(res, 400, "BAD_REQUEST", "identity_token and nonce are required");
+    return;
+  }
+
+  let privateKeyPem: string;
+  try {
+    privateKeyPem = await loadApplePrivateKey(cfg.privateKeyPath);
+  } catch {
+    writeError(res, 503, "APPLE_KEY_ERROR", "failed to load apple private key");
+    return;
+  }
+  const clientSecret = makeAppleClientSecret({
+    teamId: cfg.teamId,
+    keyId: cfg.keyId,
+    clientId: cfg.clientId,
+    privateKeyPem,
+    nowMs: Date.now(),
+  });
+
+  const claims = await verifyAppleIdToken(identityToken, { clientId: cfg.clientId, nonce, nowMs: Date.now(), fetchImpl: fetch });
+  if (claims === null) {
+    writeError(res, 401, "APPLE_IDENTITY_INVALID", "apple identity token verification failed");
+    return;
+  }
+
+  // 越权检测：该 Apple 身份已被别的账号绑定
+  const holder = runtime.db.getUserByAppleSub(claims.sub);
+  if (holder !== null && holder.id !== auth.userId) {
+    writeError(res, 409, "APPLE_ALREADY_BOUND", "this apple id is already bound to another account");
+    return;
+  }
+
+  // 换 code 存令牌（尽力而为；供删号吊销，失败不阻断绑定）
+  if (code !== "") {
+    const tok = await exchangeAppleCode(code, { clientId: cfg.clientId, clientSecret, fetchImpl: fetch });
+    if (tok !== null) {
+      runtime.db.storeAppleTokens(
+        auth.userId,
+        tok.refreshToken !== null ? encryptToken(tok.refreshToken, cfg.tokenEncKey) : null,
+        encryptToken(tok.accessToken, cfg.tokenEncKey),
+        Date.now(),
+      );
+    }
+  }
+
+  // 绑定：Apple 仅首次授权返回 email/姓名，重绑时用兜底避免清空已有值
+  runtime.db.bindApple(
+    auth.userId,
+    claims.sub,
+    claims.email ?? currentUser.appleEmail,
+    fullName ?? currentUser.appleFullName,
+  );
+  runtime.db.recordAudit(auth.userId, "apple.bind.ok", {}, clientIp(req, runtime));
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ ok: true }));
 }
 
 /** 未认证用户登录：生成一次性 state（含回跳 next）→ 302 到 qrconnect（PC 扫码 / 微信内一键）。 */
@@ -2608,10 +2700,26 @@ async function handleVerifyEmail(req: IncomingMessage, res: ServerResponse, runt
   res.end(JSON.stringify({ ok: true }));
 }
 
+/** 计算「排除某一种方式后」剩余的非密码登录方式数（已验证邮箱/已验证手机/微信/苹果）。
+ *  密码不计入（可遗忘）；未验证邮箱/手机不计入（不能用于找回/登录）。 */
+export function countOtherLoginMethods(user: UserRow, exclude: "email" | "phone" | "wechat" | "apple"): number {
+  let n = 0;
+  if (exclude !== "email" && user.email !== null && user.emailVerified === 1) n++;
+  if (exclude !== "phone" && user.phone !== null && user.phoneVerified === 1) n++;
+  if (exclude !== "wechat" && (user.wxwebOpenid !== null || user.wxappOpenid !== null)) n++;
+  if (exclude !== "apple" && user.appleSub !== null) n++;
+  return n;
+}
+
 async function handleUnbindEmail(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
   const auth = authenticate(req, runtime);
   if (auth === null) {
     writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
+    return;
+  }
+  const user = runtime.db.getUserById(auth.userId);
+  if (user !== null && countOtherLoginMethods(user, "email") === 0) {
+    writeError(res, 409, "LAST_LOGIN_METHOD", "must keep at least one login method");
     return;
   }
   runtime.db.clearEmail(auth.userId);
@@ -2682,8 +2790,65 @@ async function handleUnbindPhone(req: IncomingMessage, res: ServerResponse, runt
     writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
     return;
   }
+  const user = runtime.db.getUserById(auth.userId);
+  if (user !== null && countOtherLoginMethods(user, "phone") === 0) {
+    writeError(res, 409, "LAST_LOGIN_METHOD", "must keep at least one login method");
+    return;
+  }
   runtime.db.clearPhone(auth.userId);
   runtime.db.recordAudit(auth.userId, "phone.unbind", {}, clientIp(req, runtime));
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ ok: true }));
+}
+
+/** 解绑微信：清网站应用 + 移动应用 openid + unionid + 昵称头像。 */
+async function handleUnbindWechat(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const auth = authenticate(req, runtime);
+  if (auth === null) {
+    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
+    return;
+  }
+  const user = runtime.db.getUserById(auth.userId);
+  if (user !== null && countOtherLoginMethods(user, "wechat") === 0) {
+    writeError(res, 409, "LAST_LOGIN_METHOD", "must keep at least one login method");
+    return;
+  }
+  runtime.db.clearWechat(auth.userId);
+  runtime.db.recordAudit(auth.userId, "wechat.unbind", {}, clientIp(req, runtime));
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ ok: true }));
+}
+
+/** 解绑 Apple：吊销令牌（尽力）→ 清 sub/email/姓名 → 删令牌。 */
+async function handleUnbindApple(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const auth = authenticate(req, runtime);
+  if (auth === null) {
+    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
+    return;
+  }
+  const user = runtime.db.getUserById(auth.userId);
+  if (user !== null && countOtherLoginMethods(user, "apple") === 0) {
+    writeError(res, 409, "LAST_LOGIN_METHOD", "must keep at least one login method");
+    return;
+  }
+  const appleCfg = appleLoginConfig(runtime);
+  if (appleCfg !== null) {
+    const atok = runtime.db.getAppleTokens(auth.userId);
+    if (atok !== null && atok.refreshTokenEnc !== null) {
+      const refreshToken = decryptToken(atok.refreshTokenEnc, appleCfg.tokenEncKey);
+      if (refreshToken !== null) {
+        try {
+          const key = await loadApplePrivateKey(appleCfg.privateKeyPath);
+          const clientSecret = makeAppleClientSecret({ teamId: appleCfg.teamId, keyId: appleCfg.keyId, clientId: appleCfg.clientId, privateKeyPem: key, nowMs: Date.now() });
+          await revokeAppleToken(refreshToken, { clientId: appleCfg.clientId, clientSecret, fetchImpl: fetch });
+        } catch {
+          // 吊销失败不阻断解绑
+        }
+      }
+    }
+  }
+  runtime.db.clearApple(auth.userId);
+  runtime.db.recordAudit(auth.userId, "apple.unbind", {}, clientIp(req, runtime));
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({ ok: true }));
 }
@@ -3276,8 +3441,9 @@ async function handleAccountInfo(req: IncomingMessage, res: ServerResponse, runt
       phone: user.phone,
       phoneVerified: user.phoneVerified === 1,
       totpEnabled: user.totpSecret !== null,
-      wechatBound: user.wxwebOpenid !== null,
+      wechatBound: user.wxwebOpenid !== null || user.wxappOpenid !== null,
       wechatNickname: user.wechatNickname,
+      appleBound: user.appleSub !== null,
       smsEnabled: runtime.config.sms !== undefined,
       planStatus: user.planStatus,
       planExpiresAt: user.planExpiresAt,

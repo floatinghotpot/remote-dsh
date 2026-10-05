@@ -863,6 +863,19 @@ export class HubDb {
     this.db.prepare("UPDATE users SET email = NULL, email_verified = 0 WHERE id = ?").run(id);
   }
 
+  /** 解绑微信（清网站应用 openid + 移动应用 openid + unionid + 昵称头像）。 */
+  clearWechat(id: number): void {
+    this.db
+      .prepare("UPDATE users SET wxweb_openid = NULL, wxapp_openid = NULL, wechat_unionid = NULL, wechat_nickname = NULL, wechat_avatar = NULL WHERE id = ?")
+      .run(id);
+  }
+
+  /** 解绑 Apple（清 sub/email/姓名 + 删令牌）。 */
+  clearApple(id: number): void {
+    this.db.prepare("UPDATE users SET apple_sub = NULL, apple_email = NULL, apple_full_name = NULL WHERE id = ?").run(id);
+    this.db.prepare("DELETE FROM apple_tokens WHERE user_id = ?").run(id);
+  }
+
   setTotpSecret(id: number, secret: string): void {
     this.db.prepare("UPDATE users SET totp_secret = ? WHERE id = ?").run(secret, id);
   }
