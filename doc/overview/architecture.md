@@ -97,7 +97,7 @@
 
 - 范围：所有客户端 ↔ hub（浏览器 portal、App 原生壳、weapp、未来第三方）
 - 协议：`JSON over HTTPS`（REST）+ `WSS` 事件流
-- 端点：`/api/auth/login`、`/api/auth/refresh`、`/api/hosts`、`WSS /api/events`、`/h/<hostId>/...` 进入 host（Set-Cookie 选 host，DSH 零改动）；SaaS 增补 `billing`（套餐 / 订阅 / 支付下单 / 回调）与 `wechat/oauth/*`（JSAPI openid）
+- 端点：`/api/auth/login`、`/api/auth/refresh`、`/api/hosts`、`WSS /api/events`、`/h/<hostId>/...` 进入 host（Set-Cookie 选 host，DSH 零改动）；托管侧另增 `billing`（计费相关端点）与 `wechat/oauth/*`（JSAPI openid）
 - 统一约定：路径 `/api/*`；错误 `{ error: { code, message } }`；时间 ISO 8601；认证 `Authorization: Bearer <JWT>`（原生壳）/ Cookie（WebView 内页面）
 - **契约纪律**：文档先行（M3 前冻结），变更走协议变更流程
 

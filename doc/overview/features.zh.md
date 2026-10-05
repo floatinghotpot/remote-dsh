@@ -59,6 +59,5 @@
 - [x] CLI（host.json `gateway.accessCode`）或 DSH 插件面板双通道设置（面板即时生效）
 
 **M6+ — 规划中**
-- [ ] 商业化托管 hub（SaaS：开放注册、订阅计费、微信/支付宝支付）
 - [ ] 手机 App（Android / iOS）
 - [ ] 微信小程序
