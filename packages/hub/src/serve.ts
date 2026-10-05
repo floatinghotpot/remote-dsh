@@ -95,6 +95,9 @@ export async function serveHub(opts: HubServeOptions): Promise<void> {
     beian: config.beian,
     site: config.site,
     wechatLogin: config.wechatLogin,
+    wechatAppLogin: config.wechatAppLogin,
+    appSchemes: config.appSchemes,
+    appleLogin: config.appleLogin,
     e2ee: config.e2ee,
     backup: { dir: backupDir, keepDays: backupKeepDays },
   });

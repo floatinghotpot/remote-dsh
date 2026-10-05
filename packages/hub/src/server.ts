@@ -25,7 +25,7 @@ import { authenticate, clientIp, handleApi, writeError, sweepBilling } from "./a
 import type { HubRuntime } from "./api.ts";
 import type { EmailConfig } from "./email/types.ts";
 import type { SmsConfig } from "./sms/types.ts";
-import type { CaptchaConfig, SecurityConfig, BillingConfig, BeianConfig, SiteConfig, E2eeConfig, BackupConfig, WechatLoginConfig } from "./config.ts";
+import type { CaptchaConfig, SecurityConfig, BillingConfig, BeianConfig, SiteConfig, E2eeConfig, BackupConfig, WechatLoginConfig, WechatAppLoginConfig, AppleLoginConfig } from "./config.ts";
 import { TunnelConn, TunnelRegistry } from "./tunnel.ts";
 import type { TunnelTimings } from "./tunnel.ts";
 import { EventHub, createEventsServer } from "./events.ts";
@@ -59,6 +59,12 @@ export interface HubServerOptions {
   beian?: BeianConfig;
   /** 微信登录（12-portal-wechat-login，serve.ts 从 hub.json 传入）。 */
   wechatLogin?: WechatLoginConfig;
+  /** App 微信登录（移动应用，serve.ts 从 hub.json 传入）。 */
+  wechatAppLogin?: WechatAppLoginConfig;
+  /** App 回跳 scheme 白名单（serve.ts 从 hub.json 传入）。 */
+  appSchemes?: string[];
+  /** 苹果登录（Sign in with Apple，serve.ts 从 hub.json 传入）。 */
+  appleLogin?: AppleLoginConfig;
   /** 站点信息（portal 页脚导航，serve.ts 从 hub.json 传入）。 */
   site?: SiteConfig;
   /** 端到端加密策略（serve.ts 从 hub.json 传入）。 */
@@ -146,6 +152,9 @@ export async function startHubServer(opts: HubServerOptions): Promise<RunningHub
       beian: opts.beian,
       site: opts.site,
       wechatLogin: opts.wechatLogin,
+      wechatAppLogin: opts.wechatAppLogin,
+      appSchemes: opts.appSchemes,
+      appleLogin: opts.appleLogin,
       e2ee: opts.e2ee,
       backup: opts.backup,
     },
