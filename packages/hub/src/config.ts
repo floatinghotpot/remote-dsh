@@ -119,6 +119,20 @@ export interface WechatLoginConfig {
   redirectUri: string;
 }
 
+/** 苹果登录（Sign in with Apple，仅 iOS App）。凭据一律走配置，密钥不入库。 */
+export interface AppleLoginConfig {
+  /** Apple Developer 的 Team ID */
+  teamId: string;
+  /** 「Sign in with Apple」私钥的 Key ID */
+  keyId: string;
+  /** Client ID（原生 iOS = bundleId，如 com.unicgames.rdshapp） */
+  clientId: string;
+  /** 「Sign in with Apple」私钥（.p8，PKCS#8 PEM）文件路径；内容不入库 */
+  privateKeyPath: string;
+  /** 令牌加密密钥（64 位 hex = 32 字节，AES-256-GCM） */
+  tokenEncKey: string;
+}
+
 export interface HubConfig {
   host: string;
   port: number;
@@ -156,6 +170,8 @@ export interface HubConfig {
   site?: SiteConfig;
   /** 微信登录（网站应用 AppID；缺省 → 微信登录禁用） */
   wechatLogin?: WechatLoginConfig;
+  /** 苹果登录（Sign in with Apple；缺省 → 苹果登录禁用） */
+  appleLogin?: AppleLoginConfig;
 }
 
 export const DEFAULT_HUB_CONFIG_PATH = join(homedir(), ".rdsh", "hub.json");
@@ -243,6 +259,7 @@ export function normalizeHubConfig(raw: unknown, source = "config"): HubConfig {
   if (cfg.beian !== undefined) out.beian = normalizeBeian(cfg.beian, source);
   if (cfg.site !== undefined) out.site = normalizeSite(cfg.site, source);
   if (cfg.wechatLogin !== undefined) out.wechatLogin = normalizeWechatLogin(cfg.wechatLogin, source);
+  if (cfg.appleLogin !== undefined) out.appleLogin = normalizeAppleLogin(cfg.appleLogin, source);
   out.security = normalizeSecurity(cfg.security, source);
   return out;
 }
@@ -487,4 +504,22 @@ function normalizeWechatLogin(raw: unknown, source: string): WechatLoginConfig {
     throw new Error(`${source}: "wechatLogin.redirectUri" must be a valid absolute URL`);
   }
   return { appid: w.appid as string, appSecret: w.appSecret as string, redirectUri: w.redirectUri as string };
+}
+
+function normalizeAppleLogin(raw: unknown, source: string): AppleLoginConfig {
+  if (typeof raw !== "object" || raw === null) throw new Error(`${source}: "appleLogin" must be an object`);
+  const a = raw as Record<string, unknown>;
+  for (const key of ["teamId", "keyId", "clientId", "privateKeyPath"] as const) {
+    if (typeof a[key] !== "string" || a[key] === "") throw new Error(`${source}: "appleLogin.${key}" must be a non-empty string`);
+  }
+  if (typeof a.tokenEncKey !== "string" || !/^[0-9a-fA-F]{64}$/.test(a.tokenEncKey)) {
+    throw new Error(`${source}: "appleLogin.tokenEncKey" must be a 64-char hex string (32 bytes)`);
+  }
+  return {
+    teamId: a.teamId as string,
+    keyId: a.keyId as string,
+    clientId: a.clientId as string,
+    privateKeyPath: a.privateKeyPath as string,
+    tokenEncKey: a.tokenEncKey as string,
+  };
 }

@@ -53,6 +53,12 @@ export interface UserRow {
   wechatNickname: string | null;
   /** 微信头像 URL（仅展示） */
   wechatAvatar: string | null;
+  /** Apple 用户标识（sub；App 内唯一；null = 未绑定） */
+  appleSub: string | null;
+  /** Apple 邮箱（仅首次授权返回；私有中继邮箱合法） */
+  appleEmail: string | null;
+  /** Apple 姓名（仅首次授权返回，展示用） */
+  appleFullName: string | null;
 }
 
 export interface HostRow {
@@ -214,7 +220,10 @@ export class HubDb {
         wechat_unionid TEXT,
         wechat_nickname TEXT,
         wechat_avatar TEXT,
-        last_login_at INTEGER
+        last_login_at INTEGER,
+        apple_sub TEXT,
+        apple_email TEXT,
+        apple_full_name TEXT
       );
       CREATE TABLE IF NOT EXISTS hosts (
         id TEXT PRIMARY KEY,
@@ -321,6 +330,12 @@ export class HubDb {
         paid_at INTEGER NOT NULL,
         raw TEXT NOT NULL DEFAULT '{}'
       );
+      CREATE TABLE IF NOT EXISTS apple_tokens (
+        user_id INTEGER PRIMARY KEY REFERENCES users(id),
+        refresh_token TEXT,
+        access_token TEXT,
+        updated_at INTEGER NOT NULL DEFAULT 0
+      );
     `);
     // 迁移守卫：既有库补列（SQLite ALTER ADD COLUMN 不支持 UNIQUE，邮箱唯一用独立索引）
     const userCols = new Set(
@@ -345,6 +360,9 @@ export class HubDb {
       ["wechat_nickname", "wechat_nickname TEXT"],
       ["wechat_avatar", "wechat_avatar TEXT"],
       ["last_login_at", "last_login_at INTEGER"],
+      ["apple_sub", "apple_sub TEXT"],
+      ["apple_email", "apple_email TEXT"],
+      ["apple_full_name", "apple_full_name TEXT"],
     ];
     for (const [name, ddl] of addCols) {
       if (!userCols.has(name)) this.db.exec(`ALTER TABLE users ADD COLUMN ${ddl}`);
@@ -353,6 +371,7 @@ export class HubDb {
     this.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone ON users(phone);`);
     this.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_wxweb_openid ON users(wxweb_openid);`);
     this.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_wechat_unionid ON users(wechat_unionid);`);
+    this.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_apple_sub ON users(apple_sub);`);
     const hostCols = new Set(
       (this.db.prepare("PRAGMA table_info(hosts)").all() as unknown as Array<{ name: string }>).map((c) => c.name),
     );
@@ -400,6 +419,9 @@ export class HubDb {
       wechatUnionid: row.wechat_unionid === null || row.wechat_unionid === undefined ? null : String(row.wechat_unionid),
       wechatNickname: row.wechat_nickname === null || row.wechat_nickname === undefined ? null : String(row.wechat_nickname),
       wechatAvatar: row.wechat_avatar === null || row.wechat_avatar === undefined ? null : String(row.wechat_avatar),
+      appleSub: row.apple_sub === null || row.apple_sub === undefined ? null : String(row.apple_sub),
+      appleEmail: row.apple_email === null || row.apple_email === undefined ? null : String(row.apple_email),
+      appleFullName: row.apple_full_name === null || row.apple_full_name === undefined ? null : String(row.apple_full_name),
     };
   }
 
@@ -625,6 +647,7 @@ export class HubDb {
       this.db.prepare("DELETE FROM payments WHERE user_id = ?").run(id);
       this.db.prepare("DELETE FROM orders WHERE user_id = ?").run(id);
       this.db.prepare("DELETE FROM subscriptions WHERE user_id = ?").run(id);
+      this.db.prepare("DELETE FROM apple_tokens WHERE user_id = ?").run(id);
       this.db.prepare("DELETE FROM sms_codes WHERE user_id = ?").run(id);
       this.db.prepare("DELETE FROM users WHERE id = ?").run(id);
       this.db.exec("COMMIT");
@@ -836,6 +859,56 @@ export class HubDb {
   getUserByWechatUnionid(unionid: string): UserRow | null {
     const row = this.db.prepare("SELECT * FROM users WHERE wechat_unionid = ?").get(unionid);
     return row === undefined ? null : this.mapUser(row as unknown as Record<string, unknown>);
+  }
+
+  getUserByAppleSub(sub: string): UserRow | null {
+    const row = this.db.prepare("SELECT * FROM users WHERE apple_sub = ?").get(sub);
+    return row === undefined ? null : this.mapUser(row as unknown as Record<string, unknown>);
+  }
+
+  /** Apple 登录自动建号：active + 不可用密码（禁密码登录）+ apple 身份字段。 */
+  createAppleUser(name: string, sub: string, email: string | null, fullName: string | null, now = new Date().toISOString()): UserRow {
+    const info = this.db
+      .prepare(
+        "INSERT INTO users (name, password_hash, created_at, must_change, account_status, apple_sub, apple_email, apple_full_name) VALUES (?, '!apple', ?, 0, 'active', ?, ?, ?)",
+      )
+      .run(name, now, sub, email, fullName);
+    const id = Number(info.lastInsertRowid);
+    const row = this.db.prepare("SELECT * FROM users WHERE id = ?").get(id);
+    return this.mapUser(row as unknown as Record<string, unknown>);
+  }
+
+  /** 绑定/补记 Apple 身份（首次的 email/fullName）。 */
+  bindApple(id: number, sub: string, email: string | null, fullName: string | null): void {
+    this.db
+      .prepare("UPDATE users SET apple_sub = ?, apple_email = ?, apple_full_name = ? WHERE id = ?")
+      .run(sub, email, fullName, id);
+  }
+
+  /** 存 Apple 令牌（**已加密**密文；加密在调用方，DB 不感知明文）。 */
+  storeAppleTokens(userId: number, refreshTokenEnc: string | null, accessTokenEnc: string | null, nowMs = Date.now()): void {
+    this.db
+      .prepare(
+        "INSERT INTO apple_tokens (user_id, refresh_token, access_token, updated_at) VALUES (?, ?, ?, ?) " +
+          "ON CONFLICT(user_id) DO UPDATE SET refresh_token = excluded.refresh_token, access_token = excluded.access_token, updated_at = excluded.updated_at",
+      )
+      .run(userId, refreshTokenEnc, accessTokenEnc, nowMs);
+  }
+
+  getAppleTokens(userId: number): { refreshTokenEnc: string | null; accessTokenEnc: string | null; updatedAt: number } | null {
+    const row = this.db.prepare("SELECT * FROM apple_tokens WHERE user_id = ?").get(userId) as
+      | { refresh_token: string | null; access_token: string | null; updated_at: number }
+      | undefined;
+    if (row === undefined) return null;
+    return {
+      refreshTokenEnc: row.refresh_token === null || row.refresh_token === undefined ? null : String(row.refresh_token),
+      accessTokenEnc: row.access_token === null || row.access_token === undefined ? null : String(row.access_token),
+      updatedAt: Number(row.updated_at ?? 0),
+    };
+  }
+
+  deleteAppleTokens(userId: number): void {
+    this.db.prepare("DELETE FROM apple_tokens WHERE user_id = ?").run(userId);
   }
 
   /** 登录失败计数 +1，返回新值。 */
@@ -1179,10 +1252,11 @@ export class HubDb {
       this.db.prepare("DELETE FROM refresh_tokens WHERE user_id = ?").run(id);
       this.db.prepare("DELETE FROM hosts WHERE owner_id = ?").run(id);
       this.db.prepare("DELETE FROM subscriptions WHERE user_id = ?").run(id);
+      this.db.prepare("DELETE FROM apple_tokens WHERE user_id = ?").run(id);
       // 墓碑：抹除个人数据 + 释放 name（可重注册）；orders/payments/audit 保留（账务与留痕）
       this.db
         .prepare(
-          "UPDATE users SET name = ?, password_hash = '!deleted', email = NULL, phone = NULL, email_verified = 0, phone_verified = 0, totp_secret = NULL, account_status = 'deleted', plan_status = NULL, plan_expires_at = NULL, trial_started_at = NULL WHERE id = ?",
+          "UPDATE users SET name = ?, password_hash = '!deleted', email = NULL, phone = NULL, email_verified = 0, phone_verified = 0, totp_secret = NULL, account_status = 'deleted', plan_status = NULL, plan_expires_at = NULL, trial_started_at = NULL, apple_sub = NULL, apple_email = NULL, apple_full_name = NULL WHERE id = ?",
         )
         .run(`deleted-${id}`, id);
       this.db.exec("COMMIT");
