@@ -119,6 +119,14 @@ export interface WechatLoginConfig {
   redirectUri: string;
 }
 
+/** 微信登录配置（移动应用 AppID，仅 App SDK 登录；独立于网站应用与支付）。 */
+export interface WechatAppLoginConfig {
+  /** 微信开放平台移动应用 AppID */
+  appid: string;
+  /** 移动应用 AppSecret（仅服务端） */
+  appSecret: string;
+}
+
 /** 苹果登录（Sign in with Apple，仅 iOS App）。凭据一律走配置，密钥不入库。 */
 export interface AppleLoginConfig {
   /** Apple Developer 的 Team ID */
@@ -170,6 +178,10 @@ export interface HubConfig {
   site?: SiteConfig;
   /** 微信登录（网站应用 AppID；缺省 → 微信登录禁用） */
   wechatLogin?: WechatLoginConfig;
+  /** 微信 App 登录（移动应用 AppID；缺省 → App 微信登录禁用） */
+  wechatAppLogin?: WechatAppLoginConfig;
+  /** 允许回跳的 App scheme 白名单（不含 `://`，如 `["rdshapp"]`；缺省 → 空，服务端回跳安全失败） */
+  appSchemes?: string[];
   /** 苹果登录（Sign in with Apple；缺省 → 苹果登录禁用） */
   appleLogin?: AppleLoginConfig;
 }
@@ -259,6 +271,8 @@ export function normalizeHubConfig(raw: unknown, source = "config"): HubConfig {
   if (cfg.beian !== undefined) out.beian = normalizeBeian(cfg.beian, source);
   if (cfg.site !== undefined) out.site = normalizeSite(cfg.site, source);
   if (cfg.wechatLogin !== undefined) out.wechatLogin = normalizeWechatLogin(cfg.wechatLogin, source);
+  if (cfg.wechatAppLogin !== undefined) out.wechatAppLogin = normalizeWechatAppLogin(cfg.wechatAppLogin, source);
+  if (cfg.appSchemes !== undefined) out.appSchemes = normalizeAppSchemes(cfg.appSchemes, source);
   if (cfg.appleLogin !== undefined) out.appleLogin = normalizeAppleLogin(cfg.appleLogin, source);
   out.security = normalizeSecurity(cfg.security, source);
   return out;
@@ -504,6 +518,27 @@ function normalizeWechatLogin(raw: unknown, source: string): WechatLoginConfig {
     throw new Error(`${source}: "wechatLogin.redirectUri" must be a valid absolute URL`);
   }
   return { appid: w.appid as string, appSecret: w.appSecret as string, redirectUri: w.redirectUri as string };
+}
+
+function normalizeWechatAppLogin(raw: unknown, source: string): WechatAppLoginConfig {
+  if (typeof raw !== "object" || raw === null) throw new Error(`${source}: "wechatAppLogin" must be an object`);
+  const a = raw as Record<string, unknown>;
+  for (const key of ["appid", "appSecret"] as const) {
+    if (typeof a[key] !== "string" || a[key] === "") throw new Error(`${source}: "wechatAppLogin.${key}" must be a non-empty string`);
+  }
+  return { appid: a.appid as string, appSecret: a.appSecret as string };
+}
+
+function normalizeAppSchemes(raw: unknown, source: string): string[] {
+  if (!Array.isArray(raw)) throw new Error(`${source}: "appSchemes" must be an array`);
+  const out: string[] = [];
+  for (const s of raw) {
+    if (typeof s !== "string" || s === "") throw new Error(`${source}: "appSchemes[]" must be a non-empty string`);
+    const clean = s.replace(/:\/\/.*$/, "").trim();
+    if (!/^[a-z][a-z0-9+.-]*$/i.test(clean)) throw new Error(`${source}: "appSchemes[]" has invalid scheme: ${s}`);
+    out.push(clean);
+  }
+  return out;
 }
 
 function normalizeAppleLogin(raw: unknown, source: string): AppleLoginConfig {

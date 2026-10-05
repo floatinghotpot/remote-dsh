@@ -47,6 +47,8 @@ export interface UserRow {
   lastLoginAt: number | null;
   /** 微信 openid（**网站应用** AppID 下唯一；null = 未绑定） */
   wxwebOpenid: string | null;
+  /** 微信 openid（**移动应用** AppID 下唯一；null = 未绑定） */
+  wxappOpenid: string | null;
   /** 微信 unionid（开放平台账号内跨 AppID 共享 = 账号身份；null = 未返回/未绑定） */
   wechatUnionid: string | null;
   /** 微信昵称（仅展示） */
@@ -217,6 +219,7 @@ export class HubDb {
         trial_started_at INTEGER,
         free_since_at INTEGER,
         wxweb_openid TEXT,
+        wxapp_openid TEXT,
         wechat_unionid TEXT,
         wechat_nickname TEXT,
         wechat_avatar TEXT,
@@ -356,6 +359,7 @@ export class HubDb {
       ["trial_started_at", "trial_started_at INTEGER"],
       ["free_since_at", "free_since_at INTEGER"],
       ["wxweb_openid", "wxweb_openid TEXT"],
+      ["wxapp_openid", "wxapp_openid TEXT"],
       ["wechat_unionid", "wechat_unionid TEXT"],
       ["wechat_nickname", "wechat_nickname TEXT"],
       ["wechat_avatar", "wechat_avatar TEXT"],
@@ -370,6 +374,7 @@ export class HubDb {
     this.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email);`);
     this.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone ON users(phone);`);
     this.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_wxweb_openid ON users(wxweb_openid);`);
+    this.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_wxapp_openid ON users(wxapp_openid);`);
     this.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_wechat_unionid ON users(wechat_unionid);`);
     this.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_apple_sub ON users(apple_sub);`);
     const hostCols = new Set(
@@ -416,6 +421,7 @@ export class HubDb {
       freeSinceAt: row.free_since_at === null || row.free_since_at === undefined ? null : Number(row.free_since_at),
       lastLoginAt: row.last_login_at === null || row.last_login_at === undefined ? null : Number(row.last_login_at),
       wxwebOpenid: row.wxweb_openid === null || row.wxweb_openid === undefined ? null : String(row.wxweb_openid),
+      wxappOpenid: row.wxapp_openid === null || row.wxapp_openid === undefined ? null : String(row.wxapp_openid),
       wechatUnionid: row.wechat_unionid === null || row.wechat_unionid === undefined ? null : String(row.wechat_unionid),
       wechatNickname: row.wechat_nickname === null || row.wechat_nickname === undefined ? null : String(row.wechat_nickname),
       wechatAvatar: row.wechat_avatar === null || row.wechat_avatar === undefined ? null : String(row.wechat_avatar),
@@ -594,6 +600,25 @@ export class HubDb {
     this.db
       .prepare("UPDATE users SET wxweb_openid = ?, wechat_unionid = ?, wechat_nickname = ?, wechat_avatar = ? WHERE id = ?")
       .run(openid, unionid, nickname, avatar, id);
+  }
+
+  /** 微信 App（移动应用）登录自动建号：与门户建号同构，但 openid 存 wxapp_openid。 */
+  createWechatAppUser(name: string, appOpenid: string, unionid: string | null, nickname: string | null, avatar: string | null, now = new Date().toISOString()): UserRow {
+    const info = this.db
+      .prepare(
+        "INSERT INTO users (name, password_hash, created_at, must_change, account_status, wxapp_openid, wechat_unionid, wechat_nickname, wechat_avatar) VALUES (?, '!wechat', ?, 0, 'active', ?, ?, ?, ?)",
+      )
+      .run(name, now, appOpenid, unionid, nickname, avatar);
+    const id = Number(info.lastInsertRowid);
+    const row = this.db.prepare("SELECT * FROM users WHERE id = ?").get(id);
+    return this.mapUser(row as unknown as Record<string, unknown>);
+  }
+
+  /** 绑定微信 App（移动应用）身份到指定账号（openid 存 wxapp_openid；unionid 共享）。 */
+  bindWechatApp(id: number, appOpenid: string, unionid: string | null, nickname: string | null, avatar: string | null): void {
+    this.db
+      .prepare("UPDATE users SET wxapp_openid = ?, wechat_unionid = ?, wechat_nickname = ?, wechat_avatar = ? WHERE id = ?")
+      .run(appOpenid, unionid, nickname, avatar, id);
   }
 
   getUserByName(name: string): UserRow | null {
@@ -853,6 +878,11 @@ export class HubDb {
 
   getUserByWxwebOpenid(openid: string): UserRow | null {
     const row = this.db.prepare("SELECT * FROM users WHERE wxweb_openid = ?").get(openid);
+    return row === undefined ? null : this.mapUser(row as unknown as Record<string, unknown>);
+  }
+
+  getUserByWxappOpenid(appOpenid: string): UserRow | null {
+    const row = this.db.prepare("SELECT * FROM users WHERE wxapp_openid = ?").get(appOpenid);
     return row === undefined ? null : this.mapUser(row as unknown as Record<string, unknown>);
   }
 
@@ -1256,7 +1286,7 @@ export class HubDb {
       // 墓碑：抹除个人数据 + 释放 name（可重注册）；orders/payments/audit 保留（账务与留痕）
       this.db
         .prepare(
-          "UPDATE users SET name = ?, password_hash = '!deleted', email = NULL, phone = NULL, email_verified = 0, phone_verified = 0, totp_secret = NULL, account_status = 'deleted', plan_status = NULL, plan_expires_at = NULL, trial_started_at = NULL, apple_sub = NULL, apple_email = NULL, apple_full_name = NULL WHERE id = ?",
+          "UPDATE users SET name = ?, password_hash = '!deleted', email = NULL, phone = NULL, email_verified = 0, phone_verified = 0, totp_secret = NULL, account_status = 'deleted', plan_status = NULL, plan_expires_at = NULL, trial_started_at = NULL, wxapp_openid = NULL, apple_sub = NULL, apple_email = NULL, apple_full_name = NULL WHERE id = ?",
         )
         .run(`deleted-${id}`, id);
       this.db.exec("COMMIT");
