@@ -49,6 +49,11 @@ export function verifyTotp(secret: string, code: string, window = 1, time = Date
   return false;
 }
 
+/** 构建 otpauth URL（RFC 6238 建议的 key URI）：label 为 `remote-dsh:<账号名>`（账号名 URL 编码），显式声明算法参数。 */
+export function otpauthUrl(name: string, secret: string): string {
+  return `otpauth://totp/remote-dsh:${encodeURIComponent(name)}?secret=${secret}&issuer=remote-dsh&algorithm=SHA1&digits=6&period=30`;
+}
+
 function base32Decode(input: string): Buffer {
   const s = input.toUpperCase().replace(/[^A-Z2-7]/g, "");
   const out: number[] = [];

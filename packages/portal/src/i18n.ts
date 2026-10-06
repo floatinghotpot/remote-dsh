@@ -329,6 +329,8 @@ const EN: Record<string, string> = {
   "邮箱已解绑": "Email unbound",
   "两步验证（2FA）：登录时除了密码，还要输入手机验证器 App 生成的 6 位动态码（每 30 秒变化一次）——登录要同时通过“你知道的密码”和“你手机上的验证码”两道关，建议开启。": "Two-factor auth (2FA): besides your password, sign-in asks for a 6-digit code from an authenticator app on your phone (it rotates every 30 seconds) — login now requires both “a password you know” and “a code on your phone”, so we recommend enabling it.",
   "选择验证器 App（任意 TOTP 应用均可）：": "Pick an authenticator app (any TOTP app works):",
+  "iPhone 系统自带「密码」App —— 无需安装：Face ID 保护，代码随 iCloud 钥匙串备份、换机自动同步": "iPhone built-in Passwords app — no install needed: Face ID protected; codes are backed up in iCloud Keychain and sync across devices",
+  "Android 系统自带 Google 密码管理器 —— 无需安装，亦可生成验证码": "Android built-in Google Password Manager — no install needed; it also generates codes",
   "Microsoft Authenticator —— 推荐首选：安卓与 iPhone 均可在应用商店/官网获取，不依赖 Google Play": "Microsoft Authenticator — top pick: available from app stores / the official site on both Android and iPhone; no Google Play dependency",
   "Google Authenticator —— 安卓需 Google Play；iPhone 在 App Store": "Google Authenticator — Android via Google Play; iPhone via the App Store",
   "手机号设置": "Phone settings",

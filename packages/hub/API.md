@@ -70,6 +70,17 @@
 认证：需要。请求 `{ "password" }`（二次确认）。行为：立即断全部隧道 + 删个人数据（邮箱/手机号/hosts/隧道/refresh/join/共享/审计），`payments`+`orders` 保留脱敏账务字段（金额/时间/渠道单号）；审计留痕。
 响应：`200 { "ok": true }`
 
+### 两步验证（2FA，S2）
+
+#### POST /api/account/2fa/enable —— 开启 2FA 第一步
+认证：需要。响应：`{ "secret": string, "otpauthUrl": string }`（**不落库**）。`otpauthUrl` 格式：`otpauth://totp/remote-dsh:<encodeURIComponent(账号名)>?secret=<secret>&issuer=remote-dsh&algorithm=SHA1&digits=6&period=30`——label 的账号名为当前登录账号名（URL 编码）；`secret` 为 base32，保持原样不编码；显式 `algorithm/digits/period` 与服务器算法一致。
+
+#### POST /api/account/2fa/verify —— 激活 2FA（第二步）
+认证：需要。请求 `{ "secret": string, "code": string }`；用 `secret` 校验当前 TOTP，通过才落库（`totpSecret`）。响应：`200 { "ok": true }`。
+
+#### POST /api/account/2fa/disable —— 关闭 2FA
+认证：需要。请求 `{ "code": string }`（当前 TOTP）。行为：清 `totpSecret` + `ver+1`（全端会话失效）。响应：`200 { "ok": true }`。
+
 ## 5. 配额钩子（S1，/api/hosts/register 内）
 
 `/api/hosts/register` 建 host 前按 `plan_status` 检查 host 数上限：`NULL` 不限；`trial`=1；`subscribed`=plan.hosts；`free`/`grace`（grace 保留原配额，按原 plan.hosts）。超限 → `403 QUOTA_EXCEEDED`。

@@ -3543,7 +3543,7 @@ async function handleEnable2fa(req: IncomingMessage, res: ServerResponse, runtim
     writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
     return;
   }
-  const { secret, otpauthUrl } = runtime.auth.enableTotp();
+  const { secret, otpauthUrl } = runtime.auth.enableTotp(auth.name);
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({ secret, otpauthUrl }));
 }

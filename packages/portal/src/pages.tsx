@@ -1089,6 +1089,8 @@ function TwoFaSettingsPage(): React.JSX.Element {
             <p style={{ fontSize: 13, lineHeight: 1.7, marginTop: 0, color: "var(--rdsh-fg)" }}>{t("两步验证（2FA）：登录时除了密码，还要输入手机验证器 App 生成的 6 位动态码（每 30 秒变化一次）——登录要同时通过“你知道的密码”和“你手机上的验证码”两道关，建议开启。")}</p>
             <div style={{ background: "var(--rdsh-bg-subtle)", border: "1px solid var(--rdsh-border-soft)", borderRadius: 8, padding: 12, margin: "0 0 12px", fontSize: 12, color: "var(--rdsh-fg)" }}>
               <p style={{ margin: "0 0 4px", fontWeight: 600 }}>{t("选择验证器 App（任意 TOTP 应用均可）：")}</p>
+              <p style={{ margin: "2px 0" }}>· {t("iPhone 系统自带「密码」App —— 无需安装：Face ID 保护，代码随 iCloud 钥匙串备份、换机自动同步")}</p>
+              <p style={{ margin: "2px 0" }}>· {t("Android 系统自带 Google 密码管理器 —— 无需安装，亦可生成验证码")}</p>
               <p style={{ margin: "2px 0" }}>· {t("Microsoft Authenticator —— 推荐首选：安卓与 iPhone 均可在应用商店/官网获取，不依赖 Google Play")}</p>
               <p style={{ margin: "2px 0" }}>· {t("Google Authenticator —— 安卓需 Google Play；iPhone 在 App Store")}</p>
             </div>

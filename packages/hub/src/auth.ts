@@ -9,7 +9,7 @@ import { randomBytes, scrypt as scryptCb, timingSafeEqual } from "node:crypto";
 import { HubDb } from "./db.ts";
 import type { UserRow } from "./db.ts";
 import { Jwt, randomToken, sha256 } from "./jwt.ts";
-import { generateSecret, verifyTotp } from "./totp.ts";
+import { generateSecret, otpauthUrl, verifyTotp } from "./totp.ts";
 import type { SecurityConfig } from "./config.ts";
 
 const SCRYPT_N = 16384;
@@ -126,9 +126,9 @@ export class HubAuth {
   }
 
   /** 生成 2FA secret（不落库；activate 时由用户带回 secret+code 校验后才启用）。 */
-  enableTotp(): { secret: string; otpauthUrl: string } {
+  enableTotp(name: string): { secret: string; otpauthUrl: string } {
     const secret = generateSecret();
-    return { secret, otpauthUrl: `otpauth://totp/remote-dsh:?secret=${secret}&issuer=remote-dsh` };
+    return { secret, otpauthUrl: otpauthUrl(name, secret) };
   }
 
   /** 激活 2FA：用 secret 校验当前 TOTP → 落库。 */
