@@ -83,7 +83,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 7. Documentation SOP
 
 ### Directory Convention
-- **Feature Pipeline**: Follow `discussion → req → solution → plan → verification → summary + TODO` in `doc/feature/{NN-name}/`，特性目录以两位数字编号作索引（如 `01-remote-access`、`02-xxx`）。
+- **Feature Pipeline**: Follow `discussion → req → solution → plan → code-review → verification → summary + TODO` in `doc/feature/{NN-name}/`，特性目录以两位数字编号作索引（如 `01-remote-access`、`02-xxx`）。
 - **架构/概览/提案文档**: 跨项目的架构、概览、提案类文档放 `doc/overview/`（如 `architecture.md`、`roadmap.md`、`proposal.md`），**不进 `doc/feature/`**。
 - **博客**: 场景化教程/传播文章放 `doc/blog/`，按语言分子目录 `doc/blog/zh/`（中文，`NN-name.md`）与 `doc/blog/en/`（英文，`NN-name.md`），两版互链；README 双语各自链接对应语言版本。**博客一律不用 Markdown 表格**——结构信息用加粗引导条目（`- **标题**：说明`）表达，保证手机/微信内浏览器阅读体验。
 - **市场/营销**: 市场分析、定位、定价对标放 `private/doc/marketing/`（内部活文档，**不入公开仓**，见 `.gitignore`；基于事实带来源，查不到标"待查证"；未定内容不对外发布，正式传播走 `doc/blog/`）。
@@ -93,7 +93,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Feature Pipeline (MANDATORY)
 
 ```
-discussion.md → req.md → solution.md → plan.md → (implementation) → verification.md → plan.md review → summary.md + TODO.md
+discussion.md → req.md → solution.md → plan.md → (implementation) → code-review.md → verification.md → plan.md review → summary.md + TODO.md
 ```
 
 | Stage | Gate | Purpose |
@@ -103,6 +103,7 @@ discussion.md → req.md → solution.md → plan.md → (implementation) → ve
 | `solution.md` | **User must approve** | How to do it: architecture, file change list, data contracts. If new requirements are discovered during solution writing, add them to req.md first — do NOT silently expand scope. |
 | `plan.md` | **User must approve** | RTTM (req→task traceability matrix) + task checklist. Each task marked `✅` / `❌` / `⏭️`. |
 | *(implementation)* | **Auto** | Write code. Every 2-3 completed tasks: lightweight self-audit against req.md, note any gaps. |
+| `code-review.md` | **Independent review** | Independent review of the code diff against `req.md` / `plan.md`: correctness, security, edge cases, contract changes. List findings with severity + disposition; P0/P1 must be fixed before `verification.md`. Run by a separate agent or human — not the implementer's §2 self-check. |
 | `verification.md` | **Auto** | Close-out audit: re-check req→plan coverage via RTTM; confirm code exists AND is called; list every gap with severity and suggested action. |
 | `plan.md` review | **Auto** | Update task statuses based on verification results. |
 | `summary.md` | **Auto** | Result record: what was done, what changed. |
