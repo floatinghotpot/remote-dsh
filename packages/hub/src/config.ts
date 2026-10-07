@@ -78,35 +78,16 @@ export interface BackupConfig {
   keepDays?: number;
 }
 
-export interface BeianConfig {
-  /** ICP 备案号，如 "蜀ICP备XXXXXXXX号" */
-  icp?: string;
-  /** ICP 备案查询链接，默认 https://beian.miit.gov.cn */
-  icpUrl?: string;
-  /** 公安备案号，如 "川公网安备 XXXXXXXXXXXX号" */
-  gongan?: string;
-  /** 公安备案查询链接，默认 https://beian.mps.gov.cn */
-  gonganUrl?: string;
-}
-
-/** 站点信息（portal 页脚导航：公司名/官网 + 产品介绍页）。 */
+/** 站点信息（品牌名 + 法务/客服外链；备案/版权等内容已迁静态落地页）。 */
 export interface SiteConfig {
-  /** 产品品牌名（入口页左上角/登录页眉标；缺省 portal 回退 "RDSH.CN"） */
+  /** 产品品牌名（登录页眉标；缺省 portal 回退 "RDSH.CN"） */
   brand?: string;
-  /** 公司名（页脚展示；无 url 时纯文本） */
-  name?: string;
-  /** 公司官网 URL */
-  url?: string;
-  /** 产品介绍页 URL */
-  productUrl?: string;
-  /** 用户协议 URL；配置后覆盖内置 /portal/terms */
+  /** 用户协议 URL；配置后指向静态站 /<lang>/terms/ */
   termsUrl?: string;
-  /** 隐私政策 URL；配置后覆盖内置 /portal/privacy */
+  /** 隐私政策 URL；配置后指向静态站 /<lang>/privacy/ */
   privacyUrl?: string;
   /** 微信客服（企业微信客服）跳转 URL；配置后门户账户页显示「微信客服」入口 */
   customerServiceUrl?: string;
-  /** 页脚信息行（地址/版权/许可等，按序渲染；href 可选外链）。 */
-  footer?: Array<{ text: string; href?: string }>;
 }
 
 /** 微信登录配置（网站应用 AppID，独立于支付；仅登录）。 */
@@ -172,8 +153,6 @@ export interface HubConfig {
   e2ee?: E2eeConfig;
   /** 每日快照备份；缺省 → 启用（<hub.json 同目录>/backups，保留 7 天） */
   backup?: BackupConfig;
-  /** 备案信息（portal 页脚展示） */
-  beian?: BeianConfig;
   /** 站点信息（portal 页脚导航） */
   site?: SiteConfig;
   /** 微信登录（网站应用 AppID；缺省 → 微信登录禁用） */
@@ -268,7 +247,6 @@ export function normalizeHubConfig(raw: unknown, source = "config"): HubConfig {
   if (cfg.billing !== undefined) out.billing = normalizeBilling(cfg.billing, source);
   if (cfg.e2ee !== undefined) out.e2ee = normalizeE2ee(cfg.e2ee, source);
   if (cfg.backup !== undefined) out.backup = normalizeBackup(cfg.backup, source);
-  if (cfg.beian !== undefined) out.beian = normalizeBeian(cfg.beian, source);
   if (cfg.site !== undefined) out.site = normalizeSite(cfg.site, source);
   if (cfg.wechatLogin !== undefined) out.wechatLogin = normalizeWechatLogin(cfg.wechatLogin, source);
   if (cfg.wechatAppLogin !== undefined) out.wechatAppLogin = normalizeWechatAppLogin(cfg.wechatAppLogin, source);
@@ -465,42 +443,15 @@ function normalizeBackup(raw: unknown, source: string): BackupConfig {
   return out;
 }
 
-function normalizeBeian(raw: unknown, source: string): BeianConfig {
-  if (typeof raw !== "object" || raw === null) throw new Error(`${source}: "beian" must be an object`);
-  const b = raw as Record<string, unknown>;
-  const out: BeianConfig = {};
-  for (const key of ["icp", "icpUrl", "gongan", "gonganUrl"] as const) {
-    if (b[key] !== undefined) {
-      if (typeof b[key] !== "string") throw new Error(`${source}: "beian.${key}" must be a string`);
-      out[key] = b[key] as string;
-    }
-  }
-  return out;
-}
-
 function normalizeSite(raw: unknown, source: string): SiteConfig {
   if (typeof raw !== "object" || raw === null) throw new Error(`${source}: "site" must be an object`);
   const s = raw as Record<string, unknown>;
   const out: SiteConfig = {};
-  for (const key of ["brand", "name", "url", "productUrl", "termsUrl", "privacyUrl", "customerServiceUrl"] as const) {
+  for (const key of ["brand", "termsUrl", "privacyUrl", "customerServiceUrl"] as const) {
     if (s[key] !== undefined) {
       if (typeof s[key] !== "string") throw new Error(`${source}: "site.${key}" must be a string`);
       out[key] = s[key] as string;
     }
-  }
-  if (s.footer !== undefined) {
-    if (!Array.isArray(s.footer)) throw new Error(`${source}: "site.footer" must be an array`);
-    out.footer = (s.footer as unknown[]).map((item, i) => {
-      if (typeof item !== "object" || item === null) throw new Error(`${source}: site.footer[${i}] must be an object`);
-      const f = item as Record<string, unknown>;
-      if (typeof f.text !== "string" || f.text.length === 0) throw new Error(`${source}: site.footer[${i}].text must be a non-empty string`);
-      const row: { text: string; href?: string } = { text: f.text };
-      if (f.href !== undefined) {
-        if (typeof f.href !== "string") throw new Error(`${source}: site.footer[${i}].href must be a string`);
-        row.href = f.href;
-      }
-      return row;
-    });
   }
   return out;
 }

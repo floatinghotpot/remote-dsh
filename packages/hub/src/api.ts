@@ -891,7 +891,6 @@ async function handleCapabilities(_req: IncomingMessage, res: ServerResponse, ru
       emailEnabled: runtime.config.email !== undefined,
       smsEnabled: runtime.config.sms !== undefined,
       captchaProvider: runtime.config.captcha?.provider ?? "arithmetic",
-      beian: runtime.config.beian ?? {},
       site: runtime.config.site ?? {},
       wechatLoginEnabled: runtime.config.wechatLogin !== undefined,
       appleLoginEnabled: runtime.config.appleLogin !== undefined,
@@ -1125,7 +1124,7 @@ async function handleWechatLoginAuthorize(req: IncomingMessage, res: ServerRespo
     return;
   }
   const url = new URL(req.url ?? "/", "http://rdsh.local");
-  const next = safeRedirect(url.searchParams.get("next")) ?? "/hosts";
+  const next = safeRedirect(url.searchParams.get("next")) ?? "/portal/hosts";
   const ip = clientIp(req, runtime);
   const state = randomToken(24);
   wechatLoginStates.set(state, { kind: "login", ip, next, expiresAt: Date.now() + WECHAT_STATE_TTL_MS });
@@ -1181,7 +1180,7 @@ async function handleWechatLoginCallback(req: IncomingMessage, res: ServerRespon
       return;
     }
     res.writeHead(302, {
-      location: st.next ?? "/hosts",
+      location: st.next ?? "/portal/hosts",
       "set-cookie": [sessionCookie(tokens.accessToken), refreshCookie(tokens.refreshToken)],
     });
     res.end();
@@ -1191,7 +1190,7 @@ async function handleWechatLoginCallback(req: IncomingMessage, res: ServerRespon
   // 未找到已绑定账号 → 暂存微信身份，跳登录页让用户确认是否新建（不静默建号）
   const pendingToken = randomToken(24);
   wechatPending.set(pendingToken, { openid: id.openid, unionid: id.unionid, nickname: id.nickname, avatar: id.avatar, app: false, ip, expiresAt: Date.now() + WECHAT_STATE_TTL_MS });
-  res.writeHead(302, { location: `/login?wechat-new=${encodeURIComponent(pendingToken)}&next=${encodeURIComponent(st.next ?? "/hosts")}` });
+  res.writeHead(302, { location: `/portal/login?wechat-new=${encodeURIComponent(pendingToken)}&next=${encodeURIComponent(st.next ?? "/portal/hosts")}` });
   res.end();
 }
 
@@ -1316,7 +1315,7 @@ async function handleWechatBindCallback(req: IncomingMessage, res: ServerRespons
   }
   runtime.db.bindWechat(userId, id.openid, id.unionid, id.nickname, id.avatar);
   runtime.db.recordAudit(userId, "wechat.bind.ok", {}, clientIp(req, runtime));
-  res.writeHead(302, { location: "/settings" });
+  res.writeHead(302, { location: "/portal/settings/account" });
   res.end();
 }
 

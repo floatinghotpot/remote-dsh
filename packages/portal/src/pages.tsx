@@ -11,7 +11,6 @@ import type { HostInfo, JoinTokenInfo, CaptchaPayload, AccountInfo, Capabilities
 import { fingerprint } from "./e2ee.ts";
 import { useT, getLang } from "./i18n.ts";
 import type { T } from "./i18n.ts";
-import { TermsPage, PrivacyPage, ProductPage, LegalContent, LEGAL } from "./legal.tsx";
 
 /** portal 部署在 /portal 前缀下（host 转发的 DSH 占用根路径）。 */
 const BASE = "/portal";
@@ -66,14 +65,11 @@ export function App(): React.JSX.Element {
   if (path.startsWith("/admin")) return <AppShell><AdminApp path={path.slice("/admin".length) || "/"} /></AppShell>;
   if (path === "/login") return <Login />;
   if (path === "/register") return <RegisterPage />;
-  if (path === "/terms") return <TermsPage />;
-  if (path === "/privacy") return <PrivacyPage />;
-  if (path === "/product") return <ProductPage />;
   if (path === "/captcha") return <CaptchaPage />;
   if (path === "/verify") return <VerifyPage />;
   if (path === "/reset-password") return <ResetPasswordPage />;
   if (path === "/change-password") return <PasswordPage />;
-  if (path === "/") return <LandingPage />;
+  if (path === "/") return <Login />;
   const page =
     path === "/billing" ? (
       <BillingPage />
@@ -404,109 +400,19 @@ function CaptchaPage(): React.JSX.Element {
   );
 }
 
-/** 页脚：备案信息（ICP/公安），来自 hub.json `beian` 配置（公开 /api/capabilities 下发）。 */
-/** 法务链接：配置外部 URL 则新标签外链，否则站内 navigate（内置文档页）。 */
-function legalLink(url: string | undefined, internal: string, label: string, style: React.CSSProperties): React.JSX.Element {
-  if (url !== undefined && url !== "") {
-    return <a href={url} target="_blank" rel="noreferrer" style={style}>{label}</a>;
-  }
-  return <a href="#" onClick={(e) => { e.preventDefault(); navigate(internal); }} style={style}>{label}</a>;
-}
-
-function SiteFooter(): React.JSX.Element | null {
-  const { t } = useT();
-  const [cap, setCap] = useState<Capabilities | null>(null);
-  useEffect(() => {
-    void api.capabilities().then(setCap).catch(() => undefined);
-  }, []);
-  if (cap === null) return null;
-
-  const site = cap.site;
-  const link: React.CSSProperties = { color: "var(--rdsh-fg-subtle)", textDecoration: "none" };
-  const nav: React.ReactNode[] = [];
-  if (site?.name !== undefined) {
-    nav.push(site.url !== undefined ? <a href={site.url} target="_blank" rel="noreferrer" style={link}>{site.name}</a> : <span>{site.name}</span>);
-  }
-  nav.push(legalLink(site?.productUrl, "/product", t("产品介绍"), link));
-  nav.push(legalLink(site?.termsUrl, "/terms", t("用户协议"), link));
-  nav.push(legalLink(site?.privacyUrl, "/privacy", t("隐私政策"), link));
-
-  return (
-    <footer style={{ textAlign: "center", marginTop: 24, fontSize: 12, color: "var(--rdsh-fg-subtle)", lineHeight: 1.8 }}>
-      <div style={{ display: "flex", justifyContent: "center", flexWrap: "wrap" }}>
-        {nav.map((node, i) => (
-          <span key={i} style={{ whiteSpace: "nowrap", display: "inline-flex", alignItems: "center" }}>
-            {i > 0 && <span style={{ margin: "0 8px", color: "var(--rdsh-fg-subtle)" }}>|</span>}
-            {node}
-          </span>
-        ))}
-      </div>
-      {(site?.footer ?? []).map((f, i) => (
-        <div key={i}>
-          {f.href !== undefined
-            ? <a href={f.href} target="_blank" rel="noreferrer" style={link}>{f.text}</a>
-            : f.text}
-        </div>
-      ))}
-    </footer>
-  );
-}
-
-/** 落地页：产品介绍 + 注册/登录 CTA（新用户入口；已登录则显示「进入控制台」）。 */
-function LandingPage(): React.JSX.Element {
-  const { t } = useT();
-  const [authed, setAuthed] = useState(false);
-  const [brand, setBrand] = useState("RDSH.CN");
-  useEffect(() => {
-    void api.accountInfo({ probe: true }).then(() => setAuthed(true)).catch(() => setAuthed(false));
-    void api.capabilities().then((c) => { if (c.site?.brand !== undefined && c.site.brand !== "") setBrand(c.site.brand); }).catch(() => undefined);
-  }, []);
-
-  return (
-    <div style={{ maxWidth: 760, margin: "0 auto", padding: "0 16px", fontFamily: "system-ui, sans-serif" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 0" }}>
-        <strong style={{ fontSize: 17 }}>{brand}</strong>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <LangToggle />
-          {authed ? (
-            <button onClick={() => navigate("/hosts")} style={btnStyle()}>{t("进入控制台")}</button>
-          ) : (
-            <>
-              <button onClick={() => navigate("/login")} style={btnStyle("ghost")}>{t("登录")}</button>
-              <button onClick={() => navigate("/register")} style={btnStyle()}>{t("注册")}</button>
-            </>
-          )}
-        </div>
-      </div>
-
-      <div style={{ textAlign: "center", padding: "48px 0 40px" }}>
-        <h1 style={{ fontSize: 22, margin: "0 0 10px" }}>{t("你的 AI 智能体，随处安全可达")}</h1>
-        <p style={{ color: "var(--rdsh-fg-muted)", fontSize: 15, margin: "0 0 28px" }}>{t("免公网 IP · 免装客户端")}</p>
-        <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
-          {authed ? (
-            <button onClick={() => navigate("/hosts")} style={{ ...btnStyle(), fontSize: 16, padding: "10px 26px" }}>{t("进入控制台")}</button>
-          ) : (
-            <>
-              <button onClick={() => navigate("/register")} style={{ ...btnStyle(), fontSize: 16, padding: "10px 26px" }}>{t("立即注册")}</button>
-              <button onClick={() => navigate("/login")} style={{ ...btnStyle("ghost"), fontSize: 16, padding: "10px 26px" }}>{t("登录")}</button>
-            </>
-          )}
-        </div>
-      </div>
-
-      <LegalContent html={LEGAL.product} />
-
-      <SiteFooter />
-    </div>
-  );
+/** 法务链接：仅外链（条款/隐私/产品介绍已迁静态站；未配置 URL 时渲染为纯文本占位）。 */
+function legalLink(url: string | undefined, label: string, style: React.CSSProperties): React.JSX.Element {
+  if (url === undefined || url === "") return <span style={style}>{label}</span>;
+  return <a href={url} target="_blank" rel="noreferrer" style={style}>{label}</a>;
 }
 
 // ---- 登录 / 首次设密 ----
 
 function Login(): React.JSX.Element {
   const { t } = useT();
-  const next = new URLSearchParams(window.location.search).get("next");
-  const home = next !== null && next.startsWith("/") && !next.startsWith("//") ? next : "/hosts";
+  const rawNext = new URLSearchParams(window.location.search).get("next");
+  const next = rawNext !== null && rawNext.startsWith("/portal") ? rawNext.slice("/portal".length) || "/" : rawNext;
+  const home = next !== null && next.startsWith("/") && !next.startsWith("//") && next !== "/" ? next : "/hosts";
   const wechatNew = new URLSearchParams(window.location.search).get("wechat-new");
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
@@ -537,7 +443,7 @@ function Login(): React.JSX.Element {
     // open.weixin.qq.com 页面始终渲染它自己的登录二维码并轮询 —— PC 用户手机微信扫 → 登录落在本页面；
     // 手机用户可把该二维码转发到电脑/另一台设备显示后扫码确认（本页面轮询 → 本设备登录）。
     // 注：微信网站应用无「微信内免扫码一键」形态；自制 URL 二维码被扫只会套娃出 qrconnect 页。
-    window.location.href = `/api/wechat/login/authorize?next=${encodeURIComponent(home)}`;
+    window.location.href = `/api/wechat/login/authorize?next=${encodeURIComponent("/portal" + home)}`;
   };
 
   const confirmWechatCreate = (): void => {
@@ -560,7 +466,6 @@ function Login(): React.JSX.Element {
         <button onClick={confirmWechatCreate} style={{ ...btnStyle(), width: "100%" }}>{t("创建新账号")}</button>
         <button onClick={() => navigate("/login")} style={{ ...btnStyle("ghost"), width: "100%", marginTop: 8 }}>{t("已有账号，去登录")}</button>
         <p style={{ marginTop: 12, fontSize: 12, color: "var(--rdsh-fg-muted)" }}>{t("已有邮箱/手机号账号？先用账号密码登录，再在设置里绑定微信")}</p>
-        <SiteFooter />
       </div>
     );
   }
@@ -647,7 +552,6 @@ function Login(): React.JSX.Element {
           <a href="#" onClick={(e) => { e.preventDefault(); navigate("/register"); }} style={{ color: "var(--rdsh-link)", fontSize: 13 }}>{t("注册")}</a>
         </p>
       )}
-      <SiteFooter />
     </div>
   );
 }
@@ -1761,9 +1665,9 @@ function RegisterPage(): React.JSX.Element {
         <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} style={{ marginTop: 2 }} />
         <span>
           {t("我已阅读并同意")}
-          {legalLink(cap?.site?.termsUrl, "/terms", t("《用户协议》"), { color: "var(--rdsh-link)" })}
+          {legalLink(cap?.site?.termsUrl, t("《用户协议》"), { color: "var(--rdsh-link)" })}
           {t("与")}
-          {legalLink(cap?.site?.privacyUrl, "/privacy", t("《隐私政策》"), { color: "var(--rdsh-link)" })}
+          {legalLink(cap?.site?.privacyUrl, t("《隐私政策》"), { color: "var(--rdsh-link)" })}
         </span>
       </label>
       {err !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{err}</p>}
@@ -1771,7 +1675,6 @@ function RegisterPage(): React.JSX.Element {
       <p style={{ marginTop: 12, textAlign: "center" }}>
         <a href="#" onClick={(e) => { e.preventDefault(); navigate("/login"); }} style={{ color: "var(--rdsh-link)", fontSize: 13 }}>{t("已有账号？登录")}</a>
       </p>
-      <SiteFooter />
     </div>
   );
 }

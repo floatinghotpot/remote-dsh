@@ -133,9 +133,4 @@ textarea {
     --rdsh-scrim-soft: rgba(0, 0, 0, 0.6);
     --rdsh-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
   }
-
-  /* 白底架构图：明度反转 + 色相转回（见 solution.md §5.6） */
-  img.rdsh-arch {
-    filter: invert(1) hue-rotate(180deg);
-  }
 }

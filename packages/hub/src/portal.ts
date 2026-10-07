@@ -44,10 +44,6 @@ export async function servePortal(req: IncomingMessage, res: ServerResponse, por
   }
   if (pathname.startsWith("/portal")) {
     pathname = pathname.slice("/portal".length) || "/";
-  } else if (pathname === "/login" || pathname === "/hosts" || pathname.startsWith("/host/") || pathname.startsWith("/settings/")) {
-    res.writeHead(302, { location: `/portal${pathname}` });
-    res.end();
-    return true;
   }
   if (pathname === "/") pathname = "/index.html";
 

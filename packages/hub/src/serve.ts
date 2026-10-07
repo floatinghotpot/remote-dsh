@@ -92,7 +92,6 @@ export async function serveHub(opts: HubServeOptions): Promise<void> {
     registrationDailyLimit: config.registrationDailyLimit,
     registrationMaxUsers: config.registrationMaxUsers,
     billing: config.billing,
-    beian: config.beian,
     site: config.site,
     wechatLogin: config.wechatLogin,
     wechatAppLogin: config.wechatAppLogin,

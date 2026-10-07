@@ -25,7 +25,7 @@ import { authenticate, clientIp, handleApi, writeError, sweepBilling } from "./a
 import type { HubRuntime } from "./api.ts";
 import type { EmailConfig } from "./email/types.ts";
 import type { SmsConfig } from "./sms/types.ts";
-import type { CaptchaConfig, SecurityConfig, BillingConfig, BeianConfig, SiteConfig, E2eeConfig, BackupConfig, WechatLoginConfig, WechatAppLoginConfig, AppleLoginConfig } from "./config.ts";
+import type { CaptchaConfig, SecurityConfig, BillingConfig, SiteConfig, E2eeConfig, BackupConfig, WechatLoginConfig, WechatAppLoginConfig, AppleLoginConfig } from "./config.ts";
 import { TunnelConn, TunnelRegistry } from "./tunnel.ts";
 import type { TunnelTimings } from "./tunnel.ts";
 import { EventHub, createEventsServer } from "./events.ts";
@@ -55,8 +55,6 @@ export interface HubServerOptions {
   /** 注册总量上限（全库用户数；缺省不限） */
   registrationMaxUsers?: number;
   billing?: BillingConfig;
-  /** 备案信息（portal 页脚，serve.ts 从 hub.json 传入）。 */
-  beian?: BeianConfig;
   /** 微信登录（12-portal-wechat-login，serve.ts 从 hub.json 传入）。 */
   wechatLogin?: WechatLoginConfig;
   /** App 微信登录（移动应用，serve.ts 从 hub.json 传入）。 */
@@ -149,7 +147,6 @@ export async function startHubServer(opts: HubServerOptions): Promise<RunningHub
       registrationDailyLimit: opts.registrationDailyLimit,
       registrationMaxUsers: opts.registrationMaxUsers,
       billing: opts.billing,
-      beian: opts.beian,
       site: opts.site,
       wechatLogin: opts.wechatLogin,
       wechatAppLogin: opts.wechatAppLogin,
@@ -252,13 +249,6 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse, runtime: Hu
     if (hostId !== undefined) res.setHeader("set-cookie", clearHostCookie());
     const handled = await servePortal(req, res, portalDir);
     if (!handled) writeError(res, 404, "NOT_FOUND", "not found");
-    return;
-  }
-
-  // 管理后台已并入门户：旧 /admin 兼容重定向到 /portal/admin（管理台只走 /portal 前缀）
-  if (pathname === "/admin" || pathname.startsWith("/admin/")) {
-    res.writeHead(302, { location: `/portal${pathname}` });
-    res.end();
     return;
   }
 

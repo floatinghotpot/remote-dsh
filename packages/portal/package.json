@@ -9,8 +9,8 @@
     "node": ">=22"
   },
   "scripts": {
-    "typecheck": "node scripts/build-legal.mjs && tsc --noEmit -p tsconfig.json",
-    "build": "node scripts/build-legal.mjs && tsc --noEmit -p tsconfig.json && vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "tsc --noEmit -p tsconfig.json && vite build",
     "dev": "vite",
     "test": "vitest run --passWithNoTests"
   },
