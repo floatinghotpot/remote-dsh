@@ -561,7 +561,23 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
       }
     }
 
-    function closeStream(streamId: number): void {
+    /**
+     * CLOSE 帧是否表示「中止」而非「请求体已发完」。
+     * 协议（hub/src/tunnel.ts）：endRequest → CLOSE {code:0}（半关，响应还在来）；
+     * abortStream → CLOSE {code:1}（客户端中断）；ERROR 恒为中止。
+     * code 解析失败时保守走 false（= 半关，与旧行为一致）。
+     */
+    function isAbortClose(frame: Frame): boolean {
+      if (frame.type === FRAME_TYPE.ERROR) return true;
+      try {
+        const code = parseJsonPayload(frame).code;
+        return typeof code === "number" && code !== 0;
+      } catch {
+        return false;
+      }
+    }
+
+    function closeStream(streamId: number, abort: boolean): void {
       const ws = wsStreams.get(streamId);
       if (ws !== undefined) {
         wsStreams.delete(streamId);
@@ -574,8 +590,17 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
       }
       const http = httpStreams.get(streamId);
       if (http !== undefined) {
-        httpStreams.delete(streamId);
-        http.up.end();
+        if (abort) {
+          // 客户端中断 → 立即释放上游 socket，并删 map（流生命周期结束）。
+          httpStreams.delete(streamId);
+          http.up.destroy();
+        } else {
+          // 半关（CLOSE 0 = 请求体发完）→ 只 end()，不删 map：响应还在来，
+          // 之后由 upRes end/error、abort(CLOSE 1)、up error 之一清理。
+          // （2026-10-07 泄漏根因：旧代码在半关时就 delete，导致 SSE 响应中
+          //   abort 时取不到 up → destroy() 永不执行 → 上游 socket 遗留。）
+          http.up.end();
+        }
       }
     }
 
@@ -895,7 +920,7 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
             if (frame.type === FRAME_TYPE.CLOSE) handleGateSubmit(frame.streamId, gated);
             return;
           }
-          closeStream(frame.streamId);
+          closeStream(frame.streamId, isAbortClose(frame));
           return;
         }
         default:
