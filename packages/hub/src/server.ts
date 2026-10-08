@@ -294,26 +294,52 @@ async function handleEnterHost(
   rest: string,
   search: string,
 ): Promise<void> {
-  const auth = authenticate(req, runtime);
-  if (auth === null) {
+  // 入口凭据：优先 access（Bearer / rdsh_hub_session，1h，首次进入）；access 失效时回退
+  // 7d capability cookie（rdsh_host）——已进入过该主机的客户端在 cookie 有效期内重进 / 刷新 /
+  // 被系统回收后重建都不再依赖 access，与 relay 的 capability 语义一致（2026-10-08 fix）。
+  let userId = authenticate(req, runtime)?.userId ?? null;
+  if (userId === null) {
+    const raw = parseCookies(req.headers.cookie)[HOST_COOKIE];
+    if (raw !== undefined) {
+      const v = runtime.auth.verifyHostCookie(raw);
+      // 绑定 hostId：不允许用主机 A 的 cookie 进入主机 B
+      if (v !== null && v.hostId === hostId) userId = v.userId;
+    }
+  }
+
+  if (userId === null) {
+    // 导航型请求（Accept text/html）给可读、可操作的 HTML；API / 其它保持结构化 JSON。
+    // 状态仍为 401，供 App 侧 onHttpError 识别后走续期重试。
+    if ((req.headers.accept ?? "").includes("text/html")) {
+      const next = encodeURIComponent(`/h/${hostId}${rest}${search}`);
+      res.writeHead(401, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+      res.end(
+        `<!doctype html><meta charset="utf-8"><body style="font-family:system-ui,sans-serif;max-width:560px;margin:80px auto;padding:0 16px;color:#1f2937">` +
+          `<h1 style="font-size:20px">会话已过期</h1>` +
+          `<p style="color:#6b7280">登录已过期，请重新登录后再进入主机。</p>` +
+          `<a href="/portal/login?next=${next}" style="color:#2563eb">重新登录</a></body>`,
+      );
+      return;
+    }
     writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
     return;
   }
+
   const host = runtime.db.getHostById(hostId);
   if (host === null) {
     writeError(res, 404, "NOT_FOUND", "host not found");
     return;
   }
-  const isOwner = host.ownerId === auth.userId;
-  const isMember = isOwner || runtime.db.getShare(hostId, auth.userId) !== null;
+  const isOwner = host.ownerId === userId;
+  const isMember = isOwner || runtime.db.getShare(hostId, userId) !== null;
   if (!isMember) {
     writeError(res, 403, "FORBIDDEN", "host not owned by you or shared with you");
     return;
   }
-  runtime.db.recordAudit(auth.userId, "host.enter", { hostId, role: isOwner ? "owner" : "member" }, clientIp(req, runtime));
-  // Set-Cookie（HMAC 签名 host cookie）+ 302：DSH 在根路径运行；
-  // 后续 relay 只验签名 cookie（不受 access 1h 过期影响，改密即时失效）
-  res.writeHead(302, { location: `${rest}${search}`, "set-cookie": hostCookie(hostId, auth.userId, runtime.auth) });
+  runtime.db.recordAudit(userId, "host.enter", { hostId, role: isOwner ? "owner" : "member" }, clientIp(req, runtime));
+  // Set-Cookie（HMAC 签名 host cookie，7d）+ 302：DSH 在根路径运行。每次进入都重签 = 滑动续期；
+  // 后续 relay 只验签名 cookie（不受 access 1h 过期影响，改密即时失效）。
+  res.writeHead(302, { location: `${rest}${search}`, "set-cookie": hostCookie(hostId, userId, runtime.auth) });
   res.end();
 }
 
