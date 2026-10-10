@@ -177,7 +177,7 @@ JSAPI 支付需用户 openid（公众号 OAuth2）。门户在微信内浏览器
 
 ### POST /api/usage/report —— 上报一天用量（用户会话认证，App 语音用）
 
-请求（8 个数值字段均为**非负整数**，`date` 为客户端所在区域时区的日界）：
+请求（`date` 与 8 个数值字段**全部必填**，缺任一字段即 `400`；数值均为**非负整数**；`date` 为客户端所在区域时区的日界）：
 
 ```json
 { "date": "YYYY-MM-DD", "relaySeconds": 0, "relayBytesUp": 0, "relayBytesDown": 0, "directBytesUp": 0, "directBytesDown": 0, "cloudAsrSeconds": 0, "localAsrSeconds": 0, "sessions": 0 }
@@ -197,7 +197,10 @@ JSAPI 支付需用户 openid（公众号 OAuth2）。门户在微信内浏览器
 
 ### POST /api/host/usage/report —— gateway 上报一天用量（host token 认证）
 
-请求 = `POST /api/usage/report` 的字段 **+** `"token": "<hostToken>"`（`rdsh host` 的 host token，≥16 字符，存哈希校验）。**归到 host owner**（`user_id = host.ownerId`）；语音字段（cloudAsrSeconds/localAsrSeconds）恒 0，由 App 另报。响应同 `POST /api/usage/report`；token 无效 → `401 UNAUTHORIZED`。
+请求 = `POST /api/usage/report` 的字段 **+** `"token": "<hostToken>"`（`rdsh host` 的 host token，≥16 字符，存哈希校验）。**归到 host owner**（`user_id = host.ownerId`）。
+
+- `token` 缺失或 <16 字符 → `400 BAD_REQUEST`「invalid body (token required)」；`token` 查不到 → `401 UNAUTHORIZED`。
+- 语音字段（cloudAsrSeconds/localAsrSeconds）：**服务端不强制恒 0**（`parseUsageDay` 照收任意非负整数并按字段 `MAX` 合并），「恒 0」仅由 gateway 侧约定保证；本端上报时由 gateway 传 0。
 
 ### GET /api/admin/usage?userId=&from=&to= —— 管理面查任意用户日用量
 

@@ -240,6 +240,10 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
       writeError(res, 400, "BAD_REQUEST", "invalid userId/from/to");
       return true;
     }
+    if (Date.parse(to) - Date.parse(from) > 366 * 86400_000) {
+      writeError(res, 400, "BAD_REQUEST", "range too large (max 366 days)");
+      return true;
+    }
     const days = db.listUsageDaily(userId, from, to);
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify({ days: days.map(usageDayView) }));
