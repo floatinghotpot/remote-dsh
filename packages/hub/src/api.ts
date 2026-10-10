@@ -5,7 +5,7 @@
  * 无开放注册端点（账号由 `rdsh hub user add` 创建，防 bot/垃圾注入）。
  */
 import { randomInt, randomUUID, timingSafeEqual } from "node:crypto";
-import { statSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { HubConfig, PlanSpec, WechatLoginConfig, AppleLoginConfig } from "./config.ts";
 import { BILLING_DEFAULTS } from "./config.ts";
@@ -41,7 +41,8 @@ export const REFRESH_COOKIE = "rdsh_hub_refresh";
 export const TRUSTED_COOKIE = "rdsh_trusted";
 export const OPENID_COOKIE = "rdsh_openid";
 export const ADMIN_COOKIE = "rdsh_admin_session";
-const HUB_VERSION = "0.9.0";
+/** 版本单一来源：package.json（发布时与包版本一致，避免硬编码漏同步）。 */
+const HUB_VERSION = (JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string }).version;
 const JOIN_TOKEN_DEFAULT_TTL = 30 * 24 * 3600; // join token 默认 30 天（秒）
 const JOIN_TOKEN_MAX_TTL = 365 * 24 * 3600; // join token 上限 1 年（秒）
 const REGISTER_RATE_LIMIT = { max: 10, windowMs: 60 * 1000 }; // register 未认证端点：10 次/分钟/IP
