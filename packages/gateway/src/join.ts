@@ -12,6 +12,7 @@
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { hostname as osHostname } from "node:os";
+import { randomUUID } from "node:crypto";
 import type { IncomingHttpHeaders } from "node:http";
 import { WebSocket } from "ws";
 import { FrameParser, FRAME_TYPE, encodeFrame, jsonPayload, parseJsonPayload, FLAG_E2E, MAX_PAYLOAD_LENGTH } from "rdsh-tunnel";
@@ -24,6 +25,7 @@ import { decodeBody, encodeBody, firstEncoding } from "./http-encoding.ts";
 import { UsageMeter, localDate } from "./usage.ts";
 
 /** 当前 join 进程的用量计量器（单进程单实例；由 join() 赋值）。 */
+const gatewayInstanceId = randomUUID();
 let activeMeter: UsageMeter | undefined;
 import { acquireJoinLock, releaseJoinLock } from "./lock.ts";
 import type { JoinLockRole } from "./lock.ts";
@@ -1310,6 +1312,7 @@ export async function join(opts: JoinOptions): Promise<void> {
       body: {
         token,
         date: day,
+        instanceId: gatewayInstanceId,
         relaySeconds: snap.relaySeconds,
         relayBytesUp: snap.relayBytesUp,
         relayBytesDown: snap.relayBytesDown,

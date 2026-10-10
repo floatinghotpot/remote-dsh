@@ -99,6 +99,7 @@ export async function serveHub(opts: HubServeOptions): Promise<void> {
     appleLogin: config.appleLogin,
     e2ee: config.e2ee,
     backup: { dir: backupDir, keepDays: backupKeepDays },
+    relayNodeToken: config.relayNodeToken,
   });
 
   const scheme = tls ? "https" : "http";

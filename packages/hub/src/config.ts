@@ -248,6 +248,10 @@ export function normalizeHubConfig(raw: unknown, source = "config"): HubConfig {
   }
   if (cfg.billing !== undefined) out.billing = normalizeBilling(cfg.billing, source);
   if (cfg.e2ee !== undefined) out.e2ee = normalizeE2ee(cfg.e2ee, source);
+  if (cfg.relayNodeToken !== undefined) {
+    if (typeof cfg.relayNodeToken !== "string" || cfg.relayNodeToken.length < 16) throw new Error(`${source}: "relayNodeToken" must be a string of >= 16 chars`);
+    out.relayNodeToken = cfg.relayNodeToken;
+  }
   if (cfg.backup !== undefined) out.backup = normalizeBackup(cfg.backup, source);
   if (cfg.site !== undefined) out.site = normalizeSite(cfg.site, source);
   if (cfg.wechatLogin !== undefined) out.wechatLogin = normalizeWechatLogin(cfg.wechatLogin, source);

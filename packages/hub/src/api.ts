@@ -4,7 +4,7 @@
  * 认证：`Authorization: Bearer <access>` 或 Cookie `rdsh_hub_session`（HttpOnly）。
  * 无开放注册端点（账号由 `rdsh hub user add` 创建，防 bot/垃圾注入）。
  */
-import { randomInt, randomUUID } from "node:crypto";
+import { randomInt, randomUUID, timingSafeEqual } from "node:crypto";
 import { statSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { HubConfig, PlanSpec, WechatLoginConfig, AppleLoginConfig } from "./config.ts";
@@ -2049,7 +2049,8 @@ async function handleHostReportUsage(req: IncomingMessage, res: ServerResponse, 
     writeError(res, 400, "BAD_REQUEST", "invalid usage report");
     return;
   }
-  runtime.db.upsertUsageDaily(host.ownerId, day);
+  const instanceId = typeof body.instanceId === "string" ? body.instanceId : "";
+  runtime.db.upsertUsageDaily(host.ownerId, day, { hostId: host.id, instanceId, source: "gateway" });
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({ ok: true }));
 }
@@ -2134,7 +2135,9 @@ async function handleRelayUsageReport(req: IncomingMessage, res: ServerResponse,
   }
   const body = await readJsonBody(req);
   const provided = typeof body?.nodeToken === "string" ? body.nodeToken : "";
-  if (provided !== nodeToken) {
+  const a = Buffer.from(provided);
+  const b = Buffer.from(nodeToken);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) {
     writeError(res, 401, "UNAUTHORIZED", "invalid node token");
     return;
   }

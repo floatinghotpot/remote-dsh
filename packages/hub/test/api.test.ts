@@ -10,6 +10,7 @@ import { Jwt, randomToken, sha256 } from "../src/jwt.ts";
 import { TunnelRegistry } from "../src/tunnel.ts";
 import { EventHub } from "../src/events.ts";
 import { startHubServer } from "../src/server.ts";
+import { RelayUsageMeter, localDate } from "../src/relay-usage.ts";
 import type { RunningHub } from "../src/server.ts";
 
 let server: RunningHub | null = null;
@@ -456,4 +457,17 @@ test("用量统计：同实例 MAX、跨实例 SUM 合并", async () => {
   assert.equal(rows.length, 1);
   assert.equal(rows[0]!.relayBytesUp, 150, "同实例 MAX(100,80)=100 + 跨实例 50 = 150");
   assert.equal(rows[0]!.sessions, 2, "sessions 跨实例 SUM：实例 a 1 次 + 实例 b 1 次 = 2");
+});
+
+test("relay meter：flush 报累计值（F9 回归）", async () => {
+  const user = db.createUser("meter-user", await hashPassword("pw123456"));
+  const meter = new RelayUsageMeter(db);
+  const today = localDate();
+  meter.addBytes(user.id, "h1", 100, 0);
+  meter.flush();                    // 报累计 100
+  meter.addBytes(user.id, "h1", 50, 0);
+  meter.flush();                    // 报累计 150（不清空，MAX 取 150）
+  const rows = db.listUsageDaily(user.id, today, today);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]!.relayBytesUp, 150, "flush 报累计值，不是窗口增量");
 });

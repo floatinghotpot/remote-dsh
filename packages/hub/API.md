@@ -221,12 +221,13 @@ JSAPI 支付需用户 openid（公众号 OAuth2）。门户在微信内浏览器
 请求：
 
 ```json
-{ "nodeId": "<nodeId>", "instanceId": "<instanceId>", "rows": [
+{ "instanceId": "<instanceId>", "rows": [
   { "date": "YYYY-MM-DD", "userId": 1, "hostId": "host-1", "relayBytesUp": 0, "relayBytesDown": 0, "relaySeconds": 0, "sessions": 1 }
 ] }
 ```
 
 - `userId` = **访问者**（不是 host owner）；`hostId` = 被访问主机；`relaySeconds` 本阶段转发侧为 0（不测会话时长）。
+- `sessions` 语义：**每实例每 `(user, host)` 最多计 1**（本阶段转发侧不跟踪会话数，只记录“该日是否访问过”），跨实例由查询侧 `SUM` 求和。
 - 认证：`nodeToken`（`Authorization: Bearer` 或 body `nodeToken`；由 30-relay-node 的节点凭据决定，hub 内进程直调不经过此端点）。
 - 响应：`200 { "ok": true, "applied": <行数> }`；`400 BAD_REQUEST`（行字段非法）；`401 UNAUTHORIZED`（节点凭据无效）。
 

@@ -70,6 +70,8 @@ export interface HubServerOptions {
   e2ee?: E2eeConfig;
   /** 每日快照备份（dir 已解析；serve.ts 从 hub.json 传入）。 */
   backup?: BackupConfig;
+  /** 转发点（relay node）上报用量的共享令牌（serve.ts 从 hub.json 传入）。 */
+  relayNodeToken?: string;
   /**
    * 隧道心跳时序（缺省 30s/10s，见 PROTOCOL.md「心跳与重连」）。
    * 仅供测试注入毫秒级小值以快速验证超时判离线，生产不传。
@@ -155,12 +157,13 @@ export async function startHubServer(opts: HubServerOptions): Promise<RunningHub
       appleLogin: opts.appleLogin,
       e2ee: opts.e2ee,
       backup: opts.backup,
+      relayNodeToken: opts.relayNodeToken,
     },
     db: opts.db,
     auth: opts.auth,
     tunnels: opts.tunnels,
     events: opts.events,
-    relayUsage: new RelayUsageMeter(),
+    relayUsage: new RelayUsageMeter(opts.db),
   };
 
   // 计费状态机定时扫描（每分钟）：trial/subscribed 到期 → grace → free
@@ -170,7 +173,7 @@ export async function startHubServer(opts: HubServerOptions): Promise<RunningHub
   // 转发侧用量定时 flush（每分钟）：内存累计 → usage_daily（幂等 MAX 合并）
   setInterval(() => {
     try {
-      runtime.relayUsage.flush(runtime.db);
+      runtime.relayUsage.flush();
     } catch (err) {
       console.error("[usage] relay flush failed:", err instanceof Error ? err.message : err);
     }
