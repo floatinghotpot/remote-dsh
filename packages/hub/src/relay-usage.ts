@@ -26,6 +26,8 @@ export class RelayUsageMeter {
   readonly instanceId: string = randomUUID();
   private day = localDate();
   private rows = new Map<string, RelayRow>();
+  /** 自上次上报后有变化的行（F16：只写变更行，避免每次 flush 全量 upsert 的写放大）。 */
+  private dirty = new Set<string>();
 
   private readonly db: HubDb;
 
@@ -44,41 +46,45 @@ export class RelayUsageMeter {
     }
     r.relayBytesUp += up;
     r.relayBytesDown += down;
+    this.dirty.add(key);
   }
 
-  /** 跨日：先 flush 旧日累计，再清空切到新日（F13：不丢午夜窗口）。 */
+  /** 跨日：先把旧日**全部**行按最终累计上报，再清空切到新日（F13：不丢午夜窗口）。 */
   private rollDayIfNeeded(): void {
     const today = localDate();
     if (today !== this.day) {
-      this.report(this.day);
+      for (const r of this.rows.values()) this.upsert(this.day, r);
       this.rows.clear();
+      this.dirty.clear();
       this.day = today;
     }
   }
 
-  /** 上报当日**累计值**（不清空），保持「同实例 MAX」幂等语义（F9）。时长字段本阶段为 0。 */
+  /** 上报**自上次以来有变化的行**的当日累计值（不清空），保持「同实例 MAX」幂等语义（F9）。 */
   flush(): void {
     this.rollDayIfNeeded();
-    this.report(this.day);
+    for (const key of this.dirty) {
+      const r = this.rows.get(key);
+      if (r !== undefined) this.upsert(this.day, r);
+    }
+    this.dirty.clear();
   }
 
-  private report(day: string): void {
-    for (const r of this.rows.values()) {
-      this.db.upsertUsageDaily(
-        r.userId,
-        {
-          date: day,
-          relaySeconds: 0,
-          relayBytesUp: r.relayBytesUp,
-          relayBytesDown: r.relayBytesDown,
-          directBytesUp: 0,
-          directBytesDown: 0,
-          cloudAsrSeconds: 0,
-          localAsrSeconds: 0,
-          sessions: r.sessions,
-        },
-        { hostId: r.hostId, instanceId: this.instanceId, source: "relay" },
-      );
-    }
+  private upsert(day: string, r: RelayRow): void {
+    this.db.upsertUsageDaily(
+      r.userId,
+      {
+        date: day,
+        relaySeconds: 0,
+        relayBytesUp: r.relayBytesUp,
+        relayBytesDown: r.relayBytesDown,
+        directBytesUp: 0,
+        directBytesDown: 0,
+        cloudAsrSeconds: 0,
+        localAsrSeconds: 0,
+        sessions: r.sessions,
+      },
+      { hostId: r.hostId, instanceId: this.instanceId, source: "relay" },
+    );
   }
 }

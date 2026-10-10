@@ -427,6 +427,41 @@ export class HubDb {
     if (!subCols.has("channel")) this.db.exec(`ALTER TABLE subscriptions ADD COLUMN channel TEXT`);
     if (!subCols.has("subscription_id")) this.db.exec(`ALTER TABLE subscriptions ADD COLUMN subscription_id TEXT`);
     if (!subCols.has("will_renew")) this.db.exec(`ALTER TABLE subscriptions ADD COLUMN will_renew INTEGER NOT NULL DEFAULT 0`);
+    // 11-usage-analytics：usage_daily 由旧 schema（无 host_id/instance_id/source + UNIQUE(user_id,date)）
+    // 迁移到新 schema。SQLite 无法改 UNIQUE 约束（旧键会拒绝同一 user+day 的第二行，
+    // 多主机/多实例场景必现）⇒ 必须重建表。事务内、幂等（列已存在即跳过）。
+    const usageCols = new Set(
+      (this.db.prepare("PRAGMA table_info(usage_daily)").all() as unknown as Array<{ name: string }>).map((c) => c.name),
+    );
+    if (usageCols.size > 0 && !usageCols.has("host_id")) {
+      this.db.exec(`
+        BEGIN;
+        CREATE TABLE usage_daily_new (
+          id INTEGER PRIMARY KEY,
+          user_id INTEGER NOT NULL REFERENCES users(id),
+          host_id TEXT NOT NULL DEFAULT '',
+          date TEXT NOT NULL,
+          instance_id TEXT NOT NULL DEFAULT '',
+          source TEXT NOT NULL DEFAULT '',
+          relay_seconds INTEGER NOT NULL DEFAULT 0,
+          relay_bytes_up INTEGER NOT NULL DEFAULT 0,
+          relay_bytes_down INTEGER NOT NULL DEFAULT 0,
+          direct_bytes_up INTEGER NOT NULL DEFAULT 0,
+          direct_bytes_down INTEGER NOT NULL DEFAULT 0,
+          cloud_asr_seconds INTEGER NOT NULL DEFAULT 0,
+          local_asr_seconds INTEGER NOT NULL DEFAULT 0,
+          sessions INTEGER NOT NULL DEFAULT 0,
+          updated_at INTEGER NOT NULL,
+          UNIQUE(user_id, host_id, date, instance_id)
+        );
+        INSERT INTO usage_daily_new (id, user_id, host_id, date, instance_id, source, relay_seconds, relay_bytes_up, relay_bytes_down, direct_bytes_up, direct_bytes_down, cloud_asr_seconds, local_asr_seconds, sessions, updated_at)
+        SELECT id, user_id, '', date, '', '', relay_seconds, relay_bytes_up, relay_bytes_down, direct_bytes_up, direct_bytes_down, cloud_asr_seconds, local_asr_seconds, sessions, updated_at FROM usage_daily;
+        DROP TABLE usage_daily;
+        ALTER TABLE usage_daily_new RENAME TO usage_daily;
+        COMMIT;
+      `);
+    }
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_usage_daily_host ON usage_daily(host_id, date);`);
   }
 
 
