@@ -185,6 +185,22 @@ export interface PaymentRow {
   raw: string;
 }
 
+export interface UsageDayRow {
+  id: number;
+  userId: number;
+  /** 'YYYY-MM-DD'（区域时区日界，客户端上报） */
+  date: string;
+  relaySeconds: number;
+  relayBytesUp: number;
+  relayBytesDown: number;
+  directBytesUp: number;
+  directBytesDown: number;
+  cloudAsrSeconds: number;
+  localAsrSeconds: number;
+  sessions: number;
+  updatedAt: number;
+}
+
 export class HubDb {
   readonly db: DatabaseSync;
   /** 数据库文件路径（:memory: 测试用） */
@@ -338,6 +354,21 @@ export class HubDb {
         refresh_token TEXT,
         access_token TEXT,
         updated_at INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE TABLE IF NOT EXISTS usage_daily (
+        id INTEGER PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        date TEXT NOT NULL,
+        relay_seconds INTEGER NOT NULL DEFAULT 0,
+        relay_bytes_up INTEGER NOT NULL DEFAULT 0,
+        relay_bytes_down INTEGER NOT NULL DEFAULT 0,
+        direct_bytes_up INTEGER NOT NULL DEFAULT 0,
+        direct_bytes_down INTEGER NOT NULL DEFAULT 0,
+        cloud_asr_seconds INTEGER NOT NULL DEFAULT 0,
+        local_asr_seconds INTEGER NOT NULL DEFAULT 0,
+        sessions INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL,
+        UNIQUE(user_id, date)
       );
     `);
     // 迁移守卫：既有库补列（SQLite ALTER ADD COLUMN 不支持 UNIQUE，邮箱唯一用独立索引）
@@ -1020,6 +1051,83 @@ export class HubDb {
   isHostOwner(hostId: string, userId: number): boolean {
     const host = this.getHostById(hostId);
     return host !== null && host.ownerId === userId;
+  }
+
+  // ---- 用量统计（11-usage-analytics）----
+
+  /** 幂等 UPSERT 一天的用量（端侧上报的当天累计值，重复上报结果一致）。 */
+  upsertUsageDaily(
+    userId: number,
+    day: {
+      date: string;
+      relaySeconds: number;
+      relayBytesUp: number;
+      relayBytesDown: number;
+      directBytesUp: number;
+      directBytesDown: number;
+      cloudAsrSeconds: number;
+      localAsrSeconds: number;
+      sessions: number;
+    },
+    now = Date.now(),
+  ): void {
+    this.db
+      .prepare(
+        `INSERT INTO usage_daily (user_id, date, relay_seconds, relay_bytes_up, relay_bytes_down, direct_bytes_up, direct_bytes_down, cloud_asr_seconds, local_asr_seconds, sessions, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(user_id, date) DO UPDATE SET
+           relay_seconds = MAX(relay_seconds, excluded.relay_seconds),
+           relay_bytes_up = MAX(relay_bytes_up, excluded.relay_bytes_up),
+           relay_bytes_down = MAX(relay_bytes_down, excluded.relay_bytes_down),
+           direct_bytes_up = MAX(direct_bytes_up, excluded.direct_bytes_up),
+           direct_bytes_down = MAX(direct_bytes_down, excluded.direct_bytes_down),
+           cloud_asr_seconds = MAX(cloud_asr_seconds, excluded.cloud_asr_seconds),
+           local_asr_seconds = MAX(local_asr_seconds, excluded.local_asr_seconds),
+           sessions = MAX(sessions, excluded.sessions),
+           updated_at = excluded.updated_at`,
+      )
+      .run(
+        userId,
+        day.date,
+        day.relaySeconds,
+        day.relayBytesUp,
+        day.relayBytesDown,
+        day.directBytesUp,
+        day.directBytesDown,
+        day.cloudAsrSeconds,
+        day.localAsrSeconds,
+        day.sessions,
+        now,
+      );
+  }
+
+  /** 某用户 [from, to]（含）区间的日序列，按 date 升序。 */
+  listUsageDaily(userId: number, from: string, to: string): UsageDayRow[] {
+    return (this.db
+      .prepare("SELECT * FROM usage_daily WHERE user_id = ? AND date >= ? AND date <= ? ORDER BY date")
+      .all(userId, from, to) as unknown as Array<Record<string, unknown>>).map((r) => this.mapUsageDay(r));
+  }
+
+  /** 清理早于 [date] 的按天用量（R12：保留 90 天）。 */
+  deleteUsageOlderThan(date: string): void {
+    this.db.prepare("DELETE FROM usage_daily WHERE date < ?").run(date);
+  }
+
+  private mapUsageDay(r: Record<string, unknown>): UsageDayRow {
+    return {
+      id: Number(r.id),
+      userId: Number(r.user_id),
+      date: String(r.date),
+      relaySeconds: Number(r.relay_seconds),
+      relayBytesUp: Number(r.relay_bytes_up),
+      relayBytesDown: Number(r.relay_bytes_down),
+      directBytesUp: Number(r.direct_bytes_up),
+      directBytesDown: Number(r.direct_bytes_down),
+      cloudAsrSeconds: Number(r.cloud_asr_seconds),
+      localAsrSeconds: Number(r.local_asr_seconds),
+      sessions: Number(r.sessions),
+      updatedAt: Number(r.updated_at),
+    };
   }
 
   // ---- 审计 ----

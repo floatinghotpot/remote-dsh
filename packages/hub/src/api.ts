@@ -9,7 +9,7 @@ import { statSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { HubConfig, PlanSpec, WechatLoginConfig, AppleLoginConfig } from "./config.ts";
 import { BILLING_DEFAULTS } from "./config.ts";
-import type { HubDb, UserRow } from "./db.ts";
+import type { HubDb, UserRow, UsageDayRow } from "./db.ts";
 import type { HubAuth } from "./auth.ts";
 import { createLoginLimiter, hashPassword, verifyPassword, ADMIN_TTL_MS, RECENT_TOTP_WINDOW_MS, ACCESS_TTL_MS, REFRESH_TTL_MS } from "./auth.ts";
 import type { TunnelRegistry, TunnelTimings } from "./tunnel.ts";
@@ -229,6 +229,20 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
         version: HUB_VERSION,
       }),
     );
+    return true;
+  }
+  if (path === "/api/admin/usage" && method === "GET") {
+    const userIdRaw = url.searchParams.get("userId");
+    const userId = userIdRaw === null ? NaN : parseInt(userIdRaw, 10);
+    const from = url.searchParams.get("from");
+    const to = url.searchParams.get("to");
+    if (!Number.isInteger(userId) || userId <= 0 || typeof from !== "string" || typeof to !== "string" || !isDateString(from) || !isDateString(to) || from > to) {
+      writeError(res, 400, "BAD_REQUEST", "invalid userId/from/to");
+      return true;
+    }
+    const days = db.listUsageDaily(userId, from, to);
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ days: days.map(usageDayView) }));
     return true;
   }
   if (path === "/api/admin/users" && method === "GET") {
@@ -842,6 +856,18 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, runti
   }
   if (path === "/api/hosts/join-tokens" && method === "GET") {
     await handleListJoinTokens(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/usage/report" && method === "POST") {
+    await handleReportUsage(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/usage" && method === "GET") {
+    await handleGetUsage(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/host/usage/report" && method === "POST") {
+    await handleHostReportUsage(req, res, runtime);
     return true;
   }
   const joinTokenMatch = /^\/api\/hosts\/join-tokens\/([^/]+)$/.exec(path);
@@ -1988,6 +2014,108 @@ async function handleListHosts(req: IncomingMessage, res: ServerResponse, runtim
   }));
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({ hosts: out }));
+}
+
+// ---- 用量统计（11-usage-analytics）----
+
+/** gateway（`rdsh host`）以 host token 上报一天的中转/直连字节（归到 host owner；语音字段留 0，由 App 另报）。 */
+async function handleHostReportUsage(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const body = await readJsonBody(req);
+  if (body === null || typeof body.token !== "string" || body.token.length < 16) {
+    writeError(res, 400, "BAD_REQUEST", "invalid body (token required)");
+    return;
+  }
+  const host = runtime.db.findHostByTokenHash(sha256(body.token));
+  if (host === null) {
+    writeError(res, 401, "UNAUTHORIZED", "host token not found");
+    return;
+  }
+  const day = parseUsageDay(body);
+  if (day === null) {
+    writeError(res, 400, "BAD_REQUEST", "invalid usage report");
+    return;
+  }
+  runtime.db.upsertUsageDaily(host.ownerId, day);
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ ok: true }));
+}
+
+async function handleReportUsage(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const auth = authenticate(req, runtime);
+  if (auth === null) {
+    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
+    return;
+  }
+  const body = await readJsonBody(req);
+  const day = parseUsageDay(body);
+  if (day === null) {
+    writeError(res, 400, "BAD_REQUEST", "invalid usage report");
+    return;
+  }
+  runtime.db.upsertUsageDaily(auth.userId, day);
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ ok: true }));
+}
+
+async function handleGetUsage(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const auth = authenticate(req, runtime);
+  if (auth === null) {
+    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
+    return;
+  }
+  const url = new URL(req.url ?? "/", "http://rdsh.local");
+  const from = url.searchParams.get("from");
+  const to = url.searchParams.get("to");
+  if (typeof from !== "string" || typeof to !== "string" || !isDateString(from) || !isDateString(to) || from > to) {
+    writeError(res, 400, "BAD_REQUEST", "invalid from/to (YYYY-MM-DD)");
+    return;
+  }
+  if (Date.parse(to) - Date.parse(from) > 366 * 86400_000) {
+    writeError(res, 400, "BAD_REQUEST", "range too large (max 366 days)");
+    return;
+  }
+  const days = runtime.db.listUsageDaily(auth.userId, from, to);
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ days: days.map(usageDayView) }));
+}
+
+function isDateString(s: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(`${s}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+}
+
+function parseUsageDay(body: Record<string, unknown> | null): { date: string; relaySeconds: number; relayBytesUp: number; relayBytesDown: number; directBytesUp: number; directBytesDown: number; cloudAsrSeconds: number; localAsrSeconds: number; sessions: number } | null {
+  if (body === null) return null;
+  const date = body.date;
+  if (typeof date !== "string" || !isDateString(date)) return null;
+  const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) && v >= 0 && Math.floor(v) === v ? v : null);
+  const relaySeconds = num(body.relaySeconds);
+  const relayBytesUp = num(body.relayBytesUp);
+  const relayBytesDown = num(body.relayBytesDown);
+  const directBytesUp = num(body.directBytesUp);
+  const directBytesDown = num(body.directBytesDown);
+  const cloudAsrSeconds = num(body.cloudAsrSeconds);
+  const localAsrSeconds = num(body.localAsrSeconds);
+  const sessions = num(body.sessions);
+  if (relaySeconds === null || relayBytesUp === null || relayBytesDown === null || directBytesUp === null || directBytesDown === null || cloudAsrSeconds === null || localAsrSeconds === null || sessions === null) {
+    return null;
+  }
+  return { date, relaySeconds, relayBytesUp, relayBytesDown, directBytesUp, directBytesDown, cloudAsrSeconds, localAsrSeconds, sessions };
+}
+
+function usageDayView(d: UsageDayRow) {
+  return {
+    date: d.date,
+    relaySeconds: d.relaySeconds,
+    relayBytesUp: d.relayBytesUp,
+    relayBytesDown: d.relayBytesDown,
+    directBytesUp: d.directBytesUp,
+    directBytesDown: d.directBytesDown,
+    cloudAsrSeconds: d.cloudAsrSeconds,
+    localAsrSeconds: d.localAsrSeconds,
+    sessions: d.sessions,
+  };
 }
 
 const loginLimiters = new Map<string, ReturnType<typeof createLoginLimiter>>();

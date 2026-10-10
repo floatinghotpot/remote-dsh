@@ -78,6 +78,18 @@ export interface AccountInfo {
   planId: string | null;
 }
 
+export interface UsageDay {
+  date: string;
+  relaySeconds: number;
+  relayBytesUp: number;
+  relayBytesDown: number;
+  directBytesUp: number;
+  directBytesDown: number;
+  cloudAsrSeconds: number;
+  localAsrSeconds: number;
+  sessions: number;
+}
+
 export interface Capabilities {
   registration: "open" | "closed";
   emailEnabled: boolean;
@@ -283,6 +295,9 @@ export const api = {
   },
   capabilities(): Promise<Capabilities> {
     return jsonFetch("/api/capabilities");
+  },
+  usage(from: string, to: string): Promise<{ days: UsageDay[] }> {
+    return jsonFetch(`/api/usage?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
   },
 };
 

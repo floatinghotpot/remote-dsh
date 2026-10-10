@@ -8,6 +8,7 @@ import { request } from "node:http";
 import { WebSocket, WebSocketServer } from "ws";
 import { decodeBody, encodeBody, firstEncoding } from "./http-encoding.ts";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type { UsageMeter } from "./usage.ts";
 import type { Duplex } from "node:stream";
 
 export interface ProxyTarget {
@@ -33,6 +34,8 @@ export interface ForwardOptions {
    * 用途：把 DSH 前端的 `isLoopback` 判定替换为 `true` —— DSH 的设置/凭据界面只对 loopback 开放。
    */
   jsPatch?: (body: Buffer) => Buffer | null;
+  /** 用量计量器（11-usage-analytics）：只加字节长度，不 hold payload。 */
+  meter?: UsageMeter;
 }
 
 /**
@@ -115,7 +118,10 @@ export function forwardHttp(
         // 页面 HTML 很小（KB 级），缓冲注入后转发；其余流量仍走流式
         void (async () => {
           const chunks: Buffer[] = [];
-          for await (const chunk of upstreamRes) chunks.push(chunk as Buffer);
+          for await (const chunk of upstreamRes) {
+            opts?.meter?.addDirectDown((chunk as Buffer).length);
+            chunks.push(chunk as Buffer);
+          }
           let html = Buffer.concat(chunks).toString("utf8");
           const script = `<script>${opts!.htmlInject}</script>`;
           if (html.includes("</head>")) html = html.replace("</head>", `${script}</head>`);
@@ -146,7 +152,10 @@ export function forwardHttp(
         // 补丁后按原编码重压（fail-open：未命中/不支持编码 → 原字节原头透传）
         void (async () => {
           const chunks: Buffer[] = [];
-          for await (const chunk of upstreamRes) chunks.push(chunk as Buffer);
+          for await (const chunk of upstreamRes) {
+            opts?.meter?.addDirectDown((chunk as Buffer).length);
+            chunks.push(chunk as Buffer);
+          }
           const raw = Buffer.concat(chunks);
           const encoding = firstEncoding(upstreamRes.headers["content-encoding"]);
           const decoded = decodeBody(raw, encoding);
@@ -172,6 +181,7 @@ export function forwardHttp(
         return;
       }
       res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers);
+      upstreamRes.on("data", (c: Buffer) => opts?.meter?.addDirectDown(c.length));
       upstreamRes.pipe(res);
     },
   );
@@ -181,6 +191,7 @@ export function forwardHttp(
   });
   // 客户端断开 → 取消上游请求
   res.on("close", () => upstream.destroy());
+  req.on("data", (c: Buffer) => opts?.meter?.addDirectUp(c.length));
   req.pipe(upstream);
 }
 
@@ -209,6 +220,7 @@ export function createUpgradeProxy(target: ProxyTarget, opts?: ForwardOptions) {
         : Buffer.isBuffer(data)
           ? data
           : Buffer.from(data);
+      opts?.meter?.addDirectUp(buf.length);
       if (upstream.readyState === WebSocket.OPEN) {
         upstream.send(buf, { binary: isBinary });
       } else {
@@ -221,6 +233,12 @@ export function createUpgradeProxy(target: ProxyTarget, opts?: ForwardOptions) {
       queue.length = 0;
       // 上游 → 客户端
       upstream.on("message", (data, isBinary) => {
+        const len = Buffer.isBuffer(data)
+          ? data.length
+          : Array.isArray(data)
+            ? data.reduce((sum, b) => sum + b.length, 0)
+            : (data as ArrayBuffer).byteLength;
+        opts?.meter?.addDirectDown(len);
         if (clientWs.readyState === WebSocket.OPEN) clientWs.send(data, { binary: isBinary });
       });
       // 任一端断开 → 另一端强制销毁（优雅 close 会等对端回帧，可能悬挂）

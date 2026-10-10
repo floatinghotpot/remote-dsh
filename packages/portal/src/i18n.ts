@@ -399,6 +399,31 @@ const EN: Record<string, string> = {
   "用户协议": "Terms of Service",
   "隐私政策": "Privacy Policy",
 
+  // ---- 用量统计 ----
+  "用量统计": "Usage",
+  "近7天": "Last 7 days",
+  "近30天": "Last 30 days",
+  "本月": "This month",
+  "上月": "Last month",
+  "中转流量": "Relay traffic",
+  "直连流量": "Direct traffic",
+  "云端识别": "Cloud ASR",
+  "本地识别": "Local ASR",
+  "计费": "Billed",
+  "免费": "Free",
+  "自费": "Self-paid",
+  "合计": "Total",
+  "日均": "Daily avg",
+  "峰值": "Peak",
+  "已省下 ≈{x} 中转流量": "Saved ≈{x} relay traffic",
+  "数据来源：中转/直连流量 = 网关（设备端）统计 · 本地/云端语音 = App（设备端）统计":
+    "Data source: relay/direct traffic = gateway (on-device) · local/cloud speech = app (on-device)",
+  "暂无用量数据": "No usage data yet",
+  "秒": "sec",
+  "分钟": "min",
+  "中转 vs 直连": "Relay vs direct",
+  "本地 vs 云端": "Local vs cloud",
+
   // ---- 落地页 ----
   "你的 AI 智能体，随处安全可达": "Your AI agent, securely reachable anywhere",
   "免公网 IP · 免装客户端": "No public IP · no client install",

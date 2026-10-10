@@ -352,3 +352,88 @@ test("周期清理：pruneExpiredJoinTokens 只删过期 join token", async () =
   assert.equal(db.getJoinTokenById("jt-expired"), null, "过期 join token 应被清理");
   assert.notEqual(db.getJoinTokenById("jt-valid"), null, "未过期 join token 应保留");
 });
+
+test("用量统计：report 幂等 + query 日序列 + 校验 + 隔离", async () => {
+  const user = db.createUser("usage-tester", await hashPassword("pw123456"));
+  const pair = auth.issueSession(user.id)!;
+  const cookie = `rdsh_hub_session=${pair.accessToken}`;
+
+  // 未认证 401
+  assert.equal((await post("/api/usage/report", {})).status, 401);
+  assert.equal((await get("/api/usage")).status, 401);
+
+  // 缺字段 400
+  assert.equal((await post("/api/usage/report", { date: "2026-10-10" }, cookie)).status, 400);
+  // 负数 400
+  assert.equal(
+    (await post("/api/usage/report", { date: "2026-10-10", relaySeconds: -1 }, cookie)).status,
+    400,
+  );
+
+  // 上报一天（完整字段）
+  const day = {
+    date: "2026-10-10",
+    relaySeconds: 120,
+    relayBytesUp: 1000,
+    relayBytesDown: 5000,
+    directBytesUp: 200,
+    directBytesDown: 300,
+    cloudAsrSeconds: 0,
+    localAsrSeconds: 30,
+    sessions: 2,
+  };
+  assert.equal((await post("/api/usage/report", day, cookie)).status, 200);
+
+  // 幂等：同天再次上报，替换为最新累计值
+  const day2 = { ...day, relaySeconds: 240, relayBytesUp: 2000 };
+  assert.equal((await post("/api/usage/report", day2, cookie)).status, 200);
+
+  // query 日序列
+  const q = await get("/api/usage?from=2026-10-01&to=2026-10-31", cookie);
+  assert.equal(q.status, 200);
+  const days = q.json.days as Array<Record<string, unknown>>;
+  assert.equal(days.length, 1);
+  assert.equal(days[0]!.date, "2026-10-10");
+  assert.equal(days[0]!.relaySeconds, 240, "幂等替换后应取最新累计值");
+  assert.equal(days[0]!.relayBytesUp, 2000);
+  assert.equal(days[0]!.directBytesDown, 300);
+
+  // 非法 from/to 400
+  assert.equal((await get("/api/usage?from=bad&to=2026-10-31", cookie)).status, 400);
+  assert.equal((await get("/api/usage?from=2026-10-31&to=2026-10-01", cookie)).status, 400);
+});
+
+test("host usage report：host token 认证 + 归到 host owner", async () => {
+  const owner = db.createUser("host-usage-owner", await hashPassword("pw123456"));
+  const hostToken = randomToken();
+  db.createHost("host-usage-1", owner.id, "host-usage", sha256(hostToken));
+
+  // 缺 token → 400；假 token → 401
+  assert.equal((await post("/api/host/usage/report", { date: "2026-10-11" })).status, 400);
+  assert.equal(
+    (await post("/api/host/usage/report", { token: "x".repeat(20), date: "2026-10-11" })).status,
+    401,
+  );
+
+  // 正常上报（字节 + 时长 + 会话，语音字段留 0）
+  const day = {
+    token: hostToken,
+    date: "2026-10-11",
+    relaySeconds: 60,
+    relayBytesUp: 111,
+    relayBytesDown: 222,
+    directBytesUp: 33,
+    directBytesDown: 44,
+    cloudAsrSeconds: 0,
+    localAsrSeconds: 0,
+    sessions: 1,
+  };
+  assert.equal((await post("/api/host/usage/report", day)).status, 200);
+
+  // 归到 host owner（非访问者）
+  const rows = db.listUsageDaily(owner.id, "2026-10-11", "2026-10-11");
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]!.relayBytesUp, 111);
+  assert.equal(rows[0]!.directBytesDown, 44);
+  assert.equal(rows[0]!.sessions, 1);
+});

@@ -16,6 +16,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { SessionManager, sessionTokenFromCookie } from "./session.ts";
 import { UserManager } from "./auth.ts";
 import { createUpgradeProxy, forwardHttp } from "./proxy.ts";
+import type { UsageMeter } from "./usage.ts";
 import { patchLoopbackJs } from "./join.ts";
 import type { ProxyTarget } from "./proxy.ts";
 import { loginPageHtml } from "./login-page.ts";
@@ -69,6 +70,8 @@ export interface GatewayOptions {
   userManager?: UserManager;
   /** 配置文件路径（fs.watch 热更新 auth.version/allowFrom） */
   configPath?: string;
+  /** 用量计量器（11-usage-analytics，直连口字节计数） */
+  meter?: UsageMeter;
 }
 
 export interface RunningGateway {
@@ -99,6 +102,8 @@ interface HttpContext {
   getVersion(): number;
   isAllowed(ip: string): boolean;
   userManager?: UserManager;
+  /** 用量计量器（直连口字节计数；缺省 = 不计量，如纯 serve 模式） */
+  meter?: UsageMeter;
 }
 
 const MAX_LOGIN_FAILS = 5;
@@ -159,6 +164,7 @@ export async function startGateway(opts: GatewayOptions): Promise<RunningGateway
     getVersion: () => currentVersion,
     isAllowed: (ip) => currentAllowFrom.length === 0 || ipInCidrs(ip, currentAllowFrom),
     userManager: opts.userManager,
+    meter: opts.meter,
   };
 
   const loginLimiter = createLoginLimiter();
@@ -193,7 +199,7 @@ export async function startGateway(opts: GatewayOptions): Promise<RunningGateway
   });
   const address = server.address();
   const actualPort = typeof address === "object" && address !== null ? address.port : opts.port;
-  const upgradeProxy = createUpgradeProxy(target, { authCookie: ctx.dshAuthCookieHeader });
+  const upgradeProxy = createUpgradeProxy(target, { authCookie: ctx.dshAuthCookieHeader, meter: ctx.meter });
 
   return {
     server,
@@ -271,6 +277,7 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse, ctx: HttpCo
       htmlInject: HTML_INJECT,
       authCookie: ctx.dshAuthCookieHeader,
       jsPatch: ctx.trustPairedAsLoopback ? patchLoopbackJs : undefined,
+      meter: ctx.meter,
     });
     return;
   }
@@ -285,6 +292,7 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse, ctx: HttpCo
     // 会话分支同样要打 loopback 补丁：LAN 没有 E2EE shim，设置/API key 唯一依赖这个补丁；
     // 旧实现只在 authMode==="none" 分支传了 jsPatch ⇒ 登录模式下设置页打不开（2026-09-14 复审发现）
     jsPatch: ctx.trustPairedAsLoopback ? patchLoopbackJs : undefined,
+    meter: ctx.meter,
   });
 }
 
@@ -308,6 +316,7 @@ async function handleGateHttp(req: IncomingMessage, res: ServerResponse, ctx: Ht
       htmlInject: HTML_INJECT,
       authCookie: ctx.dshAuthCookieHeader,
       jsPatch: ctx.trustPairedAsLoopback ? patchLoopbackJs : undefined,
+      meter: ctx.meter,
     });
     return;
   }

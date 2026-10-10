@@ -21,6 +21,10 @@ import { rewriteHeadersForDsh } from "./proxy.ts";
 import type { ProxyTarget } from "./proxy.ts";
 import { clearPersistedToken, persistToken, readPersistedToken } from "./token-store.ts";
 import { decodeBody, encodeBody, firstEncoding } from "./http-encoding.ts";
+import { UsageMeter, localDate } from "./usage.ts";
+
+/** 当前 join 进程的用量计量器（单进程单实例；由 join() 赋值）。 */
+let activeMeter: UsageMeter | undefined;
 import { acquireJoinLock, releaseJoinLock } from "./lock.ts";
 import type { JoinLockRole } from "./lock.ts";
 import { responderHandshake, Aead } from "./e2ee.ts";
@@ -368,6 +372,7 @@ export const E2EE_FRAME_OVERHEAD = 15 + 12 + 16;
 /** 按 DATA_FRAME_CHUNK 分片发送响应体（多 DATA 帧在 hub/浏览器侧天然拼回同一个 body）。 */
 function sendChunkedBody(send: (frame: Buffer) => void, streamId: number, body: Buffer): void {
   if (body.length === 0) return;
+  activeMeter?.addRelayDown(body.length);
   for (let off = 0; off < body.length; off += DATA_FRAME_CHUNK) {
     send(encodeFrame(FRAME_TYPE.DATA, streamId, body.subarray(off, Math.min(off + DATA_FRAME_CHUNK, body.length))));
   }
@@ -379,6 +384,7 @@ function sendChunkedBody(send: (frame: Buffer) => void, streamId: number, body: 
  * —— 绝不让 `encodeFrame` 的 `ProtocolError` 逃逸到 ws 回调打死 host 进程。
  */
 function sendWsData(send: (frame: Buffer) => void, streamId: number, buf: Buffer): boolean {
+  activeMeter?.addRelayDown(buf.length);
   if (buf.length > MAX_PAYLOAD_LENGTH - E2EE_FRAME_OVERHEAD) {
     send(encodeFrame(FRAME_TYPE.CLOSE, streamId, jsonPayload({ code: 1009, message: "upstream ws message too large" })));
     return false;
@@ -1074,6 +1080,7 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
         return;
       }
       case FRAME_TYPE.DATA: {
+        activeMeter?.addRelayUp(frame.payload.length);
         const raw = rawStreams.get(frame.streamId);
         if (raw !== undefined) {
           handleRawData(frame.streamId, raw, frame.payload);
@@ -1132,6 +1139,7 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
 
     client.on("open", () => {
       reconnectDelay = RECONNECT_BASE_MS;
+      activeMeter?.sessionStart();
       setState("connected");
       log("info", `tunnel established (heartbeat ${heartbeatLabel})`);
       if (heartbeat !== undefined) clearInterval(heartbeat);
@@ -1199,6 +1207,7 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
         releaseJoinLock(opts.lockPath);
         return;
       }
+      activeMeter?.sessionEnd();
       setState("reconnecting", { delayMs: reconnectDelay });
       log("info", `tunnel lost — reconnecting in ${Math.round(reconnectDelay / 1000)}s...`);
       // 定时器里的异常不会被上层捕获 —— 必须自己兜住，否则一次重连失败就崩掉宿主进程。
@@ -1293,6 +1302,45 @@ export async function join(opts: JoinOptions): Promise<void> {
   console.log(`rdsh join: dsh web on 127.0.0.1:${dsh.port}`);
   console.log(`rdsh join: connecting to ${opts.hubUrl}...`);
 
+  // 用量计量（11-usage-analytics T3b）：单进程单 meter，中转/直连字节累计，定时 flush 上报（幂等）
+  const meter = new UsageMeter();
+  activeMeter = meter;
+  let meterDay = localDate();
+  const reportUsage = async (day: string, snap: ReturnType<UsageMeter["snapshot"]>): Promise<void> => {
+    await hubRequest(opts.hubUrl, "/api/host/usage/report", {
+      method: "POST",
+      insecure,
+      body: {
+        token,
+        date: day,
+        relaySeconds: snap.relaySeconds,
+        relayBytesUp: snap.relayBytesUp,
+        relayBytesDown: snap.relayBytesDown,
+        directBytesUp: snap.directBytesUp,
+        directBytesDown: snap.directBytesDown,
+        cloudAsrSeconds: 0,
+        localAsrSeconds: 0,
+        sessions: snap.sessions,
+      },
+    });
+  };
+  const flushUsage = async (): Promise<void> => {
+    const today = localDate();
+    const snap = meter.snapshot();
+    const hasUsage =
+      snap.relayBytesUp + snap.relayBytesDown + snap.directBytesUp + snap.directBytesDown + snap.relaySeconds + snap.sessions > 0;
+    if (today !== meterDay) {
+      // 跨日：先报旧日累计，再清零
+      if (hasUsage) await reportUsage(meterDay, snap).catch(() => undefined);
+      meter.reset();
+      meterDay = today;
+      return;
+    }
+    if (hasUsage) await reportUsage(today, snap).catch(() => undefined);
+  };
+  const usageTimer = setInterval(() => void flushUsage(), 60 * 1000);
+  usageTimer.unref?.();
+
   const accessCode = opts.gateway?.accessCode ?? null;
   // 直连密钥（per-host 随机，自动生成）+ 一次性直连票管理器（R4）：密钥独立于口令（方案 B）
   const directSecret = loadOrCreateDirectSecret();
@@ -1338,6 +1386,7 @@ export async function join(opts: JoinOptions): Promise<void> {
         host: opts.direct.host,
         port: opts.direct.port,
         dshUiCompat: { trustPairedAsLoopback: opts.dshUiCompat?.trustE2EEAsLoopback !== false },
+        meter,
       });
       const cands = directHandle.candidates();
       console.log(`rdsh join: direct on :${directHandle.actualPort}（${accessCode === null ? "ticket 门禁" : "ticket + 口令门禁"}）—— ${cands.map((c) => `http://${c.host}:${c.port}`).join(", ") || "(无内网网卡)"}`);
@@ -1352,6 +1401,8 @@ export async function join(opts: JoinOptions): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     if (signal !== "") console.log(`\nrdsh: received ${signal}, shutting down...`);
+    await flushUsage().catch(() => undefined);
+    clearInterval(usageTimer);
     if (directHandle !== undefined) await directHandle.stop().catch(() => undefined);
     await handle.stop();
     await dsh.stop();

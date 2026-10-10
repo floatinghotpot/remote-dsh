@@ -10,6 +10,7 @@ import type { NetworkInterfaceInfo } from "node:os";
 import { startGateway } from "./server.ts";
 import type { RunningGateway } from "./server.ts";
 import type { TlsMaterial } from "./tls.ts";
+import type { UsageMeter } from "./usage.ts";
 
 export interface DirectOptions {
   /** 转发目标 dsh 端口（join 已 spawn 的同一个 dsh；插件形态 = ctx.webServer.port） */
@@ -30,6 +31,8 @@ export interface DirectOptions {
   dshUiCompat?: { trustPairedAsLoopback?: boolean };
   configPath?: string;
   tlsMaterial?: TlsMaterial | null;
+  /** 用量计量器（直连口字节计数，与 join 共享同一实例） */
+  meter?: UsageMeter;
 }
 
 export interface DirectHandle {
@@ -55,6 +58,7 @@ export async function startDirect(opts: DirectOptions): Promise<DirectHandle> {
     dshUiCompat: opts.dshUiCompat,
     configPath: opts.configPath,
     tlsMaterial: opts.tlsMaterial ?? null,
+    meter: opts.meter,
   });
   const actualPort = gateway.actualPort;
   return {

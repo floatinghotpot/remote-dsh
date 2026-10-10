@@ -7,7 +7,7 @@
 import { useEffect, useState } from "react";
 import QRCode from "qrcode";
 import { api, ApiError, subscribeEvents, adminApi } from "./api.ts";
-import type { HostInfo, JoinTokenInfo, CaptchaPayload, AccountInfo, Capabilities, WechatPayInfo, AdminMe, AdminUserRow, AdminHostRow, AdminOrderRow, AdminPaymentRow, AdminAuditRow, AdminSubscriptionRow, AdminUserDetail, AdminDashboard, AdminConfig } from "./api.ts";
+import type { HostInfo, JoinTokenInfo, CaptchaPayload, AccountInfo, Capabilities, UsageDay, WechatPayInfo, AdminMe, AdminUserRow, AdminHostRow, AdminOrderRow, AdminPaymentRow, AdminAuditRow, AdminSubscriptionRow, AdminUserDetail, AdminDashboard, AdminConfig } from "./api.ts";
 import { fingerprint } from "./e2ee.ts";
 import { useT, getLang } from "./i18n.ts";
 import type { T } from "./i18n.ts";
@@ -75,6 +75,8 @@ export function App(): React.JSX.Element {
       <BillingPage />
     ) : path === "/settings/password" ? (
       <PasswordPage />
+    ) : path === "/usage" ? (
+      <UsagePage />
     ) : path === "/settings/account" ? (
       <AccountPage />
     ) : path === "/settings/email" ? (
@@ -137,6 +139,7 @@ function AppShell({ children }: { children: React.ReactNode }): React.JSX.Elemen
   }, []);
   const tabs = [
     { p: "/settings/account", label: t("账户与安全") },
+    { p: "/usage", label: t("用量统计") },
     { p: "/hosts", label: t("我的主机") },
     ...(me !== null && me.role !== "user" ? [{ p: "/admin", label: t("管理后台") }] : []),
   ];
@@ -2861,5 +2864,219 @@ function AdminAdmins({ isAdmin, meId }: { isAdmin: boolean; meId: number }): Rea
       </table>
       {dialog !== null && <ActionDialog spec={dialog} onClose={() => setDialog(null)} />}
     </div>
+  );
+}
+
+// ---- 用量统计（feature 11 T2）----
+
+type UsageRange = "7d" | "30d" | "month" | "lastMonth";
+
+function fmtDate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function addDays(d: Date, n: number): Date {
+  const out = new Date(d.getTime());
+  out.setDate(out.getDate() + n);
+  return out;
+}
+
+function rangeFor(r: UsageRange): { from: string; to: string } {
+  const now = new Date();
+  const today = fmtDate(now);
+  if (r === "7d") return { from: fmtDate(addDays(now, -6)), to: today };
+  if (r === "30d") return { from: fmtDate(addDays(now, -29)), to: today };
+  if (r === "month") return { from: fmtDate(new Date(now.getFullYear(), now.getMonth(), 1)), to: today };
+  const first = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const last = new Date(now.getFullYear(), now.getMonth(), 0);
+  return { from: fmtDate(first), to: fmtDate(last) };
+}
+
+function rangeLabel(r: UsageRange): string {
+  if (r === "7d") return "近7天";
+  if (r === "30d") return "近30天";
+  if (r === "month") return "本月";
+  return "上月";
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
+function formatMinutes(seconds: number, t: T): string {
+  if (seconds < 60) return `${Math.round(seconds)} ${t("秒")}`;
+  return `${(seconds / 60).toFixed(0)} ${t("分钟")}`;
+}
+
+/** 每根柱 = 一天；series 支持多序列（对照图并排）。null = 无数据日（不画柱）。 */
+function BarChart({ series, colors, height = 96 }: { series: Array<Array<number | null>>; colors: string[]; height?: number }): React.JSX.Element {
+  const n = series.reduce((m, arr) => Math.max(m, arr.length), 0);
+  const max = Math.max(1, ...series.flat().map((v) => v ?? 0));
+  if (n === 0) return <></>;
+  return (
+    <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height }}>
+      {Array.from({ length: n }).map((_, i) => (
+        <div key={i} style={{ flex: 1, display: "flex", alignItems: "flex-end", gap: 1, height: "100%", minWidth: 0 }}>
+          {series.map((arr, si) => {
+            const v = arr[i] ?? null;
+            const h = v === null || v === 0 ? 0 : Math.max(2, Math.round((v / max) * (height - 2)));
+            return <div key={si} style={{ flex: 1, height: h, background: colors[si] ?? "var(--rdsh-primary)", borderRadius: "2px 2px 0 0" }} />;
+          })}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function seriesFromDays(from: string, to: string, days: UsageDay[], pick: (d: UsageDay) => number): Array<number | null> {
+  const byDate = new Map(days.map((d) => [d.date, d]));
+  const out: Array<number | null> = [];
+  const d = new Date(`${from}T00:00:00`);
+  while (fmtDate(d) <= to) {
+    const day = byDate.get(fmtDate(d));
+    out.push(day === undefined ? null : pick(day));
+    d.setDate(d.getDate() + 1);
+  }
+  return out;
+}
+
+function sumSeries(arr: Array<number | null>): number {
+  let sum = 0;
+  for (const v of arr) sum += v ?? 0;
+  return sum;
+}
+
+function avgSeries(arr: Array<number | null>): number | null {
+  let sum = 0;
+  let count = 0;
+  for (const v of arr) {
+    if (v !== null) {
+      sum += v;
+      count++;
+    }
+  }
+  return count === 0 ? null : sum / count;
+}
+
+function UsagePage(): React.JSX.Element {
+  const { t } = useT();
+  const [range, setRange] = useState<UsageRange>("30d");
+  const [days, setDays] = useState<UsageDay[]>([]);
+  const [loading, setLoading] = useState(true);
+  const { err, run } = useError();
+
+  useEffect(() => {
+    const { from, to } = rangeFor(range);
+    void run(async () => {
+      setLoading(true);
+      try {
+        const r = await api.usage(from, to);
+        setDays(r.days);
+      } finally {
+        setLoading(false);
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [range]);
+
+  const { from, to } = rangeFor(range);
+  const relaySeries = seriesFromDays(from, to, days, (d) => d.relayBytesUp + d.relayBytesDown);
+  const directSeries = seriesFromDays(from, to, days, (d) => d.directBytesUp + d.directBytesDown);
+  const cloudSeries = seriesFromDays(from, to, days, (d) => d.cloudAsrSeconds);
+  const localSeries = seriesFromDays(from, to, days, (d) => d.localAsrSeconds);
+
+  const relayTotal = sumSeries(relaySeries);
+  const directTotal = sumSeries(directSeries);
+  const cloudTotal = sumSeries(cloudSeries);
+  const localTotal = sumSeries(localSeries);
+  const relayAvg = avgSeries(relaySeries);
+  const directAvg = avgSeries(directSeries);
+  const cloudAvg = avgSeries(cloudSeries);
+  const localAvg = avgSeries(localSeries);
+
+  const hasData = days.length > 0;
+  const green = "#07c160";
+  const orange = "#f59e0b";
+
+  const metric = (
+    label: string,
+    badge: string,
+    badgeColor: string,
+    totalText: string,
+    avgText: string | null,
+    series: Array<number | null>,
+    color: string,
+  ): React.JSX.Element => (
+    <div key={label} style={{ border: "1px solid var(--rdsh-border-soft)", borderRadius: 8, padding: 12, marginBottom: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+        <span style={{ fontWeight: 600 }}>{t(label)}</span>
+        <span style={{ fontSize: 11, color: badgeColor, border: `1px solid ${badgeColor}`, borderRadius: 4, padding: "1px 6px" }}>{t(badge)}</span>
+        <span style={{ marginLeft: "auto", fontWeight: 600, fontSize: 15 }}>{totalText}</span>
+      </div>
+      <BarChart series={[series]} colors={[color]} />
+      <div style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", marginTop: 6 }}>
+        {t("合计")} {totalText}{avgText !== null ? ` · ${t("日均")} ${avgText}` : ""}
+      </div>
+    </div>
+  );
+
+  const comparison = (
+    title: string,
+    aSeries: Array<number | null>,
+    aColor: string,
+    bSeries: Array<number | null>,
+    bColor: string,
+  ): React.JSX.Element => (
+    <div style={{ border: "1px solid var(--rdsh-border-soft)", borderRadius: 8, padding: 12, marginBottom: 12 }}>
+      <div style={{ fontWeight: 600, marginBottom: 8 }}>{t(title)}</div>
+      <BarChart series={[aSeries, bSeries]} colors={[aColor, bColor]} />
+    </div>
+  );
+
+  return (
+    <Shell title={t("用量统计")}>
+      {err !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{err}</p>}
+
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
+        {(["7d", "30d", "month", "lastMonth"] as UsageRange[]).map((r) => (
+          <button key={r} onClick={() => setRange(r)} style={{ ...btnStyle("ghost"), fontWeight: range === r ? 700 : 400, background: range === r ? "var(--rdsh-bg-active)" : "var(--rdsh-bg-surface)" }}>
+            {t(rangeLabel(r))}
+          </button>
+        ))}
+      </div>
+
+      {loading ? (
+        <p style={{ color: "var(--rdsh-fg-muted)" }}>{t("加载中…")}</p>
+      ) : !hasData ? (
+        <p style={{ color: "var(--rdsh-fg-muted)" }}>{t("暂无用量数据")}</p>
+      ) : (
+        <>
+          {metric("中转流量", "计费", orange, formatBytes(relayTotal), relayAvg !== null ? formatBytes(relayAvg) : null, relaySeries, orange)}
+          {metric("直连流量", "免费", green, formatBytes(directTotal), directAvg !== null ? formatBytes(directAvg) : null, directSeries, green)}
+          {metric("云端识别", "自费", orange, formatMinutes(cloudTotal, t), cloudAvg !== null ? formatMinutes(cloudAvg, t) : null, cloudSeries, orange)}
+          {metric("本地识别", "免费", green, formatMinutes(localTotal, t), localAvg !== null ? formatMinutes(localAvg, t) : null, localSeries, green)}
+
+          <div style={{ margin: "16px 0 4px" }}>
+            {comparison("中转 vs 直连", relaySeries, orange, directSeries, green)}
+            {comparison("本地 vs 云端", localSeries, green, cloudSeries, orange)}
+          </div>
+
+          {directTotal > 0 && (
+            <p style={{ fontSize: 13, color: green, margin: "4px 0 12px" }}>
+              💡 {t("已省下 ≈{x} 中转流量", { params: { x: formatBytes(directTotal) } })}
+            </p>
+          )}
+
+          <p style={{ fontSize: 12, color: "var(--rdsh-fg-subtle)", borderTop: "1px solid var(--rdsh-border-soft)", paddingTop: 8, margin: 0 }}>
+            {t("数据来源：中转/直连流量 = 网关（设备端）统计 · 本地/云端语音 = App（设备端）统计")}
+          </p>
+        </>
+      )}
+    </Shell>
   );
 }
