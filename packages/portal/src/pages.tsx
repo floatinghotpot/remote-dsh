@@ -2967,6 +2967,7 @@ function UsagePage(): React.JSX.Element {
   const { t } = useT();
   const [range, setRange] = useState<UsageRange>("30d");
   const [days, setDays] = useState<UsageDay[]>([]);
+  const [hostUsage, setHostUsage] = useState<Array<{ id: string; name: string; relayBytes: number; directBytes: number }>>([]);
   const [loading, setLoading] = useState(true);
   const { err, run } = useError();
 
@@ -2979,6 +2980,26 @@ function UsagePage(): React.JSX.Element {
         setDays(r.days);
       } finally {
         setLoading(false);
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [range]);
+
+  useEffect(() => {
+    void run(async () => {
+      try {
+        const r = await api.listHosts();
+        const rows = await Promise.all(
+          r.hosts.map(async (h: HostInfo) => {
+            const u = await api.usageHost(h.id, from, to);
+            const relayBytes = u.days.reduce((a, d) => a + d.relayBytesUp + d.relayBytesDown, 0);
+            const directBytes = u.days.reduce((a, d) => a + d.directBytesUp + d.directBytesDown, 0);
+            return { id: h.id, name: h.name, relayBytes, directBytes };
+          }),
+        );
+        setHostUsage(rows);
+      } catch {
+        setHostUsage([]);
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3047,6 +3068,22 @@ function UsagePage(): React.JSX.Element {
           {metric("直连流量", "免费", green, formatBytes(directTotal), directAvg !== null ? formatBytes(directAvg) : null, directSeries, green)}
           {metric("云端识别", "自费", orange, formatMinutes(cloudTotal, t), cloudAvg !== null ? formatMinutes(cloudAvg, t) : null, cloudSeries, orange)}
           {metric("本地识别", "免费", green, formatMinutes(localTotal, t), localAvg !== null ? formatMinutes(localAvg, t) : null, localSeries, green)}
+
+          {hostUsage.length > 0 && (
+            <div style={{ border: "1px solid var(--rdsh-border-soft)", borderRadius: 8, padding: 12, marginBottom: 12 }}>
+              <div style={{ fontWeight: 600, marginBottom: 8 }}>{t("主机总流量")} <span style={{ fontSize: 11, color: "var(--rdsh-fg-muted)" }}>（{t("中转流量")} {formatBytes(hostUsage.reduce((a, h) => a + h.relayBytes, 0))} · {t("直连流量")} {formatBytes(hostUsage.reduce((a, h) => a + h.directBytes, 0))}）</span></div>
+              {hostUsage.map((h) => (
+                <div key={h.id} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                  <span style={{ width: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{h.name}</span>
+                  <div style={{ flex: 1, display: "flex", gap: 4, height: 12, borderRadius: 2, overflow: "hidden" }}>
+                    {h.relayBytes > 0 && <div style={{ flex: h.relayBytes, background: orange }} />}
+                    {h.directBytes > 0 && <div style={{ flex: h.directBytes, background: green }} />}
+                  </div>
+                  <span style={{ fontSize: 12, color: "var(--rdsh-fg-muted)" }}>{formatBytes(h.relayBytes + h.directBytes)}</span>
+                </div>
+              ))}
+            </div>
+          )}
 
           {directTotal > 0 && (
             <p style={{ fontSize: 13, color: green, margin: "4px 0 12px" }}>

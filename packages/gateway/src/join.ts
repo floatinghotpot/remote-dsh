@@ -372,7 +372,6 @@ export const E2EE_FRAME_OVERHEAD = 15 + 12 + 16;
 /** 按 DATA_FRAME_CHUNK 分片发送响应体（多 DATA 帧在 hub/浏览器侧天然拼回同一个 body）。 */
 function sendChunkedBody(send: (frame: Buffer) => void, streamId: number, body: Buffer): void {
   if (body.length === 0) return;
-  activeMeter?.addRelayDown(body.length);
   for (let off = 0; off < body.length; off += DATA_FRAME_CHUNK) {
     send(encodeFrame(FRAME_TYPE.DATA, streamId, body.subarray(off, Math.min(off + DATA_FRAME_CHUNK, body.length))));
   }
@@ -384,7 +383,6 @@ function sendChunkedBody(send: (frame: Buffer) => void, streamId: number, body: 
  * —— 绝不让 `encodeFrame` 的 `ProtocolError` 逃逸到 ws 回调打死 host 进程。
  */
 function sendWsData(send: (frame: Buffer) => void, streamId: number, buf: Buffer): boolean {
-  activeMeter?.addRelayDown(buf.length);
   if (buf.length > MAX_PAYLOAD_LENGTH - E2EE_FRAME_OVERHEAD) {
     send(encodeFrame(FRAME_TYPE.CLOSE, streamId, jsonPayload({ code: 1009, message: "upstream ws message too large" })));
     return false;
@@ -1080,7 +1078,6 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
         return;
       }
       case FRAME_TYPE.DATA: {
-        activeMeter?.addRelayUp(frame.payload.length);
         const raw = rawStreams.get(frame.streamId);
         if (raw !== undefined) {
           handleRawData(frame.streamId, raw, frame.payload);

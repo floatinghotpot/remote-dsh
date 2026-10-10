@@ -299,6 +299,9 @@ export const api = {
   usage(from: string, to: string): Promise<{ days: UsageDay[] }> {
     return jsonFetch(`/api/usage?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
   },
+  usageHost(hostId: string, from: string, to: string): Promise<{ days: UsageDay[] }> {
+    return jsonFetch(`/api/usage/host?hostId=${encodeURIComponent(hostId)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
+  },
 };
 
 // ---- 管理后台（/api/admin/*，独立会话；401 不触发用户续期/跳登录） ----

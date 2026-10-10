@@ -1128,6 +1128,24 @@ export class HubDb {
       .all(userId, from, to) as unknown as Array<Record<string, unknown>>).map((r) => this.mapUsageDay(r));
   }
 
+  /** 某主机 [from, to]（含）区间的日序列（跨访问者/实例求和），按 date 升序 —— owner 视图。 */
+  listUsageDailyByHost(hostId: string, from: string, to: string): UsageDayRow[] {
+    return (this.db
+      .prepare(
+        `SELECT date,
+                SUM(relay_seconds) AS relay_seconds,
+                SUM(relay_bytes_up) AS relay_bytes_up,
+                SUM(relay_bytes_down) AS relay_bytes_down,
+                SUM(direct_bytes_up) AS direct_bytes_up,
+                SUM(direct_bytes_down) AS direct_bytes_down,
+                SUM(cloud_asr_seconds) AS cloud_asr_seconds,
+                SUM(local_asr_seconds) AS local_asr_seconds,
+                SUM(sessions) AS sessions
+         FROM usage_daily WHERE host_id = ? AND date >= ? AND date <= ? GROUP BY date ORDER BY date`,
+      )
+      .all(hostId, from, to) as unknown as Array<Record<string, unknown>>).map((r) => this.mapUsageDay(r));
+  }
+
   /** 清理早于 [date] 的按天用量（R12：保留 90 天）。 */
   deleteUsageOlderThan(date: string): void {
     this.db.prepare("DELETE FROM usage_daily WHERE date < ?").run(date);

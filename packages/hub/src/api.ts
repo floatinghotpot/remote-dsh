@@ -876,6 +876,10 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, runti
     await handleRelayUsageReport(req, res, runtime);
     return true;
   }
+  if (path === "/api/usage/host" && method === "GET") {
+    await handleGetHostUsage(req, res, runtime);
+    return true;
+  }
   if (path === "/api/host/usage/report" && method === "POST") {
     await handleHostReportUsage(req, res, runtime);
     return true;
@@ -2085,6 +2089,39 @@ async function handleGetUsage(req: IncomingMessage, res: ServerResponse, runtime
     return;
   }
   const days = runtime.db.listUsageDaily(auth.userId, from, to);
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ days: days.map(usageDayView) }));
+}
+
+async function handleGetHostUsage(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const auth = authenticate(req, runtime);
+  if (auth === null) {
+    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
+    return;
+  }
+  const url = new URL(req.url ?? "/", "http://rdsh.local");
+  const hostId = url.searchParams.get("hostId");
+  const from = url.searchParams.get("from");
+  const to = url.searchParams.get("to");
+  if (typeof hostId !== "string" || hostId.length === 0 || typeof from !== "string" || typeof to !== "string" || !isDateString(from) || !isDateString(to) || from > to) {
+    writeError(res, 400, "BAD_REQUEST", "invalid hostId/from/to");
+    return;
+  }
+  if (Date.parse(to) - Date.parse(from) > 366 * 86400_000) {
+    writeError(res, 400, "BAD_REQUEST", "range too large (max 366 days)");
+    return;
+  }
+  const host = runtime.db.getHostById(hostId);
+  if (host === null) {
+    writeError(res, 404, "NOT_FOUND", "host not found");
+    return;
+  }
+  const isMember = host.ownerId === auth.userId || runtime.db.getShare(hostId, auth.userId) !== null;
+  if (!isMember) {
+    writeError(res, 403, "FORBIDDEN", "not a member of this host");
+    return;
+  }
+  const days = runtime.db.listUsageDailyByHost(hostId, from, to);
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({ days: days.map(usageDayView) }));
 }

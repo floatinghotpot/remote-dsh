@@ -409,6 +409,7 @@ const EN: Record<string, string> = {
   "直连流量": "Direct traffic",
   "云端识别": "Cloud ASR",
   "本地识别": "Local ASR",
+  "主机总流量": "Host traffic",
   "计费": "Billed",
   "免费": "Free",
   "自费": "Self-paid",
