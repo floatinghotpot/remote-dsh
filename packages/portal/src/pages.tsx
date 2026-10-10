@@ -1164,6 +1164,58 @@ function ShieldIcon(): React.JSX.Element {
   );
 }
 
+/** 用量页图标：语义对齐 App 端用量页（24x24 stroke，与全站 SVG 风格一致）。 */
+function UsageIcon({ name, color }: { name: "relay" | "direct" | "cloud" | "local" | "host"; color: string }): React.JSX.Element {
+  const paths: Record<string, React.ReactNode> = {
+    relay: <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" />,
+    direct: (
+      <>
+        <rect x="16" y="16" width="6" height="6" rx="1" />
+        <rect x="2" y="16" width="6" height="6" rx="1" />
+        <rect x="9" y="2" width="6" height="6" rx="1" />
+        <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
+        <path d="M12 12V8" />
+      </>
+    ),
+    cloud: (
+      <>
+        <path d="M12 19v3" />
+        <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+        <rect x="9" y="2" width="6" height="13" rx="3" />
+      </>
+    ),
+    local: (
+      <>
+        <rect width="14" height="20" x="5" y="2" rx="2" ry="2" />
+        <path d="M12 18h.01" />
+      </>
+    ),
+    host: (
+      <>
+        <rect width="20" height="8" x="2" y="2" rx="2" ry="2" />
+        <rect width="20" height="8" x="2" y="14" rx="2" ry="2" />
+        <line x1="6" x2="6.01" y1="6" y2="6" />
+        <line x1="6" x2="6.01" y1="18" y2="18" />
+      </>
+    ),
+  };
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke={color}
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      style={{ flexShrink: 0 }}
+    >
+      {paths[name]}
+    </svg>
+  );
+}
+
 /** 菜单项图标：继承 currentColor（随普通/危险文字变色），stroke 风格与全站一致。 */
 function MenuIcon({ children }: { children: React.ReactNode }): React.JSX.Element {
   return (
@@ -3026,6 +3078,7 @@ function UsagePage(): React.JSX.Element {
 
   const metric = (
     label: string,
+    iconName: "relay" | "direct" | "cloud" | "local",
     badge: string,
     badgeColor: string,
     totalText: string,
@@ -3035,6 +3088,7 @@ function UsagePage(): React.JSX.Element {
   ): React.JSX.Element => (
     <div key={label} style={{ border: "1px solid var(--rdsh-border-soft)", borderRadius: 8, padding: 12, marginBottom: 12 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+        <UsageIcon name={iconName} color={color} />
         <span style={{ fontWeight: 600 }}>{t(label)}</span>
         <span style={{ fontSize: 11, color: badgeColor, border: `1px solid ${badgeColor}`, borderRadius: 4, padding: "1px 6px" }}>{t(badge)}</span>
         <span style={{ marginLeft: "auto", fontWeight: 600, fontSize: 15 }}>{totalText}</span>
@@ -3064,14 +3118,14 @@ function UsagePage(): React.JSX.Element {
         <p style={{ color: "var(--rdsh-fg-muted)" }}>{t("暂无用量数据")}</p>
       ) : (
         <>
-          {metric("中转流量", "计费", orange, formatBytes(relayTotal), relayAvg !== null ? formatBytes(relayAvg) : null, relaySeries, orange)}
-          {metric("直连流量", "免费", green, formatBytes(directTotal), directAvg !== null ? formatBytes(directAvg) : null, directSeries, green)}
-          {metric("云端识别", "自费", orange, formatMinutes(cloudTotal, t), cloudAvg !== null ? formatMinutes(cloudAvg, t) : null, cloudSeries, orange)}
-          {metric("本地识别", "免费", green, formatMinutes(localTotal, t), localAvg !== null ? formatMinutes(localAvg, t) : null, localSeries, green)}
+          {metric("中转流量", "relay", "计费", orange, formatBytes(relayTotal), relayAvg !== null ? formatBytes(relayAvg) : null, relaySeries, orange)}
+          {metric("直连流量", "direct", "免费", green, formatBytes(directTotal), directAvg !== null ? formatBytes(directAvg) : null, directSeries, green)}
+          {metric("云端识别", "cloud", "自费", orange, formatMinutes(cloudTotal, t), cloudAvg !== null ? formatMinutes(cloudAvg, t) : null, cloudSeries, orange)}
+          {metric("本地识别", "local", "免费", green, formatMinutes(localTotal, t), localAvg !== null ? formatMinutes(localAvg, t) : null, localSeries, green)}
 
           {hostUsage.length > 0 && (
             <div style={{ border: "1px solid var(--rdsh-border-soft)", borderRadius: 8, padding: 12, marginBottom: 12 }}>
-              <div style={{ fontWeight: 600, marginBottom: 8 }}>{t("主机总流量")} <span style={{ fontSize: 11, color: "var(--rdsh-fg-muted)" }}>（{t("中转流量")} {formatBytes(hostUsage.reduce((a, h) => a + h.relayBytes, 0))} · {t("直连流量")} {formatBytes(hostUsage.reduce((a, h) => a + h.directBytes, 0))}）</span></div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 600, marginBottom: 8 }}><UsageIcon name="host" color="#3b82f6" />{t("主机总流量")} <span style={{ fontSize: 11, color: "var(--rdsh-fg-muted)" }}>（{t("中转流量")} {formatBytes(hostUsage.reduce((a, h) => a + h.relayBytes, 0))} · {t("直连流量")} {formatBytes(hostUsage.reduce((a, h) => a + h.directBytes, 0))}）</span></div>
               {hostUsage.map((h) => (
                 <div key={h.id} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
                   <span style={{ width: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{h.name}</span>
