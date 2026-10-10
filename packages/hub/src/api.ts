@@ -13,6 +13,7 @@ import type { HubDb, UserRow, UsageDayRow } from "./db.ts";
 import type { HubAuth } from "./auth.ts";
 import { createLoginLimiter, hashPassword, verifyPassword, ADMIN_TTL_MS, RECENT_TOTP_WINDOW_MS, ACCESS_TTL_MS, REFRESH_TTL_MS } from "./auth.ts";
 import type { TunnelRegistry, TunnelTimings } from "./tunnel.ts";
+import type { RelayUsageMeter } from "./relay-usage.ts";
 import type { EventHub } from "./events.ts";
 import { randomToken, sha256 } from "./jwt.ts";
 import { createEmailSender } from "./email/index.ts";
@@ -55,6 +56,7 @@ export interface HubRuntime {
   auth: HubAuth;
   tunnels: TunnelRegistry;
   events: EventHub;
+  relayUsage: RelayUsageMeter;
 }
 
 export interface AuthResult {
@@ -868,6 +870,10 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, runti
   }
   if (path === "/api/usage" && method === "GET") {
     await handleGetUsage(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/relay/usage/report" && method === "POST") {
+    await handleRelayUsageReport(req, res, runtime);
     return true;
   }
   if (path === "/api/host/usage/report" && method === "POST") {
@@ -2081,6 +2087,59 @@ async function handleGetUsage(req: IncomingMessage, res: ServerResponse, runtime
   const days = runtime.db.listUsageDaily(auth.userId, from, to);
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({ days: days.map(usageDayView) }));
+}
+
+async function handleRelayUsageReport(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const nodeToken = runtime.config.relayNodeToken;
+  if (nodeToken === undefined || nodeToken.length === 0) {
+    writeError(res, 404, "DISABLED", "relay usage report disabled");
+    return;
+  }
+  const body = await readJsonBody(req);
+  const provided = typeof body?.nodeToken === "string" ? body.nodeToken : "";
+  if (provided !== nodeToken) {
+    writeError(res, 401, "UNAUTHORIZED", "invalid node token");
+    return;
+  }
+  const rows = parseRelayUsageRows(body);
+  if (rows === null) {
+    writeError(res, 400, "BAD_REQUEST", "invalid relay usage report");
+    return;
+  }
+  for (const r of rows) {
+    runtime.db.upsertUsageDaily(
+      r.userId,
+      { date: r.date, relaySeconds: r.relaySeconds, relayBytesUp: r.relayBytesUp, relayBytesDown: r.relayBytesDown, directBytesUp: 0, directBytesDown: 0, cloudAsrSeconds: 0, localAsrSeconds: 0, sessions: r.sessions },
+      { hostId: r.hostId, instanceId: r.instanceId, source: "relay" },
+    );
+  }
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ ok: true, applied: rows.length }));
+}
+
+function parseRelayUsageRows(body: Record<string, unknown> | null): Array<{ date: string; userId: number; hostId: string; relayBytesUp: number; relayBytesDown: number; relaySeconds: number; sessions: number; instanceId: string }> | null {
+  if (body === null) return null;
+  const instanceId = typeof body.instanceId === "string" ? body.instanceId : "";
+  const rows = body.rows;
+  if (!Array.isArray(rows) || rows.length === 0 || rows.length > 10000) return null;
+  const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) && v >= 0 && Math.floor(v) === v ? v : null);
+  const out: Array<{ date: string; userId: number; hostId: string; relayBytesUp: number; relayBytesDown: number; relaySeconds: number; sessions: number; instanceId: string }> = [];
+  for (const raw of rows) {
+    if (typeof raw !== "object" || raw === null) return null;
+    const row = raw as Record<string, unknown>;
+    const date = row.date;
+    const userId = row.userId;
+    const hostId = row.hostId;
+    const relayBytesUp = num(row.relayBytesUp);
+    const relayBytesDown = num(row.relayBytesDown);
+    const relaySeconds = num(row.relaySeconds);
+    const sessions = num(row.sessions);
+    if (typeof date !== "string" || !isDateString(date) || typeof userId !== "number" || !Number.isInteger(userId) || userId <= 0 || typeof hostId !== "string" || hostId.length === 0 || relayBytesUp === null || relayBytesDown === null || relaySeconds === null || sessions === null) {
+      return null;
+    }
+    out.push({ date, userId, hostId, relayBytesUp, relayBytesDown, relaySeconds, sessions, instanceId });
+  }
+  return out;
 }
 
 function isDateString(s: string): boolean {

@@ -205,3 +205,31 @@ JSAPI 支付需用户 openid（公众号 OAuth2）。门户在微信内浏览器
 ### GET /api/admin/usage?userId=&from=&to= —— 管理面查任意用户日用量
 
 管理面认证（`authenticateAdmin`）。`userId` 必须为正整数；`from`/`to` 同 `GET /api/usage` 约束。响应同 `GET /api/usage`（查指定 `userId`）。
+
+## 12. 转发侧用量上报（11-usage-analytics 第二轮，2026-10-10）
+
+> 中转字节改由 **relay 转发侧**按「访问者 × 主机 × 天」计量（hub 内进程直调，未来独立节点走 HTTP）。网关侧仅保留直连字节。
+
+### 表结构变更（`usage_daily`）
+
+新增 `host_id`（默认 `''`，relay 行=被访问主机）、`instance_id`（默认 `''`，随上报进程重启变化）、`source`（`app`/`gateway`/`relay`）；唯一键由 `(user_id, date)` 改为 `(user_id, host_id, date, instance_id)`。
+
+**合并语义**：同一 `(user_id, host_id, date, instance_id)` 内按字段 `MAX`（单实例累计值单调递增、幂等）；**跨实例（重启 = 新 instanceId）由查询侧 `SUM` 聚合**。用户视图 `GROUP BY user_id,date`；主机 owner 视图 `GROUP BY host_id,date`（= 各访问者求和）。
+
+### POST /api/relay/usage/report —— 转发点上报一批行（节点 token 认证）
+
+请求：
+
+```json
+{ "nodeId": "<nodeId>", "instanceId": "<instanceId>", "rows": [
+  { "date": "YYYY-MM-DD", "userId": 1, "hostId": "host-1", "relayBytesUp": 0, "relayBytesDown": 0, "relaySeconds": 0, "sessions": 1 }
+] }
+```
+
+- `userId` = **访问者**（不是 host owner）；`hostId` = 被访问主机；`relaySeconds` 本阶段转发侧为 0（不测会话时长）。
+- 认证：`nodeToken`（`Authorization: Bearer` 或 body `nodeToken`；由 30-relay-node 的节点凭据决定，hub 内进程直调不经过此端点）。
+- 响应：`200 { "ok": true, "applied": <行数> }`；`400 BAD_REQUEST`（行字段非法）；`401 UNAUTHORIZED`（节点凭据无效）。
+
+### 直连归 owner 是兜底（F7）
+
+直连票为匿名（无 `userId`）且直连免费、不占服务端带宽 ⇒ 直连字节归 `host.ownerId` 是「**访问者未知的兜底**」，**不是**「访问者=owner」；直连**永不进配额/计费**，仅作「节省」展示。

@@ -104,6 +104,7 @@ export async function handleRelay(req: IncomingMessage, res: ServerResponse, run
       }
     },
     onData: (chunk) => {
+      runtime.relayUsage.addBytes(auth.userId, hostId, 0, chunk.length);
       if (res.destroyed) return;
       if (htmlBuf !== null) htmlBuf.push(chunk);
       else res.write(chunk);
@@ -136,6 +137,7 @@ export async function handleRelay(req: IncomingMessage, res: ServerResponse, run
 
   // 请求体流式转发
   req.on("data", (chunk: Buffer) => {
+    runtime.relayUsage.addBytes(auth.userId, hostId, chunk.length, 0);
     conn.sendData(streamId, chunk);
   });
   req.on("end", () => {
@@ -205,6 +207,7 @@ export function handleRelayUpgrade(req: IncomingMessage, socket: Duplex, head: B
     const headers = normalizeHeaders(req.headers);
     const streamId = conn.openStream("ws", path, "GET", headers, {
       onData: (chunk) => {
+        runtime.relayUsage.addBytes(auth.userId, hostId, 0, chunk.length);
         if (clientWs.readyState === clientWs.OPEN) clientWs.send(chunk, { binary: false }); // DSH WS 为 text(JSON)，转发必须保持文本帧
       },
       onClose: () => {
@@ -234,6 +237,7 @@ export function handleRelayUpgrade(req: IncomingMessage, socket: Duplex, head: B
       // 兜底：任何"封装不了"的帧只废掉这一条流，绝不允许异常逃逸到进程
       //（maxPayload 已在 ws 层拦下超限消息；这里是纵深防御 + 未来路径的护栏）
       try {
+        runtime.relayUsage.addBytes(auth.userId, hostId, buf.length, 0);
         conn.sendData(streamId, buf);
       } catch (err) {
         console.error(`[relay] ws frame rejected (${buf.length}B): ${err instanceof Error ? err.message : String(err)}`);
@@ -280,6 +284,7 @@ export function handleRawUpgrade(req: IncomingMessage, socket: Duplex, head: Buf
   wss.handleUpgrade(req, socket, head, (clientWs) => {
     const streamId = conn.openRawStream({
       onData: (chunk) => {
+        runtime.relayUsage.addBytes(auth.userId, auth.hostId, 0, chunk.length);
         if (clientWs.readyState === clientWs.OPEN) clientWs.send(chunk, { binary: true });
       },
       onClose: () => {
@@ -309,6 +314,7 @@ export function handleRawUpgrade(req: IncomingMessage, socket: Duplex, head: Buf
       // E2EE raw 流是"一条 WS 消息 = 一个隧道 DATA 帧"（host 侧按 AES-GCM 包逐帧解密，
       // 见 gateway join.ts handleRawData），所以超限消息既不能拆也不能封装 ⇒ 只能废流。
       try {
+        runtime.relayUsage.addBytes(auth.userId, auth.hostId, buf.length, 0);
         conn.sendRawData(streamId, buf);
       } catch (err) {
         console.error(`[relay] raw ws frame rejected (${buf.length}B): ${err instanceof Error ? err.message : String(err)}`);

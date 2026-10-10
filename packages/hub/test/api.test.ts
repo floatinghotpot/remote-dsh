@@ -439,3 +439,21 @@ test("host usage report：host token 认证 + 归到 host owner", async () => {
   assert.equal(rows[0]!.directBytesDown, 44);
   assert.equal(rows[0]!.sessions, 1);
 });
+
+test("用量统计：同实例 MAX、跨实例 SUM 合并", async () => {
+  const user = db.createUser("sum-user", await hashPassword("pw123456"));
+  const day = {
+    date: "2026-10-10", relaySeconds: 0, relayBytesUp: 100, relayBytesDown: 0,
+    directBytesUp: 0, directBytesDown: 0, cloudAsrSeconds: 0, localAsrSeconds: 0, sessions: 1,
+  };
+  // 实例 a：报 100，再报 80（同实例 MAX → 100）
+  db.upsertUsageDaily(user.id, day, { hostId: "h1", instanceId: "a", source: "relay" });
+  db.upsertUsageDaily(user.id, { ...day, relayBytesUp: 80 }, { hostId: "h1", instanceId: "a", source: "relay" });
+  // 实例 b：报 50（跨实例 SUM → 100 + 50 = 150）
+  db.upsertUsageDaily(user.id, { ...day, relayBytesUp: 50 }, { hostId: "h1", instanceId: "b", source: "relay" });
+
+  const rows = db.listUsageDaily(user.id, "2026-10-01", "2026-10-31");
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]!.relayBytesUp, 150, "同实例 MAX(100,80)=100 + 跨实例 50 = 150");
+  assert.equal(rows[0]!.sessions, 2, "sessions 跨实例 SUM：实例 a 1 次 + 实例 b 1 次 = 2");
+});

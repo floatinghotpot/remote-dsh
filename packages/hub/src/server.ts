@@ -31,6 +31,7 @@ import type { TunnelTimings } from "./tunnel.ts";
 import { EventHub, createEventsServer } from "./events.ts";
 import { handleRelay, handleRelayUpgrade, handleRawUpgrade } from "./relay.ts";
 import { servePortal } from "./portal.ts";
+import { RelayUsageMeter } from "./relay-usage.ts";
 
 export interface HubServerOptions {
   host: string;
@@ -159,11 +160,21 @@ export async function startHubServer(opts: HubServerOptions): Promise<RunningHub
     auth: opts.auth,
     tunnels: opts.tunnels,
     events: opts.events,
+    relayUsage: new RelayUsageMeter(),
   };
 
   // 计费状态机定时扫描（每分钟）：trial/subscribed 到期 → grace → free
   sweepBilling(runtime);
   setInterval(() => sweepBilling(runtime), 60 * 1000).unref();
+
+  // 转发侧用量定时 flush（每分钟）：内存累计 → usage_daily（幂等 MAX 合并）
+  setInterval(() => {
+    try {
+      runtime.relayUsage.flush(runtime.db);
+    } catch (err) {
+      console.error("[usage] relay flush failed:", err instanceof Error ? err.message : err);
+    }
+  }, 60 * 1000).unref();
 
   const requestHandler = (req: IncomingMessage, res: ServerResponse): void => {
     void handleHttp(req, res, runtime, opts.portalDir).catch((err) => {

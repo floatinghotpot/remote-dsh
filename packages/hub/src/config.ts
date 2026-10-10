@@ -153,6 +153,8 @@ export interface HubConfig {
   e2ee?: E2eeConfig;
   /** 每日快照备份；缺省 → 启用（<hub.json 同目录>/backups，保留 7 天） */
   backup?: BackupConfig;
+  /** 转发点（relay node）上报用量的共享令牌；缺省 → 端点禁用（404） */
+  relayNodeToken?: string;
   /** 站点信息（portal 页脚导航） */
   site?: SiteConfig;
   /** 微信登录（网站应用 AppID；缺省 → 微信登录禁用） */

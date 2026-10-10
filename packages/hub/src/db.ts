@@ -358,7 +358,10 @@ export class HubDb {
       CREATE TABLE IF NOT EXISTS usage_daily (
         id INTEGER PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id),
+        host_id TEXT NOT NULL DEFAULT '',
         date TEXT NOT NULL,
+        instance_id TEXT NOT NULL DEFAULT '',
+        source TEXT NOT NULL DEFAULT '',
         relay_seconds INTEGER NOT NULL DEFAULT 0,
         relay_bytes_up INTEGER NOT NULL DEFAULT 0,
         relay_bytes_down INTEGER NOT NULL DEFAULT 0,
@@ -368,7 +371,7 @@ export class HubDb {
         local_asr_seconds INTEGER NOT NULL DEFAULT 0,
         sessions INTEGER NOT NULL DEFAULT 0,
         updated_at INTEGER NOT NULL,
-        UNIQUE(user_id, date)
+        UNIQUE(user_id, host_id, date, instance_id)
       );
     `);
     // 迁移守卫：既有库补列（SQLite ALTER ADD COLUMN 不支持 UNIQUE，邮箱唯一用独立索引）
@@ -1056,6 +1059,8 @@ export class HubDb {
   // ---- 用量统计（11-usage-analytics）----
 
   /** 幂等 UPSERT 一天的用量（端侧上报的当天累计值，重复上报结果一致）。 */
+  /** 幂等 UPSERT 一天用量：同一 `(user_id, host_id, date, instance_id)` 内按字段 `MAX` 合并；
+   *  跨实例（重启 = 新 instanceId）由查询侧 `SUM` 聚合。 */
   upsertUsageDaily(
     userId: number,
     day: {
@@ -1069,13 +1074,14 @@ export class HubDb {
       localAsrSeconds: number;
       sessions: number;
     },
+    meta: { hostId?: string; instanceId?: string; source?: string } = {},
     now = Date.now(),
   ): void {
     this.db
       .prepare(
-        `INSERT INTO usage_daily (user_id, date, relay_seconds, relay_bytes_up, relay_bytes_down, direct_bytes_up, direct_bytes_down, cloud_asr_seconds, local_asr_seconds, sessions, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(user_id, date) DO UPDATE SET
+        `INSERT INTO usage_daily (user_id, host_id, date, instance_id, source, relay_seconds, relay_bytes_up, relay_bytes_down, direct_bytes_up, direct_bytes_down, cloud_asr_seconds, local_asr_seconds, sessions, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(user_id, host_id, date, instance_id) DO UPDATE SET
            relay_seconds = MAX(relay_seconds, excluded.relay_seconds),
            relay_bytes_up = MAX(relay_bytes_up, excluded.relay_bytes_up),
            relay_bytes_down = MAX(relay_bytes_down, excluded.relay_bytes_down),
@@ -1088,7 +1094,10 @@ export class HubDb {
       )
       .run(
         userId,
+        meta.hostId ?? "",
         day.date,
+        meta.instanceId ?? "",
+        meta.source ?? "",
         day.relaySeconds,
         day.relayBytesUp,
         day.relayBytesDown,
@@ -1101,10 +1110,21 @@ export class HubDb {
       );
   }
 
-  /** 某用户 [from, to]（含）区间的日序列，按 date 升序。 */
+  /** 某用户 [from, to]（含）区间的日序列（跨 host/instance 求和），按 date 升序。 */
   listUsageDaily(userId: number, from: string, to: string): UsageDayRow[] {
     return (this.db
-      .prepare("SELECT * FROM usage_daily WHERE user_id = ? AND date >= ? AND date <= ? ORDER BY date")
+      .prepare(
+        `SELECT date,
+                SUM(relay_seconds) AS relay_seconds,
+                SUM(relay_bytes_up) AS relay_bytes_up,
+                SUM(relay_bytes_down) AS relay_bytes_down,
+                SUM(direct_bytes_up) AS direct_bytes_up,
+                SUM(direct_bytes_down) AS direct_bytes_down,
+                SUM(cloud_asr_seconds) AS cloud_asr_seconds,
+                SUM(local_asr_seconds) AS local_asr_seconds,
+                SUM(sessions) AS sessions
+         FROM usage_daily WHERE user_id = ? AND date >= ? AND date <= ? GROUP BY date ORDER BY date`,
+      )
       .all(userId, from, to) as unknown as Array<Record<string, unknown>>).map((r) => this.mapUsageDay(r));
   }
 
@@ -1115,18 +1135,18 @@ export class HubDb {
 
   private mapUsageDay(r: Record<string, unknown>): UsageDayRow {
     return {
-      id: Number(r.id),
-      userId: Number(r.user_id),
+      id: Number(r.id ?? 0),
+      userId: Number(r.user_id ?? 0),
       date: String(r.date),
-      relaySeconds: Number(r.relay_seconds),
-      relayBytesUp: Number(r.relay_bytes_up),
-      relayBytesDown: Number(r.relay_bytes_down),
-      directBytesUp: Number(r.direct_bytes_up),
-      directBytesDown: Number(r.direct_bytes_down),
-      cloudAsrSeconds: Number(r.cloud_asr_seconds),
-      localAsrSeconds: Number(r.local_asr_seconds),
-      sessions: Number(r.sessions),
-      updatedAt: Number(r.updated_at),
+      relaySeconds: Number(r.relay_seconds ?? 0),
+      relayBytesUp: Number(r.relay_bytes_up ?? 0),
+      relayBytesDown: Number(r.relay_bytes_down ?? 0),
+      directBytesUp: Number(r.direct_bytes_up ?? 0),
+      directBytesDown: Number(r.direct_bytes_down ?? 0),
+      cloudAsrSeconds: Number(r.cloud_asr_seconds ?? 0),
+      localAsrSeconds: Number(r.local_asr_seconds ?? 0),
+      sessions: Number(r.sessions ?? 0),
+      updatedAt: Number(r.updated_at ?? 0),
     };
   }
 
