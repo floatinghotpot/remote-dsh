@@ -170,3 +170,35 @@ JSAPI 支付需用户 openid（公众号 OAuth2）。门户在微信内浏览器
 ### GET /api/admin/config —— 脱敏后的运行时配置。
 
 ### GET /api/admin/admins；POST /api/admin/admins/{id}/role|remove —— 管理员管理（`admin` only；`role` 请求体 `{ role, reason }`；不能操作自己）。
+
+## 11. 用量统计（11-usage-analytics，2026-10-10 新增）
+
+四类用量（中转/直连流量字节、本地/云端语音时长、中转时长、会话数）端侧统计 → 上报 `usage_daily`（user×day 聚合，幂等 UPSERT 按字段 `MAX` 合并）。本期**全部端侧、仅展示**；服务端可信计量后置到 30-relay-node。
+
+### POST /api/usage/report —— 上报一天用量（用户会话认证，App 语音用）
+
+请求（8 个数值字段均为**非负整数**，`date` 为客户端所在区域时区的日界）：
+
+```json
+{ "date": "YYYY-MM-DD", "relaySeconds": 0, "relayBytesUp": 0, "relayBytesDown": 0, "directBytesUp": 0, "directBytesDown": 0, "cloudAsrSeconds": 0, "localAsrSeconds": 0, "sessions": 0 }
+```
+
+语义：**当天累计值**；UPSERT 按字段 `MAX` 合并（网关字节与 App 语音各源只影响自己的字段，重复上报结果一致）。响应 `200 {"ok":true}`；`400 BAD_REQUEST`（字段非法）；`401 UNAUTHORIZED`。
+
+### GET /api/usage?from=YYYY-MM-DD&to=YYYY-MM-DD —— 查询日序列（用户会话认证）
+
+`from`/`to` **必填**（`YYYY-MM-DD`），`from ≤ to` 且 `to - from ≤ 366` 天。响应：
+
+```json
+{ "days": [{ "date", "relaySeconds", "relayBytesUp", "relayBytesDown", "directBytesUp", "directBytesDown", "cloudAsrSeconds", "localAsrSeconds", "sessions" }] }
+```
+
+按 `date` 升序，只含**有记录**的日（无数据日由客户端补「—」）。
+
+### POST /api/host/usage/report —— gateway 上报一天用量（host token 认证）
+
+请求 = `POST /api/usage/report` 的字段 **+** `"token": "<hostToken>"`（`rdsh host` 的 host token，≥16 字符，存哈希校验）。**归到 host owner**（`user_id = host.ownerId`）；语音字段（cloudAsrSeconds/localAsrSeconds）恒 0，由 App 另报。响应同 `POST /api/usage/report`；token 无效 → `401 UNAUTHORIZED`。
+
+### GET /api/admin/usage?userId=&from=&to= —— 管理面查任意用户日用量
+
+管理面认证（`authenticateAdmin`）。`userId` 必须为正整数；`from`/`to` 同 `GET /api/usage` 约束。响应同 `GET /api/usage`（查指定 `userId`）。
