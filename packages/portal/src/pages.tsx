@@ -3025,19 +3025,6 @@ function UsagePage(): React.JSX.Element {
     </div>
   );
 
-  const comparison = (
-    title: string,
-    aSeries: Array<number | null>,
-    aColor: string,
-    bSeries: Array<number | null>,
-    bColor: string,
-  ): React.JSX.Element => (
-    <div style={{ border: "1px solid var(--rdsh-border-soft)", borderRadius: 8, padding: 12, marginBottom: 12 }}>
-      <div style={{ fontWeight: 600, marginBottom: 8 }}>{t(title)}</div>
-      <BarChart series={[aSeries, bSeries]} colors={[aColor, bColor]} />
-    </div>
-  );
-
   return (
     <Shell title={t("用量统计")}>
       {err !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{err}</p>}
@@ -3060,11 +3047,6 @@ function UsagePage(): React.JSX.Element {
           {metric("直连流量", "免费", green, formatBytes(directTotal), directAvg !== null ? formatBytes(directAvg) : null, directSeries, green)}
           {metric("云端识别", "自费", orange, formatMinutes(cloudTotal, t), cloudAvg !== null ? formatMinutes(cloudAvg, t) : null, cloudSeries, orange)}
           {metric("本地识别", "免费", green, formatMinutes(localTotal, t), localAvg !== null ? formatMinutes(localAvg, t) : null, localSeries, green)}
-
-          <div style={{ margin: "16px 0 4px" }}>
-            {comparison("中转 vs 直连", relaySeries, orange, directSeries, green)}
-            {comparison("本地 vs 云端", localSeries, green, cloudSeries, orange)}
-          </div>
 
           {directTotal > 0 && (
             <p style={{ fontSize: 13, color: green, margin: "4px 0 12px" }}>
