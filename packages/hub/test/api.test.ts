@@ -401,6 +401,8 @@ test("用量统计：report 幂等 + query 日序列 + 校验 + 隔离", async (
   // 非法 from/to 400
   assert.equal((await get("/api/usage?from=bad&to=2026-10-31", cookie)).status, 400);
   assert.equal((await get("/api/usage?from=2026-10-31&to=2026-10-01", cookie)).status, 400);
+  // 跨度 > 366 天 → 400
+  assert.equal((await get("/api/usage?from=2026-01-01&to=2027-12-31", cookie)).status, 400);
 });
 
 test("host usage report：host token 认证 + 归到 host owner", async () => {

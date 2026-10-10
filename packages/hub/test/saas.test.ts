@@ -369,3 +369,9 @@ test("addMonths：月末收敛 + 闰年 + 跨年 + 普通日期不漂移", () =>
   // 多个月：2026-01-31 +3 月 → 2026-04-30
   assert.equal(iso(addMonths(Date.UTC(2026, 0, 31), 3)), "2026-04-30");
 });
+
+test("admin usage：跨度 > 366 天 → 400", async () => {
+  const cookie = await adminCookie();
+  const res = await fetch(base + "/api/admin/usage?userId=1&from=2026-01-01&to=2027-12-31", { headers: { cookie } });
+  assert.equal(res.status, 400);
+});
