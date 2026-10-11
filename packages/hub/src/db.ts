@@ -958,6 +958,14 @@ export class HubDb {
     this.db.prepare("UPDATE nodes SET status = 'offline' WHERE status = 'online' AND last_heartbeat > 0 AND last_heartbeat < ?").run(since);
   }
 
+  /**
+   * N2 心跳证明节点存活：把被离线扫描误判的节点拉回 online。
+   * 只改 offline → online，**不动 `draining`**（迁移中不能被改写，R39）。
+   */
+  markNodeAlive(id: string): void {
+    this.db.prepare("UPDATE nodes SET status = 'online' WHERE id = ? AND status = 'offline'").run(id);
+  }
+
   /** N2：落一次负载采样（最新计数器 + append-only 样本，供带宽口径 R32）。 */
   recordNodeMetric(nodeId: string, m: { connections: number; activeStreams: number; bytesIn: number; bytesOut: number }, now = Date.now()): void {
     this.db.prepare("UPDATE nodes SET connections=?, active_streams=?, bytes_in=?, bytes_out=?, last_heartbeat=? WHERE id=?").run(m.connections, m.activeStreams, m.bytesIn, m.bytesOut, now, nodeId);

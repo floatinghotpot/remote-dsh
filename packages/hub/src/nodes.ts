@@ -86,6 +86,8 @@ export async function handleNodeHeartbeat(req: IncomingMessage, res: ServerRespo
     bytesIn: Number(body?.bytesIn ?? 0),
     bytesOut: Number(body?.bytesOut ?? 0),
   });
+  // 心跳即存活证明：节点被离线扫描误判后无需重启即可自愈（draining 不被改写）。
+  runtime.db.markNodeAlive(node.id);
   res.writeHead(200, { "content-type": "application/json" });
   res.end("{}");
 }

@@ -232,6 +232,11 @@ func syncLoop(acc *account, nodeID string, cookie *hostCookie, cache *hostCache,
 			continue
 		}
 		cache.setHosts(data.Hosts)
+		// N4：上报本节点主机的真实在线状态（幂等）。此前 HostUpsert 从未被调用，
+		// 导致账号服务端 hosts.online 恒为 0 → 节点路由的主机永久显示离线 ✗
+		for _, h := range data.Hosts {
+			_ = acc.HostUpsert(nodeID, h.HostID, registry.IsOnline(h.HostID))
+		}
 		if data.HostCookiePubKey != "" {
 			if pk, err := decodeHexKey(data.HostCookiePubKey); err == nil {
 				cookie.pub = pk
