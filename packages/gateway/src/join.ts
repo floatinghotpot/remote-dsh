@@ -631,6 +631,8 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
     function openWsStream(streamId: number, path: string, headers: Record<string, string | string[]>): void {
       const upstream = new WebSocket(`ws://${opts.target.host}:${opts.target.port}${path}`, {
         headers: rewriteHeadersForDsh(headers, opts.target, dshAuthCookie),
+        // ws 库的 Origin 走独立 option，不从 headers 取；DSH WS 围栏要求 loopback Origin
+        origin: `http://${opts.target.host}:${opts.target.port}`,
       });
       const queue: Buffer[] = [];
       wsStreams.set(streamId, { upstream, queue });
