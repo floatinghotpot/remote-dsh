@@ -114,8 +114,8 @@ test("注册限流：registrationDailyLimit / registrationMaxUsers 校验", () =
 
 test("billing.plans[].vipTier：可选 / 正整数 / 档位唯一（客户端据此判定用户档位，见 API.md §13）", () => {
   const plan = { id: "plus_monthly", name: "标准版", hosts: 2, priceCny: 38, intervalMonths: 1 };
-  // 可选：不传 → undefined（客户端按最低付费档处理，与 App `vip_tier ?? 1` 一致）
-  assert.equal(normalizeHubConfig({ billing: { plans: [plan] } }).billing?.plans[0]?.vipTier, undefined);
+  // 缺省：不传 → 按声明顺序推导（单档 = 1；与 App `vip_tier ?? 1` 兜底同向）
+  assert.equal(normalizeHubConfig({ billing: { plans: [plan] } }).billing?.plans[0]?.vipTier, 1);
   // 透传到客户端
   assert.equal(normalizeHubConfig({ billing: { plans: [{ ...plan, vipTier: 2 }] } }).billing?.plans[0]?.vipTier, 2);
   // 必须是正整数
@@ -136,15 +136,21 @@ test("billing.plans[].vipTier：可选 / 正整数 / 档位唯一（客户端据
   );
 });
 
-test("billing.plans[].vipTier：多档时必须显式声明（否则客户端两档都归最低档）", () => {
+test("billing.plans[].vipTier：多档缺省按声明顺序推导 1/2/3（兼容存量配置，F1 回归）", () => {
   const plan = { id: "plus_monthly", name: "标准版", hosts: 2, priceCny: 38, intervalMonths: 1 };
-  // 单档：可缺省
-  assert.doesNotThrow(() => normalizeHubConfig({ billing: { plans: [plan] } }));
-  // 多档但都不声明 vipTier → 拒绝
-  assert.throws(
-    () => normalizeHubConfig({ billing: { plans: [plan, { ...plan, id: "pro_monthly" }] } }),
-    /"billing.plans\[\]\.vipTier" is required when there are multiple plans/,
+  // 线上存量形态：3 套餐、均未声明 vipTier → 按顺序推导 1/2/3
+  const cfg = normalizeHubConfig({
+    billing: { plans: [plan, { ...plan, id: "pro_monthly", hosts: 5 }, { ...plan, id: "ultra_monthly", hosts: 15 }] },
+  });
+  assert.deepEqual(cfg.billing?.plans.map((p) => p.vipTier), [1, 2, 3]);
+  // 显式声明 → 原样保留
+  assert.deepEqual(
+    normalizeHubConfig({ billing: { plans: [{ ...plan, vipTier: 3 }, { ...plan, id: "pro_monthly", vipTier: 2 }] } }).billing?.plans.map((p) => p.vipTier),
+    [3, 2],
   );
-  // 多档且都声明 → 通过
-  assert.doesNotThrow(() => normalizeHubConfig({ billing: { plans: [{ ...plan, vipTier: 1 }, { ...plan, id: "pro_monthly", vipTier: 2 }] } }));
+  // 显式重复 → 仍报错
+  assert.throws(
+    () => normalizeHubConfig({ billing: { plans: [{ ...plan, vipTier: 1 }, { ...plan, id: "pro_monthly", vipTier: 1 }] } }),
+    /must be unique/,
+  );
 });

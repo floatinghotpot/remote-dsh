@@ -412,17 +412,15 @@ function normalizeBilling(raw: unknown, source: string): BillingConfig {
       if ("intervalDays" in plan) throw new Error(`${source}: "billing.plans[].intervalDays" was removed — rename it to "intervalMonths" and set the month count (e.g. intervalDays: 30 → intervalMonths: 1)`);
       if (!Number.isInteger(plan.intervalMonths) || (plan.intervalMonths as number) < 1) throw new Error(`${source}: "billing.plans[].intervalMonths" must be a positive integer`);
       if (plan.vipTier !== undefined && (!Number.isInteger(plan.vipTier) || (plan.vipTier as number) < 1)) throw new Error(`${source}: "billing.plans[].vipTier" must be a positive integer (1=标准版 / 2=专业版 / 3=旗舰版)`);
-      const vipTier = typeof plan.vipTier === "number" ? plan.vipTier : undefined;
+      // vipTier 只影响展示/对比表（权益与配额由 hosts 决定）→ 容忍缺省：
+      // 缺省按声明顺序推导为 1,2,3…（与门户/App 的 `vipTier ?? 1` 兜底姿态一致，向后兼容存量配置）。
+      const vipTier = typeof plan.vipTier === "number" ? plan.vipTier : plans.length + 1;
       // 档位不可重复：客户端按 vipTier 判定"我是哪一档"，重复会让它无法区分。
-      if (vipTier !== undefined && plans.some((x) => x.vipTier === vipTier)) {
+      if (plans.some((x) => x.vipTier === vipTier)) {
         throw new Error(`${source}: "billing.plans[].vipTier" must be unique (duplicate ${vipTier})`);
       }
       plans.push({ id: plan.id, name: plan.name, hosts: plan.hosts as number, priceCny: plan.priceCny, priceUsd: typeof plan.priceUsd === "number" ? plan.priceUsd : undefined, intervalMonths: plan.intervalMonths as number, vipTier });
     }
-  }
-  // 多档时必须显式声明 vipTier：缺省会让客户端都按"最低付费档"归并，两档静默同名。
-  if (plans.length > 1 && plans.some((p) => p.vipTier === undefined)) {
-    throw new Error(`${source}: "billing.plans[].vipTier" is required when there are multiple plans`);
   }
   const out: BillingConfig = { plans };
   for (const key of ["trialDays", "trialHosts", "graceDays", "retentionDays"] as const) {
