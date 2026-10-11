@@ -2070,7 +2070,7 @@ async function handleLogout(req: IncomingMessage, res: ServerResponse, runtime: 
   // 清除访问令牌 cookie + 续期 cookie（httpOnly，客户端无法自行删除）+ host 转发 cookie：
   // 否则登出后 access JWT（1h）仍可认证 /api/*，根路径仍会直接转发进 host。
   res.writeHead(204, {
-    "set-cookie": [`${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`, clearRefreshCookie(), clearHostCookie(runtime.config.hostCookieDomain)],
+    "set-cookie": [`${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Domain=.rdsh.cn; Max-Age=0`, clearRefreshCookie(), clearHostCookie(runtime.config.hostCookieDomain)],
   });
   res.end();
 }
@@ -2099,7 +2099,7 @@ async function handlePassword(req: IncomingMessage, res: ServerResponse, runtime
   // 改密已吊销全部会话（ver+1 + revokeAllRefresh）；这里顺手清掉会话/续期 cookie，避免死 cookie 残留。
   res.writeHead(200, {
     "content-type": "application/json",
-    "set-cookie": [`${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`, clearRefreshCookie()],
+    "set-cookie": [`${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Domain=.rdsh.cn; Max-Age=0`, clearRefreshCookie()],
   });
   res.end(JSON.stringify({ ok: true, message: "password updated; all sessions revoked" }));
 }
@@ -2648,17 +2648,18 @@ async function handleRegister(req: IncomingMessage, res: ServerResponse, runtime
 }
 
 function sessionCookie(accessToken: string): string {
-  return `${SESSION_COOKIE}=${accessToken}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${ACCESS_TTL_MS / 1000}`;
+  // TEMP(hot-patch): 会话 cookie 加 Domain 跨子域（排查 relay 白屏/跨域鉴权）。
+  return `${SESSION_COOKIE}=${accessToken}; HttpOnly; SameSite=Lax; Path=/; Domain=.rdsh.cn; Max-Age=${ACCESS_TTL_MS / 1000}`;
 }
 
 /** 续期凭证 cookie：`Max-Age` 由 `REFRESH_TTL_MS` 换算（禁止写死，避免与常量漂移）。 */
 function refreshCookie(refreshToken: string): string {
-  return `${REFRESH_COOKIE}=${refreshToken}; HttpOnly; SameSite=Lax; Path=/api/auth; Max-Age=${Math.floor(REFRESH_TTL_MS / 1000)}`;
+  return `${REFRESH_COOKIE}=${refreshToken}; HttpOnly; SameSite=Lax; Path=/api/auth; Domain=.rdsh.cn; Max-Age=${Math.floor(REFRESH_TTL_MS / 1000)}`;
 }
 
 /** 清续期凭证 cookie（登出/改密用）。 */
 function clearRefreshCookie(): string {
-  return `${REFRESH_COOKIE}=; HttpOnly; SameSite=Lax; Path=/api/auth; Max-Age=0`;
+  return `${REFRESH_COOKIE}=; HttpOnly; SameSite=Lax; Path=/api/auth; Domain=.rdsh.cn; Max-Age=0`;
 }
 
 function trustedDeviceCookie(token: string): string {
