@@ -749,9 +749,6 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
       const streamId = frame.streamId;
       /** 响应头是否已发给客户端（决定失败时能回 ERROR 还是只能用 CLOSE 表示截断）。 */
       let responded = false;
-      console.log(
-        `[rdsh][debug] http stream kind=${kind} path=${path} dshAuthCookie=${dshAuthCookie ? "set" : "EMPTY"} inCookie=${JSON.stringify(headers.cookie)}`,
-      );
       const up = httpRequest(
         {
           host: opts.target.host,
@@ -763,7 +760,6 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
         (upRes) => {
           responded = true;
           const status = upRes.statusCode ?? 502;
-          console.log(`[rdsh][debug] upRes status=${status} content-type=${upRes.headers["content-type"] ?? ""}`);
           const baseHeaders = normalizeRespHeaders(upRes.headers);
           // 已确认该 URL 不含目标串（DSH 前端壳资源就属此类）→ 直接流式，省掉白解压与全量扫描
           const wantsPatch =
