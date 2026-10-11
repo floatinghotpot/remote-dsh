@@ -4,7 +4,7 @@
  * 部署形态：`rdsh hub serve` 从包内服务 portal；目录定位相对本文件
  * （monorepo：packages/hub → packages/portal/dist）。
  */
-import { createReadStream, existsSync } from "node:fs";
+import { createReadStream, existsSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { extname, join, normalize, resolve } from "node:path";
@@ -65,12 +65,29 @@ export async function servePortal(req: IncomingMessage, res: ServerResponse, por
     return true;
   }
 
+  // 目录（如 /portal/assets/）不是文件：createReadStream 会触发未捕获的 EISDIR
+  // error 事件 → 整个 hub 进程崩溃（2026-10-12 生产事故：GET /portal/assets 打挂 hub）。
+  // 明确 404，绝不让目录落到流式读取。
+  if (statSync(target).isDirectory()) {
+    res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+    res.end("not found");
+    return true;
+  }
+
   const type = CONTENT_TYPES[extname(target)] ?? "application/octet-stream";
   const isAsset = /\.(js|css|woff2|png|svg|ico|map)$/.test(target);
   res.writeHead(200, {
     "content-type": type,
     "cache-control": isAsset ? "public, max-age=31536000, immutable" : "no-store",
   });
-  createReadStream(target).pipe(res);
+  const stream = createReadStream(target);
+  // 防御：读取中途出错（文件被删 / 权限变化）→ 500，绝不崩进程（error 事件必须有人接）。
+  stream.on("error", () => {
+    if (!res.headersSent) {
+      res.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
+    }
+    res.end("stream error");
+  });
+  stream.pipe(res);
   return true;
 }
