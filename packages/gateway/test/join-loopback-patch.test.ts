@@ -126,27 +126,27 @@ test("loopback 补丁：identity / gzip / br 命中；未知编码与 JSON 原�
       const list = frames.get(streamId) ?? [];
       const open = list.find((f) => f.type === FRAME_TYPE.OPEN);
       assert.ok(open !== undefined, "应收到 OPEN 帧");
-      const headers = (JSON.parse(open.payload.toString("utf8")) as { headers: Record<string, string> }).headers;
+      const headers = (JSON.parse(open.payload.toString("utf8")) as { headers: Record<string, string | string[]> }).headers;
       const body = Buffer.concat(list.filter((f) => f.type === FRAME_TYPE.DATA).map((f) => f.payload));
       return { headers, body };
     }
 
     const plain = await get(1, "/plugins/plain.js");
     assert.ok(plain.body.toString("utf8").includes("var loop = true;"), "identity JS 应被替换");
-    assert.equal(plain.headers["content-length"], String(plain.body.length), "content-length 必须与实际字节一致");
+    assert.deepEqual(plain.headers["content-length"], [String(plain.body.length)], "content-length 必须与实际字节一致");
 
     const gz = await get(2, "/plugins/gzip.js");
-    assert.equal(gz.headers["content-encoding"], "gzip", "应保留原编码");
-    assert.equal(gz.headers["content-length"], String(gz.body.length), "重压后 content-length 必须重算");
+    assert.deepEqual(gz.headers["content-encoding"], ["gzip"], "应保留原编码");
+    assert.deepEqual(gz.headers["content-length"], [String(gz.body.length)], "重压后 content-length 必须重算");
     assert.ok(gunzipSync(gz.body).toString("utf8").includes("var loop = true;"), "gzip JS 解压后应已被替换");
 
     const br = await get(3, "/plugins/br.js");
-    assert.equal(br.headers["content-encoding"], "br");
+    assert.deepEqual(br.headers["content-encoding"], ["br"]);
     assert.ok(brotliDecompressSync(br.body).toString("utf8").includes("var loop = true;"), "br JS 解压后应已被替换");
 
     const zstd = await get(4, "/plugins/zstd.js");
     assert.deepEqual(zstd.body, ZSTD_FAKE, "未知编码必须字节级原样透传（不得损坏）");
-    assert.equal(zstd.headers["content-encoding"], "zstd");
+    assert.deepEqual(zstd.headers["content-encoding"], ["zstd"]);
 
     const json = await get(5, "/api/data.json");
     assert.equal(json.body.toString("utf8"), JSON_BODY, "非 JS 不得改动");
@@ -292,8 +292,8 @@ test(">16 MiB 的 JS 响应：按 ≤1 MiB 分片发送、字节一致、补丁�
     assert.ok(body.subarray(0, 32).toString("utf8").includes("var loop = true;"), "分片后补丁必须仍生效");
 
     const open = list.find((f) => f.type === FRAME_TYPE.OPEN)!;
-    const headers = (JSON.parse(open.payload.toString("utf8")) as { headers: Record<string, string> }).headers;
-    assert.equal(headers["content-length"], String(body.length), "content-length 必须与实际字节一致");
+    const headers = (JSON.parse(open.payload.toString("utf8")) as { headers: Record<string, string | string[]> }).headers;
+    assert.deepEqual(headers["content-length"], [String(body.length)], "content-length 必须与实际字节一致");
   } finally {
     await handle.stop();
     await new Promise<void>((r) => wss.close(() => r()));

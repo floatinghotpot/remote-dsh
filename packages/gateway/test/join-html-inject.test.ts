@@ -97,7 +97,7 @@ test("join：text/html 注入契约并重算 content-length；gzip/JSON 原样�
     const list = frames.get(streamId) ?? [];
     const open = list.find((f) => f.type === FRAME_TYPE.OPEN);
     assert.ok(open !== undefined, "应收到 OPEN 帧");
-    const headers = (JSON.parse(open.payload.toString("utf8")) as { headers: Record<string, string> }).headers;
+    const headers = (JSON.parse(open.payload.toString("utf8")) as { headers: Record<string, string | string[]> }).headers;
     const body = Buffer.concat(list.filter((f) => f.type === FRAME_TYPE.DATA).map((f) => f.payload));
     return { headers, body };
   }
