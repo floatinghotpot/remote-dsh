@@ -778,9 +778,9 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
             upRes.on("end", () => {
               const inject = typeof dio!.htmlInject === "function" ? dio!.htmlInject() : dio!.htmlInject!;
               const html = injectHtmlScript(Buffer.concat(htmlChunks).toString("utf8"), inject);
-              const outHeaders: Record<string, string | string[]> = {
+              const outHeaders: Record<string, string[]> = {
                 ...baseHeaders,
-                "content-length": String(Buffer.byteLength(html)),
+                "content-length": [String(Buffer.byteLength(html))],
               };
               delete outHeaders["transfer-encoding"];
               if (!adapterInjectionLogged) {
@@ -855,11 +855,11 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
               if (recoded !== null) {
                 body = recoded;
                 hit = true;
-                outHeaders = { ...baseHeaders, "content-length": String(body.length) };
+                outHeaders = { ...baseHeaders, "content-length": [String(body.length)] };
                 delete outHeaders["transfer-encoding"];
                 // 不能沿用上游的 `immutable` / 长 max-age：补丁改了 body 但 URL(rev) 由上游内容决定，
                 // 浏览器会把"旧的未补丁 bundle"缓存很久 ⇒ 修复无法生效（2026-09-14 实测踩到）。
-                outHeaders["cache-control"] = "public, max-age=300";
+                outHeaders["cache-control"] = ["public, max-age=300"];
               }
             }
             // 命中与未命中都必须留痕（每个路径一次）：fail-open 是刻意设计，但"补丁是否生效"不能靠猜。
@@ -1489,13 +1489,14 @@ export async function join(opts: JoinOptions): Promise<void> {
   await new Promise<void>(() => {});
 }
 
-function normalizeRespHeaders(headers: IncomingHttpHeaders): Record<string, string | string[]> {
-  const out: Record<string, string | string[]> = {};
+function normalizeRespHeaders(headers: IncomingHttpHeaders): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
   for (const [k, v] of Object.entries(headers)) {
     if (v === undefined) continue;
     // hop-by-hop 头由各自连接管理，不透传
     if (k === "transfer-encoding" || k === "connection" || k === "keep-alive" || k === "upgrade") continue;
-    out[k] = Array.isArray(v) ? v : String(v);
+    // 统一为 string[]：Go relay 的 wire 类型是 map[string][]string，混入 string 会导致 unmarshal 失败
+    out[k] = Array.isArray(v) ? v : [String(v)];
   }
   return out;
 }
