@@ -107,9 +107,10 @@ test("gate 拦截：无 cookie challenge → ws 403 → 错误 code 提示 → �
   // 4) POST 正确 code → 303 + Set-Cookie rdsh_gate
   ctx.sendPost(4, "/", "gate_code=secret");
   const ok303 = await ctx.waitFrame(4, FRAME_TYPE.OPEN, (f) => parseJsonPayload(f).status === 303, "303 redirect");
-  const hdrs = parseJsonPayload(ok303).headers as Record<string, string>;
-  assert.match(hdrs["set-cookie"] ?? "", new RegExp(`${GATE_COOKIE}=`));
-  const cookieVal = hdrs["set-cookie"].split(";")[0].split("=").slice(1).join("=");
+  const hdrs = parseJsonPayload(ok303).headers as Record<string, string | string[]>;
+  const setCookie = (hdrs["set-cookie"] as string[])[0] ?? "";
+  assert.match(setCookie, new RegExp(`${GATE_COOKIE}=`));
+  const cookieVal = setCookie.split(";")[0].split("=").slice(1).join("=");
 
   // 5) GET / 带有效 cookie → 放行（转发 127.0.0.1:1 → UPSTREAM_UNREACHABLE），非 challenge
   ctx.send(FRAME_TYPE.OPEN, 5, { kind: "http", method: "GET", path: "/", headers: { cookie: `${GATE_COOKIE}=${cookieVal}` } });
@@ -156,8 +157,8 @@ test("改 code → 旧 cookie 失效（R3）", async () => {
   // 用 abcd 领 cookie
   ctx.sendPost(1, "/", "gate_code=abcd");
   const ok303 = await ctx.waitFrame(1, FRAME_TYPE.OPEN, (f) => parseJsonPayload(f).status === 303, "303");
-  const hdrs = parseJsonPayload(ok303).headers as Record<string, string>;
-  const oldCookie = hdrs["set-cookie"].split(";")[0].split("=").slice(1).join("=");
+  const hdrs = parseJsonPayload(ok303).headers as Record<string, string | string[]>;
+  const oldCookie = ((hdrs["set-cookie"] as string[])[0] ?? "").split(";")[0].split("=").slice(1).join("=");
 
   // 改 code → 旧 cookie 失效：带旧 cookie 访问被 challenge（非转发）
   ctx.handle.setAccessCode("wxyz");
