@@ -2070,7 +2070,7 @@ async function handleLogout(req: IncomingMessage, res: ServerResponse, runtime: 
   // 清除访问令牌 cookie + 续期 cookie（httpOnly，客户端无法自行删除）+ host 转发 cookie：
   // 否则登出后 access JWT（1h）仍可认证 /api/*，根路径仍会直接转发进 host。
   res.writeHead(204, {
-    "set-cookie": [`${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`, clearRefreshCookie(), clearHostCookie()],
+    "set-cookie": [`${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`, clearRefreshCookie(), clearHostCookie(runtime.config.hostCookieDomain)],
   });
   res.end();
 }

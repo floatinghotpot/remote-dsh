@@ -125,8 +125,11 @@ function hostCookie(hostId: string, userId: number, auth: HubAuth, domain?: stri
   return `${HOST_COOKIE}=${token}; HttpOnly; SameSite=Lax; Path=/${domainAttr}; Max-Age=${HOST_COOKIE_MAX_AGE}`;
 }
 
-export function clearHostCookie(): string {
-  return `${HOST_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`;
+export function clearHostCookie(domain?: string): string {
+  // 必须带与 hostCookie() 相同的 Domain 属性，否则浏览器匹配不到原 cookie、清不掉
+  // （2026-10-12 生产事故：残留 rdsh_host → 登录后 /api/* 仍被转发进 host 隧道 → 404）。
+  const domainAttr = domain !== undefined && domain !== "" ? `; Domain=${domain}` : "";
+  return `${HOST_COOKIE}=; HttpOnly; SameSite=Lax; Path=/${domainAttr}; Max-Age=0`;
 }
 
 /** 解析 Cookie 头（relay 复用）。 */
@@ -273,7 +276,7 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse, runtime: Hu
 
   // portal 区域：进入 portal 即退出 host 上下文（清 cookie）
   if (pathname === PORTAL_PREFIX || pathname.startsWith(PORTAL_PREFIX + "/")) {
-    if (hostId !== undefined) res.setHeader("set-cookie", clearHostCookie());
+    if (hostId !== undefined) res.setHeader("set-cookie", clearHostCookie(runtime.config.hostCookieDomain));
     const handled = await servePortal(req, res, portalDir);
     if (!handled) writeError(res, 404, "NOT_FOUND", "not found");
     return;

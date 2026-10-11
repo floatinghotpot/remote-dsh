@@ -4,6 +4,7 @@ import { HubDb } from "../src/db.ts";
 import { HubAuth } from "../src/auth.ts";
 import { loadHostCookieSigner } from "../src/hostcookie.ts";
 import { Jwt } from "../src/jwt.ts";
+import { clearHostCookie } from "../src/server.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -47,4 +48,12 @@ test("Ed25519 host cookie：签发/验证/篡改（R17）", () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("clearHostCookie 必须带 Domain（否则清不掉跨域 cookie）", () => {
+  assert.equal(
+    clearHostCookie(".rdsh.cn"),
+    "rdsh_host=; HttpOnly; SameSite=Lax; Path=/; Domain=.rdsh.cn; Max-Age=0",
+  );
+  assert.equal(clearHostCookie(), "rdsh_host=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0");
 });
