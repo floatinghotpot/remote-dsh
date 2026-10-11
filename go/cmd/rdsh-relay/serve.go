@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"os"
@@ -99,7 +101,8 @@ func serve(dataDir string) error {
 }
 
 // nodeMeter accumulates relayed bytes: aggregate (for N2 load, R32) + per
-// user×host (for R8 usage reporting).
+// user×host (for R8 usage reporting). Mirrors hub/src/relay-usage.ts: cumulative
+// values, NOT cleared on flush; instanceId is per-process (F1).
 type usageKey struct {
 	hostID string
 	userID int64
@@ -108,19 +111,28 @@ type usageKey struct {
 type usageEntry struct {
 	bytesUp   int64
 	bytesDown int64
-	startedAt int64 // first-byte ms
+	sessions  int64 // 1 per user×host (relay side does not count distinct sessions)
 }
 
 type nodeMeter struct {
+	instanceID string
+	day        string
+
 	bytesIn  atomic.Int64
 	bytesOut atomic.Int64
 
 	mu    sync.Mutex
 	usage map[usageKey]*usageEntry
+	dirty map[usageKey]bool
 }
 
 func newNodeMeter() *nodeMeter {
-	return &nodeMeter{usage: make(map[usageKey]*usageEntry)}
+	return &nodeMeter{
+		instanceID: randomInstanceID(),
+		day:        time.Now().Format("2006-01-02"),
+		usage:      make(map[usageKey]*usageEntry),
+		dirty:      make(map[usageKey]bool),
+	}
 }
 
 func (m *nodeMeter) add(hostID string, userID int64, up, down int64) {
@@ -129,44 +141,53 @@ func (m *nodeMeter) add(hostID string, userID int64, up, down int64) {
 	if userID <= 0 || hostID == "" {
 		return
 	}
-	now := time.Now().UnixMilli()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	k := usageKey{hostID, userID}
 	e := m.usage[k]
 	if e == nil {
-		e = &usageEntry{startedAt: now}
+		e = &usageEntry{sessions: 1}
 		m.usage[k] = e
 	}
 	e.bytesUp += up
 	e.bytesDown += down
+	m.dirty[k] = true
 }
 
-// snapshot returns the accumulated usage rows and resets the per-user×host map.
-func (m *nodeMeter) snapshot(date string) []UsageRow {
+func (m *nodeMeter) row(date string, k usageKey, e *usageEntry) UsageRow {
+	return UsageRow{
+		Date:           date,
+		UserID:         k.userID,
+		HostID:         k.hostID,
+		RelayBytesUp:   e.bytesUp,
+		RelayBytesDown: e.bytesDown,
+		RelaySeconds:   0, // relay side does not measure session duration (F2)
+		Sessions:       e.sessions,
+	}
+}
+
+// report returns the rows to send. Same day: only dirty rows (cumulative, NOT
+// cleared). Day rollover: the old day's full final cumulative, then reset.
+func (m *nodeMeter) report(date string) []UsageRow {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	now := time.Now().UnixMilli()
-	var rows []UsageRow
-	for k, e := range m.usage {
-		if e.bytesUp == 0 && e.bytesDown == 0 {
-			continue
+	if date != m.day {
+		var rows []UsageRow
+		for k, e := range m.usage {
+			rows = append(rows, m.row(m.day, k, e))
 		}
-		seconds := (now - e.startedAt) / 1000
-		if seconds < 0 {
-			seconds = 0
-		}
-		rows = append(rows, UsageRow{
-			Date:           date,
-			UserID:         k.userID,
-			HostID:         k.hostID,
-			RelayBytesUp:   e.bytesUp,
-			RelayBytesDown: e.bytesDown,
-			RelaySeconds:   seconds,
-			Sessions:       1,
-		})
+		m.usage = make(map[usageKey]*usageEntry)
+		m.dirty = make(map[usageKey]bool)
+		m.day = date
+		return rows
 	}
-	m.usage = make(map[usageKey]*usageEntry)
+	var rows []UsageRow
+	for k := range m.dirty {
+		if e := m.usage[k]; e != nil {
+			rows = append(rows, m.row(date, k, e))
+		}
+	}
+	m.dirty = make(map[usageKey]bool)
 	return rows
 }
 
@@ -178,11 +199,11 @@ func reportUsageLoop(acc *account, cfg *Config, m *nodeMeter) {
 		if cfg.RelayNodeToken == "" {
 			continue
 		}
-		rows := m.snapshot(time.Now().Format("2006-01-02"))
+		rows := m.report(time.Now().Format("2006-01-02"))
 		if len(rows) == 0 {
 			continue
 		}
-		_ = acc.ReportUsage(cfg.RelayNodeToken, cfg.InstanceID, rows)
+		_ = acc.ReportUsage(cfg.RelayNodeToken, m.instanceID, rows)
 	}
 }
 
@@ -227,4 +248,11 @@ func syncLoop(acc *account, nodeID string, cookie *hostCookie, cache *hostCache,
 			}
 		}
 	}
+}
+
+// randomInstanceID returns a random 32-hex-char id (per-process, mirrors hub randomUUID).
+func randomInstanceID() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
 }
