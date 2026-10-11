@@ -636,10 +636,12 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
       wsStreams.set(streamId, { upstream, queue });
 
       upstream.on("open", () => {
+        console.log(`[rdsh][debug] ws open ${path}`);
         for (const q of queue) upstream.send(q, { binary: false });
         queue.length = 0;
       });
-      upstream.on("message", (data) => {
+      upstream.on("message", (data, isBinary) => {
+        console.log(`[rdsh][debug] ws msg ${path} isBinary=${isBinary} len=${Array.isArray(data) ? data.length : (data as Buffer).length}`);
         const buf = Array.isArray(data)
           ? Buffer.concat(data as Buffer[])
           : Buffer.isBuffer(data)
@@ -659,8 +661,14 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
         wsStreams.delete(streamId);
         send(encodeFrame(FRAME_TYPE.CLOSE, streamId, jsonPayload({ code: 0 })));
       };
-      upstream.on("close", cleanup);
-      upstream.on("error", cleanup);
+      upstream.on("close", (code, reason) => {
+        console.log(`[rdsh][debug] ws close ${path} code=${code} reason=${reason}`);
+        cleanup();
+      });
+      upstream.on("error", (err) => {
+        console.log(`[rdsh][debug] ws error ${path} ${(err as Error).message}`);
+        cleanup();
+      });
     }
 
     function handleOpen(frame: Frame): void {
