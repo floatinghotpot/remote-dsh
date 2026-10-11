@@ -1,6 +1,6 @@
 {
   "name": "rdsh-hub",
-  "version": "0.13.0",
+  "version": "0.13.1",
   "description": "rdsh server: control plane (auth, host registry, routing) + data plane (tunnel relay)",
   "license": "MIT",
   "type": "module",
@@ -35,6 +35,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/copy-portal.mjs",
+    "prepack": "pnpm run build",
     "test": "node --test \"test/*.test.ts\""
   }
 }
