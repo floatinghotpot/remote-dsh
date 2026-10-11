@@ -13,6 +13,7 @@ import { EventHub } from "./events.ts";
 import { startHubServer, loadHubTls } from "./server.ts";
 import { defaultPortalDir } from "./portal.ts";
 import { backupNow, pruneBackups } from "./backup.ts";
+import { loadHostCookieSigner } from "./hostcookie.ts";
 
 export interface HubServeOptions {
   configPath?: string;
@@ -69,7 +70,10 @@ export async function serveHub(opts: HubServeOptions): Promise<void> {
   };
   setInterval(runBackup, 24 * 3600 * 1000).unref();
   const jwt = new Jwt(await loadJwtKey(config.jwtKeyPath));
-  const auth = new HubAuth(db, jwt, config.security);
+  // host cookie Ed25519 签名器（R17）：私钥文件与 jwt 同目录；公钥经 N5 下发给节点
+  const hostCookieSigner = loadHostCookieSigner(join(dirname(config.jwtKeyPath), "hub-hostcookie.key"));
+  config.hostCookiePubKey = hostCookieSigner.publicKeyHex;
+  const auth = new HubAuth(db, jwt, config.security, hostCookieSigner);
   const tunnels = new TunnelRegistry();
   const events = new EventHub();
 
@@ -100,6 +104,8 @@ export async function serveHub(opts: HubServeOptions): Promise<void> {
     e2ee: config.e2ee,
     backup: { dir: backupDir, keepDays: backupKeepDays },
     relayNodeToken: config.relayNodeToken,
+    hostCookiePubKey: config.hostCookiePubKey,
+    hostCookieDomain: config.hostCookieDomain,
   });
 
   const scheme = tls ? "https" : "http";

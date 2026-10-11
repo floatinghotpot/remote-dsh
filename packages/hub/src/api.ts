@@ -519,6 +519,57 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
     return true;
   }
 
+  // ---- 中继节点（30-relay-node，R29–R34）----
+  if (path === "/api/admin/nodes" && method === "GET") {
+    const nodes = admin.listNodes(db).map((n) => ({ ...n, hostCount: db.listHostsByNode(n.id).length }));
+    res.end(JSON.stringify({ nodes }));
+    return true;
+  }
+  if (path === "/api/admin/nodes" && method === "POST") {
+    const body = await readJsonBody(req);
+    const name = typeof body?.name === "string" ? body.name.slice(0, 64) : "";
+    const advertiseUrl = typeof body?.advertiseUrl === "string" ? body.advertiseUrl.slice(0, 256) : "";
+    if (name === "" || advertiseUrl === "") {
+      writeError(res, 400, "BAD_REQUEST", "name + advertiseUrl required");
+      return true;
+    }
+    try {
+      const out = admin.createNodeToken(db, ctx, { name, advertiseUrl, capacity: Number(body?.capacity ?? 0), weight: Number(body?.weight ?? 100) });
+      res.end(JSON.stringify(out));
+    } catch (err) {
+      writeAdminError(res, err);
+    }
+    return true;
+  }
+  const nodeRevoke = /^\/api\/admin\/nodes\/([^/]+)\/revoke$/.exec(path);
+  if (nodeRevoke !== null && method === "POST") {
+    const nodeId = decodeURIComponent(nodeRevoke[1]!);
+    const body = await readJsonBody(req);
+    try {
+      admin.revokeNode(db, ctx, nodeId, requireReason(body) ?? "no reason");
+      res.end(JSON.stringify({ ok: true }));
+    } catch (err) {
+      writeAdminError(res, err);
+    }
+    return true;
+  }
+  const nodeRename = /^\/api\/admin\/nodes\/([^/]+)\/rename$/.exec(path);
+  if (nodeRename !== null && method === "POST") {
+    const nodeId = decodeURIComponent(nodeRename[1]!);
+    const body = await readJsonBody(req);
+    if (typeof body?.name !== "string" || body.name.trim() === "") {
+      writeError(res, 400, "BAD_REQUEST", "name required");
+      return true;
+    }
+    try {
+      admin.renameNode(db, ctx, nodeId, body.name.slice(0, 64), requireReason(body) ?? "no reason");
+      res.end(JSON.stringify({ ok: true }));
+    } catch (err) {
+      writeAdminError(res, err);
+    }
+    return true;
+  }
+
   const orderRefund = /^\/api\/admin\/orders\/([^/]+)\/refund$/.exec(path);
   if (orderRefund !== null && method === "POST") {
     const orderId = decodeURIComponent(orderRefund[1]!);

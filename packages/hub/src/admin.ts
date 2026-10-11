@@ -5,8 +5,10 @@
  * 每个写操作内部做角色断言 + 写审计（source='admin'、actorUserId、reason）。
  * 只做数据层变更；隧道终止等 runtime 副作用由调用方（api.ts）负责。
  */
-import type { AuditEventRow, HostRow, HubDb, OrderRow, PaymentRow, UserRow } from "./db.ts";
+import type { AuditEventRow, HostRow, HubDb, NodeRow, OrderRow, PaymentRow, UserRow } from "./db.ts";
 import { hashPassword } from "./auth.ts";
+import { randomToken, sha256 } from "./jwt.ts";
+import { randomUUID } from "node:crypto";
 
 /** 管理面三档角色（req R1）。 */
 export const ADMIN_ROLES = ["readonly", "operator", "admin"] as const;
@@ -207,6 +209,41 @@ export function revokeHost(db: HubDb, ctx: AdminCtx, hostId: string, reason: str
   if (host === null) throw new AdminError("NOT_FOUND", "host not found");
   db.removeHost(hostId);
   audit(db, ctx, host.ownerId, "admin.revoke-host", { hostId, name: host.name }, reason);
+}
+
+// ---- 中继节点（30-relay-node，R29–R34）----
+
+export function listNodes(db: HubDb): NodeRow[] {
+  return db.listNodes();
+}
+
+/** 添加节点：生成节点 + 一次性明文令牌（令牌只存 sha256；域名预登记，R24）。 */
+export function createNodeToken(db: HubDb, ctx: AdminCtx, input: { name: string; advertiseUrl: string; capacity?: number; weight?: number }): { nodeId: string; token: string } {
+  assertRole(ctx, "operator");
+  const nodeId = randomUUID();
+  const token = randomToken();
+  db.createNode(nodeId, input.name, input.advertiseUrl, sha256(token), "", input.capacity ?? 0, input.weight ?? 100);
+  audit(db, ctx, null, "admin.node.create", { nodeId, name: input.name, advertiseUrl: input.advertiseUrl });
+  return { nodeId, token };
+}
+
+/** 吊销节点：解除主机分配 + 删节点 + 审计。 */
+export function revokeNode(db: HubDb, ctx: AdminCtx, nodeId: string, reason: string): void {
+  assertRole(ctx, "operator");
+  const node = db.getNodeById(nodeId);
+  if (node === null) throw new AdminError("NOT_FOUND", "node not found");
+  for (const h of db.listHostsByNode(nodeId)) db.setHostNode(h.id, null);
+  db.removeNode(nodeId);
+  audit(db, ctx, null, "admin.node.revoke", { nodeId, name: node.name }, reason);
+}
+
+/** 重命名节点 + 审计。 */
+export function renameNode(db: HubDb, ctx: AdminCtx, nodeId: string, name: string, reason: string): void {
+  assertRole(ctx, "operator");
+  const node = db.getNodeById(nodeId);
+  if (node === null) throw new AdminError("NOT_FOUND", "node not found");
+  db.updateNodeName(nodeId, name);
+  audit(db, ctx, null, "admin.node.rename", { nodeId, from: node.name, to: name }, reason);
 }
 
 /** 记录人工退款：订单置 refunded + 取消订阅并降级免费档 + 审计（不接渠道退款 API）。 */

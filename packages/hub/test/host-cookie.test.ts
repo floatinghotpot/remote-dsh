@@ -2,7 +2,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { HubDb } from "../src/db.ts";
 import { HubAuth } from "../src/auth.ts";
+import { loadHostCookieSigner } from "../src/hostcookie.ts";
 import { Jwt } from "../src/jwt.ts";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 function setup() {
   const db = new HubDb(":memory:");
@@ -26,4 +30,21 @@ test("签名 host cookie：签发/验证/篡改/过期", () => {
   db.setPassword(user.id, "scrypt:fake2");
   assert.equal(db.getUserById(user.id)?.ver, 2, "改密后 ver 应=2");
   assert.equal(auth.verifyHostCookie(token), null, "改密后旧 host cookie 应失效");
+});
+
+test("Ed25519 host cookie：签发/验证/篡改（R17）", () => {
+  const dir = mkdtempSync(join(tmpdir(), "rdsh-hc-"));
+  try {
+    const signer = loadHostCookieSigner(join(dir, "hostcookie.key"));
+    const db = new HubDb(":memory:");
+    const auth = new HubAuth(db, new Jwt(Buffer.from("test-secret-key-0123456789abcdef")), {}, signer);
+    const user = db.createUser("bob", "scrypt:fake");
+    const token = auth.signHostCookie("host-xyz", user.id);
+    assert.ok(auth.verifyHostCookie(token) !== null, "Ed25519 签发应可验证");
+    const mid = Math.floor(token.length / 2);
+    const tampered = token.slice(0, mid) + (token[mid] === "X" ? "Y" : "X") + token.slice(mid + 1);
+    assert.equal(auth.verifyHostCookie(tampered), null, "篡改应校验失败");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

@@ -5,12 +5,13 @@
  * - 改密 → users.ver + 1 → 全部旧 access 立即失效 + 全部 refresh 吊销
  * - 密码 scrypt（格式与 gateway 一致：`scrypt:$N:$r:$p:$salt:$hash`）
  */
-import { randomBytes, scrypt as scryptCb, timingSafeEqual } from "node:crypto";
+import { randomBytes, scrypt as scryptCb, timingSafeEqual, verify as edVerify } from "node:crypto";
 import { HubDb } from "./db.ts";
 import type { UserRow } from "./db.ts";
 import { Jwt, randomToken, sha256 } from "./jwt.ts";
 import { generateSecret, otpauthUrl, verifyTotp } from "./totp.ts";
 import type { SecurityConfig } from "./config.ts";
+import type { HostCookieSigner } from "./hostcookie.ts";
 
 const SCRYPT_N = 16384;
 const SCRYPT_R = 8;
@@ -78,11 +79,14 @@ export class HubAuth {
   private readonly db: HubDb;
   private readonly jwt: Jwt;
   private readonly security: SecurityConfig;
+  /** Ed25519 host-cookie 签名器（R17）；缺省 → 回退 HMAC（兼容期）。 */
+  private readonly hostCookieSigner: HostCookieSigner | undefined;
 
-  constructor(db: HubDb, jwt: Jwt, security: SecurityConfig = { emailDailyLimit: 5, globalEmailDailyLimit: 200, loginLockThreshold: 10, loginLockMinutes: 15, auditRetentionDays: 90 }) {
+  constructor(db: HubDb, jwt: Jwt, security: SecurityConfig = { emailDailyLimit: 5, globalEmailDailyLimit: 200, loginLockThreshold: 10, loginLockMinutes: 15, auditRetentionDays: 90 }, hostCookieSigner?: HostCookieSigner) {
     this.db = db;
     this.jwt = jwt;
     this.security = security;
+    this.hostCookieSigner = hostCookieSigner;
   }
 
   /**
@@ -215,7 +219,8 @@ signHostCookie(hostId: string, userId: number): string {
   const ver = this.db.getUserById(userId)?.ver ?? 1;
   const exp = Date.now() + 7 * 24 * 60 * 60 * 1000;
   const payload = [hostId, userId, ver, exp].join('.');
-  const sig = this.hmac(payload);
+  // R17：Ed25519（sig = hex 128 字符）；无签名器时回退 HMAC（兼容期）
+  const sig = this.hostCookieSigner !== undefined ? this.hostCookieSigner.sign(payload) : this.hmac(payload);
   return Buffer.from(payload + '.' + sig).toString('base64url');
 }
 
@@ -227,7 +232,13 @@ verifyHostCookie(cookie: string): { hostId: string; userId: number } | null {
     if (parts.length !== 5) return null;
     const [hostId, userIdStr, verStr, expStr, sig] = parts as [string, string, string, string, string];
     const payload = [hostId, userIdStr, verStr, expStr].join('.');
-    if (sig !== this.hmac(payload)) return null;
+    // R17：Ed25519 优先（hex 128 字符）；否则 HMAC 回退（兼容期）
+    let sigOk = false;
+    if (this.hostCookieSigner !== undefined && /^[0-9a-f]{128}$/i.test(sig)) {
+      sigOk = edVerify(null, Buffer.from(payload), this.hostCookieSigner.publicKey, Buffer.from(sig, "hex"));
+    }
+    if (!sigOk && sig === this.hmac(payload)) sigOk = true;
+    if (!sigOk) return null;
     const exp = Number(expStr);
     const userId = Number(userIdStr);
     const ver = Number(verStr);

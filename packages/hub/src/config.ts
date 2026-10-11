@@ -157,6 +157,8 @@ export interface HubConfig {
   relayNodeToken?: string;
   /** host cookie 的 Ed25519 公钥（hex，64 字符）；节点经 N5 同步持公钥验签（R17）。缺省 → 节点目录功能禁用 */
   hostCookiePubKey?: string;
+  /** host cookie 的 Domain（区域根域，如 .rdsh.cn）；缺省 → host-only（节点子域收不到） */
+  hostCookieDomain?: string;
   /** 站点信息（portal 页脚导航） */
   site?: SiteConfig;
   /** 微信登录（网站应用 AppID；缺省 → 微信登录禁用） */
@@ -257,6 +259,10 @@ export function normalizeHubConfig(raw: unknown, source = "config"): HubConfig {
   if (cfg.hostCookiePubKey !== undefined) {
     if (typeof cfg.hostCookiePubKey !== "string" || !/^[0-9a-f]{64}$/i.test(cfg.hostCookiePubKey)) throw new Error(`${source}: "hostCookiePubKey" must be a 64-char hex Ed25519 public key`);
     out.hostCookiePubKey = cfg.hostCookiePubKey;
+  }
+  if (cfg.hostCookieDomain !== undefined) {
+    if (typeof cfg.hostCookieDomain !== "string") throw new Error(`${source}: "hostCookieDomain" must be a string`);
+    out.hostCookieDomain = cfg.hostCookieDomain;
   }
   if (cfg.backup !== undefined) out.backup = normalizeBackup(cfg.backup, source);
   if (cfg.site !== undefined) out.site = normalizeSite(cfg.site, source);

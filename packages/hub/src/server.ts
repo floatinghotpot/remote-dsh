@@ -73,6 +73,10 @@ export interface HubServerOptions {
   backup?: BackupConfig;
   /** 转发点（relay node）上报用量的共享令牌（serve.ts 从 hub.json 传入）。 */
   relayNodeToken?: string;
+  /** host cookie 的 Ed25519 公钥（hex，R17；serve.ts 派生自私钥文件） */
+  hostCookiePubKey?: string;
+  /** host cookie 的 Domain（区域根域，如 .rdsh.cn；节点子域需接收该 cookie） */
+  hostCookieDomain?: string;
   /**
    * 隧道心跳时序（缺省 30s/10s，见 PROTOCOL.md「心跳与重连」）。
    * 仅供测试注入毫秒级小值以快速验证超时判离线，生产不传。
@@ -111,9 +115,11 @@ const HUB_MANIFEST = {
   theme_color: "#0b0f14",
 } as const;
 
-function hostCookie(hostId: string, userId: number, auth: HubAuth): string {
+function hostCookie(hostId: string, userId: number, auth: HubAuth, domain?: string): string {
   const token = auth.signHostCookie(hostId, userId);
-  return `${HOST_COOKIE}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${HOST_COOKIE_MAX_AGE}`;
+  // 区域根域 Domain（如 .rdsh.cn）→ 节点子域能收到 cookie（跨域 cookie，见 solution §6.3）
+  const domainAttr = domain !== undefined && domain !== "" ? `; Domain=${domain}` : "";
+  return `${HOST_COOKIE}=${token}; HttpOnly; SameSite=Lax; Path=/${domainAttr}; Max-Age=${HOST_COOKIE_MAX_AGE}`;
 }
 
 export function clearHostCookie(): string {
@@ -159,6 +165,8 @@ export async function startHubServer(opts: HubServerOptions): Promise<RunningHub
       e2ee: opts.e2ee,
       backup: opts.backup,
       relayNodeToken: opts.relayNodeToken,
+      hostCookiePubKey: opts.hostCookiePubKey,
+      hostCookieDomain: opts.hostCookieDomain,
     },
     db: opts.db,
     auth: opts.auth,
@@ -354,7 +362,7 @@ async function handleEnterHost(
   runtime.db.recordAudit(userId, "host.enter", { hostId, role: isOwner ? "owner" : "member" }, clientIp(req, runtime));
   // Set-Cookie（HMAC 签名 host cookie，7d）+ 302：DSH 在根路径运行。每次进入都重签 = 滑动续期；
   // 后续 relay 只验签名 cookie（不受 access 1h 过期影响，改密即时失效）。
-  res.writeHead(302, { location: `${rest}${search}`, "set-cookie": hostCookie(hostId, userId, runtime.auth) });
+  res.writeHead(302, { location: `${rest}${search}`, "set-cookie": hostCookie(hostId, userId, runtime.auth, runtime.config.hostCookieDomain) });
   res.end();
 }
 

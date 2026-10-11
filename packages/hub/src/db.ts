@@ -907,6 +907,11 @@ export class HubDb {
     return info.changes > 0;
   }
 
+  updateNodeName(id: string, name: string): boolean {
+    const info = this.db.prepare("UPDATE nodes SET name = ? WHERE id = ?").run(name, id);
+    return info.changes > 0;
+  }
+
   removeNode(id: string): boolean {
     const info = this.db.prepare("DELETE FROM nodes WHERE id = ?").run(id);
     return info.changes > 0;
