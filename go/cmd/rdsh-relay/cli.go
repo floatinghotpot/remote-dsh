@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 func printUsage() {
@@ -51,6 +52,15 @@ func flagDataDir(fs *flag.FlagSet, dataDir *string) {
 	fs.StringVar(dataDir, "data-dir", defaultDataDir(), "state directory (default ~/.rdsh/relay)")
 }
 
+// reorderArgs 支持「位置参数在前」的用法：把首个非 flag 参数挪到末尾，
+// 让 Go flag 包能完整解析其后的 --token 等 flag。
+func reorderArgs(args []string) []string {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return args
+	}
+	return append(append([]string{}, args[1:]...), args[0])
+}
+
 func cmdJoin(args []string) error {
 	fs := flag.NewFlagSet("join", flag.ExitOnError)
 	var token, advertiseURL, name, dataDir string
@@ -58,7 +68,10 @@ func cmdJoin(args []string) error {
 	fs.StringVar(&advertiseURL, "advertise-url", "", "public node URL (https://sg01.tunnel.rdsh.cn)")
 	fs.StringVar(&name, "name", "", "display name")
 	flagDataDir(fs, &dataDir)
-	_ = fs.Parse(args)
+	// 支持「位置参数在前」的用法（usage 文案：join <account-url> --token ...）。
+	// Go flag 包解析到首个非 flag 参数即停止，其后的 --token 等会被忽略；
+	// 故先把首个位置参数挪到末尾再 Parse。
+	_ = fs.Parse(reorderArgs(args))
 
 	accountURL := fs.Arg(0)
 	if accountURL == "" || token == "" || advertiseURL == "" {
