@@ -70,9 +70,9 @@ export function rewriteHeadersForDsh(
 ): Record<string, string | string[] | undefined> {
   const out = { ...headers };
   out.host = `${target.host}:${target.port}`;
-  if (out.origin !== undefined) {
-    out.origin = `http://${target.host}:${target.port}`;
-  }
+  // 始终改写为 loopback Origin：同源 fetch 不带 Origin，但部分 DSH 插件（目录选择器）
+  // 的围栏要求 Origin 存在且为 loopback，缺失会 403 forbidden。
+  out.origin = `http://${target.host}:${target.port}`;
   if (acceptsHtml(headers)) {
     delete out["accept-encoding"];
   }
