@@ -59,6 +59,7 @@ Usage:
   rdsh hub user add|passwd|rm|ls|unlock|reset-2fa|ban|unban
   rdsh hub audit ls           Audit log (login/2FA/sharing/email events)
   rdsh hub host ls|revoke     List / revoke hosts (revoke drops the tunnel instantly)
+  rdsh hub node ls|revoke     List / revoke relay nodes (revoke unassigns its hosts)
   rdsh hub service ...        Run hub as a systemd/launchd service
 
 Global:
@@ -97,6 +98,7 @@ Subcommands:
   user add|passwd|rm|ls|unlock|reset-2fa|ban|unban   Manage users (admin creates accounts; unlock / reset-2fa / ban / unban)
   audit ls [--user <n>] [--event <e>] [--since 24h|7d]   Query the audit log
   host ls|revoke        List / revoke hosts (revoke drops the tunnel instantly)
+  node ls|revoke        List / revoke relay nodes (revoke unassigns its hosts)
   service install|status|start|stop|restart|uninstall   Run hub as a systemd/launchd service
 
 Options (serve):
@@ -561,6 +563,10 @@ async function handleHub(args: string[], configPath?: string): Promise<void> {
       await handleHubHost(rest, configPath);
       return;
     }
+    case "node": {
+      await handleHubNode(rest, configPath);
+      return;
+    }
     case "audit": {
       await handleHubAudit(rest, configPath);
       return;
@@ -753,6 +759,40 @@ async function handleHubHost(args: string[], configPath?: string): Promise<void>
       }
       default:
         throw new Error("usage: rdsh hub host ls|revoke <hostId>");
+    }
+  } finally {
+    db.close();
+  }
+}
+
+async function handleHubNode(args: string[], configPath?: string): Promise<void> {
+  const action = args[0];
+  const db = await openHubDb(configPath);
+  try {
+    switch (action) {
+      case "ls": {
+        const nodes = db.listNodes();
+        if (nodes.length === 0) {
+          console.log("(no relay nodes)");
+        } else {
+          for (const n of nodes) {
+            console.log(`${n.id}  ${n.name}  ${n.advertiseUrl}  status=${n.status}  hosts=${db.listHostsByNode(n.id).length}`);
+          }
+        }
+        return;
+      }
+      case "revoke": {
+        const nodeId = args[1];
+        if (nodeId === undefined) throw new Error("usage: rdsh hub node revoke <nodeId>");
+        const node = db.getNodeById(nodeId);
+        if (node === null) throw new Error(`node '${nodeId}' not found`);
+        for (const h of db.listHostsByNode(nodeId)) db.setHostNode(h.id, null);
+        db.removeNode(nodeId);
+        console.log(`rdsh: node '${nodeId}' revoked — its hosts must re-join via the account service`);
+        return;
+      }
+      default:
+        throw new Error("usage: rdsh hub node ls|revoke <nodeId>");
     }
   } finally {
     db.close();

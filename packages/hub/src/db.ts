@@ -69,7 +69,21 @@ export interface HostRow {
   name: string;
   tokenHash: string;
   e2eePublicKey: string | null;
+  nodeId: string | null;
   createdAt: string;
+}
+
+export interface NodeRow {
+  id: string;
+  name: string;
+  advertiseUrl: string;
+  tokenHash: string;
+  region: string;
+  status: string;
+  capacity: number;
+  weight: number;
+  lastHeartbeat: number;
+  createdAt: number;
 }
 
 export interface RefreshRow {
@@ -250,6 +264,7 @@ export class HubDb {
         name TEXT NOT NULL,
         token_hash TEXT UNIQUE NOT NULL,
         e2ee_public_key TEXT,
+        node_id TEXT,
         created_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS refresh_tokens (
@@ -373,6 +388,18 @@ export class HubDb {
         updated_at INTEGER NOT NULL,
         UNIQUE(user_id, host_id, date, instance_id)
       );
+      CREATE TABLE IF NOT EXISTS nodes (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        advertise_url TEXT NOT NULL,
+        token_hash TEXT UNIQUE NOT NULL,
+        region TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'online',
+        capacity INTEGER NOT NULL DEFAULT 0,
+        weight INTEGER NOT NULL DEFAULT 100,
+        last_heartbeat INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL
+      );
     `);
     // 迁移守卫：既有库补列（SQLite ALTER ADD COLUMN 不支持 UNIQUE，邮箱唯一用独立索引）
     const userCols = new Set(
@@ -415,6 +442,7 @@ export class HubDb {
       (this.db.prepare("PRAGMA table_info(hosts)").all() as unknown as Array<{ name: string }>).map((c) => c.name),
     );
     if (!hostCols.has("e2ee_public_key")) this.db.exec(`ALTER TABLE hosts ADD COLUMN e2ee_public_key TEXT`);
+    if (!hostCols.has("node_id")) this.db.exec(`ALTER TABLE hosts ADD COLUMN node_id TEXT`);
     const auditCols = new Set(
       (this.db.prepare("PRAGMA table_info(audit_events)").all() as unknown as Array<{ name: string }>).map((c) => c.name),
     );
@@ -507,7 +535,23 @@ export class HubDb {
       name: String(row.name),
       tokenHash: String(row.token_hash),
       e2eePublicKey: row.e2ee_public_key === null || row.e2ee_public_key === undefined ? null : String(row.e2ee_public_key),
+      nodeId: row.node_id === null || row.node_id === undefined ? null : String(row.node_id),
       createdAt: String(row.created_at),
+    };
+  }
+
+  private mapNode(row: Record<string, unknown>): NodeRow {
+    return {
+      id: String(row.id),
+      name: String(row.name),
+      advertiseUrl: String(row.advertise_url),
+      tokenHash: String(row.token_hash),
+      region: String(row.region ?? ""),
+      status: String(row.status ?? "online"),
+      capacity: Number(row.capacity ?? 0),
+      weight: Number(row.weight ?? 100),
+      lastHeartbeat: Number(row.last_heartbeat ?? 0),
+      createdAt: Number(row.created_at),
     };
   }
 
@@ -821,6 +865,66 @@ export class HubDb {
     this.db.prepare("DELETE FROM host_share WHERE host_id = ?").run(id); // 清共享残留（FK）
     const info = this.db.prepare("DELETE FROM hosts WHERE id = ?").run(id);
     return info.changes > 0;
+  }
+
+  // ---- relay nodes（30-relay-node）----
+
+  createNode(id: string, name: string, advertiseUrl: string, tokenHash: string, region: string, capacity: number, weight: number, now = Date.now()): NodeRow {
+    this.db.prepare("INSERT INTO nodes (id, name, advertise_url, token_hash, region, status, capacity, weight, created_at) VALUES (?, ?, ?, ?, ?, 'online', ?, ?, ?)").run(
+      id,
+      name,
+      advertiseUrl,
+      tokenHash,
+      region,
+      capacity,
+      weight,
+      now,
+    );
+    const row = this.db.prepare("SELECT * FROM nodes WHERE id = ?").get(id);
+    return this.mapNode(row as unknown as Record<string, unknown>);
+  }
+
+  getNodeById(id: string): NodeRow | null {
+    const row = this.db.prepare("SELECT * FROM nodes WHERE id = ?").get(id);
+    return row === undefined ? null : this.mapNode(row as unknown as Record<string, unknown>);
+  }
+
+  findNodeByTokenHash(tokenHash: string): NodeRow | null {
+    const row = this.db.prepare("SELECT * FROM nodes WHERE token_hash = ?").get(tokenHash);
+    return row === undefined ? null : this.mapNode(row as unknown as Record<string, unknown>);
+  }
+
+  listNodes(): NodeRow[] {
+    return (this.db.prepare("SELECT * FROM nodes ORDER BY created_at").all() as unknown as Array<Record<string, unknown>>).map((r) => this.mapNode(r));
+  }
+
+  updateNodeHeartbeat(id: string, lastHeartbeat: number): void {
+    this.db.prepare("UPDATE nodes SET last_heartbeat = ? WHERE id = ?").run(lastHeartbeat, id);
+  }
+
+  updateNodeStatus(id: string, status: string): boolean {
+    const info = this.db.prepare("UPDATE nodes SET status = ? WHERE id = ?").run(status, id);
+    return info.changes > 0;
+  }
+
+  removeNode(id: string): boolean {
+    const info = this.db.prepare("DELETE FROM nodes WHERE id = ?").run(id);
+    return info.changes > 0;
+  }
+
+  /** R35：从在线且非 draining 的节点中按优先级/权重选一个（P2 再引入负载）。 */
+  pickNode(): NodeRow | null {
+    const row = this.db.prepare("SELECT * FROM nodes WHERE status = 'online' ORDER BY weight DESC, created_at ASC LIMIT 1").get();
+    return row === undefined ? null : this.mapNode(row as unknown as Record<string, unknown>);
+  }
+
+  /** R5/R40：主机 → 节点 映射（动态分配 / 迁移）。 */
+  setHostNode(hostId: string, nodeId: string | null): void {
+    this.db.prepare("UPDATE hosts SET node_id = ? WHERE id = ?").run(nodeId, hostId);
+  }
+
+  listHostsByNode(nodeId: string): HostRow[] {
+    return (this.db.prepare("SELECT * FROM hosts WHERE node_id = ? ORDER BY created_at").all(nodeId) as unknown as Array<Record<string, unknown>>).map((r) => this.mapHost(r));
   }
 
   // ---- refresh tokens ----

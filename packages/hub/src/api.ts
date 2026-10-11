@@ -29,6 +29,7 @@ import { verifyCaptchaParam } from "./captcha/aliyun.ts";
 import { DailyWindowLimiter } from "./ratelimit.ts";
 import { clearHostCookie } from "./server.ts";
 import { AdminError } from "./admin.ts";
+import { handleNodeRegister, handleNodeHeartbeat, handleNodeHosts, handleNodeSync, handleNodeLeave, handleNodeAssign } from "./nodes.ts";
 import type { AdminCtx, AdminCreateUserInput } from "./admin.ts";
 import * as admin from "./admin.ts";
 import { lastBackupAt } from "./backup.ts";
@@ -863,6 +864,31 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, runti
   }
   if (path === "/api/hosts/join-tokens" && method === "GET") {
     await handleListJoinTokens(req, res, runtime);
+    return true;
+  }
+  // ---- 节点端点（30-relay-node，协议 B 上行）----
+  if (path === "/api/nodes/register" && method === "POST") {
+    await handleNodeRegister(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/nodes/heartbeat" && method === "POST") {
+    await handleNodeHeartbeat(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/nodes/hosts" && method === "POST") {
+    await handleNodeHosts(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/nodes/sync" && method === "POST") {
+    await handleNodeSync(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/nodes/leave" && method === "POST") {
+    await handleNodeLeave(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/nodes/assign" && method === "POST") {
+    await handleNodeAssign(req, res, runtime);
     return true;
   }
   if (path === "/api/usage/report" && method === "POST") {
@@ -2019,14 +2045,19 @@ async function handleListHosts(req: IncomingMessage, res: ServerResponse, runtim
     return;
   }
   const hosts = runtime.db.listHostsForUser(auth.userId);
-  const out = hosts.map((h) => ({
-    id: h.id,
-    name: h.name,
-    online: runtime.tunnels.isOnline(h.id),
-    createdAt: h.createdAt,
-    role: h.ownerId === auth.userId ? "owner" : "member",
-    e2eePublicKey: h.e2eePublicKey,
-  }));
+  const out = hosts.map((h) => {
+    const node = h.nodeId !== null && h.nodeId !== undefined ? runtime.db.getNodeById(h.nodeId) : null;
+    return {
+      id: h.id,
+      name: h.name,
+      online: runtime.tunnels.isOnline(h.id),
+      createdAt: h.createdAt,
+      role: h.ownerId === auth.userId ? "owner" : "member",
+      e2eePublicKey: h.e2eePublicKey,
+      // R9：客户端据此直连节点（凭据不变）
+      nodeUrl: node !== null ? node.advertiseUrl : null,
+    };
+  });
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({ hosts: out }));
 }

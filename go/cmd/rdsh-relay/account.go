@@ -51,10 +51,10 @@ type SyncData struct {
 
 // HostEntry is one host's local authorization data (N5).
 type HostEntry struct {
-	HostID   string `json:"hostId"`
-	OwnerID  int64  `json:"ownerId"`
-	Online   bool   `json:"online"`
-	UsersVer int64  `json:"usersVer"` // owner session version (cookie ver)
+	HostID   string           `json:"hostId"`
+	OwnerID  int64            `json:"ownerId"`
+	Online   bool             `json:"online"`
+	UserVers map[string]int64 `json:"userVers"` // userId (string key) → session ver
 }
 
 func (a *account) post(path string, body any, out any) error {
@@ -128,4 +128,18 @@ func (a *account) Sync(nodeID string) (*SyncData, error) {
 		return nil, err
 	}
 	return &out, nil
+}
+
+// AssignVerify validates a gateway's one-time assign token (R35) and returns
+// its hostId. The node calls back to the account service, which consumed the
+// token when the gateway was redirected here.
+func (a *account) AssignVerify(token string) (string, bool) {
+	var out struct {
+		HostID string `json:"hostId"`
+	}
+	err := a.post("/api/nodes/assign", map[string]any{"assign": token}, &out)
+	if err != nil || out.HostID == "" {
+		return "", false
+	}
+	return out.HostID, true
 }

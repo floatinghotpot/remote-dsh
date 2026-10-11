@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
@@ -34,7 +35,8 @@ func (c *hostCache) setHosts(hosts []HostEntry) {
 	c.hosts = m
 }
 
-// authorize checks the host is known locally + the cookie ver matches the owner.
+// authorize checks the host is known locally + the entering user's ver matches
+// (owner or shared member, via the N5 userVers map).
 func (c *hostCache) authorize(hostID string, userID, ver int64) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -42,7 +44,11 @@ func (c *hostCache) authorize(hostID string, userID, ver int64) bool {
 	if !ok {
 		return false
 	}
-	return h.OwnerID == userID && h.UsersVer == ver
+	v, ok := h.UserVers[strconv.FormatInt(userID, 10)]
+	if !ok {
+		return false
+	}
+	return v == ver
 }
 
 // defaultDataDir returns the state directory (~/.rdsh/relay, or $RDSH_DATA_DIR).
@@ -73,6 +79,7 @@ func serve(dataDir string) error {
 
 	// Protocol B background loops (N2 heartbeat + N5 sync).
 	acc := newAccount(cfg.AccountURL, cfg.NodeToken)
+	srv.assignVerify = acc.AssignVerify
 	go heartbeatLoop(acc, cfg.NodeID, registry)
 	go syncLoop(acc, cfg.NodeID, cookie, cache, registry)
 

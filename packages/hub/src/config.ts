@@ -155,6 +155,8 @@ export interface HubConfig {
   backup?: BackupConfig;
   /** 转发点（relay node）上报用量的共享令牌；缺省 → 端点禁用（404） */
   relayNodeToken?: string;
+  /** host cookie 的 Ed25519 公钥（hex，64 字符）；节点经 N5 同步持公钥验签（R17）。缺省 → 节点目录功能禁用 */
+  hostCookiePubKey?: string;
   /** 站点信息（portal 页脚导航） */
   site?: SiteConfig;
   /** 微信登录（网站应用 AppID；缺省 → 微信登录禁用） */
@@ -251,6 +253,10 @@ export function normalizeHubConfig(raw: unknown, source = "config"): HubConfig {
   if (cfg.relayNodeToken !== undefined) {
     if (typeof cfg.relayNodeToken !== "string" || cfg.relayNodeToken.length < 16) throw new Error(`${source}: "relayNodeToken" must be a string of >= 16 chars`);
     out.relayNodeToken = cfg.relayNodeToken;
+  }
+  if (cfg.hostCookiePubKey !== undefined) {
+    if (typeof cfg.hostCookiePubKey !== "string" || !/^[0-9a-f]{64}$/i.test(cfg.hostCookiePubKey)) throw new Error(`${source}: "hostCookiePubKey" must be a 64-char hex Ed25519 public key`);
+    out.hostCookiePubKey = cfg.hostCookiePubKey;
   }
   if (cfg.backup !== undefined) out.backup = normalizeBackup(cfg.backup, source);
   if (cfg.site !== undefined) out.site = normalizeSite(cfg.site, source);

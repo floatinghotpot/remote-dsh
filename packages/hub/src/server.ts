@@ -32,6 +32,7 @@ import { EventHub, createEventsServer } from "./events.ts";
 import { handleRelay, handleRelayUpgrade, handleRawUpgrade } from "./relay.ts";
 import { servePortal } from "./portal.ts";
 import { RelayUsageMeter } from "./relay-usage.ts";
+import { mintAssignToken, hostOf } from "./nodes.ts";
 
 export interface HubServerOptions {
   host: string;
@@ -376,6 +377,19 @@ function handleTunnelUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer,
     socket.destroy();
     return;
   }
+  // 动态分配（R35）：该 host 已分配节点（sticky）或 pickNode → 307 到节点
+  const nodeId = host.nodeId ?? runtime.db.pickNode()?.id ?? null;
+  if (nodeId !== null) {
+    const node = runtime.db.getNodeById(nodeId);
+    if (node !== null && node.status === "online") {
+      runtime.db.setHostNode(host.id, node.id);
+      const assign = mintAssignToken(host.id, node.id);
+      socket.write(`HTTP/1.1 307 Temporary Redirect\r\nLocation: wss://${hostOf(node.advertiseUrl)}/tunnel?assign=${assign}\r\n\r\n`);
+      socket.destroy();
+      return;
+    }
+  }
+  // 无可用节点 → 现有行为（hub 直接转发，兜底）
   const wss = new WebSocketServer({ noServer: true });
   wss.handleUpgrade(req, socket, head, (ws) => {
     const conn = new TunnelConn(ws, host.id, (hostId) => {
