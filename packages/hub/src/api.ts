@@ -2075,8 +2075,9 @@ async function handleLogout(req: IncomingMessage, res: ServerResponse, runtime: 
   if (token !== null) runtime.auth.logout(token);
   // 清除访问令牌 cookie + 续期 cookie（httpOnly，客户端无法自行删除）+ host 转发 cookie：
   // 否则登出后 access JWT（1h）仍可认证 /api/*，根路径仍会直接转发进 host。
+  const domain = cookieDomain(req, runtime);
   res.writeHead(204, {
-    "set-cookie": [`${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`, clearRefreshCookie(), clearHostCookie(runtime.config.hostCookieDomain)],
+    "set-cookie": [clearSessionCookie(domain), clearRefreshCookie(domain), clearHostCookie(domain)],
   });
   res.end();
 }
@@ -2103,9 +2104,10 @@ async function handlePassword(req: IncomingMessage, res: ServerResponse, runtime
     return;
   }
   // 改密已吊销全部会话（ver+1 + revokeAllRefresh）；这里顺手清掉会话/续期 cookie，避免死 cookie 残留。
+  const domain = cookieDomain(req, runtime);
   res.writeHead(200, {
     "content-type": "application/json",
-    "set-cookie": [`${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`, clearRefreshCookie()],
+    "set-cookie": [clearSessionCookie(domain), clearRefreshCookie(domain)],
   });
   res.end(JSON.stringify({ ok: true, message: "password updated; all sessions revoked" }));
 }
@@ -2665,8 +2667,15 @@ function refreshCookie(refreshToken: string, domain?: string): string {
 }
 
 /** 清续期凭证 cookie（登出/改密用）。 */
-function clearRefreshCookie(): string {
-  return `${REFRESH_COOKIE}=; HttpOnly; SameSite=Lax; Path=/api/auth; Max-Age=0`;
+function clearRefreshCookie(domain?: string): string {
+  const d = domain !== undefined && domain !== "" ? `; Domain=${domain}` : "";
+  return `${REFRESH_COOKIE}=; HttpOnly; SameSite=Lax; Path=/api/auth${d}; Max-Age=0`;
+}
+
+/** 清会话 cookie（登出/改密用）。 */
+function clearSessionCookie(domain?: string): string {
+  const d = domain !== undefined && domain !== "" ? `; Domain=${domain}` : "";
+  return `${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/${d}; Max-Age=0`;
 }
 
 /** 会话/续期 cookie 的 Domain：显式配置 `hostCookieDomain` 优先，否则从请求 Host 自动计算根域。 */

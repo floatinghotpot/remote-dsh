@@ -182,6 +182,7 @@ export async function startHubServer(opts: HubServerOptions): Promise<RunningHub
       relayNodeToken: opts.relayNodeToken,
       hostCookiePubKey: opts.hostCookiePubKey,
       hostCookieDomain: opts.hostCookieDomain,
+      defaultRelayUrl: opts.defaultRelayUrl,
     },
     db: opts.db,
     auth: opts.auth,
