@@ -1179,7 +1179,9 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
     // 认证走 Authorization 头（不入 URL，避免 token 进日志）
     const url = redirectTarget !== null ? redirectTarget : `${hubWsBase}/tunnel`;
     redirectTarget = null; // 一次性消费：失败/断线重连都回 hubWsBase（自愈）
-    const client = new WebSocket(url, { headers: { authorization: `Bearer ${opts.token}` }, rejectUnauthorized: !opts.insecure });
+    // x-rdsh-relay-follow 声明本 gateway 能跟随节点分配的 307 重定向；hub 据此决定是否把隧道 307 到 relay 节点
+    //（老 gateway 不带此头 → hub 直接兜底直连，避免老 gateway 拿到 307 连不上而循环重试）。
+    const client = new WebSocket(url, { headers: { authorization: `Bearer ${opts.token}`, "x-rdsh-relay-follow": "1" }, rejectUnauthorized: !opts.insecure });
     currentClient = client;
 
     // 401/403 = token 被拒（吊销/不存在）；307 = 账号服务动态分配节点（R35）。
