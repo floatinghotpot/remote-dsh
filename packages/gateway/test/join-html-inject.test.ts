@@ -108,10 +108,10 @@ test("join：text/html 注入契约并重算 content-length；gzip/JSON 原样�
     // 1) text/html → 注入
     const html = await get(1, "/index.html");
     assert.ok(html.body.toString("utf8").includes("window.__rdshWebViewApi"), "HTML 应含注入的契约脚本");
-    assert.equal(
-      Number(html.headers["content-length"]),
-      html.body.length,
-      "注入后 content-length 必须等于实际字节数",
+    assert.deepEqual(
+      html.headers["content-length"],
+      [String(html.body.length)],
+      "注入后 content-length 必须等于实际字节数（string[]）",
     );
 
     // 2) text/html + gzip → 跳过注入（原样透传）

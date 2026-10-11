@@ -123,8 +123,8 @@ test("plain 路径（设了口令，未带 cookie）：候选端点仍必须在�
     httpGet(ctx, 1, "/__rdsh/direct-candidates", { "accept-language": "zh-CN" });
     const open = await ctx.waitFrame(1, FRAME_TYPE.OPEN, () => true, "响应头");
     // 语言无关的判据：拿到的是 challenge 页（text/html），而不是候选端点的 JSON
-    const headers = (parseJsonPayload(open) as { headers?: Record<string, string> }).headers ?? {};
-    assert.match(headers["content-type"] ?? "", /text\/html/, "未授权必须拿到 challenge 页");
+    const headers = (parseJsonPayload(open) as { headers?: Record<string, string | string[]> }).headers ?? {};
+    assert.deepEqual(headers["content-type"], ["text/html; charset=utf-8"], "未授权必须拿到 challenge 页（合成响应 header 应为 string[]）");
     await ctx.waitFrame(
       1,
       FRAME_TYPE.DATA,

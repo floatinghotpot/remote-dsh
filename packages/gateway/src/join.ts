@@ -409,8 +409,8 @@ function sendWsData(send: (frame: Buffer) => void, streamId: number, buf: Buffer
   return true;
 }
 
-/** 发送合成的 HTTP 响应帧（gateway 不触达 dsh）。 */
-function sendSyntheticHttp(send: (frame: Buffer) => void, streamId: number, status: number, headers: Record<string, string>, body: Buffer): void {
+/** 发送合成的 HTTP 响应帧（gateway 不触达 dsh）。headers 统一 string[]（对齐 Go relay 的 map[string][]string wire 契约）。 */
+function sendSyntheticHttp(send: (frame: Buffer) => void, streamId: number, status: number, headers: Record<string, string[]>, body: Buffer): void {
   send(encodeFrame(FRAME_TYPE.OPEN, streamId, jsonPayload({ kind: "http", status, reason: undefined, headers })));
   sendChunkedBody(send, streamId, body);
   send(encodeFrame(FRAME_TYPE.CLOSE, streamId, jsonPayload({ code: 0 })));
@@ -552,14 +552,14 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
     /** 发送 challenge 页（或带错误）响应。 */
     function sendChallenge(streamId: number, path: string, error: GateError, acceptLanguage?: string): void {
       const html = gateChallengeHtml(hostName, path, error, acceptLanguage);
-      sendSyntheticHttp(send, streamId, 200, { "content-type": "text/html; charset=utf-8" }, Buffer.from(html));
+      sendSyntheticHttp(send, streamId, 200, { "content-type": ["text/html; charset=utf-8"] }, Buffer.from(html));
     }
 
     /** 校验 code 提交（POST gate_code）→ 303 回跳 + 发 cookie，或回 challenge 错误。 */
     function handleGateSubmit(streamId: number, state: { method: string; path: string; body: Buffer[]; acceptLanguage?: string }): void {
       const code = gate.accessCode;
       if (code === null) {
-        sendSyntheticHttp(send, streamId, 303, { location: state.path }, Buffer.alloc(0));
+        sendSyntheticHttp(send, streamId, 303, { location: [state.path] }, Buffer.alloc(0));
         return;
       }
       if (gateBlocked()) {
@@ -577,7 +577,7 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
       if (input !== null && verifyGateCode(input, code)) {
         gateFailures.count = 0;
         const { value } = signGateCookie(code);
-        sendSyntheticHttp(send, streamId, 303, { location: state.path, "set-cookie": `${GATE_COOKIE}=${value}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${7 * 24 * 3600}` }, Buffer.alloc(0));
+        sendSyntheticHttp(send, streamId, 303, { location: [state.path], "set-cookie": [`${GATE_COOKIE}=${value}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${7 * 24 * 3600}`] }, Buffer.alloc(0));
       } else {
         gateFailures.count += 1;
         if (gateFailures.count >= 10) gateFailures.lockedUntil = Date.now() + 60_000;
@@ -735,7 +735,7 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
             ticket: dio.directCandidates.mintTicket(),
           }),
         );
-        sendSyntheticHttp(send, frame.streamId, 200, { "content-type": "application/json" }, body);
+        sendSyntheticHttp(send, frame.streamId, 200, { "content-type": ["application/json"] }, body);
         return;
       }
 

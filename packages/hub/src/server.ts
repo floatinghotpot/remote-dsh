@@ -408,8 +408,9 @@ function handleTunnelUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer,
   }
   // 动态分配（R35/R35a）：sticky 节点在线则沿用；离线/不存在则重新 pickNode（自愈）。
   // 仅对声明能跟随 307 的新 gateway 生效（握手头 x-rdsh-relay-follow: 1）；老 gateway 不带此头，
-  // 拿到 307 只会 terminate + 重连循环，故直接兜底直连，并清掉残留节点分配（否则 isHostOnline 读 DB online 列误判离线）。
-  if (req.headers["x-rdsh-relay-follow"] === "1") {
+  // 拿到 307 只会 terminate + 重连循环，故直接兜底直连。
+  const follow = req.headers["x-rdsh-relay-follow"];
+  if ((Array.isArray(follow) ? follow[0] : follow) === "1") {
     let node = host.nodeId !== null ? runtime.db.getNodeById(host.nodeId) : null;
     if (node === null || node.status !== "online") {
       node = runtime.db.pickNode();
@@ -421,10 +422,12 @@ function handleTunnelUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer,
       socket.destroy();
       return;
     }
-  } else if (host.nodeId !== null) {
+  }
+  // 兜底直连（无可用节点 / 老 gateway）→ hub 直接转发。统一清掉残留节点分配，
+  // 否则 isHostOnline 读 DB online 列（节点路由）会误判离线（markNodesOffline 不清 hosts.node_id）。
+  if (host.nodeId !== null) {
     runtime.db.setHostNode(host.id, null);
   }
-  // 无可用节点 / 老 gateway → hub 直接转发（兜底）
   const wss = new WebSocketServer({ noServer: true });
   wss.handleUpgrade(req, socket, head, (ws) => {
     const conn = new TunnelConn(ws, host.id, (hostId) => {
