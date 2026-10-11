@@ -1639,8 +1639,7 @@ function logout(): void {
 // ---- 进入 host：整页跳转 /h/<hostId>/（hub 校验归属 → Set-Cookie → 302 根路径，DSH 在根路径运行） ----
 
 function enterHost(hostId: string): void {
-  // TEMP(hot-patch): 跨域名 cookie 排查 —— 硬编码到 relay.rdsh.cn（Apache 映射回 hub，逻辑与 rdsh.cn 完全一致，仅域名不同）。
-  window.location.href = `https://relay.rdsh.cn/h/${encodeURIComponent(hostId)}/`;
+  window.location.href = `/h/${encodeURIComponent(hostId)}/`;
 }
 
 // ---- 添加主机：生成用户级 join token + 接入命令（明文只显示一次）----
