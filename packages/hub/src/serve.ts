@@ -49,6 +49,9 @@ export async function serveHub(opts: HubServeOptions): Promise<void> {
   const pruneAudit = (): void => db.pruneAudit(Date.now() - auditRetentionMs);
   pruneAudit();
   setInterval(pruneAudit, 24 * 3600 * 1000).unref();
+  // 节点离线判定（R33）：连续 90s 未心跳 → offline
+  const markNodesOffline = (): void => db.markNodesOffline(Date.now() - 90_000);
+  setInterval(markNodesOffline, 30_000).unref();
   // 绑定会话（扫码）清理：启动清一次 + 每 10 分钟清（会话 TTL 5 分钟）
   const pruneBindSessions = (): void => db.pruneExpiredBindSessions();
   pruneBindSessions();

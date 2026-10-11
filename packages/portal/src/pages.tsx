@@ -7,7 +7,7 @@
 import { useEffect, useState } from "react";
 import QRCode from "qrcode";
 import { api, ApiError, subscribeEvents, adminApi } from "./api.ts";
-import type { HostInfo, JoinTokenInfo, CaptchaPayload, AccountInfo, Capabilities, UsageDay, WechatPayInfo, AdminMe, AdminUserRow, AdminHostRow, AdminOrderRow, AdminPaymentRow, AdminAuditRow, AdminSubscriptionRow, AdminUserDetail, AdminDashboard, AdminConfig } from "./api.ts";
+import type { HostInfo, JoinTokenInfo, CaptchaPayload, AccountInfo, Capabilities, UsageDay, WechatPayInfo, AdminMe, AdminUserRow, AdminHostRow, AdminNodeRow, AdminOrderRow, AdminPaymentRow, AdminAuditRow, AdminSubscriptionRow, AdminUserDetail, AdminDashboard, AdminConfig } from "./api.ts";
 import { fingerprint } from "./e2ee.ts";
 import { useT, getLang } from "./i18n.ts";
 import type { T } from "./i18n.ts";
@@ -2240,6 +2240,7 @@ function AdminApp({ path }: { path: string }): React.JSX.Element {  const { t } 
     { p: "/", label: t("总览") },
     { p: "/users", label: t("用户") },
     { p: "/hosts", label: t("主机") },
+    { p: "/nodes", label: t("中继节点", { en: "Relay Nodes" }) },
     { p: "/billing", label: t("账单") },
     { p: "/audit", label: t("审计") },
     { p: "/health", label: t("健康") },
@@ -2269,6 +2270,8 @@ function AdminApp({ path }: { path: string }): React.JSX.Element {  const { t } 
         <AdminUsers isWrite={isWrite} isAdmin={isAdmin} />
       ) : path === "/hosts" ? (
         <AdminHosts isWrite={isWrite} />
+      ) : path === "/nodes" ? (
+        <AdminNodes isWrite={isWrite} />
       ) : path === "/billing" ? (
         <AdminBilling isWrite={isWrite} isAdmin={isAdmin} />
       ) : path === "/audit" ? (
@@ -2681,6 +2684,95 @@ function AdminHosts({ isWrite }: { isWrite: boolean }): React.JSX.Element {
         </tbody>
       </table>
       <Pager page={page} total={total} pageSize={PAGE} onPage={setPage} />
+      {dialog !== null && <ActionDialog spec={dialog} onClose={() => setDialog(null)} />}
+    </div>
+  );
+}
+
+function AdminNodes({ isWrite }: { isWrite: boolean }): React.JSX.Element {
+  const { t } = useT();
+  const [nodes, setNodes] = useState<AdminNodeRow[] | null>(null);
+  const [msg, setMsg] = useState("");
+  const [dialog, setDialog] = useState<DialogSpec | null>(null);
+  const [token, setToken] = useState<{ name: string; token: string; advertiseUrl: string } | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
+  const [addName, setAddName] = useState("");
+  const [addUrl, setAddUrl] = useState("https://");
+  const reload = (): void => {
+    adminApi.nodes().then((r) => setNodes(r.nodes)).catch(() => setNodes([]));
+  };
+  useEffect(reload, []);
+  const create = (): void => {
+    if (addName.trim() === "" || addUrl.trim() === "") { setMsg(t("请填写名称和对外地址")); return; }
+    adminApi.createNode({ name: addName.trim(), advertiseUrl: addUrl.trim() })
+      .then((r) => { setToken({ name: addName.trim(), token: r.token, advertiseUrl: addUrl.trim() }); setAddOpen(false); setAddName(""); setAddUrl("https://"); reload(); })
+      .catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed"));
+  };
+  const revoke = (n: AdminNodeRow): void => {
+    setDialog({
+      title: `${t("吊销")} · ${n.name}`,
+      fields: [],
+      danger: true,
+      submit: (reason) => adminApi.revokeNode(n.id, reason).then(() => { setMsg("ok"); setDialog(null); reload(); }).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed")),
+    });
+  };
+  const rename = (n: AdminNodeRow): void => {
+    setDialog({
+      title: `${t("重命名")} · ${n.name}`,
+      fields: [{ key: "name", label: t("名称"), value: n.name }],
+      submit: (reason, values) => adminApi.renameNode(n.id, values.name ?? "", reason).then(() => { setMsg("ok"); setDialog(null); reload(); }).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed")),
+    });
+  };
+  return (
+    <div>
+      <div style={{ marginBottom: 10, display: "flex", gap: 8, alignItems: "center" }}>
+        {isWrite && <button onClick={() => setAddOpen((v) => !v)} style={adminBtnStyle()}>{t("添加中继节点", { en: "Add Relay Node" })}</button>}
+        {msg !== "" && <span style={{ fontSize: 12, color: "var(--rdsh-link)" }}>{msg}</span>}
+      </div>
+      {addOpen && (
+        <div style={{ border: "1px solid var(--rdsh-border)", borderRadius: 10, padding: 14, marginBottom: 12, background: "var(--rdsh-bg-surface)" }}>
+          <div style={{ marginBottom: 8 }}>
+            <label style={{ display: "block", fontSize: 12, color: "var(--rdsh-fg-muted)", marginBottom: 4 }}>{t("名称", { en: "Name" })}</label>
+            <input value={addName} onChange={(e) => setAddName(e.target.value)} placeholder="sg-01" style={{ width: "100%", padding: "8px 10px", boxSizing: "border-box" }} />
+          </div>
+          <div style={{ marginBottom: 8 }}>
+            <label style={{ display: "block", fontSize: 12, color: "var(--rdsh-fg-muted)", marginBottom: 4 }}>{t("对外地址（域名）", { en: "Advertise URL (domain)" })}</label>
+            <input value={addUrl} onChange={(e) => setAddUrl(e.target.value)} placeholder="https://sg01.tunnel.rdsh.cn" style={{ width: "100%", padding: "8px 10px", boxSizing: "border-box" }} />
+          </div>
+          <button onClick={create} style={adminBtnStyle()}>{t("生成节点令牌", { en: "Generate Node Token" })}</button>
+        </div>
+      )}
+      {token !== null && (
+        <div style={{ border: "1px solid var(--rdsh-border)", borderRadius: 10, padding: 14, marginBottom: 12, background: "var(--rdsh-bg-surface)" }}>
+          <p style={{ fontSize: 13, margin: "0 0 6px" }}>{t("节点令牌（只显示一次，请立即复制）：", { en: "Node token (shown once — copy now):" })}</p>
+          <code style={{ fontSize: 12, wordBreak: "break-all" }}>{token.token}</code>
+          <p style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", margin: "8px 0 0" }}>{t("接入命令：", { en: "Join command:" })}</p>
+          <code style={{ fontSize: 12, wordBreak: "break-all" }}>rdsh-relay join {window.location.origin} --token {token.token} --advertise-url {token.advertiseUrl} --name {token.name}</code>
+          <div style={{ marginTop: 8 }}><button onClick={() => setToken(null)} style={adminBtnStyle("ghost")}>{t("关闭", { en: "Close" })}</button></div>
+        </div>
+      )}
+      <table className="admintbl" style={adminTableStyle()}>
+        <thead>
+          <tr style={{ borderBottom: "1px solid var(--rdsh-border)" }}>{[t("名称", { en: "Name" }), t("对外地址", { en: "Advertise URL" }), t("状态", { en: "Status" }), t("主机数", { en: "Hosts" }), t("最后心跳", { en: "Last heartbeat" }), t("操作", { en: "Actions" })].map(adminTh)}</tr>
+        </thead>
+        <tbody>
+          {(nodes ?? []).map((n) => (
+            <tr key={n.id} style={{ borderBottom: "1px solid var(--rdsh-bg-subtle)" }}>
+              {adminTd(t("名称", { en: "Name" }), n.name)}
+              {adminTd(t("对外地址", { en: "Advertise URL" }), <span style={{ color: "var(--rdsh-fg-muted)" }}>{n.advertiseUrl}</span>)}
+              {adminTd(t("状态", { en: "Status" }), n.status === "online" ? "●" : n.status === "draining" ? "◐" : "○")}
+              {adminTd(t("主机数", { en: "Hosts" }), String(n.hostCount))}
+              {adminTd(t("最后心跳", { en: "Last heartbeat" }), n.lastHeartbeat > 0 ? new Date(n.lastHeartbeat).toLocaleString() : "—")}
+              {adminTd(null, isWrite && (
+                <span style={{ display: "flex", gap: 6 }}>
+                  <button onClick={() => rename(n)} style={adminBtnStyle("ghost")}>{t("重命名", { en: "Rename" })}</button>
+                  <button onClick={() => revoke(n)} style={adminBtnStyle("danger")}>{t("吊销", { en: "Revoke" })}</button>
+                </span>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
       {dialog !== null && <ActionDialog spec={dialog} onClose={() => setDialog(null)} />}
     </div>
   );

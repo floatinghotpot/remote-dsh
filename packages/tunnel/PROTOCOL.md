@@ -45,14 +45,14 @@
 - `type ≥ 0x80`（0x80–0xFF）= **扩展帧**：首个为 `REDIRECT = 0x80`（见下）。
   **未知扩展帧 = 忽略**（向前兼容：老实现对新增扩展帧不崩、原样跳过）。
 
-### REDIRECT（0x80，扩展帧，A2 预留）
+### REDIRECT（0x80，扩展帧，A2 预留 → P1.5 实现）
 
 | 项 | 说明 |
 |---|---|
 | 值 | `0x80`（扩展帧，首个）|
-| payload | JSON `{ "nodeUrl": "wss://<node>/tunnel", "expiresAt": <毫秒时间戳> }` |
-| 认证语义（P0-2）| `nodeUrl` **必须来自账号服务签发的节点目录**（由账号服务密钥签名，gateway 验签）；否则可被中间人伪造，劫持 gateway 的隧道 token |
-| 状态 | **P1 只预留帧号 + 认证语义**；P1.5 实现（存量迁移时由节点下发）|
+| payload | JSON `{ "nodeUrl": "wss://<node>/tunnel", "expiresAt": <毫秒时间戳>, "sig": <hex> }` |
+| 认证语义（P0-2）| `sig` = 账号服务 Ed25519 私钥对 `hostId + "." + nodeUrl + "." + expiresAt` 的签名（hex 128 字符）；gateway 用账号服务公钥（注册时下发）验签，**验签失败或过期即忽略**（防中间人伪造迁移目标、劫持隧道 token）|
+| 状态 | P1 预留帧号 + 认证语义；**P1.5 实现**（节点 draining 时向存量主机下发）|
 
 ### OPEN payload
 

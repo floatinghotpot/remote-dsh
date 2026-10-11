@@ -912,6 +912,11 @@ export class HubDb {
     return info.changes > 0;
   }
 
+  /** R33：连续未心跳（last_heartbeat < since）的在线节点 → offline。 */
+  markNodesOffline(since: number): void {
+    this.db.prepare("UPDATE nodes SET status = 'offline' WHERE status = 'online' AND last_heartbeat > 0 AND last_heartbeat < ?").run(since);
+  }
+
   removeNode(id: string): boolean {
     const info = this.db.prepare("DELETE FROM nodes WHERE id = ?").run(id);
     return info.changes > 0;

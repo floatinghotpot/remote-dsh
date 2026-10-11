@@ -345,6 +345,19 @@ export interface AdminHostRow {
   online: boolean;
   createdAt: string;
 }
+
+export interface AdminNodeRow {
+  id: string;
+  name: string;
+  advertiseUrl: string;
+  region: string;
+  status: string;
+  capacity: number;
+  weight: number;
+  lastHeartbeat: number;
+  hostCount: number;
+  createdAt: number;
+}
 export interface AdminOrderRow {
   id: string;
   userId: number;
@@ -473,6 +486,18 @@ export const adminApi = {
   },
   revokeHost(id: string, reason: string): Promise<{ ok: boolean }> {
     return adminJson(`/api/admin/hosts/${encodeURIComponent(id)}/revoke`, { method: "POST", body: JSON.stringify({ reason }) });
+  },
+  nodes(): Promise<{ nodes: AdminNodeRow[] }> {
+    return adminJson("/api/admin/nodes");
+  },
+  createNode(input: { name: string; advertiseUrl: string; capacity?: number; weight?: number }): Promise<{ nodeId: string; token: string }> {
+    return adminJson("/api/admin/nodes", { method: "POST", body: JSON.stringify(input) });
+  },
+  revokeNode(id: string, reason: string): Promise<{ ok: boolean }> {
+    return adminJson(`/api/admin/nodes/${encodeURIComponent(id)}/revoke`, { method: "POST", body: JSON.stringify({ reason }) });
+  },
+  renameNode(id: string, name: string, reason: string): Promise<{ ok: boolean }> {
+    return adminJson(`/api/admin/nodes/${encodeURIComponent(id)}/rename`, { method: "POST", body: JSON.stringify({ name, reason }) });
   },
   orders(): Promise<{ orders: AdminOrderRow[] }> {
     return adminJson("/api/admin/orders");
