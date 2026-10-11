@@ -70,6 +70,8 @@ export interface HostRow {
   tokenHash: string;
   e2eePublicKey: string | null;
   nodeId: string | null;
+  /** 节点路由的主机在线状态（N4 上报）；hub 路由的用 TunnelRegistry。 */
+  online: boolean;
   createdAt: string;
 }
 
@@ -265,6 +267,7 @@ export class HubDb {
         token_hash TEXT UNIQUE NOT NULL,
         e2ee_public_key TEXT,
         node_id TEXT,
+        online INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS refresh_tokens (
@@ -443,6 +446,7 @@ export class HubDb {
     );
     if (!hostCols.has("e2ee_public_key")) this.db.exec(`ALTER TABLE hosts ADD COLUMN e2ee_public_key TEXT`);
     if (!hostCols.has("node_id")) this.db.exec(`ALTER TABLE hosts ADD COLUMN node_id TEXT`);
+    if (!hostCols.has("online")) this.db.exec(`ALTER TABLE hosts ADD COLUMN online INTEGER NOT NULL DEFAULT 0`);
     const auditCols = new Set(
       (this.db.prepare("PRAGMA table_info(audit_events)").all() as unknown as Array<{ name: string }>).map((c) => c.name),
     );
@@ -536,6 +540,7 @@ export class HubDb {
       tokenHash: String(row.token_hash),
       e2eePublicKey: row.e2ee_public_key === null || row.e2ee_public_key === undefined ? null : String(row.e2ee_public_key),
       nodeId: row.node_id === null || row.node_id === undefined ? null : String(row.node_id),
+      online: Number(row.online ?? 0) === 1,
       createdAt: String(row.created_at),
     };
   }
@@ -931,6 +936,11 @@ export class HubDb {
   /** R5/R40：主机 → 节点 映射（动态分配 / 迁移）。 */
   setHostNode(hostId: string, nodeId: string | null): void {
     this.db.prepare("UPDATE hosts SET node_id = ? WHERE id = ?").run(nodeId, hostId);
+  }
+
+  /** 节点路由的主机在线状态（N4 上报）。 */
+  setHostOnline(hostId: string, online: boolean): void {
+    this.db.prepare("UPDATE hosts SET online = ? WHERE id = ?").run(online ? 1 : 0, hostId);
   }
 
   listHostsByNode(nodeId: string): HostRow[] {

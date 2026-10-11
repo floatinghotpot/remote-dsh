@@ -9,7 +9,7 @@ import { readFileSync, statSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { HubConfig, PlanSpec, WechatLoginConfig, AppleLoginConfig } from "./config.ts";
 import { BILLING_DEFAULTS } from "./config.ts";
-import type { HubDb, UserRow, UsageDayRow } from "./db.ts";
+import type { HubDb, UserRow, UsageDayRow, HostRow } from "./db.ts";
 import type { HubAuth } from "./auth.ts";
 import { createLoginLimiter, hashPassword, verifyPassword, ADMIN_TTL_MS, RECENT_TOTP_WINDOW_MS, ACCESS_TTL_MS, REFRESH_TTL_MS } from "./auth.ts";
 import type { TunnelRegistry, TunnelTimings } from "./tunnel.ts";
@@ -214,7 +214,7 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
   if (path === "/api/admin/dashboard" && method === "GET") {
     const users = db.listUsers();
     const hosts = db.listAllHosts();
-    const online = hosts.filter((h) => runtime.tunnels.isOnline(h.id)).length;
+    const online = hosts.filter((h) => isHostOnline(h, runtime)).length;
     let dbSize = -1;
     try {
       if (db.path !== ":memory:") dbSize = statSync(db.path).size;
@@ -317,7 +317,7 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
     const limit = clampLimit(url.searchParams.get("limit"));
     const offset = Math.max(0, parseInt(url.searchParams.get("offset") ?? "0", 10) || 0);
     const { rows, total } = db.listHostsPage({ q, limit, offset });
-    const hosts = rows.map((h) => ({ ...h, online: runtime.tunnels.isOnline(h.id) }));
+    const hosts = rows.map((h) => ({ ...h, online: isHostOnline(h, runtime) }));
     res.end(JSON.stringify({ hosts, total }));
     return true;
   }
@@ -355,7 +355,7 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
   }
   if (path === "/api/admin/health" && method === "GET") {
     const hosts = db.listAllHosts();
-    const online = hosts.filter((h) => runtime.tunnels.isOnline(h.id)).length;
+    const online = hosts.filter((h) => isHostOnline(h, runtime)).length;
     let dbSize = -1;
     try {
       if (db.path !== ":memory:") dbSize = statSync(db.path).size;
@@ -2089,6 +2089,11 @@ async function handlePassword(req: IncomingMessage, res: ServerResponse, runtime
   res.end(JSON.stringify({ ok: true, message: "password updated; all sessions revoked" }));
 }
 
+/** 主机在线：节点路由用 N4 上报的 online；hub 路由（无节点）用 TunnelRegistry。 */
+function isHostOnline(h: HostRow, runtime: HubRuntime): boolean {
+  return h.nodeId !== null ? h.online : runtime.tunnels.isOnline(h.id);
+}
+
 async function handleListHosts(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
   const auth = authenticate(req, runtime);
   if (auth === null) {
@@ -2101,7 +2106,8 @@ async function handleListHosts(req: IncomingMessage, res: ServerResponse, runtim
     return {
       id: h.id,
       name: h.name,
-      online: runtime.tunnels.isOnline(h.id),
+      // 节点路由用 N4 上报的 online；hub 路由（无节点）用 TunnelRegistry
+      online: isHostOnline(h, runtime),
       createdAt: h.createdAt,
       role: h.ownerId === auth.userId ? "owner" : "member",
       e2eePublicKey: h.e2eePublicKey,

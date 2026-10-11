@@ -360,9 +360,12 @@ async function handleEnterHost(
     return;
   }
   runtime.db.recordAudit(userId, "host.enter", { hostId, role: isOwner ? "owner" : "member" }, clientIp(req, runtime));
-  // Set-Cookie（HMAC 签名 host cookie，7d）+ 302：DSH 在根路径运行。每次进入都重签 = 滑动续期；
-  // 后续 relay 只验签名 cookie（不受 access 1h 过期影响，改密即时失效）。
-  res.writeHead(302, { location: `${rest}${search}`, "set-cookie": hostCookie(hostId, userId, runtime.auth, runtime.config.hostCookieDomain) });
+  // Set-Cookie（Ed25519 签名 host cookie，7d，Domain=区域根域）+ 302。
+  // 30-relay-node R9：主机已分配在线节点时 302 到节点根路径（否则回退 hub 根路径）。
+  const node = host.nodeId !== null ? runtime.db.getNodeById(host.nodeId) : null;
+  const enterBase = node !== null && node.status === "online" ? node.advertiseUrl : "";
+  const location = enterBase !== "" ? `${enterBase}${rest}${search}` : `${rest}${search}`;
+  res.writeHead(302, { location, "set-cookie": hostCookie(hostId, userId, runtime.auth, runtime.config.hostCookieDomain) });
   res.end();
 }
 
@@ -385,17 +388,17 @@ function handleTunnelUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer,
     socket.destroy();
     return;
   }
-  // 动态分配（R35）：该 host 已分配节点（sticky）或 pickNode → 307 到节点
-  const nodeId = host.nodeId ?? runtime.db.pickNode()?.id ?? null;
-  if (nodeId !== null) {
-    const node = runtime.db.getNodeById(nodeId);
-    if (node !== null && node.status === "online") {
-      runtime.db.setHostNode(host.id, node.id);
-      const assign = mintAssignToken(host.id, node.id);
-      socket.write(`HTTP/1.1 307 Temporary Redirect\r\nLocation: wss://${hostOf(node.advertiseUrl)}/tunnel?assign=${assign}\r\n\r\n`);
-      socket.destroy();
-      return;
-    }
+  // 动态分配（R35/R35a）：sticky 节点在线则沿用；离线/不存在则重新 pickNode（自愈）
+  let node = host.nodeId !== null ? runtime.db.getNodeById(host.nodeId) : null;
+  if (node === null || node.status !== "online") {
+    node = runtime.db.pickNode();
+  }
+  if (node !== null) {
+    runtime.db.setHostNode(host.id, node.id);
+    const assign = mintAssignToken(host.id, node.id);
+    socket.write(`HTTP/1.1 307 Temporary Redirect\r\nLocation: wss://${hostOf(node.advertiseUrl)}/tunnel?assign=${assign}\r\n\r\n`);
+    socket.destroy();
+    return;
   }
   // 无可用节点 → 现有行为（hub 直接转发，兜底）
   const wss = new WebSocketServer({ noServer: true });

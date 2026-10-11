@@ -102,6 +102,7 @@ export async function handleNodeHosts(req: IncomingMessage, res: ServerResponse,
     return;
   }
   if (body.online) runtime.db.setHostNode(body.hostId, node.id);
+  runtime.db.setHostOnline(body.hostId, body.online);
   res.writeHead(200, { "content-type": "application/json" });
   res.end("{}");
 }
