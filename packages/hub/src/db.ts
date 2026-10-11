@@ -1572,6 +1572,18 @@ export class HubDb {
     return row === undefined ? null : this.mapSubscription(row as unknown as Record<string, unknown>);
   }
 
+  /**
+   * 取用户**最近一条**订阅（不按 status 过滤）。
+   *
+   * 用于配额计算：取消订阅（status=canceled）或进入宽限期（status 尚未翻但计划仍有效）时，
+   * plan_status 仍是 subscribed/grace —— 当前周期仍有效，配额应保留。
+   * 若用 getActiveSubscription（只看 active），此时会返回 null，配额被误判为 0。
+   */
+  getLatestSubscription(userId: number): SubscriptionRow | null {
+    const row = this.db.prepare("SELECT * FROM subscriptions WHERE user_id = ? ORDER BY id DESC LIMIT 1").get(userId);
+    return row === undefined ? null : this.mapSubscription(row as unknown as Record<string, unknown>);
+  }
+
   setSubscriptionStatus(id: number, status: string): void {
     this.db.prepare("UPDATE subscriptions SET status = ? WHERE id = ?").run(status, id);
   }

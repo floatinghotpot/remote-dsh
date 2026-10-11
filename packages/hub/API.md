@@ -39,7 +39,11 @@
 ## 3. 计费（S2）
 
 ### GET /api/billing/plans —— 套餐列表
-响应：`{ "plans": [ { "id", "name", "hosts", "priceCny", "priceUsd?", "intervalMonths" } ] }`（来源 `config.billing.plans`；`priceUsd` 可选，美元，缺省时客户端按人民币展示；`intervalMonths` 为周期月数，订阅到期按日历月顺延）
+响应：`{ "plans": [ { "id", "name", "hosts", "priceCny", "priceUsd?", "intervalMonths", "vipTier?" } ] }`（来源 `config.billing.plans`；`priceUsd` 可选，美元，缺省时客户端按人民币展示；`intervalMonths` 为周期月数，订阅到期按日历月顺延）
+
+- **`hosts`** = 该档**可接入云端中转的主机数**（⚠️ 术语见 §13.3 —— **不是**"用户拥有几台主机"；客户端档位对比表显示的就是它）。
+- **`vipTier`** = 档位：`1` 标准版 / `2` 专业版 / `3` 旗舰版（可扩展）。客户端据此显示用户在**哪一档**（见 §13）。**缺省按最低付费档处理**；同一 `billing.plans` 内**不可重复**（校验会在启动时报错）。
+  > 客户端不要用"价格排序"或"数组下标"猜档位 —— 必须用本字段。
 
 ### POST /api/billing/subscribe —— 订阅
 认证：需要。请求 `{ "planId", "form"?: "native" | "h5" | "jsapi" }`（`form` 缺省 `native`；`jsapi` 需先经 OAuth 取 openid 存于签名 Cookie，见 §9）→ 建 order（`status=created`）→ PaymentProvider 按 form 下单 → 回调/mock 支付 → `status=paid` → 激活 `plan_status=subscribed` + `plan_expires_at`。
@@ -83,7 +87,7 @@
 
 ## 5. 配额钩子（S1，/api/hosts/register 内）
 
-`/api/hosts/register` 建 host 前按 `plan_status` 检查 host 数上限：`NULL` 不限；`trial`=1；`subscribed`=plan.hosts；`free`/`grace`（grace 保留原配额，按原 plan.hosts）。超限 → `403 QUOTA_EXCEEDED`。
+`/api/hosts/register` 建 host 前按 `plan_status` 检查 **可接入云端中转的主机数**（⚠️ 语义与术语见 §13.3 —— **不是**「用户拥有几台主机」）：`NULL` 不限；`trial`=1；`subscribed`=plan.hosts；`free`/`grace`（grace 保留原配额，按原 plan.hosts）。超限 → `403 QUOTA_EXCEEDED`。
 
 ## 6. 状态机语义（req §2.5，非端点）
 
@@ -247,3 +251,98 @@ JSAPI 支付需用户 openid（公众号 OAuth2）。门户在微信内浏览器
 合并规则为「同实例 `MAX`、跨实例 `SUM`」，因此查询侧得到的 `sessions` ≈ 网关重启次数 + hub 重启次数，`relaySeconds` ≈ 网关隧道在线时长之和；二者都不是访问者视角的「会话数/时长」。
 
 > 真「会话数/时长」是访问者视角概念，只有 App 知道（它拥有会话生命周期）；hub/网关在链路上只见流与隧道，层 1/2 协议无会话边界信号。将来若需展示或计费，应由 **App 侧上报**（独立需求），届时替换本字段，而非在 hub 侧猜测。
+
+## 13. 身份与权益矩阵（跨语言契约，2026-10-11）
+
+> **唯一来源**：本节的矩阵是 **rdsh-hub（强制逻辑）/ rdsh-app（私有仓）/ rdsh-portal / rdsh-weapp / 第三方** 的共同依据。
+> 任何一端新增或调整权益，**必须先改本节**，再改各端实现与测试（协议先行纪律，同文件头）。
+> 各端实现：hub 见 §5；App 见私有仓 `rdsh-app/lib/rdsh/entitlements.dart`（含测试 `test/rdsh/entitlements_test.dart`）；Portal 见 `packages/portal/src/entitlements.ts`。
+
+### 13.1 三个正交维度（不是一条身份阶梯）
+
+| 维度 | 字段 | 取值 | 作用 |
+|---|---|---|---|
+| **计费档** | `plan_status`（可空）| `NULL` / `trial` / `subscribed` / `grace` / `free` | **决定身份显示与配额** |
+| 后台权限 | `role` | `user` / `readonly` / `operator` / `admin` | 管理面权限（§10）|
+| 账号状态 | `account_status` | `active` / `pending` / `banned` / `deleted` | 账号是否可用 |
+
+**`plan_status = NULL` 的对外显示名 = 「专属账号」（Exclusive account）。**
+- **不要**叫「自托管」—— 自托管是**部署形态**（开源自建 hub vs 我方托管 hub），不是用户档次；
+- **不要**叫「VIP」—— 会与付费档混淆。
+
+**⚠️ 客户端必须区分「无数据」与「`plan_status` 为空」**：
+- 未登录 / `GET /api/billing/subscription` 失败 → **不得**显示为「专属账号」，应显示中性状态（"订阅状态暂不可用"）；
+- 只有**成功取得响应且 `planStatus === null`** 才是专属账号。
+
+（二者曾混为一谈：订阅接口抖动时，订阅用户会被显示成"自托管模式 · 开源免费"。）
+
+### 13.2 档位 × 权益矩阵（**冻结**）
+
+`✅` = 该档位可用。对比表**只列稳定的可选择档位**；`trial` / `grace` 是**访问者自身的临时状态**，只出现在"我的身份"卡；`NULL`（专属）**永不进入对外对比表**。
+
+| 权益 | NULL（专属）| free | trial | grace | 标准版 | 专业版 | 旗舰版 |
+|---|---|---|---|---|---|---|---|
+| 可云端中转的主机数（见 13.3）| **不限** | 0 | 1 | 保留原配额 | `plans[].hosts` | `plans[].hosts` | `plans[].hosts` |
+| 直连（局域网 IP / 公网域名）| ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 系统语音识别 / 合成 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 离线语音包下载（ASR + TTS）| ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 离线语音识别 / 合成 | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 云端语音识别 / 合成（BYO，自费 API Key）| ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| 专属人工客服 | ✅ | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ |
+
+**判据（贯穿全表）**
+1. **消耗服务端成本**的能力（离线语音包走我方 CDN、云端中转走我方带宽与中继节点）→ **免费档不给**；
+2. **端侧零成本**能力（直连、系统语音识别/合成）→ **全档开放**。
+   云端语音识别/合成是 **BYO**（用户自备 API Key、费用自付给厂商），**零成本但按策略**只给**旗舰版 + 专属**，用于拉开价差。
+
+**trial 为什么必须给离线语音包**：系统语音识别**并非所有设备可用**（Android 无 GMS、墨水屏设备等），此时离线包是**唯一**语音通路；不给试用 ⟹ 核心功能完全无法体验。
+
+**free 的对外表达**：free 档并非"什么都没有"——它仍**拥有**直连与系统语音识别/合成。客户端对比表必须列出这些行，否则整列皆 ✗，用户误以为"免费等于不可用"。
+
+### 13.3 ⚠️ 术语：`hostQuota` 是「**可云端中转的主机数**」
+
+主机是**用户自己的**（他自己装 rdsh-gateway）。`hostQuota` 限制的**不是**"用户拥有几台主机"，而是"**有几台能接入我方云端中转**"。
+
+| 接入方式 | 含义 | 走我方服务器 | 占 `hostQuota` |
+|---|---|---|---|
+| 「扫码添加」/ `POST /api/hosts/register` | 把主机接入**云端中转**（内网穿透）| ✅ | ✅ |
+| 「添加站点」（客户端手输 URL）| **直连**该主机（局域网 / 公网）| ❌ | ❌ |
+
+**⟹ 因此**：`hostQuota = 0` **不等于**"不能用" —— 用户仍可直连**不限台数**。
+UI 文案必须写「**可云端中转主机数**」，**不要**写「主机配额 N 台」。
+
+**「云端中转」的价值根因**：它是"**没有公网 IP 的主机**"的唯一外网通道（内网穿透/隧道）。
+
+### 13.4 时长与状态机
+
+`plan_status`：`NULL` → `trial` → `subscribed` / `grace` → `free`（见 §6）。
+`grace → free` 时 `dropHosts`（终止隧道）；`free` 后离线主机数据保留 `retentionDays`。
+
+| 配置 | 代码默认（`BILLING_DEFAULTS`）| 产品政策 |
+|---|---|---|
+| `billing.trialDays` | 3 | **7 天**（须确认线上配置已覆盖）|
+| `billing.graceDays` | 3 | **3 天**（宽限期本质是"未付费仍享付费档"，越长越亏）|
+| `billing.retentionDays` | 30 | 30 天 |
+
+### 13.5 各端实现与已知缺口（2026-10-11）
+
+| 端 | 状态 |
+|---|---|
+| **hub 强制** | ① 主机配额（注册口）✅ `/api/hosts/register`，§5。<br>**⛔ 离线语音包 CDN 无鉴权**：任何客户端可直连下载（单包数十 MB）—— 待处理 |
+| **App**（私有仓）| ✅ 身份卡（简版/完整版）+「我的权益」清单 + 档位对比矩阵 + 专属账号视图 + 无数据态 + 开发者模式（仅 debug 构建）|
+| **Portal** | ⏳ 本轮补齐（此前仍是"自托管 / 开源免费"旧口径，且无权益清单、无对比矩阵）|
+| **weapp** | ⏭️ 未开始 |
+
+> 上述两个 ⛔ 属**门禁缺口**，修复方案与验收标准见私有仓
+> `doc/fix/20261011-account-identity-entitlements/solution.md` §5（S7a / S7b）。
+
+### 13.6 超配额主机的处理（**UI 软提示**，非后端硬拦 —— 2026-10-11 决策）
+
+超出租户套餐可中转台数的主机，**不在后端做访问门槛**。原因：
+1. 后端门槛若做在"每请求"上，需 `listHostsByOwner`（`SELECT * … ORDER BY created_at`）全表扫描 —— 每个转发请求都扫一遍，纯属浪费；
+2. 若做在"隧道连接"处拒绝，`gateway/src/join.ts` 是**指数退避自动重连**的（`JoinState` 含 `reconnecting`）→ 多台主机同时被拒即**重连风暴**。
+
+**改为客户端 UI 软提示**：主机列表**按本地显示顺序**（`created_at`）数"前 N 台在配额内"，
+用户点按**第 N 台之后**的云端主机时，弹提示「当前主机数已超出套餐配额，请升级或续费」，引导其进入套餐页。
+
+**后果（已接受）**：这是**软提示而非硬拦** —— 隧道仍连着（避免风暴），若用户持有旧书签 / 共享链接直接访问，中继仍会转发。

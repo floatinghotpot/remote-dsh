@@ -2825,15 +2825,21 @@ function resolveLoginName(db: HubDb, identifier: string): string | null {
 }
 
 /** 当前账号 host 配额：null = 不限；否则为上限（trial/subscribed/grace/free）。 */
-function hostQuota(runtime: HubRuntime, user: UserRow): number | null {
+export function hostQuota(runtime: HubRuntime, user: UserRow): number | null {
   const plan = user.planStatus;
   if (plan === null) return null;
   const billing = runtime.config.billing;
   if (plan === "trial") return billing?.trialHosts ?? BILLING_DEFAULTS.trialHosts;
   if (plan === "free") return 0;
-  const sub = runtime.db.getActiveSubscription(user.id);
-  const spec = (billing?.plans ?? []).find((p) => p.id === sub?.planId);
-  return spec?.hosts ?? 0;
+  // subscribed / grace：取**最近一条**订阅（不按 status 过滤）。
+  // 取消订阅（到期不续）或进入宽限期时 status 已翻成 canceled/expired，
+  // 但 plan_status 仍是 subscribed/grace（当前周期仍有效），配额应保留。
+  const sub = runtime.db.getLatestSubscription(user.id);
+  if (sub !== null) {
+    return (billing?.plans ?? []).find((p) => p.id === sub.planId)?.hosts ?? 0;
+  }
+  // 无任何订阅行 → 只可能是"试用源宽限期"（试用从不进 subscriptions 表）。
+  return plan === "grace" ? (billing?.trialHosts ?? BILLING_DEFAULTS.trialHosts) : 0;
 }
 
 /** 验证码校验（按 provider 分发）：none 跳过；aliyun VerifyCaptcha 验签；arithmetic token+answer。

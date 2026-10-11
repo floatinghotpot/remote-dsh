@@ -111,3 +111,40 @@ test("注册限流：registrationDailyLimit / registrationMaxUsers 校验", () =
   assert.throws(() => normalizeHubConfig({ registrationDailyLimit: -1 }), /"registrationDailyLimit" must be a positive integer/);
   assert.throws(() => normalizeHubConfig({ registrationMaxUsers: 1.5 }), /"registrationMaxUsers" must be a positive integer/);
 });
+
+test("billing.plans[].vipTier：可选 / 正整数 / 档位唯一（客户端据此判定用户档位，见 API.md §13）", () => {
+  const plan = { id: "plus_monthly", name: "标准版", hosts: 2, priceCny: 38, intervalMonths: 1 };
+  // 可选：不传 → undefined（客户端按最低付费档处理，与 App `vip_tier ?? 1` 一致）
+  assert.equal(normalizeHubConfig({ billing: { plans: [plan] } }).billing?.plans[0]?.vipTier, undefined);
+  // 透传到客户端
+  assert.equal(normalizeHubConfig({ billing: { plans: [{ ...plan, vipTier: 2 }] } }).billing?.plans[0]?.vipTier, 2);
+  // 必须是正整数
+  assert.throws(
+    () => normalizeHubConfig({ billing: { plans: [{ ...plan, vipTier: 0 }] } }),
+    /"billing\.plans\[\]\.vipTier" must be a positive integer/,
+  );
+  assert.throws(
+    () => normalizeHubConfig({ billing: { plans: [{ ...plan, vipTier: 1.5 }] } }),
+    /"billing\.plans\[\]\.vipTier" must be a positive integer/,
+  );
+  // 档位不可重复：重复会让客户端无法区分"我是哪一档"
+  assert.throws(
+    () => normalizeHubConfig({
+      billing: { plans: [{ ...plan, vipTier: 1 }, { ...plan, id: "pro_monthly", vipTier: 1 }] },
+    }),
+    /"billing\.plans\[\]\.vipTier" must be unique/,
+  );
+});
+
+test("billing.plans[].vipTier：多档时必须显式声明（否则客户端两档都归最低档）", () => {
+  const plan = { id: "plus_monthly", name: "标准版", hosts: 2, priceCny: 38, intervalMonths: 1 };
+  // 单档：可缺省
+  assert.doesNotThrow(() => normalizeHubConfig({ billing: { plans: [plan] } }));
+  // 多档但都不声明 vipTier → 拒绝
+  assert.throws(
+    () => normalizeHubConfig({ billing: { plans: [plan, { ...plan, id: "pro_monthly" }] } }),
+    /"billing.plans\[\]\.vipTier" is required when there are multiple plans/,
+  );
+  // 多档且都声明 → 通过
+  assert.doesNotThrow(() => normalizeHubConfig({ billing: { plans: [{ ...plan, vipTier: 1 }, { ...plan, id: "pro_monthly", vipTier: 2 }] } }));
+});

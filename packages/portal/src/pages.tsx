@@ -11,6 +11,17 @@ import type { HostInfo, JoinTokenInfo, CaptchaPayload, AccountInfo, Capabilities
 import { fingerprint } from "./e2ee.ts";
 import { useT, getLang } from "./i18n.ts";
 import type { T } from "./i18n.ts";
+import {
+  COMPARABLE_TIERS,
+  DISPLAY_ORDER,
+  entitlementLabel,
+  has,
+  relayHostsFor,
+  tierOf,
+  tierShortName,
+  type Entitlement,
+  type PlanTier,
+} from "./entitlements.ts";
 
 /** portal 部署在 /portal 前缀下（host 转发的 DSH 占用根路径）。 */
 const BASE = "/portal";
@@ -748,49 +759,61 @@ function remainingText(expiresAt: number, t: T): string {
   return days > 0 ? t("{days} 天 {hours} 小时", { params: { days, hours } }) : t("{hours} 小时", { params: { hours } });
 }
 
-/** 当前订阅状态卡：账户总览可点击进入套餐页；套餐页内静态展示（不传 onClick）。 */
-function CurrentPlanCard({ sub, onClick }: { sub: SubInfo | null; onClick?: () => void }): React.JSX.Element {
+/**
+ * 订阅状态卡。
+ *
+ * - **简版**（`compact`，账户总览用）：只显示身份 + 时间一行，点击进套餐页；
+ * - **完整版**（套餐页用）：身份 + 时间 + 「我的权益」清单（全集逐项 ✅/❌）。
+ *
+ * 档位判定一律委托 `entitlements.ts`（唯一口径，契约见 `packages/hub/API.md` §13）。
+ * 权益文案也取自该模块 —— **不要在本文件另写权益文案**。
+ */
+function CurrentPlanCard({
+  sub,
+  plans = [],
+  compact = false,
+  onClick,
+}: {
+  sub: SubInfo | null;
+  plans?: ReadonlyArray<{ id: string; vipTier?: number; hosts?: number }>;
+  compact?: boolean;
+  onClick?: () => void;
+}): React.JSX.Element {
   const { t } = useT();
-  const status = sub?.planStatus ?? null;
-  const used = sub?.hostsInUse ?? 0;
-  const quota = sub?.hostQuota ?? null;
+  const vipTier = sub?.planId != null ? plans.find((p) => p.id === sub.planId)?.vipTier ?? null : null;
+  // ⚠️ 必须区分「无数据」与「plan_status 为空」：接口失败/未登录传 hasEntitlement=false，
+  // 显示中性提示，**不得**显示为专属账号（API.md §13.1）。
+  const tier = tierOf({ hasEntitlement: sub !== null, planStatus: sub?.planStatus ?? null, vipTier });
+  const exp = sub?.planExpiresAt ?? null;
+  const dateText = exp === null ? "" : new Date(exp).toLocaleDateString();
+  const warn = tier === "grace";
+
   let title: string;
   let detail: string;
-  let warn = false;
-  if (status === null) {
-    title = t("🏠 自托管模式");
-    detail = t("host 数量不限 · 无需订阅 · 开源免费");
-  } else if (status === "trial") {
-    title = t("● 试用中");
-    detail =
-      sub!.planExpiresAt !== null
-        ? t("剩余 {x} · 配额 {used}/{quota} 台", { params: { x: remainingText(sub!.planExpiresAt, t), used, quota: quota ?? "∞" } })
-        : t("配额 {used}/{quota} 台", { params: { used, quota: quota ?? "∞" } });
-  } else if (status === "subscribed") {
-    title = t("● 已订阅 {plan}", { params: { plan: sub!.planId ?? t("套餐") } });
-    detail =
-      sub!.planExpiresAt !== null
-        ? t("到期 {date} · 配额 {used}/{quota} 台", {
-            params: { date: new Date(sub!.planExpiresAt).toLocaleDateString(), used, quota: quota ?? "∞" },
-          })
-        : t("配额 {used}/{quota} 台", { params: { used, quota: quota ?? "∞" } });
-  } else if (status === "grace") {
-    title = t("⚠ 宽限期");
-    detail =
-      sub!.planExpiresAt !== null
-        ? t("剩余 {x} · 隧道保留 · 到期后降级免费档", { params: { x: remainingText(sub!.planExpiresAt, t) } })
-        : t("隧道保留 · 到期后降级免费档");
-    warn = true;
+  if (tier === null) {
+    title = t("订阅状态暂不可用");
+    detail = "";
+  } else if (tier === "internal") {
+    title = `🏠 ${t(tierShortName(tier))}`;
+    // 有真实到期日就显示日期；否则说明由管理员设定（与 App 同构）
+    detail = dateText === "" ? t("由管理员创建 · 无需订阅 · 有效期以管理员设置为准") : t("有效期至 {date}", { params: { date: dateText } });
+  } else if (tier === "trial") {
+    title = `● ${t(tierShortName(tier))}`;
+    detail = exp === null ? t("主机 1 台") : `${t("剩余")} ${remainingText(exp, t)} · ${t("至 {date}", { params: { date: dateText } })}`;
+  } else if (tier === "grace") {
+    title = `⚠ ${t(tierShortName(tier))}`;
+    detail = dateText === "" ? t("原套餐配额保留，续费即恢复") : t("至 {date}", { params: { date: dateText } });
+  } else if (tier === "free") {
+    title = `○ ${t(tierShortName(tier))}`;
+    detail = t("未订阅");
   } else {
-    title = t("○ 免费档");
-    detail = t("0 台配额 · host 数据保留 30 天");
+    title = `● ${t("已订阅：{plan}", { params: { plan: t(tierShortName(tier)) } })}`;
+    detail = dateText === "" ? "" : t("到期 {date}", { params: { date: dateText } });
   }
-  const action = status === null ? t("查看详情") : status === "trial" || status === "free" ? t("升级套餐") : t("管理");
+
   const style: React.CSSProperties = {
-    display: "flex",
+    display: "block",
     width: "100%",
-    alignItems: "center",
-    gap: 10,
     padding: "14px 16px",
     border: `1px solid ${warn ? "var(--rdsh-warn)" : "var(--rdsh-border)"}`,
     borderRadius: 10,
@@ -800,15 +823,46 @@ function CurrentPlanCard({ sub, onClick }: { sub: SubInfo | null; onClick?: () =
     textAlign: "left",
     font: "inherit",
   };
-  const content = (
-    <>
+
+  const header = (
+    <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
       <span style={{ flex: 1 }}>
         <span style={{ display: "block", fontSize: 15, fontWeight: 600, color: warn ? "var(--rdsh-warn-strong)" : "var(--rdsh-fg)" }}>{title}</span>
-        <span style={{ display: "block", fontSize: 12, color: "var(--rdsh-fg-muted)", marginTop: 2 }}>{detail}</span>
+        {detail !== "" && (
+          <span style={{ display: "block", fontSize: 12, color: "var(--rdsh-fg-muted)", marginTop: 2 }}>{detail}</span>
+        )}
       </span>
-      {onClick !== undefined && <span style={{ color: "var(--rdsh-link)", fontSize: 13 }}>{action} ›</span>}
+      {onClick !== undefined && <span style={{ color: "var(--rdsh-link)", fontSize: 13 }}>{t("查看详情")} ›</span>}
+    </span>
+  );
+
+  const content = compact || tier === null ? (
+    header
+  ) : (
+    <>
+      {header}
+      <span style={{ display: "block", height: 1, background: "var(--rdsh-border)", margin: "12px 0 10px" }} />
+      <span style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--rdsh-fg-muted)", marginBottom: 6 }}>
+        {t("我的权益")}
+      </span>
+      {DISPLAY_ORDER.map((e) => {
+        const owned = has(tier, e);
+        const label = benefitText(t, e, sub);
+        return (
+          <span key={e} style={{ display: "flex", alignItems: "flex-start", gap: 6, marginTop: 4 }}>
+            <span style={{ color: owned ? "var(--rdsh-success-strong)" : "var(--rdsh-fg-muted)", fontWeight: owned ? 600 : 400, lineHeight: "18px" }}>
+              {owned ? "✓" : "✗"}
+            </span>
+            <span style={{ fontSize: 12, color: owned ? "var(--rdsh-fg)" : "var(--rdsh-fg-muted)" }}>
+              {t(label)}
+              {owned ? "" : `（${t(fromTierHint(e))}）`}
+            </span>
+          </span>
+        );
+      })}
     </>
   );
+
   return onClick !== undefined ? (
     <button onClick={onClick} style={style}>{content}</button>
   ) : (
@@ -816,18 +870,113 @@ function CurrentPlanCard({ sub, onClick }: { sub: SubInfo | null; onClick?: () =
   );
 }
 
+/** 「云端中转」那行带上台数（已用/总量）；其余直接给文案。 */
+function benefitText(t: T, e: Entitlement, sub: SubInfo | null): string {
+  const base = entitlementLabel(e);
+  if (e !== "cloudRelay") return base;
+  // 权威值：订阅响应里的 hostQuota（随订阅实时变化，与 App 同源）。
+  // ⚠️ 不要用 relayHostsFor —— 它只对 free/plus/pro/ultra 生效，trial/grace 会误显示成"不限"。
+  const quota = sub?.hostQuota ?? null;
+  if (quota === null) return `${base}：${t("不限")}`; // 专属账号（null = 不限）
+  if (quota === 0) return `${base}：0`;
+  return `${base}：${sub?.hostsInUse ?? 0}/${quota}`;
+}
+
+/** 缺该权益时标注"从哪一档开始有"（升级动因）。 */
+function fromTierHint(e: Entitlement): string {
+  switch (e) {
+    case "cloudRelay":
+    case "offlinePackages":
+    case "offlineSpeech":
+      return "试用起";
+    case "cloudSpeech":
+      return "旗舰版起";
+    case "support":
+      return "标准版起";
+    case "directConnect":
+    case "systemSpeech":
+      return "";
+  }
+}
+
+/** 档位对比矩阵：稳定的可选择档位 × 有差异的权益。 */
+function TierMatrix({
+  myTier,
+  plans,
+}: {
+  myTier: PlanTier | null;
+  plans: ReadonlyArray<{ id: string; vipTier?: number; hosts?: number }>;
+}): React.JSX.Element {
+  const { t } = useT();
+  const cell: React.CSSProperties = { padding: "8px 6px", fontSize: 12, textAlign: "center" };
+  const head: React.CSSProperties = { ...cell, fontWeight: 600 };
+  const label: React.CSSProperties = { ...cell, textAlign: "left" };
+  const hl = (x: PlanTier): React.CSSProperties => (x === myTier ? { background: "var(--rdsh-success-soft)" } : {});
+  return (
+    <Card title={t("档位对比")}>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 320 }}>
+          <thead>
+            <tr>
+              <th style={label} />
+              {COMPARABLE_TIERS.map((x) => (
+                <th key={x} style={{ ...head, ...hl(x) }}>{t(tierShortName(x))}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {DISPLAY_ORDER.map((e) => (
+              <tr key={e} style={{ borderTop: "1px solid var(--rdsh-border)" }}>
+                <td style={label}>
+                  {e === "cloudRelay" ? t("可云端中转主机数") : t(entitlementLabel(e))}
+                </td>
+                {COMPARABLE_TIERS.map((x) => {
+                  if (e === "cloudRelay") {
+                    const q = relayHostsFor(x, plans);
+                    return (
+                      <td key={x} style={{ ...cell, ...hl(x), fontWeight: 600, color: q === 0 ? "var(--rdsh-fg-muted)" : "var(--rdsh-success-strong)" }}>
+                        {q === undefined || q === null ? "—" : q === 0 ? "0" : String(q)}
+                      </td>
+                    );
+                  }
+                  const owned = has(x, e);
+                  return (
+                    <td key={x} style={{ ...cell, ...hl(x), color: owned ? "var(--rdsh-success-strong)" : "var(--rdsh-fg-muted)", fontWeight: owned ? 600 : 400 }}>
+                      {owned ? "✓" : "✗"}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ fontSize: 11, color: "var(--rdsh-fg-muted)", marginTop: 8 }}>
+        {t("✓ = 该档位可用 · 台数 = 可接云端中转的主机数")}
+      </div>
+    </Card>
+  );
+}
+
 function AccountPage(): React.JSX.Element {
   const { t } = useT();
   const [info, setInfo] = useState<AccountInfo | null>(null);
   const [sub, setSub] = useState<SubInfo | null>(null);
+  const [plans, setPlans] = useState<Array<{ id: string; vipTier?: number; hosts?: number }>>([]);
   const [customerServiceUrl, setCustomerServiceUrl] = useState<string | undefined>(undefined);
   const [wechatEnabled, setWechatEnabled] = useState(false);
   const { err, run } = useError();
   useEffect(() => {
     void run(async () => {
-      const [acc, subInfo] = await Promise.all([api.accountInfo(), api.subscription()]);
+      // 计划表用于把 planId 映射到档位（vipTier）—— 失败不影响本页其余内容。
+      const [acc, subInfo, planList] = await Promise.all([
+        api.accountInfo(),
+        api.subscription(),
+        api.listPlans().catch(() => ({ plans: [] })),
+      ]);
       setInfo(acc);
       setSub(subInfo);
+      setPlans(planList.plans);
     });
   }, []);
   useEffect(() => {
@@ -836,7 +985,7 @@ function AccountPage(): React.JSX.Element {
   return (
     <Shell title={t("账户与安全")}>
       {err !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{err}</p>}
-      <CurrentPlanCard sub={sub} onClick={() => navigate("/billing")} />
+      <CurrentPlanCard sub={sub} plans={plans} compact onClick={() => navigate("/billing")} />
       <SettingRow
         label={t("邮箱")}
         desc={info?.emailVerified === true ? t("已绑定 {x}", { params: { x: maskEmail(info.email ?? "") } }) : t("绑定邮箱后可自助找回密码")}
@@ -1246,6 +1395,9 @@ function HostsPage(): React.JSX.Element {
   const [shareName, setShareName] = useState("");
   const [shares, setShares] = useState<Array<{ userId: number; name: string; role: string }>>([]);
   const [pendingTrust, setPendingTrust] = useState<{ hostId: string; name: string; publicKey: string; fingerprint: string; changed: boolean } | null>(null);
+  // 超配额软提示（本地判定，不查后端）：quota = 可云端中转主机数上限（null=不限）。
+  const [quota, setQuota] = useState<number | null>(null);
+  const [quotaHost, setQuotaHost] = useState<{ name: string; quota: number } | null>(null);
   const { err, run } = useError();
 
   const openShare = (hostId: string): void => {
@@ -1254,6 +1406,15 @@ function HostsPage(): React.JSX.Element {
   };
 
   const requestEnter = (h: HostInfo): void => {
+    // 超配额软提示（本地判定，不查后端）：只统计自有主机，按列表顺序前 N 台可用。
+    if (h.role === "owner" && quota !== null) {
+      const owned = hosts.filter((x) => x.role === "owner");
+      const rank = owned.findIndex((x) => x.id === h.id);
+      if (rank >= 0 && rank >= quota) {
+        setQuotaHost({ name: h.name, quota });
+        return;
+      }
+    }
     void run(async () => {
       const pub = h.e2eePublicKey;
       if (pub === undefined || pub === null || pub === "") {
@@ -1303,6 +1464,8 @@ function HostsPage(): React.JSX.Element {
   };
 
   useEffect(() => {
+    // 配额仅用于"超配额软提示"；失败按"不限"处理（绝不因拉取失败拦住用户）。
+    void api.subscription().then((s) => setQuota(s.hostQuota)).catch(() => setQuota(null));
     load();
     const unsub = subscribeEvents((e) => {
       setHosts((prev) => prev.map((h) => (h.id === e.hostId ? { ...h, online: e.type === "host.online" } : h)));
@@ -1430,6 +1593,20 @@ function HostsPage(): React.JSX.Element {
               )}
             </div>
           )}
+        </div>
+      )}
+      {quotaHost !== null && (
+        <div style={{ position: "fixed", inset: 0, background: "var(--rdsh-scrim)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setQuotaHost(null)}>
+          <div style={{ background: "var(--rdsh-bg-surface)", padding: 20, borderRadius: 12, maxWidth: 400, textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
+            <p style={{ margin: 0, fontWeight: 600 }}>{t("主机超出套餐")}</p>
+            <p style={{ color: "var(--rdsh-fg-muted)", fontSize: 13, margin: "8px 0 0" }}>
+              {t("当前套餐可云端中转的主机数为 {n} 台，这台已超出。升级或续费后即可继续使用。", { params: { n: quotaHost.quota } })}
+            </p>
+            <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 12 }}>
+              <button onClick={() => { setQuotaHost(null); navigate("/billing"); }} style={btnStyle()}>{t("去升级")}</button>
+              <button onClick={() => setQuotaHost(null)} style={btnStyle("ghost")}>{t("取消")}</button>
+            </div>
+          </div>
         </div>
       )}
       {pendingTrust !== null && (
@@ -1766,10 +1943,13 @@ function VerifyPage(): React.JSX.Element {
 interface PlanInfo {
   id: string;
   name: string;
+  /** 该档可接入云端中转的主机数（API.md §13.3：不是"用户拥有几台主机"）。 */
   hosts: number;
   priceCny: number;
   priceUsd?: number;
   intervalMonths: number;
+  /** 档位 1=标准版 / 2=专业版 / 3=旗舰版；缺省按最低付费档（见 API.md §13）。 */
+  vipTier?: number;
 }
 
 /** 是否微信内置浏览器。 */
@@ -1920,15 +2100,22 @@ function BillingPage(): React.JSX.Element {
 
   const hasPlans = plans.length > 0;
   const currentPlanId = sub?.planId ?? null;
-  const hasStatus = sub !== null && (hasPlans || sub.planStatus !== null);
+  // 档位（唯一口径见 entitlements.ts）。专属账号无需订阅 ⟹ 不渲染购买与对比（API.md §13.2）。
+  const vipTier = sub?.planId != null ? plans.find((p) => p.id === sub.planId)?.vipTier ?? null : null;
+  const myTier = tierOf({ hasEntitlement: sub !== null, planStatus: sub?.planStatus ?? null, vipTier });
+  const isInternal = myTier === "internal";
 
   return (
     <>
-      <Shell title={t("套餐与订阅")}>
+      <Shell title={t(isInternal ? "我的权益" : "套餐与订阅")}>
         <Toast toast={toast} />
         {err !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{err}</p>}
-        {hasStatus && <CurrentPlanCard sub={sub} />}
-        {hasPlans ? (
+        {/* 完整版：身份 + 时间 +「我的权益」清单 */}
+        <CurrentPlanCard sub={sub} plans={plans} />
+        {isInternal && (
+          <p style={{ fontSize: 12, color: "var(--rdsh-fg-muted)" }}>{t("如需变更有效期或额度，请联系管理员。")}</p>
+        )}
+        {isInternal ? null : hasPlans ? (
           <Card title={t("选择套餐")}>
             {plans.map((p) => {
               const current = p.id === currentPlanId;
@@ -1949,20 +2136,26 @@ function BillingPage(): React.JSX.Element {
             })}
           </Card>
         ) : (
-          <Card title={t("自托管模式")}>
-            <p style={{ fontSize: 13, margin: 0 }}>{t("你正在自托管运行 remote-dsh（开源免费）：host 数量不限 · 无需订阅 · 无到期限制。")}</p>
-            <p style={{ fontSize: 13, color: "var(--rdsh-fg-muted)", margin: "8px 0 0" }}>{t("完整功能：多用户 / 2FA / 审计 / 共享。")}</p>
-            <p style={{ fontSize: 12, color: "var(--rdsh-fg-subtle)", margin: "8px 0 0" }}>{t("运营方在 hub.json 配置 billing.plans 后，此处将展示套餐与订阅入口。")}</p>
+          // 本 hub 未配置计费套餐（`billing.plans` 为空）—— 这是**运营方配置**问题，
+          // 不是"用户身份"（用户身份见上方身份卡，`plan_status=NULL` 一律显示「专属账号」）。
+          <Card title={t("未配置计费套餐")}>
+            <p style={{ fontSize: 13, margin: 0 }}>
+              {t("本 hub 未配置 billing.plans，因此没有可购买的套餐。")}
+            </p>
+            <p style={{ fontSize: 12, color: "var(--rdsh-fg-subtle)", margin: "8px 0 0" }}>
+              {t("运营方配置后，此处将展示套餐与订阅入口。")}
+            </p>
           </Card>
         )}
-        <Card title={t("计费说明")}>
+        {!isInternal && hasPlans && <TierMatrix myTier={myTier} plans={plans} />}
+        {!isInternal && <Card title={t("计费说明")}>
           <p style={{ fontSize: 13, color: "var(--rdsh-fg-muted)", margin: 0 }}>
             {t("订阅/试用到期后进入 3 天宽限期（隧道保留），之后降级免费档（0 台在线，host 数据保留 30 天）。")}
           </p>
           <p style={{ fontSize: 13, color: "var(--rdsh-fg-muted)", margin: "8px 0 0" }}>
             {t("支付：微信支付（扫码 / H5 / 微信内）· 暂不提供发票。")}
           </p>
-        </Card>
+        </Card>}
       </Shell>
       {qrDataUrl !== null && (
         <div style={{ position: "fixed", inset: 0, background: "var(--rdsh-scrim)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setQrDataUrl(null)}>

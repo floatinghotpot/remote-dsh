@@ -271,7 +271,7 @@ export const api = {
   unbindPhone(): Promise<{ ok: boolean }> {
     return jsonFetch("/api/account/phone/unbind", { method: "POST", body: "{}" });
   },
-  listPlans(): Promise<{ plans: Array<{ id: string; name: string; hosts: number; priceCny: number; intervalMonths: number }> }> {
+  listPlans(): Promise<{ plans: Array<{ id: string; name: string; hosts: number; priceCny: number; intervalMonths: number; vipTier?: number }> }> {
     return jsonFetch("/api/billing/plans");
   },
   subscribe(planId: string, form?: "native" | "h5" | "jsapi"): Promise<{ orderId: string; paid: boolean; payInfo?: WechatPayInfo }> {
