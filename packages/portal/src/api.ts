@@ -346,6 +346,15 @@ export interface AdminHostRow {
   createdAt: string;
 }
 
+export interface AdminNodeBandwidth {
+  currentBps: number;
+  avg5mBps: number;
+  avg1hBps: number;
+  avg24hBps: number;
+  connections: number;
+  activeStreams: number;
+}
+
 export interface AdminNodeRow {
   id: string;
   name: string;
@@ -356,6 +365,7 @@ export interface AdminNodeRow {
   weight: number;
   lastHeartbeat: number;
   hostCount: number;
+  bandwidth: AdminNodeBandwidth;
   createdAt: number;
 }
 export interface AdminOrderRow {
@@ -495,6 +505,9 @@ export const adminApi = {
   },
   revokeNode(id: string, reason: string): Promise<{ ok: boolean }> {
     return adminJson(`/api/admin/nodes/${encodeURIComponent(id)}/revoke`, { method: "POST", body: JSON.stringify({ reason }) });
+  },
+  nodeDetail(id: string): Promise<{ node: AdminNodeRow; hosts: Array<{ id: string; name: string; ownerId: number; online: boolean }> }> {
+    return adminJson(`/api/admin/nodes/${encodeURIComponent(id)}`);
   },
   renameNode(id: string, name: string, reason: string): Promise<{ ok: boolean }> {
     return adminJson(`/api/admin/nodes/${encodeURIComponent(id)}/rename`, { method: "POST", body: JSON.stringify({ name, reason }) });

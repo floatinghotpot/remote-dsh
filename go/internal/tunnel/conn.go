@@ -198,6 +198,18 @@ func (c *Conn) SendRawData(streamID uint32, chunk []byte) {
 	c.send(TypeData, streamID, chunk, FlagE2E)
 }
 
+// ActiveStreams returns the number of open streams (R18/R39 drain waits for zero).
+func (c *Conn) ActiveStreams() int {
+	c.streamsMu.Lock()
+	defer c.streamsMu.Unlock()
+	return len(c.streams)
+}
+
+// SendRedirect sends a REDIRECT frame (P1.5 migration, R39).
+func (c *Conn) SendRedirect(nodeURL string, expiresAt int64, sig string) {
+	c.send(TypeRedirect, 0, mustJSON(map[string]any{"nodeUrl": nodeURL, "expiresAt": expiresAt, "sig": sig}), 0)
+}
+
 // EndRequest notifies the gateway the request body is complete (CLOSE code 0).
 // The handler is kept — the response is still incoming.
 func (c *Conn) EndRequest(streamID uint32) {

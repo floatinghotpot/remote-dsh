@@ -85,7 +85,20 @@ export interface NodeRow {
   capacity: number;
   weight: number;
   lastHeartbeat: number;
+  connections: number;
+  activeStreams: number;
+  bytesIn: number;
+  bytesOut: number;
   createdAt: number;
+}
+
+export interface NodeBandwidth {
+  currentBps: number;
+  avg5mBps: number;
+  avg1hBps: number;
+  avg24hBps: number;
+  connections: number;
+  activeStreams: number;
 }
 
 export interface RefreshRow {
@@ -401,7 +414,20 @@ export class HubDb {
         capacity INTEGER NOT NULL DEFAULT 0,
         weight INTEGER NOT NULL DEFAULT 100,
         last_heartbeat INTEGER NOT NULL DEFAULT 0,
+        connections INTEGER NOT NULL DEFAULT 0,
+        active_streams INTEGER NOT NULL DEFAULT 0,
+        bytes_in INTEGER NOT NULL DEFAULT 0,
+        bytes_out INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS node_metrics (
+        node_id TEXT NOT NULL,
+        ts INTEGER NOT NULL,
+        connections INTEGER NOT NULL DEFAULT 0,
+        active_streams INTEGER NOT NULL DEFAULT 0,
+        bytes_in INTEGER NOT NULL DEFAULT 0,
+        bytes_out INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (node_id, ts)
       );
     `);
     // 迁移守卫：既有库补列（SQLite ALTER ADD COLUMN 不支持 UNIQUE，邮箱唯一用独立索引）
@@ -447,6 +473,12 @@ export class HubDb {
     if (!hostCols.has("e2ee_public_key")) this.db.exec(`ALTER TABLE hosts ADD COLUMN e2ee_public_key TEXT`);
     if (!hostCols.has("node_id")) this.db.exec(`ALTER TABLE hosts ADD COLUMN node_id TEXT`);
     if (!hostCols.has("online")) this.db.exec(`ALTER TABLE hosts ADD COLUMN online INTEGER NOT NULL DEFAULT 0`);
+    const nodeCols = new Set(
+      (this.db.prepare("PRAGMA table_info(nodes)").all() as unknown as Array<{ name: string }>).map((c) => c.name),
+    );
+    for (const [col, ddl] of [["connections", "connections INTEGER NOT NULL DEFAULT 0"], ["active_streams", "active_streams INTEGER NOT NULL DEFAULT 0"], ["bytes_in", "bytes_in INTEGER NOT NULL DEFAULT 0"], ["bytes_out", "bytes_out INTEGER NOT NULL DEFAULT 0"]] as Array<[string, string]>) {
+      if (!nodeCols.has(col)) this.db.exec(`ALTER TABLE nodes ADD COLUMN ${ddl}`);
+    }
     const auditCols = new Set(
       (this.db.prepare("PRAGMA table_info(audit_events)").all() as unknown as Array<{ name: string }>).map((c) => c.name),
     );
@@ -556,6 +588,10 @@ export class HubDb {
       capacity: Number(row.capacity ?? 0),
       weight: Number(row.weight ?? 100),
       lastHeartbeat: Number(row.last_heartbeat ?? 0),
+      connections: Number(row.connections ?? 0),
+      activeStreams: Number(row.active_streams ?? 0),
+      bytesIn: Number(row.bytes_in ?? 0),
+      bytesOut: Number(row.bytes_out ?? 0),
       createdAt: Number(row.created_at),
     };
   }
@@ -922,14 +958,46 @@ export class HubDb {
     this.db.prepare("UPDATE nodes SET status = 'offline' WHERE status = 'online' AND last_heartbeat > 0 AND last_heartbeat < ?").run(since);
   }
 
+  /** N2：落一次负载采样（最新计数器 + append-only 样本，供带宽口径 R32）。 */
+  recordNodeMetric(nodeId: string, m: { connections: number; activeStreams: number; bytesIn: number; bytesOut: number }, now = Date.now()): void {
+    this.db.prepare("UPDATE nodes SET connections=?, active_streams=?, bytes_in=?, bytes_out=?, last_heartbeat=? WHERE id=?").run(m.connections, m.activeStreams, m.bytesIn, m.bytesOut, now, nodeId);
+    this.db.prepare("INSERT OR REPLACE INTO node_metrics (node_id, ts, connections, active_streams, bytes_in, bytes_out) VALUES (?, ?, ?, ?, ?, ?)").run(nodeId, now, m.connections, m.activeStreams, m.bytesIn, m.bytesOut);
+  }
+
+  /** R32：节点带宽口径（当前=最近区间速率；平均=5m/1h/24h 滚动窗口，bps）。 */
+  nodeBandwidth(nodeId: string, now = Date.now()): NodeBandwidth {
+    const total = (r: { bytes_in: number; bytes_out: number } | undefined): number => (r === undefined ? 0 : r.bytes_in + r.bytes_out);
+    const latest = this.db.prepare("SELECT bytes_in, bytes_out, connections, active_streams FROM node_metrics WHERE node_id=? ORDER BY ts DESC LIMIT 1").get(nodeId) as { bytes_in: number; bytes_out: number; connections: number; active_streams: number } | undefined;
+    const connections = latest?.connections ?? 0;
+    const activeStreams = latest?.active_streams ?? 0;
+    const rate = (windowMs: number): number => {
+      if (latest === undefined) return 0;
+      const at = this.db.prepare("SELECT bytes_in, bytes_out FROM node_metrics WHERE node_id=? AND ts <= ? ORDER BY ts DESC LIMIT 1").get(nodeId, now - windowMs) as { bytes_in: number; bytes_out: number } | undefined;
+      if (at === undefined) return 0;
+      const delta = total(latest) - total(at);
+      return delta > 0 ? Math.round((delta / windowMs) * 1000) : 0;
+    };
+    // 当前速率：最近两样本之间
+    let currentBps = 0;
+    const lastTwo = this.db.prepare("SELECT ts, bytes_in, bytes_out FROM node_metrics WHERE node_id=? ORDER BY ts DESC LIMIT 2").all(nodeId) as Array<{ ts: number; bytes_in: number; bytes_out: number }>;
+    if (lastTwo.length === 2) {
+      const [a, b] = lastTwo as [{ ts: number; bytes_in: number; bytes_out: number }, { ts: number; bytes_in: number; bytes_out: number }];
+      const dt = a.ts - b.ts;
+      if (dt > 0) currentBps = Math.round(((total(a as unknown as { bytes_in: number; bytes_out: number }) - total(b as unknown as { bytes_in: number; bytes_out: number })) / dt) * 1000);
+    }
+    return { currentBps, avg5mBps: rate(5 * 60 * 1000), avg1hBps: rate(60 * 60 * 1000), avg24hBps: rate(24 * 60 * 60 * 1000), connections, activeStreams };
+  }
+
   removeNode(id: string): boolean {
     const info = this.db.prepare("DELETE FROM nodes WHERE id = ?").run(id);
     return info.changes > 0;
   }
 
-  /** R35：从在线且非 draining 的节点中按优先级/权重选一个（P2 再引入负载）。 */
+  /** R35/R36：从在线且非 draining、且未满载的节点中按优先级/权重选一个。capacity=0 表示不限。 */
   pickNode(): NodeRow | null {
-    const row = this.db.prepare("SELECT * FROM nodes WHERE status = 'online' ORDER BY weight DESC, created_at ASC LIMIT 1").get();
+    const row = this.db.prepare(
+      "SELECT n.* FROM nodes n WHERE n.status = 'online' AND (n.capacity = 0 OR (SELECT COUNT(*) FROM hosts h WHERE h.node_id = n.id) < n.capacity) ORDER BY n.weight DESC, n.created_at ASC LIMIT 1",
+    ).get();
     return row === undefined ? null : this.mapNode(row as unknown as Record<string, unknown>);
   }
 

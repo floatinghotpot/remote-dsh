@@ -12,7 +12,7 @@
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { hostname as osHostname } from "node:os";
-import { randomUUID } from "node:crypto";
+import { randomUUID, verify as edVerify, createPublicKey } from "node:crypto";
 import type { IncomingHttpHeaders } from "node:http";
 import { WebSocket } from "ws";
 import { FrameParser, FRAME_TYPE, encodeFrame, jsonPayload, parseJsonPayload, FLAG_E2E, MAX_PAYLOAD_LENGTH, isUnknownCoreType } from "rdsh-tunnel";
@@ -20,7 +20,7 @@ import type { Frame } from "rdsh-tunnel";
 import { findDsh, spawnDsh, exchangeDshSessionCookie, detectDshVersion, dshVersionWarning, checkRemotePickerGraph, remotePickerWarning } from "./spawn-dsh.ts";
 import { rewriteHeadersForDsh } from "./proxy.ts";
 import type { ProxyTarget } from "./proxy.ts";
-import { clearPersistedToken, persistToken, readPersistedToken } from "./token-store.ts";
+import { clearPersistedToken, persistToken, readPersistedToken, readJoinMeta, persistJoinMeta } from "./token-store.ts";
 import { decodeBody, encodeBody, firstEncoding } from "./http-encoding.ts";
 import { UsageMeter, localDate } from "./usage.ts";
 
@@ -79,6 +79,10 @@ export interface RegisterOutcome {
   token: string;
   insecure: boolean;
   name: string;
+  /** 本机 hostId（REDIRECT 验签用）。 */
+  hostId: string;
+  /** 账号服务 host-cookie 公钥 hex（REDIRECT 验签用，R17）。 */
+  hostCookiePubKey: string;
 }
 
 /** 隧道状态机（onState 事件值）。 */
@@ -118,6 +122,10 @@ export interface StartJoinOptions {
   name?: string;
   /** 宿主代持的 dsh 浏览器会话 cookie（`dsh-auth-*`，0.1.2+）；有值时注入隧道→本地转发 */
   dshAuthCookieHeader?: string | null;
+  /** 本机 hostId（REDIRECT 验签用）。 */
+  hostId?: string;
+  /** 账号服务 host-cookie 公钥 hex（REDIRECT 验签用，R17）。 */
+  hostCookiePubKey?: string;
   /**
    * 心跳间隔（缺省 30s，协议 PROTOCOL.md「心跳与重连」）。
    * 测试可注入毫秒级小值以快速验证超时判定。
@@ -220,23 +228,31 @@ export async function registerJoin(opts: JoinOptions): Promise<RegisterOutcome> 
   // 主机名缺省 = 机器 hostname（CLI / service install / 插件三条路径统一；--name 可覆盖）
   const name = opts.name !== undefined && opts.name.trim() !== "" ? opts.name.trim() : osHostname();
   let token: string;
+  let hostId = "";
+  let hostCookiePubKey = "";
   if (opts.token !== undefined) {
     // --token = join token（或旧 host token）→ register 端点换 host token
     const e2eeKeyPair = loadOrCreateE2eeKeyPair(opts.e2eeKeyDir);
-    const { hostToken } = await register(opts.hubUrl, opts.token, name, insecure, e2eeKeyPair.publicRaw.toString("base64url"));
-    token = hostToken;
+    const r = await register(opts.hubUrl, opts.token, name, insecure, e2eeKeyPair.publicRaw.toString("base64url"));
+    token = r.hostToken;
+    hostId = r.hostId;
+    hostCookiePubKey = r.hostCookiePubKey;
     persistToken(opts.hubUrl, token);
+    persistJoinMeta(opts.hubUrl, { hostId, hostCookiePubKey });
   } else {
     if (opts.reset === true) clearPersistedToken(opts.hubUrl);
     const persisted = readPersistedToken(opts.hubUrl);
     if (persisted !== null) {
       token = persisted;
+      const meta = readJoinMeta(opts.hubUrl);
+      hostId = meta?.hostId ?? "";
+      hostCookiePubKey = meta?.hostCookiePubKey ?? "";
       console.log("rdsh join: reusing persisted host token");
     } else {
       throw new Error("未接入：无持久化 session 且未提供 --token；先 `rdsh host join <hub>` 生成/粘贴 join token");
     }
   }
-  return { token, insecure, name };
+  return { token, insecure, name, hostId, hostCookiePubKey };
 }
 
 /** 调 register 端点：join token → host token（对旧 host token 幂等返回同一 token）。 */
@@ -246,7 +262,7 @@ async function register(
   name: string | undefined,
   insecure: boolean,
   e2eePublicKey?: string,
-): Promise<{ hostId: string; hostToken: string }> {
+): Promise<{ hostId: string; hostToken: string; hostCookiePubKey: string }> {
   const body: Record<string, unknown> = { token: joinToken, name };
   if (e2eePublicKey !== undefined) body.e2eePublicKey = e2eePublicKey;
   const res = await hubRequest(hubUrl, "/api/hosts/register", { method: "POST", insecure, body });
@@ -254,11 +270,11 @@ async function register(
     const msg = (res.body as { error?: { message?: string } }).error?.message ?? `HTTP ${res.status}`;
     throw new Error(`hub rejected register: ${msg}`);
   }
-  const b = res.body as { hostId?: string; hostToken?: string };
+  const b = res.body as { hostId?: string; hostToken?: string; hostCookiePubKey?: string };
   if (typeof b.hostId !== "string" || typeof b.hostToken !== "string") {
     throw new Error("hub register returned malformed response");
   }
-  return { hostId: b.hostId, hostToken: b.hostToken };
+  return { hostId: b.hostId, hostToken: b.hostToken, hostCookiePubKey: typeof b.hostCookiePubKey === "string" ? b.hostCookiePubKey : "" };
 }
 
 /**
@@ -402,6 +418,8 @@ function sendSyntheticHttp(send: (frame: Buffer) => void, streamId: number, stat
 
 export function startJoin(opts: StartJoinOptions): JoinHandle {
   const hubWsBase = opts.hubUrl.replace(/^https/, "wss").replace(/^http/, "ws");
+  const hostId = opts.hostId ?? "";
+  const hostCookiePubKey = opts.hostCookiePubKey ?? "";
   const hooks = opts.hooks ?? {};
   // 宿主代持的 dsh 会话 cookie（0.1.2+）；null = 无认证（0.1.1）或换发失败
   const dshAuthCookie = opts.dshAuthCookieHeader ?? null;
@@ -1097,6 +1115,28 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
         plainDispatcher.handleFrame(frame);
         return;
       }
+      case FRAME_TYPE.REDIRECT: {
+        // P1.5：节点→gateway 迁移指令（账号服务签发，验签通过后重连新节点）
+        try {
+          const p = parseJsonPayload(frame);
+          const nodeUrl = typeof p.nodeUrl === "string" ? p.nodeUrl : "";
+          const expiresAt = typeof p.expiresAt === "number" ? p.expiresAt : 0;
+          const sig = typeof p.sig === "string" ? p.sig : "";
+          if (nodeUrl.startsWith("wss://") && expiresAt > Date.now() && sig !== "" && hostCookiePubKey !== "" && hostId !== "") {
+            const payload = `${hostId}.${nodeUrl}.${expiresAt}`;
+            const spki = Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), Buffer.from(hostCookiePubKey, "hex")]);
+            const pub = createPublicKey({ key: spki, format: "der", type: "spki" });
+            if (edVerify(null, Buffer.from(payload), pub, Buffer.from(sig, "hex"))) {
+              log("info", `migration: redirecting to ${nodeUrl}`);
+              redirectTarget = nodeUrl;
+              currentClient?.terminate();
+            }
+          }
+        } catch {
+          /* 忽略畸形 REDIRECT */
+        }
+        return;
+      }
       default:
         // 帧分域（A1）：核心帧未知 = 协议错误（发 ERROR + 断开）；扩展帧（≥0x80）未知 = 忽略（向前兼容）
         if (isUnknownCoreType(frame.type)) {
@@ -1322,7 +1362,7 @@ export async function join(opts: JoinOptions): Promise<void> {
   }
 
   // 解析 host token（含证书自动检测 + 持久化）；进程重启后复用，避免重复配对。
-  const { token, insecure, name } = await registerJoin(opts);
+  const { token, insecure, name, hostId, hostCookiePubKey } = await registerJoin(opts);
 
   console.log(`rdsh join: dsh web on 127.0.0.1:${dsh.port}`);
   console.log(`rdsh join: connecting to ${opts.hubUrl}...`);
@@ -1378,6 +1418,8 @@ export async function join(opts: JoinOptions): Promise<void> {
     hubUrl: opts.hubUrl,
     token,
     insecure,
+    hostId,
+    hostCookiePubKey,
     target,
     role: "cli",
     dshUiCompat: opts.dshUiCompat,

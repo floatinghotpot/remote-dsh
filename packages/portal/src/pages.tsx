@@ -2272,6 +2272,8 @@ function AdminApp({ path }: { path: string }): React.JSX.Element {  const { t } 
         <AdminHosts isWrite={isWrite} />
       ) : path === "/nodes" ? (
         <AdminNodes isWrite={isWrite} />
+      ) : path.startsWith("/nodes/") ? (
+        <AdminNodeDetail nodeId={path.slice("/nodes/".length)} isWrite={isWrite} />
       ) : path === "/billing" ? (
         <AdminBilling isWrite={isWrite} isAdmin={isAdmin} />
       ) : path === "/audit" ? (
@@ -2689,6 +2691,13 @@ function AdminHosts({ isWrite }: { isWrite: boolean }): React.JSX.Element {
   );
 }
 
+function fmtBps(bps: number): string {
+  if (bps <= 0) return "—";
+  if (bps >= 1_000_000) return `${(bps / 1_000_000).toFixed(1)} MB/s`;
+  if (bps >= 1_000) return `${(bps / 1_000).toFixed(1)} KB/s`;
+  return `${bps} B/s`;
+}
+
 function AdminNodes({ isWrite }: { isWrite: boolean }): React.JSX.Element {
   const { t } = useT();
   const [nodes, setNodes] = useState<AdminNodeRow[] | null>(null);
@@ -2753,15 +2762,17 @@ function AdminNodes({ isWrite }: { isWrite: boolean }): React.JSX.Element {
       )}
       <table className="admintbl" style={adminTableStyle()}>
         <thead>
-          <tr style={{ borderBottom: "1px solid var(--rdsh-border)" }}>{[t("名称", { en: "Name" }), t("对外地址", { en: "Advertise URL" }), t("状态", { en: "Status" }), t("主机数", { en: "Hosts" }), t("最后心跳", { en: "Last heartbeat" }), t("操作", { en: "Actions" })].map(adminTh)}</tr>
+          <tr style={{ borderBottom: "1px solid var(--rdsh-border)" }}>{[t("名称", { en: "Name" }), t("对外地址", { en: "Advertise URL" }), t("状态", { en: "Status" }), t("主机数", { en: "Hosts" }), t("活跃会话", { en: "Sessions" }), t("当前带宽", { en: "Bandwidth" }), t("最后心跳", { en: "Last heartbeat" }), t("操作", { en: "Actions" })].map(adminTh)}</tr>
         </thead>
         <tbody>
           {(nodes ?? []).map((n) => (
             <tr key={n.id} style={{ borderBottom: "1px solid var(--rdsh-bg-subtle)" }}>
-              {adminTd(t("名称", { en: "Name" }), n.name)}
+              {adminTd(t("名称", { en: "Name" }), <button onClick={() => navigate(`/admin/nodes/${encodeURIComponent(n.id)}`)} style={{ ...adminBtnStyle("ghost"), padding: 0 }}>{n.name}</button>)}
               {adminTd(t("对外地址", { en: "Advertise URL" }), <span style={{ color: "var(--rdsh-fg-muted)" }}>{n.advertiseUrl}</span>)}
               {adminTd(t("状态", { en: "Status" }), n.status === "online" ? "●" : n.status === "draining" ? "◐" : "○")}
               {adminTd(t("主机数", { en: "Hosts" }), String(n.hostCount))}
+              {adminTd(t("活跃会话", { en: "Sessions" }), String(n.bandwidth?.activeStreams ?? 0))}
+              {adminTd(t("当前带宽", { en: "Bandwidth" }), fmtBps(n.bandwidth?.currentBps ?? 0))}
               {adminTd(t("最后心跳", { en: "Last heartbeat" }), n.lastHeartbeat > 0 ? new Date(n.lastHeartbeat).toLocaleString() : "—")}
               {adminTd(null, isWrite && (
                 <span style={{ display: "flex", gap: 6 }}>
@@ -2774,6 +2785,48 @@ function AdminNodes({ isWrite }: { isWrite: boolean }): React.JSX.Element {
         </tbody>
       </table>
       {dialog !== null && <ActionDialog spec={dialog} onClose={() => setDialog(null)} />}
+    </div>
+  );
+}
+
+function AdminNodeDetail({ nodeId, isWrite }: { nodeId: string; isWrite: boolean }): React.JSX.Element {
+  const { t } = useT();
+  const [data, setData] = useState<{ node: AdminNodeRow; hosts: Array<{ id: string; name: string; ownerId: number; online: boolean }> } | null>(null);
+  useEffect(() => {
+    adminApi.nodeDetail(nodeId).then(setData).catch(() => setData(null));
+  }, [nodeId]);
+  if (data === null) return <div style={{ padding: 20, fontFamily: "system-ui, sans-serif" }}>{t("加载中…")}</div>;
+  const n = data.node;
+  const b = n.bandwidth;
+  return (
+    <div>
+      <button onClick={() => navigate("/admin/nodes")} style={adminBtnStyle("ghost")}>{t("← 返回节点列表", { en: "← Back to nodes" })}</button>
+      <h3 style={{ fontSize: 16, margin: "12px 0 8px" }}>{n.name}</h3>
+      <div style={{ border: "1px solid var(--rdsh-border)", borderRadius: 10, padding: 14, marginBottom: 12, background: "var(--rdsh-bg-surface)" }}>
+        <p style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", margin: 0 }}>{t("对外地址", { en: "Advertise URL" })}：{n.advertiseUrl}</p>
+        <p style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", margin: "4px 0 0" }}>nodeId：{n.id}</p>
+        <p style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", margin: "4px 0 0" }}>{t("状态", { en: "Status" })}：{n.status} · {t("优先级", { en: "Weight" })} {n.weight} · {t("容量", { en: "Capacity" })} {n.capacity === 0 ? "∞" : n.capacity}</p>
+        <p style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", margin: "4px 0 0" }}>{t("最后心跳", { en: "Last heartbeat" })}：{n.lastHeartbeat > 0 ? new Date(n.lastHeartbeat).toLocaleString() : "—"}</p>
+      </div>
+      <div style={{ border: "1px solid var(--rdsh-border)", borderRadius: 10, padding: 14, marginBottom: 12, background: "var(--rdsh-bg-surface)" }}>
+        <p style={{ fontSize: 12, margin: "0 0 4px" }}>{t("实时负载", { en: "Live load" })}</p>
+        <p style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", margin: "0 0 4px" }}>{t("连接数", { en: "Connections" })}：{b?.connections ?? 0} · {t("活跃会话", { en: "Active sessions" })}：{b?.activeStreams ?? 0}</p>
+        <p style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", margin: "0 0 4px" }}>{t("当前带宽", { en: "Current" })}：{fmtBps(b?.currentBps ?? 0)} · 5m {fmtBps(b?.avg5mBps ?? 0)} · 1h {fmtBps(b?.avg1hBps ?? 0)} · 24h {fmtBps(b?.avg24hBps ?? 0)}</p>
+      </div>
+      <table className="admintbl" style={adminTableStyle()}>
+        <thead>
+          <tr style={{ borderBottom: "1px solid var(--rdsh-border)" }}>{[t("主机名", { en: "Host" }), t("归属", { en: "Owner" }), t("在线", { en: "Online" })].map(adminTh)}</tr>
+        </thead>
+        <tbody>
+          {data.hosts.map((h) => (
+            <tr key={h.id} style={{ borderBottom: "1px solid var(--rdsh-bg-subtle)" }}>
+              {adminTd(t("主机名", { en: "Host" }), h.name)}
+              {adminTd(t("归属", { en: "Owner" }), String(h.ownerId))}
+              {adminTd(t("在线", { en: "Online" }), h.online ? "●" : "○")}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

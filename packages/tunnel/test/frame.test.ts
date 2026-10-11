@@ -162,3 +162,13 @@ test("REDIRECT=0x80 常量已预留（A2），且归类为扩展帧", () => {
   assert.equal(isExtensionType(FRAME_TYPE.REDIRECT), true);
   assert.equal(isUnknownCoreType(FRAME_TYPE.REDIRECT), false);
 });
+
+test("REDIRECT 帧 roundtrip（扩展帧 0x80，payload 原样）", () => {
+  const payload = jsonPayload({ nodeUrl: "wss://node.example.com/tunnel", expiresAt: 123, sig: "abc" });
+  const frame = encodeFrame(FRAME_TYPE.REDIRECT, 0, payload);
+  const out = new FrameParser().push(frame);
+  assert.equal(out.length, 1);
+  assert.equal(out[0]!.type, FRAME_TYPE.REDIRECT);
+  assert.equal(out[0]!.payload.toString("utf8"), payload.toString("utf8"));
+  assert.equal(isUnknownCoreType(FRAME_TYPE.REDIRECT), false);
+});

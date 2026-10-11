@@ -33,6 +33,7 @@ import { handleRelay, handleRelayUpgrade, handleRawUpgrade } from "./relay.ts";
 import { servePortal } from "./portal.ts";
 import { RelayUsageMeter } from "./relay-usage.ts";
 import { mintAssignToken, hostOf } from "./nodes.ts";
+import type { HostCookieSigner } from "./hostcookie.ts";
 
 export interface HubServerOptions {
   host: string;
@@ -77,6 +78,8 @@ export interface HubServerOptions {
   hostCookiePubKey?: string;
   /** host cookie 的 Domain（区域根域，如 .rdsh.cn；节点子域需接收该 cookie） */
   hostCookieDomain?: string;
+  /** host cookie 的 Ed25519 签名器（R17；迁移票据签发 + 公钥下发） */
+  hostCookieSigner?: HostCookieSigner;
   /**
    * 隧道心跳时序（缺省 30s/10s，见 PROTOCOL.md「心跳与重连」）。
    * 仅供测试注入毫秒级小值以快速验证超时判离线，生产不传。
@@ -173,6 +176,7 @@ export async function startHubServer(opts: HubServerOptions): Promise<RunningHub
     tunnels: opts.tunnels,
     events: opts.events,
     relayUsage: new RelayUsageMeter(opts.db),
+    hostCookieSigner: opts.hostCookieSigner,
   };
 
   // 计费状态机定时扫描（每分钟）：trial/subscribed 到期 → grace → free

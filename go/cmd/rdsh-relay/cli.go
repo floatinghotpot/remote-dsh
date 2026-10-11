@@ -131,9 +131,36 @@ func cmdStatus(args []string) error {
 }
 
 func cmdService(args []string) error {
-	// T1.8 deferral: the systemd unit is a deployment SOP; `rdsh host service`
-	// is the reference shape (cli/bin.ts installService). Placeholder for now.
-	return fmt.Errorf("service install is not yet implemented (deferred; see plan.md T1.8)")
+	if len(args) == 0 {
+		return fmt.Errorf("usage: rdsh-relay service install|status|start|stop|restart|uninstall")
+	}
+	action := args[0]
+	dataDir := defaultDataDir()
+	for i := 1; i < len(args)-1; i++ {
+		if args[i] == "--data-dir" {
+			dataDir = args[i+1]
+		}
+	}
+	switch action {
+	case "install":
+		if err := serviceInstall(dataDir); err != nil {
+			return err
+		}
+		fmt.Printf("rdsh-relay: service installed (%s)\n", serviceName)
+		return nil
+	case "status":
+		return serviceStatus()
+	case "start":
+		return serviceStart()
+	case "stop":
+		return serviceStop()
+	case "restart":
+		return serviceRestart()
+	case "uninstall":
+		return serviceUninstall()
+	default:
+		return fmt.Errorf("usage: rdsh-relay service install|status|start|stop|restart|uninstall")
+	}
 }
 
 func saveConfig(dir string, cfg *Config) error {

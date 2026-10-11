@@ -30,6 +30,7 @@ import { DailyWindowLimiter } from "./ratelimit.ts";
 import { clearHostCookie } from "./server.ts";
 import { AdminError } from "./admin.ts";
 import { handleNodeRegister, handleNodeHeartbeat, handleNodeHosts, handleNodeSync, handleNodeLeave, handleNodeAssign } from "./nodes.ts";
+import type { HostCookieSigner } from "./hostcookie.ts";
 import type { AdminCtx, AdminCreateUserInput } from "./admin.ts";
 import * as admin from "./admin.ts";
 import { lastBackupAt } from "./backup.ts";
@@ -59,6 +60,8 @@ export interface HubRuntime {
   tunnels: TunnelRegistry;
   events: EventHub;
   relayUsage: RelayUsageMeter;
+  /** host cookie 的 Ed25519 签名器（R17；迁移票据签发）。 */
+  hostCookieSigner?: HostCookieSigner;
 }
 
 export interface AuthResult {
@@ -521,7 +524,7 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
 
   // ---- 中继节点（30-relay-node，R29–R34）----
   if (path === "/api/admin/nodes" && method === "GET") {
-    const nodes = admin.listNodes(db).map((n) => ({ ...n, hostCount: db.listHostsByNode(n.id).length }));
+    const nodes = admin.listNodes(db).map((n) => ({ ...n, hostCount: db.listHostsByNode(n.id).length, bandwidth: db.nodeBandwidth(n.id) }));
     res.end(JSON.stringify({ nodes }));
     return true;
   }
@@ -539,6 +542,18 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
     } catch (err) {
       writeAdminError(res, err);
     }
+    return true;
+  }
+  const nodeDetail = /^\/api\/admin\/nodes\/([^/]+)$/.exec(path);
+  if (nodeDetail !== null && method === "GET") {
+    const nodeId = decodeURIComponent(nodeDetail[1]!);
+    const node = db.getNodeById(nodeId);
+    if (node === null) {
+      writeError(res, 404, "NOT_FOUND", "node not found");
+      return true;
+    }
+    const hosts = db.listHostsByNode(nodeId).map((h) => ({ id: h.id, name: h.name, ownerId: h.ownerId, online: h.online }));
+    res.end(JSON.stringify({ node: { ...node, hostCount: hosts.length, bandwidth: db.nodeBandwidth(nodeId) }, hosts }));
     return true;
   }
   const nodeRevoke = /^\/api\/admin\/nodes\/([^/]+)\/revoke$/.exec(path);
@@ -2517,7 +2532,7 @@ async function handleConsumeBindSession(req: IncomingMessage, res: ServerRespons
   runtime.db.consumeBindSession(id);
   runtime.db.recordAudit(ownerId, "bind.session.consume", { bindId: id, hostId, name: session.name }, clientIp(req, runtime), Date.now());
   res.writeHead(200, { "content-type": "application/json" });
-  res.end(JSON.stringify({ hostId, hostToken }));
+  res.end(JSON.stringify({ hostId, hostToken, hostCookiePubKey: runtime.config.hostCookiePubKey ?? "" }));
 }
 
 /** 创建用户级 join token（需登录）：{label?, ttlSeconds?} → 返回明文一次，服务端只存 SHA-256。 */
@@ -2607,7 +2622,7 @@ async function handleRegister(req: IncomingMessage, res: ServerResponse, runtime
   const existing = runtime.db.findHostByTokenHash(hash);
   if (existing !== null) {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ hostId: existing.id, hostToken: body.token }));
+    res.end(JSON.stringify({ hostId: existing.id, hostToken: body.token, hostCookiePubKey: runtime.config.hostCookiePubKey ?? "" }));
     return;
   }
   // 2) join token → 校验 + 建 host（账号配额检查点，SaaS）
@@ -2629,7 +2644,7 @@ async function handleRegister(req: IncomingMessage, res: ServerResponse, runtime
   const e2eePublicKey = typeof body.e2eePublicKey === "string" && body.e2eePublicKey.length > 0 ? body.e2eePublicKey.slice(0, 256) : undefined;
   runtime.db.createHost(hostId, jt.ownerId, name ?? `host-${hostId.slice(0, 8)}`, sha256(hostToken), e2eePublicKey);
   res.writeHead(200, { "content-type": "application/json" });
-  res.end(JSON.stringify({ hostId, hostToken }));
+  res.end(JSON.stringify({ hostId, hostToken, hostCookiePubKey: runtime.config.hostCookiePubKey ?? "" }));
 }
 
 function sessionCookie(accessToken: string): string {

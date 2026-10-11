@@ -49,12 +49,20 @@ type SyncData struct {
 	Draining         bool        `json:"draining"`
 }
 
+// MigrateTo is a signed migration ticket (R39): target node + expiry + account-service signature.
+type MigrateTo struct {
+	NodeURL   string `json:"nodeUrl"`
+	ExpiresAt int64  `json:"expiresAt"`
+	Sig       string `json:"sig"`
+}
+
 // HostEntry is one host's local authorization data (N5).
 type HostEntry struct {
-	HostID   string           `json:"hostId"`
-	OwnerID  int64            `json:"ownerId"`
-	Online   bool             `json:"online"`
-	UserVers map[string]int64 `json:"userVers"` // userId (string key) → session ver
+	HostID    string           `json:"hostId"`
+	OwnerID   int64            `json:"ownerId"`
+	Online    bool             `json:"online"`
+	UserVers  map[string]int64 `json:"userVers"` // userId (string key) → session ver
+	MigrateTo *MigrateTo       `json:"migrateTo,omitempty"`
 }
 
 func (a *account) post(path string, body any, out any) error {
@@ -128,6 +136,28 @@ func (a *account) Sync(nodeID string) (*SyncData, error) {
 		return nil, err
 	}
 	return &out, nil
+}
+
+// UsageRow is one user×host relayed-usage row (R8, 11-usage-analytics).
+type UsageRow struct {
+	Date         string `json:"date"`
+	UserID       int64  `json:"userId"`
+	HostID       string `json:"hostId"`
+	RelayBytesUp int64  `json:"relayBytesUp"`
+	RelayBytesDown int64 `json:"relayBytesDown"`
+	RelaySeconds int64  `json:"relaySeconds"`
+	Sessions     int64  `json:"sessions"`
+}
+
+// ReportUsage posts a batch of relayed-usage rows (R8). Uses the shared relay
+// node token + instance id from config (not the per-node protocol-B token).
+func (a *account) ReportUsage(relayNodeToken, instanceID string, rows []UsageRow) error {
+	body := map[string]any{
+		"nodeToken":  relayNodeToken,
+		"instanceId": instanceID,
+		"rows":       rows,
+	}
+	return a.post("/api/relay/usage/report", body, nil)
 }
 
 // AssignVerify validates a gateway's one-time assign token (R35) and returns

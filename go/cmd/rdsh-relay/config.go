@@ -20,6 +20,9 @@ type Config struct {
 	Name     string `json:"name,omitempty"`     // admin-set display name
 	NodeID   string `json:"nodeId,omitempty"`   // assigned at first registration, persisted (R37)
 	NodeToken string `json:"nodeToken,omitempty"` // node auth token (R12-N6)
+	// Relay usage reporting (R8, 11-usage-analytics): shared node token + instance id.
+	RelayNodeToken string `json:"relayNodeToken,omitempty"`
+	InstanceID     string `json:"instanceId,omitempty"`
 
 	TLS  *TLS  `json:"tls,omitempty"`  // manual cert (incl. wildcard)
 	ACME *ACME `json:"acme,omitempty"` // automatic issuance/renewal

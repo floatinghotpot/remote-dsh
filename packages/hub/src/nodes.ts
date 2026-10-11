@@ -79,7 +79,13 @@ export async function handleNodeHeartbeat(req: IncomingMessage, res: ServerRespo
     writeError(res, 401, "UNAUTHORIZED", "invalid node token");
     return;
   }
-  runtime.db.updateNodeHeartbeat(node.id, Date.now());
+  const body = await readJsonBody(req);
+  runtime.db.recordNodeMetric(node.id, {
+    connections: Number(body?.connections ?? 0),
+    activeStreams: Number(body?.activeStreams ?? 0),
+    bytesIn: Number(body?.bytesIn ?? 0),
+    bytesOut: Number(body?.bytesOut ?? 0),
+  });
   res.writeHead(200, { "content-type": "application/json" });
   res.end("{}");
 }
@@ -114,6 +120,10 @@ export async function handleNodeSync(req: IncomingMessage, res: ServerResponse, 
     writeError(res, 401, "UNAUTHORIZED", "invalid node token");
     return;
   }
+  // P1.5 迁移（R39）：draining 节点 → 每个主机给一张账号服务签发的迁移票据。
+  const draining = node.status === "draining";
+  const target = draining ? runtime.db.pickNode() : null;
+  const expiresAt = Date.now() + 5 * 60 * 1000; // 5 分钟票据 TTL
   const hosts = runtime.db.listHostsByNode(node.id).map((h) => {
     // ver 是"进入用户"的（owner 或 member 各自 ver），故给 owner + 所有 member 各一份。
     const userVers: Record<string, number> = { [String(h.ownerId)]: runtime.db.getUserById(h.ownerId)?.ver ?? 1 };
@@ -121,13 +131,18 @@ export async function handleNodeSync(req: IncomingMessage, res: ServerResponse, 
       const u = runtime.db.getUserById(s.userId);
       if (u !== null) userVers[String(s.userId)] = u.ver;
     }
-    return { hostId: h.id, ownerId: h.ownerId, online: true, userVers };
+    const entry: Record<string, unknown> = { hostId: h.id, ownerId: h.ownerId, online: true, userVers };
+    if (draining && target !== null && target.id !== node.id && runtime.hostCookieSigner !== undefined) {
+      const nodeUrl = `wss://${hostOf(target.advertiseUrl)}/tunnel`;
+      entry.migrateTo = { nodeUrl, expiresAt, sig: runtime.hostCookieSigner.sign(`${h.id}.${nodeUrl}.${expiresAt}`) };
+    }
+    return entry;
   });
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({
     hosts,
     hostCookiePubKey: runtime.config.hostCookiePubKey ?? "",
-    draining: node.status === "draining",
+    draining,
   }));
 }
 

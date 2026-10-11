@@ -109,6 +109,7 @@ export async function serveHub(opts: HubServeOptions): Promise<void> {
     relayNodeToken: config.relayNodeToken,
     hostCookiePubKey: config.hostCookiePubKey,
     hostCookieDomain: config.hostCookieDomain,
+    hostCookieSigner,
   });
 
   const scheme = tls ? "https" : "http";

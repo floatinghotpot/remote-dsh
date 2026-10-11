@@ -137,3 +137,25 @@ func TestRedirectReserved(t *testing.T) {
 		t.Fatal("REDIRECT must be an extension frame")
 	}
 }
+
+func TestRedirectRoundtrip(t *testing.T) {
+	payload := []byte(`{"nodeUrl":"wss://node.example.com/tunnel","expiresAt":123,"sig":"abc"}`)
+	frame, err := EncodeFrame(TypeRedirect, 0, payload, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var p Parser
+	frames, err := p.Push(frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(frames) != 1 || frames[0].Type != TypeRedirect {
+		t.Fatalf("REDIRECT roundtrip: got %d frames type=%d", len(frames), frames[0].Type)
+	}
+	if string(frames[0].Payload) != string(payload) {
+		t.Fatal("REDIRECT payload mismatch")
+	}
+	if IsUnknownCoreType(TypeRedirect) {
+		t.Fatal("REDIRECT must be an extension frame, not unknown-core")
+	}
+}

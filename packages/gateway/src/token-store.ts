@@ -49,3 +49,26 @@ export function clearPersistedToken(hubUrl: string, dir = RDSH_DIR): void {
     /* 文件不存在等，忽略 */
   }
 }
+
+/** 持久化 join 元数据（hostId + 账号服务 host-cookie 公钥，供 REDIRECT 验签）。 */
+export interface JoinMeta {
+  hostId: string;
+  hostCookiePubKey: string;
+}
+
+export function readJoinMeta(hubUrl: string, dir = RDSH_DIR): JoinMeta | null {
+  try {
+    const p = tokenFilePath(hubUrl, dir) + ".json";
+    if (!existsSync(p)) return null;
+    const m = JSON.parse(readFileSync(p, "utf8")) as Partial<JoinMeta>;
+    return typeof m.hostId === "string" && typeof m.hostCookiePubKey === "string" ? (m as JoinMeta) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function persistJoinMeta(hubUrl: string, meta: JoinMeta, dir = RDSH_DIR): void {
+  const p = tokenFilePath(hubUrl, dir) + ".json";
+  mkdirSync(dirname(p), { recursive: true, mode: 0o700 });
+  writeFileSync(p, JSON.stringify(meta), { mode: 0o600 });
+}
