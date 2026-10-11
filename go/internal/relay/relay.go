@@ -9,6 +9,7 @@ package relay
 import (
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/floatinghotpot/remote-dsh/go/internal/tunnel"
 	"github.com/gorilla/websocket"
@@ -108,6 +109,16 @@ type httpHandler struct {
 	meter     Meter
 	userID    int64
 	hostID    string
+	done      chan struct{}
+	doneOnce  sync.Once
+}
+
+// finish unblocks HandleHTTP once the response stream is complete. Mirrors the
+// Node hub where `res` stays open until res.end(); Go's net/http otherwise
+// auto-writes a default 200 with an empty body as soon as HandleHTTP returns,
+// truncating the async response that arrives later.
+func (h *httpHandler) finish() {
+	h.doneOnce.Do(func() { close(h.done) })
 }
 
 func (h *httpHandler) OnResponse(status int, reason string, headers http.Header) {
@@ -131,12 +142,14 @@ func (h *httpHandler) OnData(chunk []byte) {
 
 func (h *httpHandler) OnClose(code int, message string) {
 	// response body complete
+	h.finish()
 }
 
 func (h *httpHandler) OnError(code, message string) {
 	if !h.responded {
 		writeError(h.w, http.StatusBadGateway, "UPSTREAM_ERROR", code+": "+message)
 	}
+	h.finish()
 }
 
 // HandleHTTP relays an HTTP/SSE request over the host's tunnel.
@@ -153,7 +166,7 @@ func (n *Node) HandleHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	headers := normalizeHeaders(req.Header)
-	h := &httpHandler{w: w, meter: n.Meter, userID: userID, hostID: hostID}
+	h := &httpHandler{w: w, meter: n.Meter, userID: userID, hostID: hostID, done: make(chan struct{})}
 	streamID := conn.OpenStream("http", req.URL.RequestURI(), req.Method, headers, h)
 
 	// Stream the request body.
@@ -172,6 +185,10 @@ func (n *Node) HandleHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 	conn.EndRequest(streamID)
+
+	// Block until the response stream completes (OnClose/OnError) — otherwise
+	// net/http auto-flushes an empty 200 and the async body is truncated.
+	<-h.done
 }
 
 // wsHandler relays a browser WS ↔ tunnel stream.
