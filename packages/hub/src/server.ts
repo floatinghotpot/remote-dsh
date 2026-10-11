@@ -78,6 +78,8 @@ export interface HubServerOptions {
   hostCookiePubKey?: string;
   /** host cookie 的 Domain（区域根域，如 .rdsh.cn；节点子域需接收该 cookie） */
   hostCookieDomain?: string;
+  /** 默认 relay 的对客 URL；配置后 host 列表与进入 302 强制走该 URL（避免与站点根路径混用） */
+  defaultRelayUrl?: string;
   /** host cookie 的 Ed25519 签名器（R17；迁移票据签发 + 公钥下发） */
   hostCookieSigner?: HostCookieSigner;
   /**
@@ -130,6 +132,13 @@ export function clearHostCookie(domain?: string): string {
   // （2026-10-12 生产事故：残留 rdsh_host → 登录后 /api/* 仍被转发进 host 隧道 → 404）。
   const domainAttr = domain !== undefined && domain !== "" ? `; Domain=${domain}` : "";
   return `${HOST_COOKIE}=; HttpOnly; SameSite=Lax; Path=/${domainAttr}; Max-Age=0`;
+}
+
+/** 从请求 Host 计算根域：>2 词去掉第一个（子域），前缀加 `.`。例 rdsh.cn → .rdsh.cn，cn-relay-01.rdsh.cn → .rdsh.cn。 */
+export function rootDomain(host: string | undefined): string {
+  const words = ((host ?? "").split(":")[0] ?? "").split(".").filter(Boolean);
+  if (words.length > 2) words.shift();
+  return "." + words.join(".");
 }
 
 /** 解析 Cookie 头（relay 复用）。 */
@@ -276,7 +285,7 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse, runtime: Hu
 
   // portal 区域：进入 portal 即退出 host 上下文（清 cookie）
   if (pathname === PORTAL_PREFIX || pathname.startsWith(PORTAL_PREFIX + "/")) {
-    if (hostId !== undefined) res.setHeader("set-cookie", clearHostCookie(runtime.config.hostCookieDomain));
+    if (hostId !== undefined) res.setHeader("set-cookie", clearHostCookie(runtime.config.hostCookieDomain ?? rootDomain(req.headers.host)));
     const handled = await servePortal(req, res, portalDir);
     if (!handled) writeError(res, 404, "NOT_FOUND", "not found");
     return;
@@ -368,11 +377,12 @@ async function handleEnterHost(
   }
   runtime.db.recordAudit(userId, "host.enter", { hostId, role: isOwner ? "owner" : "member" }, clientIp(req, runtime));
   // Set-Cookie（Ed25519 签名 host cookie，7d，Domain=区域根域）+ 302。
-  // 30-relay-node R9：主机已分配在线节点时 302 到节点根路径（否则回退 hub 根路径）。
+  // 30-relay-node R9：在线外部节点 → 节点根路径；hub 内置 relay → defaultRelayUrl（配置了才强制，避免与站点根路径混用）；否则回退 hub 根路径。
   const node = host.nodeId !== null ? runtime.db.getNodeById(host.nodeId) : null;
-  const enterBase = node !== null && node.status === "online" ? node.advertiseUrl : "";
+  const enterBase = node !== null && node.status === "online" ? node.advertiseUrl : (runtime.config.defaultRelayUrl ?? "");
   const location = enterBase !== "" ? `${enterBase}${rest}${search}` : `${rest}${search}`;
-  res.writeHead(302, { location, "set-cookie": hostCookie(hostId, userId, runtime.auth, runtime.config.hostCookieDomain) });
+  const cookieDomain = runtime.config.hostCookieDomain ?? rootDomain(req.headers.host);
+  res.writeHead(302, { location, "set-cookie": hostCookie(hostId, userId, runtime.auth, cookieDomain) });
   res.end();
 }
 

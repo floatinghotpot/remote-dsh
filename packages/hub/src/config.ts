@@ -166,6 +166,8 @@ export interface HubConfig {
   hostCookiePubKey?: string;
   /** host cookie 的 Domain（区域根域，如 .rdsh.cn）；缺省 → host-only（节点子域收不到） */
   hostCookieDomain?: string;
+  /** 默认 relay（hub 内置转发点）的对客 URL（如 https://relay.rdsh.cn）；配置后 host 列表与进入 302 强制走该 URL，避免与站点根路径混用。缺省 → 空（回退 hub 根路径） */
+  defaultRelayUrl?: string;
   /** 站点信息（portal 页脚导航） */
   site?: SiteConfig;
   /** 微信登录（网站应用 AppID；缺省 → 微信登录禁用） */
@@ -270,6 +272,10 @@ export function normalizeHubConfig(raw: unknown, source = "config"): HubConfig {
   if (cfg.hostCookieDomain !== undefined) {
     if (typeof cfg.hostCookieDomain !== "string") throw new Error(`${source}: "hostCookieDomain" must be a string`);
     out.hostCookieDomain = cfg.hostCookieDomain;
+  }
+  if (cfg.defaultRelayUrl !== undefined) {
+    if (typeof cfg.defaultRelayUrl !== "string") throw new Error(`${source}: "defaultRelayUrl" must be a string`);
+    out.defaultRelayUrl = cfg.defaultRelayUrl;
   }
   if (cfg.backup !== undefined) out.backup = normalizeBackup(cfg.backup, source);
   if (cfg.site !== undefined) out.site = normalizeSite(cfg.site, source);

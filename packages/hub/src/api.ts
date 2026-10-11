@@ -27,7 +27,7 @@ import { verifyAppleIdToken, exchangeAppleCode, revokeAppleToken, makeAppleClien
 import { createChallenge, verifyChallenge } from "./captcha.ts";
 import { verifyCaptchaParam } from "./captcha/aliyun.ts";
 import { DailyWindowLimiter } from "./ratelimit.ts";
-import { clearHostCookie } from "./server.ts";
+import { clearHostCookie, rootDomain } from "./server.ts";
 import { AdminError } from "./admin.ts";
 import { handleNodeRegister, handleNodeHeartbeat, handleNodeHosts, handleNodeSync, handleNodeLeave, handleNodeAssign } from "./nodes.ts";
 import type { HostCookieSigner } from "./hostcookie.ts";
@@ -1312,9 +1312,10 @@ async function handleWechatLoginCallback(req: IncomingMessage, res: ServerRespon
       writeError(res, 403, "FORBIDDEN", "account not active");
       return;
     }
+    const domain = cookieDomain(req, runtime);
     res.writeHead(302, {
       location: st.next ?? "/portal/hosts",
-      "set-cookie": [sessionCookie(tokens.accessToken), refreshCookie(tokens.refreshToken)],
+      "set-cookie": [sessionCookie(tokens.accessToken, domain), refreshCookie(tokens.refreshToken, domain)],
     });
     res.end();
     return;
@@ -1385,7 +1386,8 @@ async function handleWechatConfirm(req: IncomingMessage, res: ServerResponse, ru
     writeError(res, 403, "FORBIDDEN", "account not active");
     return;
   }
-  res.writeHead(200, { "content-type": "application/json", "set-cookie": [sessionCookie(tokens.accessToken), refreshCookie(tokens.refreshToken)] });
+  const domain = cookieDomain(req, runtime);
+  res.writeHead(200, { "content-type": "application/json", "set-cookie": [sessionCookie(tokens.accessToken, domain), refreshCookie(tokens.refreshToken, domain)] });
   res.end(JSON.stringify({ accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, user: { id: user.id, name: user.name } }));
 }
 
@@ -1833,9 +1835,10 @@ async function handleLogin(req: IncomingMessage, res: ServerResponse, runtime: H
           const tokens = runtime.auth.issueTokens(user, true); // 可信设备 = 已验证过 2FA
           runtime.db.touchLastLogin(user.id); // feature 16
           runtime.db.recordAudit(user.id, "login.ok", { name: user.name, trustedDevice: true }, ip);
+          const domain = cookieDomain(req, runtime);
           res.writeHead(200, {
             "content-type": "application/json",
-            "set-cookie": [sessionCookie(tokens.accessToken), refreshCookie(tokens.refreshToken), trustedDeviceCookie(runtime.auth.signTrustedDevice(user.id))],
+            "set-cookie": [sessionCookie(tokens.accessToken, domain), refreshCookie(tokens.refreshToken, domain), trustedDeviceCookie(runtime.auth.signTrustedDevice(user.id))],
           });
           res.end(
             JSON.stringify({
@@ -1856,9 +1859,10 @@ async function handleLogin(req: IncomingMessage, res: ServerResponse, runtime: H
       limiter.clear(ip);
       const user = runtime.db.getUserByName(loginName);
       runtime.db.recordAudit(user?.id ?? null, "login.ok", {}, ip);
+      const domain = cookieDomain(req, runtime);
       res.writeHead(200, {
         "content-type": "application/json",
-        "set-cookie": [sessionCookie(result.tokens.accessToken), refreshCookie(result.tokens.refreshToken)],
+        "set-cookie": [sessionCookie(result.tokens.accessToken, domain), refreshCookie(result.tokens.refreshToken, domain)],
       });
       res.end(
         JSON.stringify({
@@ -2034,7 +2038,8 @@ async function handleAccountVerify(req: IncomingMessage, res: ServerResponse, ru
     writeError(res, 403, "FORBIDDEN", "account not active");
     return;
   }
-  res.writeHead(200, { "content-type": "application/json", "set-cookie": [sessionCookie(tokens.accessToken), refreshCookie(tokens.refreshToken)] });
+  const domain = cookieDomain(req, runtime);
+  res.writeHead(200, { "content-type": "application/json", "set-cookie": [sessionCookie(tokens.accessToken, domain), refreshCookie(tokens.refreshToken, domain)] });
   res.end(JSON.stringify({ accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, user: { id: user.id, name: user.name } }));
 }
 
@@ -2054,9 +2059,10 @@ async function handleRefresh(req: IncomingMessage, res: ServerResponse, runtime:
     writeError(res, 401, "INVALID_REFRESH", "refresh token invalid or revoked");
     return;
   }
+  const domain = cookieDomain(req, runtime);
   res.writeHead(200, {
     "content-type": "application/json",
-    "set-cookie": [sessionCookie(pair.accessToken), refreshCookie(pair.refreshToken)],
+    "set-cookie": [sessionCookie(pair.accessToken, domain), refreshCookie(pair.refreshToken, domain)],
   });
   res.end(JSON.stringify(pair));
 }
@@ -2126,8 +2132,8 @@ async function handleListHosts(req: IncomingMessage, res: ServerResponse, runtim
       createdAt: h.createdAt,
       role: h.ownerId === auth.userId ? "owner" : "member",
       e2eePublicKey: h.e2eePublicKey,
-      // R9：客户端据此直连节点（凭据不变）
-      nodeUrl: node !== null ? node.advertiseUrl : null,
+      // R9：客户端据此直连节点（凭据不变）；hub 内置 relay（node=null）配置了 defaultRelayUrl 时返回该 URL
+      nodeUrl: node !== null ? node.advertiseUrl : (runtime.config.defaultRelayUrl ?? null),
     };
   });
   res.writeHead(200, { "content-type": "application/json" });
@@ -2647,18 +2653,25 @@ async function handleRegister(req: IncomingMessage, res: ServerResponse, runtime
   res.end(JSON.stringify({ hostId, hostToken, hostCookiePubKey: runtime.config.hostCookiePubKey ?? "" }));
 }
 
-function sessionCookie(accessToken: string): string {
-  return `${SESSION_COOKIE}=${accessToken}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${ACCESS_TTL_MS / 1000}`;
+function sessionCookie(accessToken: string, domain?: string): string {
+  const d = domain !== undefined && domain !== "" ? `; Domain=${domain}` : "";
+  return `${SESSION_COOKIE}=${accessToken}; HttpOnly; SameSite=Lax; Path=/${d}; Max-Age=${ACCESS_TTL_MS / 1000}`;
 }
 
 /** 续期凭证 cookie：`Max-Age` 由 `REFRESH_TTL_MS` 换算（禁止写死，避免与常量漂移）。 */
-function refreshCookie(refreshToken: string): string {
-  return `${REFRESH_COOKIE}=${refreshToken}; HttpOnly; SameSite=Lax; Path=/api/auth; Max-Age=${Math.floor(REFRESH_TTL_MS / 1000)}`;
+function refreshCookie(refreshToken: string, domain?: string): string {
+  const d = domain !== undefined && domain !== "" ? `; Domain=${domain}` : "";
+  return `${REFRESH_COOKIE}=${refreshToken}; HttpOnly; SameSite=Lax; Path=/api/auth${d}; Max-Age=${Math.floor(REFRESH_TTL_MS / 1000)}`;
 }
 
 /** 清续期凭证 cookie（登出/改密用）。 */
 function clearRefreshCookie(): string {
   return `${REFRESH_COOKIE}=; HttpOnly; SameSite=Lax; Path=/api/auth; Max-Age=0`;
+}
+
+/** 会话/续期 cookie 的 Domain：显式配置 `hostCookieDomain` 优先，否则从请求 Host 自动计算根域。 */
+function cookieDomain(req: IncomingMessage, runtime: HubRuntime): string {
+  return runtime.config.hostCookieDomain ?? rootDomain(req.headers.host);
 }
 
 function trustedDeviceCookie(token: string): string {
@@ -2917,7 +2930,8 @@ async function handleTotpLogin(req: IncomingMessage, res: ServerResponse, runtim
     writeError(res, 401, "BAD_TOTP", "invalid or expired 2FA code");
     return;
   }
-  const cookies = [sessionCookie(result.tokens.accessToken), refreshCookie(result.tokens.refreshToken)];
+  const domain = cookieDomain(req, runtime);
+  const cookies = [sessionCookie(result.tokens.accessToken, domain), refreshCookie(result.tokens.refreshToken, domain)];
   if (body.trustDevice === true) {
     // 用户勾选「记住此设备」→ 签发 30 天可信设备 cookie（同一次 TOTP 验证即信任）
     cookies.push(trustedDeviceCookie(runtime.auth.signTrustedDevice(result.userId)));
