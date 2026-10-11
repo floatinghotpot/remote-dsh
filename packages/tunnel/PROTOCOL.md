@@ -38,6 +38,22 @@
 | PONG | 0x05 | JSON `{ts}` | 心跳回显 |
 | ERROR | 0x06 | JSON `{code, message}` | 协议级错误（认证失败、host 不存在、上游不可达等），关闭对应流 |
 
+### 帧分域（frame domain，A1，2026-10-10）
+
+- `type < 0x80`（0x00–0x7F）= **核心帧**：即上表 OPEN..ERROR（0x01–0x06）。
+  **未知核心帧 = 协议错误**：收到侧回 `ERROR {code:"UNKNOWN_FRAME"}` 并断开该连接。
+- `type ≥ 0x80`（0x80–0xFF）= **扩展帧**：首个为 `REDIRECT = 0x80`（见下）。
+  **未知扩展帧 = 忽略**（向前兼容：老实现对新增扩展帧不崩、原样跳过）。
+
+### REDIRECT（0x80，扩展帧，A2 预留）
+
+| 项 | 说明 |
+|---|---|
+| 值 | `0x80`（扩展帧，首个）|
+| payload | JSON `{ "nodeUrl": "wss://<node>/tunnel", "expiresAt": <毫秒时间戳> }` |
+| 认证语义（P0-2）| `nodeUrl` **必须来自账号服务签发的节点目录**（由账号服务密钥签名，gateway 验签）；否则可被中间人伪造，劫持 gateway 的隧道 token |
+| 状态 | **P1 只预留帧号 + 认证语义**；P1.5 实现（存量迁移时由节点下发）|
+
 ### OPEN payload
 
 **请求（hub → gateway）**：

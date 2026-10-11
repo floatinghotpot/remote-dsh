@@ -42,3 +42,6 @@ spike/
 
 # Private docs (business/credentials/strategy — never commit/push to public repo)
 private/
+
+# Go build artifacts
+/go/rdsh-relay

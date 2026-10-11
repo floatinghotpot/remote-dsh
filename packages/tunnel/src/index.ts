@@ -15,6 +15,9 @@ export {
   parseJsonPayload,
   FRAME_HEADER_LENGTH,
   MAX_PAYLOAD_LENGTH,
+  isCoreType,
+  isExtensionType,
+  isUnknownCoreType,
 } from "./frame.ts";
 export type { Frame, RequestOpen, ResponseOpen } from "./frame.ts";
 export {
@@ -22,4 +25,5 @@ export {
   PROTOCOL_VERSION,
   FRAME_TYPE,
   FLAG_E2E,
+  CORE_TYPE_MAX,
 } from "./constants.ts";

@@ -4,8 +4,23 @@
  * 帧头：magic "RDSH"(4B) | version(1B) | flags(1B) | type(1B) | streamId(4B BE) | length(4B BE)
  * 跨语言契约：TS ↔ Go 必须逐字段一致；变更先改 PROTOCOL.md。
  */
-import { MAGIC, PROTOCOL_VERSION, FRAME_TYPE } from "./constants.ts";
+import { MAGIC, PROTOCOL_VERSION, FRAME_TYPE, CORE_TYPE_MAX } from "./constants.ts";
 export { MAGIC, PROTOCOL_VERSION, FRAME_TYPE };
+
+/** 帧分域（A1）：`type < 0x80` 核心帧（未知 = 协议错误）；`≥ 0x80` 扩展帧（未知 = 忽略）。 */
+export function isCoreType(type: number): boolean {
+  return type < 0x80;
+}
+
+/** 帧分域（A1）判定：是否扩展帧。 */
+export function isExtensionType(type: number): boolean {
+  return type >= 0x80;
+}
+
+/** 未知核心帧类型（type < CORE_TYPE_MAX 但非已知 OPEN..ERROR）。 */
+export function isUnknownCoreType(type: number): boolean {
+  return isCoreType(type) && type !== FRAME_TYPE.OPEN && type !== FRAME_TYPE.DATA && type !== FRAME_TYPE.CLOSE && type !== FRAME_TYPE.PING && type !== FRAME_TYPE.PONG && type !== FRAME_TYPE.ERROR;
+}
 
 export const FRAME_HEADER_LENGTH = 15;
 /** 单帧 payload 上限（DATA 分片转发；超出属协议错误，防恶意超大帧内存攻击）。 */

@@ -5,7 +5,7 @@
  * 在线状态：注册/摘除 → events.ts 推送。
  */
 import type { WebSocket } from "ws";
-import { FrameParser, FRAME_TYPE, jsonPayload, parseJsonPayload, encodeFrame, FLAG_E2E } from "rdsh-tunnel";
+import { FrameParser, FRAME_TYPE, jsonPayload, parseJsonPayload, encodeFrame, FLAG_E2E, isUnknownCoreType } from "rdsh-tunnel";
 import type { Frame } from "rdsh-tunnel";
 import { ProtocolError } from "rdsh-tunnel";
 
@@ -241,7 +241,11 @@ export class TunnelConn {
         return;
       }
       default:
-        // 未知帧类型：忽略（向前兼容）
+        // 帧分域（A1）：核心帧未知 = 协议错误（ERROR + 断开）；扩展帧（≥0x80）未知 = 忽略（向前兼容）
+        if (isUnknownCoreType(frame.type)) {
+          this.send(FRAME_TYPE.ERROR, 0, jsonPayload({ code: "UNKNOWN_FRAME", message: `unknown core frame type 0x${frame.type.toString(16)}` }));
+          this.terminate();
+        }
         return;
     }
   }

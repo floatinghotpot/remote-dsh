@@ -15,7 +15,7 @@ import { hostname as osHostname } from "node:os";
 import { randomUUID } from "node:crypto";
 import type { IncomingHttpHeaders } from "node:http";
 import { WebSocket } from "ws";
-import { FrameParser, FRAME_TYPE, encodeFrame, jsonPayload, parseJsonPayload, FLAG_E2E, MAX_PAYLOAD_LENGTH } from "rdsh-tunnel";
+import { FrameParser, FRAME_TYPE, encodeFrame, jsonPayload, parseJsonPayload, FLAG_E2E, MAX_PAYLOAD_LENGTH, isUnknownCoreType } from "rdsh-tunnel";
 import type { Frame } from "rdsh-tunnel";
 import { findDsh, spawnDsh, exchangeDshSessionCookie, detectDshVersion, dshVersionWarning, checkRemotePickerGraph, remotePickerWarning } from "./spawn-dsh.ts";
 import { rewriteHeadersForDsh } from "./proxy.ts";
@@ -1098,6 +1098,17 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
         return;
       }
       default:
+        // 帧分域（A1）：核心帧未知 = 协议错误（发 ERROR + 断开）；扩展帧（≥0x80）未知 = 忽略（向前兼容）
+        if (isUnknownCoreType(frame.type)) {
+          sendTunnelFrame(encodeFrame(FRAME_TYPE.ERROR, 0, jsonPayload({ code: "UNKNOWN_FRAME", message: `unknown core frame type 0x${frame.type.toString(16)}` })));
+          if (currentClient !== undefined) {
+            try {
+              currentClient.terminate();
+            } catch {
+              /* 已关闭 */
+            }
+          }
+        }
         return;
     }
   }
@@ -1117,18 +1128,31 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
     rawStreams.clear();
   }
 
+  /** 一次性重定向目标（R35/R35a）：连接时被账号服务 307 指定到某节点；连接成功后清空，
+   *  之后断线重连仍回 hubWsBase（不持久化节点地址）。 */
+  let redirectTarget: string | null = null;
+
   function connect(): void {
     if (shuttingDown) return;
     // 认证走 Authorization 头（不入 URL，避免 token 进日志）
-    const url = `${hubWsBase}/tunnel`;
+    const url = redirectTarget !== null ? redirectTarget : `${hubWsBase}/tunnel`;
+    redirectTarget = null; // 一次性消费：失败/断线重连都回 hubWsBase（自愈）
     const client = new WebSocket(url, { headers: { authorization: `Bearer ${opts.token}` }, rejectUnauthorized: !opts.insecure });
     currentClient = client;
 
-    // 401/403 = token 被拒（吊销/不存在）。监听此事件后 ws 不再自动 abort，
-    // 需手动 terminate → 触发 close → 决定「重配对」还是「普通重连」。
+    // 401/403 = token 被拒（吊销/不存在）；307 = 账号服务动态分配节点（R35）。
+    // 监听此事件后 ws 不再自动 abort，需手动 terminate → 触发 close → 决定「重定向 / 重配对 / 普通重连」。
     let tokenRejected = false;
     client.on("unexpected-response", (_req, res) => {
-      if (res.statusCode === 401 || res.statusCode === 403) tokenRejected = true;
+      if (res.statusCode === 307) {
+        const loc = res.headers.location;
+        // 只接受 ws/wss 重定向目标（节点隧道地址）；其余一律视为不可信、按普通失败处理。
+        if (typeof loc === "string" && (loc.startsWith("wss://") || loc.startsWith("ws://"))) {
+          redirectTarget = loc;
+        }
+      } else if (res.statusCode === 401 || res.statusCode === 403) {
+        tokenRejected = true;
+      }
       try {
         client.terminate();
       } catch {
@@ -1207,8 +1231,10 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
         return;
       }
       activeMeter?.sessionEnd();
-      setState("reconnecting", { delayMs: reconnectDelay });
-      log("info", `tunnel lost — reconnecting in ${Math.round(reconnectDelay / 1000)}s...`);
+      const followingRedirect = redirectTarget !== null;
+      const delay = followingRedirect ? 0 : reconnectDelay;
+      setState("reconnecting", { delayMs: delay });
+      log("info", followingRedirect ? "following node assignment..." : `tunnel lost — reconnecting in ${Math.round(reconnectDelay / 1000)}s...`);
       // 定时器里的异常不会被上层捕获 —— 必须自己兜住，否则一次重连失败就崩掉宿主进程。
       setTimeout(() => {
         try {
@@ -1216,8 +1242,8 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
         } catch (err) {
           log("error", `reconnect failed: ${err instanceof Error ? err.message : String(err)}`);
         }
-      }, reconnectDelay + Math.random() * 500);
-      reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS);
+      }, delay + (followingRedirect ? 0 : Math.random() * 500));
+      if (!followingRedirect) reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS);
     });
     client.on("error", () => {
       try {

@@ -15,6 +15,10 @@ import {
   PROTOCOL_VERSION,
   FRAME_TYPE,
   FLAG_E2E,
+  CORE_TYPE_MAX,
+  isCoreType,
+  isExtensionType,
+  isUnknownCoreType,
 } from "../src/index.ts";
 import type { Frame } from "../src/index.ts";
 
@@ -129,4 +133,32 @@ test("解析器连续使用（多段输入）", () => {
   assert.equal(rest.length, 2); // 补全 a + b
   assert.equal(rest[0]!.type, FRAME_TYPE.OPEN);
   assert.equal(rest[1]!.payload.toString("utf8"), "body");
+});
+
+// ---- 帧分域（A1，PROTOCOL.md「帧分域」）----
+
+test("帧分域边界：核心帧 type < 0x80，扩展帧 type ≥ 0x80", () => {
+  assert.equal(CORE_TYPE_MAX, 0x7f);
+  assert.equal(isCoreType(0x00), true);
+  assert.equal(isCoreType(0x06), true); // ERROR = 最后一个核心帧
+  assert.equal(isCoreType(0x7f), true); // 核心帧上界
+  assert.equal(isCoreType(0x80), false); // REDIRECT = 扩展帧
+  assert.equal(isExtensionType(0x80), true);
+  assert.equal(isExtensionType(0xff), true);
+  assert.equal(isExtensionType(0x06), false);
+});
+
+test("未知核心帧判定：已知 OPEN..ERROR 不算未知；0x07 与 0x80 区分", () => {
+  for (const t of [FRAME_TYPE.OPEN, FRAME_TYPE.DATA, FRAME_TYPE.CLOSE, FRAME_TYPE.PING, FRAME_TYPE.PONG, FRAME_TYPE.ERROR]) {
+    assert.equal(isUnknownCoreType(t), false, `type ${t} 是已知核心帧`);
+  }
+  assert.equal(isUnknownCoreType(0x07), true, "0x07 是未知核心帧 → 应 ERROR + 断开");
+  assert.equal(isUnknownCoreType(0x00), true, "0x00 保留 → 未知核心帧");
+  assert.equal(isUnknownCoreType(0x80), false, "0x80 = REDIRECT 扩展帧 → 忽略而非报错");
+});
+
+test("REDIRECT=0x80 常量已预留（A2），且归类为扩展帧", () => {
+  assert.equal(FRAME_TYPE.REDIRECT, 0x80);
+  assert.equal(isExtensionType(FRAME_TYPE.REDIRECT), true);
+  assert.equal(isUnknownCoreType(FRAME_TYPE.REDIRECT), false);
 });
