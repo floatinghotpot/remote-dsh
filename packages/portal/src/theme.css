@@ -10,8 +10,9 @@
  */
 
 :root {
-  /* 让 UA 渲染的控件、滚动条、表单弹层跟随页面配色 */
-  color-scheme: light dark;
+  /* 实际配色由 src/theme.ts 写入的 data-theme 决定（UA 控件、滚动条、表单弹层随之切换）。
+     JS 未执行时（SPA 本也无法运行）按浅色渲染，避免深色 UA 控件配浅色变量的错配。 */
+  color-scheme: light;
 
   /* 表面 */
   --rdsh-bg-base: #fff;
@@ -67,6 +68,9 @@ html,
 body {
   background: var(--rdsh-bg-base);
   color: var(--rdsh-fg);
+  /* 浏览器默认 body margin 8px。App 内嵌验证码页的视口本身只有 312px，
+     这 16px 会进一步压缩可用宽度，把 360px 宽的阿里云滑块挤出视口。 */
+  margin: 0;
 }
 
 /*
@@ -95,42 +99,58 @@ textarea {
   }
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --rdsh-bg-base: #151517;
-    --rdsh-bg-surface: #232324;
-    --rdsh-bg-subtle: #2c2c2e;
-    --rdsh-bg-active: #ffffff14;
+/*
+ * 深色变量由 <html data-theme="dark"> 驱动（见 src/theme.ts）。
+ * 该属性综合 URL ?theme= 与系统偏好后写入，故这里不再用 prefers-color-scheme：
+ * App 内嵌 WebView 时它只反映**系统**主题，而 App 主题是用户可覆盖的应用级状态，
+ * 两者不一致时就会表现为「App 已是浅色、内嵌页仍是深色」。
+ */
+:root[data-theme="dark"] {
+  color-scheme: dark;
 
-    --rdsh-fg: #f9fafb;
-    --rdsh-fg-muted: #cfd3d6;
-    --rdsh-fg-subtle: #adb2b8;
+  --rdsh-bg-base: #151517;
+  --rdsh-bg-surface: #232324;
+  --rdsh-bg-subtle: #2c2c2e;
+  --rdsh-bg-active: #ffffff14;
 
-    --rdsh-border: #ffffff29;
-    --rdsh-border-soft: #ffffff1f;
+  --rdsh-fg: #f9fafb;
+  --rdsh-fg-muted: #cfd3d6;
+  --rdsh-fg-subtle: #adb2b8;
 
-    --rdsh-primary: #2563eb;
-    --rdsh-link: #679efe;
+  --rdsh-border: #ffffff29;
+  --rdsh-border-soft: #ffffff1f;
 
-    --rdsh-danger: #f25a5a;
-    --rdsh-danger-on-soft: #f87171;
-    --rdsh-danger-fill: #dc2626;
-    --rdsh-danger-soft: color-mix(in srgb, var(--rdsh-danger) 10%, transparent);
+  --rdsh-primary: #2563eb;
+  --rdsh-link: #679efe;
 
-    --rdsh-success: #22c55e;
-    --rdsh-success-strong: #22c55e;
-    --rdsh-success-soft: #233c2c;
+  --rdsh-danger: #f25a5a;
+  --rdsh-danger-on-soft: #f87171;
+  --rdsh-danger-fill: #dc2626;
+  --rdsh-danger-soft: color-mix(in srgb, var(--rdsh-danger) 10%, transparent);
 
-    --rdsh-warn: #f59e0b;
-    --rdsh-warn-strong: #f7ad31;
-    --rdsh-warn-soft: #27241f;
+  --rdsh-success: #22c55e;
+  --rdsh-success-strong: #22c55e;
+  --rdsh-success-soft: #233c2c;
 
-    /* 微信按钮反转：深底 + 品牌绿前景（绿字在深底 7.65:1，绿底白字仅 2.38:1） */
-    --rdsh-wechat-bg: #232324;
-    --rdsh-wechat-fg: #07c160;
+  --rdsh-warn: #f59e0b;
+  --rdsh-warn-strong: #f7ad31;
+  --rdsh-warn-soft: #27241f;
 
-    --rdsh-scrim: rgba(0, 0, 0, 0.72);
-    --rdsh-scrim-soft: rgba(0, 0, 0, 0.6);
-    --rdsh-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  /* 微信按钮反转：深底 + 品牌绿前景（绿字在深底 7.65:1，绿底白字仅 2.38:1） */
+  --rdsh-wechat-bg: #232324;
+  --rdsh-wechat-fg: #07c160;
+
+  --rdsh-scrim: rgba(0, 0, 0, 0.72);
+  --rdsh-scrim-soft: rgba(0, 0, 0, 0.6);
+  --rdsh-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
   }
+
+/*
+ * 阿里云滑块的内部轨道固定 360px 宽，而 App 内嵌 WebView 的视口通常只有 ~312px：
+ * 不缩放时轨道会被挤出视口左侧，滑块大半在屏幕外，用户「按不到、拖不动」。
+ * 比例由 CaptchaPage 的 useCaptchaZoom() 按实际视口宽度写入上面的变量。
+ * 只缩放轨道本体：外层容器宽度本就等于视口宽，缩放它装不下 360px 的内容。
+ */
+.aliyunCaptcha-sliding-body {
+  zoom: var(--rdsh-captcha-zoom, 1);
 }

@@ -345,7 +345,11 @@ function CaptchaGate({ captcha, onCaptcha }: { captcha: CaptchaPayload; onCaptch
         await loadScript(ALIYUN_CAPTCHA_SDK);
         const init = window.initAliyunCaptcha;
         if (init === undefined) throw new Error("aliyun captcha SDK not loaded");
-        // V3：mode/element/button/success 均必填；验证通过回调直接透出 captchaVerifyParam（后端 VerifyCaptcha 验签）
+        // V3：mode=popup（弹出式）+ button 触发。
+        // 曾改为 embed（嵌入式，省去点按钮、无遮罩），但在本项目的 SceneId 下初始化后
+        // #rdsh-captcha-element 始终为空、验证码不渲染，控制台报 AliyunCaptcha
+        // "Error: timeout" / "Network Error"，FeiLin 指纹模块报错 —— 已回退 popup。
+        // 尺寸问题另在 theme.css / CaptchaPage 中修复（见 2026-10-12 记录）。
         init({
           SceneId: cfg.sceneId ?? "",
           mode: "popup",
@@ -386,28 +390,119 @@ function CaptchaGate({ captcha, onCaptcha }: { captcha: CaptchaPayload; onCaptch
       </div>
     );
   }
-  if (hasTicket) return <p style={{ color: "var(--rdsh-success)", fontSize: 13 }}>{t("人机验证已完成")}</p>;
+  // 成功态同样零文字：绿色对勾表意，避免内嵌页引入待翻译文案。
+  if (hasTicket) {
+    return (
+      <div style={{ display: "flex", justifyContent: "center", color: "var(--rdsh-success)", padding: "4px 0" }}>
+        <CheckIcon size={28} />
+      </div>
+    );
+  }
   if (challenge === null) return null;
+  // 零文字设计：算式本身（阿拉伯数字 + 运算符）跨语言通用，无需翻译任何文案，
+  // 因此内嵌验证码不必维护多语言。外层「人机验证」标题由宿主 App 本地化提供。
+  // 一行放完（App 内嵌高度固定约 120px）：题目在上，输入框 + 打勾按钮在下。
   return (
     <>
-      <p style={{ fontSize: 13, color: "var(--rdsh-fg-muted)" }}>{t("防机器人验证：{question}", { params: { question: challenge.question } })}</p>
-      {field(t("答案"), answer, setAnswer)}
-      <button type="button" onClick={() => onCaptcha({ captchaToken: challenge.token, captchaAnswer: answer.trim() })} style={btnStyle()}>{t("确认验证")}</button>
+      <p style={{ fontSize: 18, fontWeight: 600, letterSpacing: 1, margin: "0 0 8px", textAlign: "center" }}>{challenge.question}</p>
+      <div style={{ display: "flex", gap: 8 }}>
+        <input
+          value={answer}
+          onChange={(e) => setAnswer(e.target.value)}
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          maxLength={6}
+          aria-label={t("答案")}
+          style={{ ...inputStyle(), width: "auto", flex: 1, minWidth: 0 }}
+        />
+        <button
+          type="button"
+          aria-label={t("确认验证")}
+          onClick={() => onCaptcha({ captchaToken: challenge.token, captchaAnswer: answer.trim() })}
+          style={{ ...btnStyle(), flexShrink: 0, width: 44, padding: 0, display: "flex", alignItems: "center", justifyContent: "center" }}
+        >
+          <CheckIcon />
+        </button>
+      </div>
     </>
   );
 }
 
-/** 验证码独立页（App WebView 内嵌用）：渲染滑块并在成功后经 JS bridge 回传 captchaVerifyParam。 */
+/** 打勾图标：验证码确认按钮与成功态用。图标而非文字，避免内嵌页引入待翻译文案。 */
+function CheckIcon({ size = 18 }: { size?: number }): React.JSX.Element {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="3"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <polyline points="20 6 9 17 4 12" />
+    </svg>
+  );
+}
+
+/**
+ * 阿里云滑块内部固定 360px 宽，而 App 内嵌 WebView 的视口通常只有 ~312px：
+ * 不缩放的话滑块会被挤出视口（左侧被裁、按不到也拖不动）。
+ * 这里按实际可用宽度等比缩放，写进 CSS 变量供 theme.css 消费。
+ */
+function useCaptchaZoom(): void {
+  useEffect(() => {
+    const apply = (): void => {
+      const w = document.documentElement.clientWidth;
+      const z = w >= 372 ? 1 : Math.max(0.6, w / 372);
+      document.documentElement.style.setProperty("--rdsh-captcha-zoom", String(z));
+    };
+    apply();
+    window.addEventListener("resize", apply);
+    return () => window.removeEventListener("resize", apply);
+  }, []);
+}
+
+/**
+ * 验证码独立页（App WebView 内嵌用）：渲染验证码，通过后经 JS bridge 回传**完整载荷**。
+ *
+ * 载荷为 JSON 字符串，内容随 provider 而异：
+ *  - arithmetic → {"captchaToken":"...","captchaAnswer":"..."}
+ *  - aliyun     → {"captchaVerifyParam":"..."}
+ * App 侧（AliyunCaptchaView）解析后按同样的键提交给 hub。
+ */
 function CaptchaPage(): React.JSX.Element {
   const [payload, setPayload] = useState<CaptchaPayload>({});
+  useCaptchaZoom();
+  // 内嵌在 App 里时让底色透明，与宿主背景无缝衔接；否则 WebView 会出现一块
+  // 与 App 主题无关的底色（浅色 App 里浮着深色方块）。浏览器直访时无需透明，
+  // 卸载时还原，避免影响同页其他路由的观感。
+  useEffect(() => {
+    const html = document.documentElement;
+    const body = document.body;
+    const prevHtml = html.style.background;
+    const prevBody = body.style.background;
+    html.style.background = "transparent";
+    body.style.background = "transparent";
+    return () => {
+      html.style.background = prevHtml;
+      body.style.background = prevBody;
+    };
+  }, []);
   return (
-    <div style={{ padding: "48px 24px", maxWidth: 420, margin: "0 auto" }}>
+    // 横向不留 padding：内嵌视口本就窄，任何左右留白都会进一步压缩验证码可用宽度。
+    <div style={{ padding: "8px 0", maxWidth: "100%", margin: 0 }}>
       <CaptchaGate
         captcha={payload}
         onCaptcha={(p) => {
           setPayload(p);
-          const param = p.captchaVerifyParam;
-          if (param) window.CaptchaResult?.postMessage?.(param);
+          // 回传完整载荷而非单个 captchaVerifyParam：算术题没有该字段，
+          // 只回传它会让 App 永远拿不到验证结果（见 2026-10-12 记录）。
+          if (Object.keys(p).length > 0) {
+            window.CaptchaResult?.postMessage?.(JSON.stringify(p));
+          }
         }}
       />
     </div>

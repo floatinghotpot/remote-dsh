@@ -204,7 +204,7 @@ const EN: Record<string, string> = {
 
   // ---- 验证码 ----
   "完成滑块验证": "Complete the slider captcha",
-  "防机器人验证：{question}": "Anti-bot check: {question}",
+  "人机验证：{question}": "Human verification: {question}",
   "答案": "Answer",
   "确认验证": "Verify",
   "人机验证已完成": "Human verification completed",
