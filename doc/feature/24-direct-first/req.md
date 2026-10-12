@@ -5,7 +5,7 @@
 > **状态**: **待用户批准**。需求级决策已定：**C1（先 http 跑通、P3 补 https）**；C2–C8 为 solution 阶段细化项。**方案 B 修订（2026-09-28）**：直连口从「未设口令不监听（C9 原案）」改为「**join 模式始终监听，门禁 = ticket（per-host 随机密钥签名），口令为可选增强层**」——解决"默认无口令 → 直连不生效 → 大多数用户享受不到"的采纳问题。
 > **范围**: **本期只做 App（garsync）侧**（D19）；**两种 host 形态都要**（CLI 起的 host 与插件注册的 host，D14）；**hub 零改动**（不改层 2 协议、不改 relay/shim、无升级顺序要求）
 > **前置未决**: **P7**（App 的 WebView 里是否已有 E2EE pin，决定"经安全通道取候选"能否成立，验证步骤见 discussion §9）与 **P9**（浏览器绕过证书后是否仍算安全上下文，浏览器后置时才需要）
-> **关联**: [`04-cli-refactor`](../04-cli-refactor/)（"双通道"原为排除项）、[`09-e2e-encryption`](../09-e2e-encryption/)、[`15-host-access-code`](../15-host-access-code/)（访问口令；本特性扩其范围并补其遗留）、[`private/22-rdsh-webview-api`](../../../private/doc/feature/22-rdsh-webview-api/)（HTML 注入槽先例）、`packages/tunnel/PROTOCOL.md`（层 2 冻结契约，本特性不动）
+> **关联**: [`04-cli-refactor`](../04-cli-refactor/)（"双通道"原为排除项）、[`09-e2e-encryption`](../09-e2e-encryption/)、[`15-host-access-code`](../15-host-access-code/)（访问口令；本特性扩其范围并补其遗留）、HTML 注入槽先例（详见内部设计文档）、`packages/tunnel/PROTOCOL.md`（层 2 冻结契约，本特性不动）
 
 ---
 

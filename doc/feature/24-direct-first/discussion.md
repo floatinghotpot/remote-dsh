@@ -6,7 +6,7 @@
 > **修订（2026-09-27 第二轮）**: **目标不变、手段修订**——内网候选**不经过 hub**（host 不上报），改由客户端在**既有 E2EE 通道**内向 host 索取（见 §1.1/§1.2/§2.7 与决策 Q6）
 > **状态**: 事实审计完成；**`req.md` 已产出（2026-09-27，待用户批准）** ⇒ 本文件此后作为**只读事实来源**（新需求直接进 `req.md`）。决策进度：**已定 D1/D2（A 案）、D3b/D7（候选走 E2EE）、D4+D15（统一固定口令）、D5+D17（raw 门禁 = host 侧页面 token）、D11、D14、D19（App 先行）**；待定 D3a/D3c/D6/D8–D10/D12/D13/D16/D18/D20；**卡 P7**（App 内是否已有 E2EE pin）与 **P9**（浏览器绕过证书后是否仍算安全上下文）
 > **性质**: 原始记录（用户构想 + 代码审计事实 + 出处）。`req.md` 存在后本文件转为只读需求来源（新需求直接进 `req.md`）
-> **关联**: [`03-hub`](../03-hub/)、[`04-cli-refactor`](../04-cli-refactor/)（3 模式互斥）、[`09-e2e-encryption`](../09-e2e-encryption/)、[`15-host-access-code`](../15-host-access-code/)、[`private/22-rdsh-webview-api`](../../../private/doc/feature/22-rdsh-webview-api/)、[`21-agent-mesh`](../21-agent-mesh/)、`packages/tunnel/PROTOCOL.md`（层 2 冻结契约）
+> **关联**: [`03-hub`](../03-hub/)、[`04-cli-refactor`](../04-cli-refactor/)（3 模式互斥）、[`09-e2e-encryption`](../09-e2e-encryption/)、[`15-host-access-code`](../15-host-access-code/)、HTML 注入槽先例（详见内部设计文档）、[`21-agent-mesh`](../21-agent-mesh/)、`packages/tunnel/PROTOCOL.md`（层 2 冻结契约）
 > **跨仓**: 消费端 = garsync App（`~/workspace/flutter-apps/garsync`，WebView 嵌 DSH 页面 + 语音）；本特性落在 remote-dsh（host/hub 侧）为主
 
 ---
