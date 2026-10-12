@@ -27,8 +27,9 @@ func TestNormalizeHeaders(t *testing.T) {
 			t.Fatalf("%s must be stripped", k)
 		}
 	}
-	if got := out["Content-Type"]; len(got) != 1 || got[0] != "application/json" {
-		t.Fatalf("Content-Type = %v", got)
+	// headers 统一小写输出，与 Node hub 的 relay.ts 一致（gateway 侧按小写读取，如 acceptsHtml）
+	if got := out["content-type"]; len(got) != 1 || got[0] != "application/json" {
+		t.Fatalf("content-type = %v", got)
 	}
 	// only the gateway cookie survives; the session cookie is stripped
 	if got := out["cookie"]; len(got) != 1 || got[0] != "rdsh_gate=abc" {

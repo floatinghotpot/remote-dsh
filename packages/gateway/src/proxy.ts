@@ -68,12 +68,18 @@ export function rewriteHeadersForDsh(
   target: ProxyTarget,
   dshAuthCookie?: string | null,
 ): Record<string, string | string[] | undefined> {
-  const out = { ...headers };
+  // 统一小写 key：Go relay 转发时 key 是规范化形式（如 "Accept"），Node hub 是小写。
+  // 下游按小写读取（acceptsHtml / accept-encoding / cookie），必须先归一化，
+  // 否则 acceptsHtml 误判 → 不剥离 accept-encoding → DSH 返回 gzip HTML → 注入被跳过。
+  const out: Record<string, string | string[] | undefined> = {};
+  for (const [k, v] of Object.entries(headers)) {
+    out[k.toLowerCase()] = v;
+  }
   out.host = `${target.host}:${target.port}`;
   // 始终改写为 loopback Origin：同源 fetch 不带 Origin，但部分 DSH 插件（目录选择器）
   // 的围栏要求 Origin 存在且为 loopback，缺失会 403 forbidden。
   out.origin = `http://${target.host}:${target.port}`;
-  if (acceptsHtml(headers)) {
+  if (acceptsHtml(out)) {
     delete out["accept-encoding"];
   }
   if (dshAuthCookie !== undefined && dshAuthCookie !== null && dshAuthCookie !== "") {

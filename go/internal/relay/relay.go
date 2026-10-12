@@ -72,7 +72,7 @@ func normalizeHeaders(h http.Header) tunnel.Headers {
 				out["cookie"] = []string{"rdsh_gate=" + gate}
 			}
 		default:
-			out[k] = append([]string(nil), vs...)
+			out[lk] = append([]string(nil), vs...)
 		}
 	}
 	return out
