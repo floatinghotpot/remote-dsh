@@ -48,7 +48,7 @@
 - `packages/gateway/src/proxy.ts` `rewriteHeadersForDsh`：入口把传入 headers 的 key **统一 lower 后再处理**（防御，一处覆盖 `acceptsHtml` / `delete accept-encoding` / `cookie` 三处小写读取）。
 - `go/internal/relay/relay_test.go`：`TestNormalizeHeaders` 断言从 `out["Content-Type"]` 改为 `out["content-type"]`（契约同步）。
 
-> 与 [20261012-go-relay-white-screen](./20261012-go-relay-white-screen/record.md) 同属「Go relay 与 TS gateway 跨语言契约不一致」系列：那次是 wire header 类型 `string` vs `[]string`，这次是 header key 大小写。**跨语言隧道的任何 wire 契约（类型、大小写、枚举值）都必须两侧显式对齐并加 conformance 断言。**
+> 与 [20261012-go-relay-white-screen](../20261012-go-relay-white-screen/record.md) 同属「Go relay 与 TS gateway 跨语言契约不一致」系列：那次是 wire header 类型 `string` vs `[]string`，这次是 header key 大小写。**跨语言隧道的任何 wire 契约（类型、大小写、枚举值）都必须两侧显式对齐并加 conformance 断言。**
 
 ---
 

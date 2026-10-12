@@ -3,7 +3,7 @@
 > **日期**: 2026-08-22
 > **状态**: 草稿，**待用户批准**
 > **范围**: M1 MVP —— 仅 rdsh-gateway（LAN 模式）
-> **来源**: [discussion.md](discussion.md), [proposal.md](../../marketing/proposal.md)（Q9 决策）
+> **来源**: [discussion.md](discussion.md), proposal（内部营销文档，Q9 决策）
 
 ---
 

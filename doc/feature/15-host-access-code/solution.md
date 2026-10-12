@@ -11,7 +11,7 @@
 
 ### 1.1 事实（代码核查）
 
-- gateway 侧**看不到浏览器请求本体**——它收到的是 hub relay 的帧：`OPEN {kind, method, path, headers}` + `DATA`（请求体）+ `CLOSE`（[join.ts](packages/gateway/src/join.ts) `makeInnerDispatcher.handleOpen`，259 行起）；
+- gateway 侧**看不到浏览器请求本体**——它收到的是 hub relay 的帧：`OPEN {kind, method, path, headers}` + `DATA`（请求体）+ `CLOSE`（[join.ts](../../../packages/gateway/src/join.ts) `makeInnerDispatcher.handleOpen`，259 行起）；
 - 拦截点 = **`handleOpen`**：校验通过才 `openWsStream`（ws）或 `httpRequest`（http）到本机 dsh；未过 gate → **网关自己合成 HTTP 响应**（用 `send` 发 OPEN/DATA/CLOSE 帧），不碰 dsh；
 - hub relay 对 text/html 响应会注入 E2EE shim/返回条（外观影响，见 D9）；
 - hub relay 已剥离请求 cookie（F7）；响应头（含 Set-Cookie）**原样透传**（relay.ts `onResponse`）。
