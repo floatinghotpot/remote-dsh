@@ -17,7 +17,7 @@ import type { RelayUsageMeter } from "./relay-usage.ts";
 import type { EventHub } from "./events.ts";
 import { randomToken, sha256 } from "./jwt.ts";
 import { createEmailSender } from "./email/index.ts";
-import type { EmailSender } from "./email/index.ts";
+import type { EmailCodeTemplate, EmailSender } from "./email/index.ts";
 import { createSmsSender } from "./sms/index.ts";
 import type { SmsSender } from "./sms/index.ts";
 import { createPaymentProvider, verifyWechatCallback, decryptWechatResource, getWechatOpenid } from "./billing/index.ts";
@@ -1943,7 +1943,7 @@ async function handleAccountRegister(req: IncomingMessage, res: ServerResponse, 
 
   const r =
     channel === "email"
-      ? await sendEmailCode(runtime, { purpose: "verify", email: identifier, userId: user.id, ip, subject: "remote-dsh email verification" })
+      ? await sendEmailCode(runtime, { purpose: "verify", email: identifier, userId: user.id, ip, lang: bodyLang(body) })
       : await sendSmsCode(runtime, { purpose: "verify", phone: identifier, userId: user.id, ip });
   if (r === "disabled") writeError(res, 400, channel === "email" ? "EMAIL_DISABLED" : "SMS_DISABLED", "verification service not configured");
   else if (r === "limited" || r === "resend") writeError(res, 429, "RATE_LIMITED", r === "resend" ? "resend too soon" : "too many requests");
@@ -1987,7 +1987,7 @@ async function handleAccountResend(req: IncomingMessage, res: ServerResponse, ru
   }
   const r =
     channel === "email"
-      ? await sendEmailCode(runtime, { purpose: "verify", email: identifier, userId: user.id, ip, subject: "remote-dsh email verification" })
+      ? await sendEmailCode(runtime, { purpose: "verify", email: identifier, userId: user.id, ip, lang: bodyLang(body) })
       : await sendSmsCode(runtime, { purpose: "verify", phone: identifier, userId: user.id, ip });
   if (r === "disabled") writeError(res, 400, channel === "email" ? "EMAIL_DISABLED" : "SMS_DISABLED", "verification service not configured");
   else if (r === "limited" || r === "resend") writeError(res, 429, "RATE_LIMITED", r === "resend" ? "resend too soon" : "too many requests");
@@ -2735,10 +2735,39 @@ function getSmsLimiters(runtime: HubRuntime) {
   return l;
 }
 
+/** 内置验证码邮件模板（未配置 email.codeTemplates 时兜底）。占位符 {code}/{brand}。 */
+const DEFAULT_EMAIL_CODE_TEMPLATES: Record<"verify" | "reset", EmailCodeTemplate> = {
+  verify: {
+    subject: { zh: "{brand} 验证码", en: "{brand} verification code" },
+    text: { zh: "【{brand}】您的验证码是 {code}（10 分钟内有效）。", en: "[{brand}] Your verification code is {code} (valid 10 minutes)." },
+  },
+  reset: {
+    subject: { zh: "{brand} 重置码", en: "{brand} password reset" },
+    text: { zh: "【{brand}】您的重置码是 {code}（10 分钟内有效）。", en: "[{brand}] Your password reset code is {code} (valid 10 minutes)." },
+  },
+};
+
+/** 按用户语言渲染验证码邮件主题/正文（lang="zh" → 中文，其余 → 英文兜底）。 */
+export function renderEmailCode(runtime: HubRuntime, purpose: "verify" | "reset", lang: string | undefined, code: string): { subject: string; text: string } {
+  const zh = lang === "zh";
+  const tpl = runtime.config.email?.codeTemplates?.[purpose] ?? DEFAULT_EMAIL_CODE_TEMPLATES[purpose];
+  const brand = zh
+    ? (runtime.config.site?.brand?.zh ?? "鲸语通")
+    : (runtime.config.site?.brand?.en ?? "WhaleLink");
+  const subject = (zh ? tpl.subject.zh : tpl.subject.en).replaceAll("{brand}", brand).replaceAll("{code}", code);
+  const text = (zh ? tpl.text.zh : tpl.text.en).replaceAll("{brand}", brand).replaceAll("{code}", code);
+  return { subject, text };
+}
+
+/** 从请求 body 读语言偏好（"zh" → 中文，其余 → 英文兜底）。 */
+function bodyLang(body: Record<string, unknown> | null): string | undefined {
+  return typeof body?.lang === "string" ? body.lang : undefined;
+}
+
 /** 生成并发送验证码/重置码（含限流 + 审计）。返回状态。 */
 async function sendEmailCode(
   runtime: HubRuntime,
-  opts: { purpose: "verify" | "reset"; email: string; userId: number; ip: string; subject: string },
+  opts: { purpose: "verify" | "reset"; email: string; userId: number; ip: string; lang?: string },
 ): Promise<"sent" | "disabled" | "limited" | "resend" | "error"> {
   const sender = getEmailSender(runtime);
   if (sender === null) return "disabled";
@@ -2757,8 +2786,9 @@ async function sendEmailCode(
   limiters.global.count("g");
 
   const code = String(randomInt(0, 1000000)).padStart(6, "0");
+  const { subject, text } = renderEmailCode(runtime, opts.purpose, opts.lang, code);
   try {
-    await sender.send({ to: opts.email, subject: opts.subject, text: `Your remote-dsh code is ${code} (valid 10 minutes).` });
+    await sender.send({ to: opts.email, subject, text });
   } catch (err) {
     console.error(`[email] send failed to ${opts.email}:`, err instanceof Error ? err.message : err);
     return "error";
@@ -2978,7 +3008,7 @@ async function handleResetRequest(req: IncomingMessage, res: ServerResponse, run
   } else {
     const user = runtime.db.getUserByEmail(identifier);
     if (user !== null && user.emailVerified === 1) {
-      await sendEmailCode(runtime, { purpose: "reset", email: identifier, userId: user.id, ip, subject: "remote-dsh password reset" });
+      await sendEmailCode(runtime, { purpose: "reset", email: identifier, userId: user.id, ip, lang: bodyLang(body) });
     }
   }
   // 统一响应（防枚举）：邮箱/手机号是否存在都返回 ok
@@ -3031,7 +3061,7 @@ async function handleBindEmail(req: IncomingMessage, res: ServerResponse, runtim
     writeError(res, 429, "UNBIND_COOLDOWN", "recently unbound; retry later", UNBIND_LOCK_MS - (Date.now() - recentUnbind[0]!.createdAt));
     return;
   }
-  const r = await sendEmailCode(runtime, { purpose: "verify", email, userId: auth.userId, ip: clientIp(req, runtime), subject: "remote-dsh email verification" });
+  const r = await sendEmailCode(runtime, { purpose: "verify", email, userId: auth.userId, ip: clientIp(req, runtime), lang: bodyLang(body) });
   if (r === "disabled") writeError(res, 400, "EMAIL_DISABLED", "email service not configured");
   else if (r === "limited" || r === "resend") writeError(res, 429, "RATE_LIMITED", r === "resend" ? "resend too soon" : "too many requests");
   else {

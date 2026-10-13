@@ -26,12 +26,23 @@ export interface AliyunConfig {
   endpoint?: string;
 }
 
+/** 验证码邮件模板（中英文）。占位符：{code}=6 位验证码、{brand}=品牌名（site.brand）。 */
+export interface EmailCodeTemplate {
+  subject: { zh: string; en: string };
+  text: { zh: string; en: string };
+}
+
 export interface EmailConfig {
   provider: "smtp" | "aliyun" | "log";
   from: string;
   fromAlias?: string;
   smtp?: SmtpConfig;
   aliyun?: AliyunConfig;
+  /** 验证码邮件模板（可选，缺省用内置中英文模板）。 */
+  codeTemplates?: {
+    verify?: EmailCodeTemplate;
+    reset?: EmailCodeTemplate;
+  };
 }
 
 export interface EmailSender {

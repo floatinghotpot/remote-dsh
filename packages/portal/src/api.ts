@@ -1,6 +1,7 @@
 /**
  * api.ts — portal 的 hub API client（同源 fetch，httpOnly Cookie 会话）。
  */
+import { getLang } from "./i18n.js";
 
 /** 静默续期：续期令牌由 hub 下发的 HttpOnly cookie 承载（服务端读取），这里发空 body；cookie 缺失/失效 ⇒ 401。 */
 const REFRESH_TIMEOUT_MS = 8000;
@@ -96,7 +97,7 @@ export interface Capabilities {
   smsEnabled: boolean;
   captchaProvider: "arithmetic" | "none" | "aliyun";
   wechatLoginEnabled?: boolean;
-  site?: { brand?: string; termsUrl?: string; privacyUrl?: string; customerServiceUrl?: string };
+  site?: { brand?: { zh?: string; en?: string }; termsUrl?: string; privacyUrl?: string; customerServiceUrl?: string };
 }
 
 /** 验证码载荷：arithmetic 用 captchaToken+captchaAnswer；aliyun 用 captchaVerifyParam。 */
@@ -220,13 +221,13 @@ export const api = {
     return jsonFetch("/api/captcha/config");
   },
   resetRequest(channel: "email" | "phone", identifier: string, captcha: CaptchaPayload): Promise<{ ok: boolean }> {
-    return jsonFetch("/api/auth/password/reset", { method: "POST", body: JSON.stringify({ channel, identifier, ...captcha }) });
+    return jsonFetch("/api/auth/password/reset", { method: "POST", body: JSON.stringify({ channel, identifier, lang: getLang(), ...captcha }) });
   },
   resetConfirm(channel: "email" | "phone", identifier: string, code: string, newPassword: string): Promise<{ ok: boolean }> {
     return jsonFetch("/api/auth/password/reset/confirm", { method: "POST", body: JSON.stringify({ channel, identifier, code, newPassword }) });
   },
   bindEmail(email: string): Promise<{ ok: boolean }> {
-    return jsonFetch("/api/account/email", { method: "POST", body: JSON.stringify({ email }) });
+    return jsonFetch("/api/account/email", { method: "POST", body: JSON.stringify({ email, lang: getLang() }) });
   },
   verifyEmail(email: string, code: string): Promise<{ ok: boolean }> {
     return jsonFetch("/api/account/email/verify", { method: "POST", body: JSON.stringify({ email, code }) });
@@ -254,10 +255,10 @@ export const api = {
   },
   // ---- 08-saas：注册 / 验证 / 手机号 / 计费 / 删除 ----
   register(channel: "email" | "phone", identifier: string, password: string, captcha: CaptchaPayload): Promise<{ ok: boolean }> {
-    return jsonFetch("/api/auth/register", { method: "POST", body: JSON.stringify({ channel, identifier, password, ...captcha }) });
+    return jsonFetch("/api/auth/register", { method: "POST", body: JSON.stringify({ channel, identifier, password, lang: getLang(), ...captcha }) });
   },
   registerResend(channel: "email" | "phone", identifier: string, captcha: CaptchaPayload): Promise<{ ok: boolean }> {
-    return jsonFetch("/api/auth/register/resend", { method: "POST", body: JSON.stringify({ channel, identifier, ...captcha }) });
+    return jsonFetch("/api/auth/register/resend", { method: "POST", body: JSON.stringify({ channel, identifier, lang: getLang(), ...captcha }) });
   },
   verifyAccount(channel: "email" | "phone", identifier: string, code: string): Promise<LoginResponse> {
     return jsonFetch("/api/auth/verify", { method: "POST", body: JSON.stringify({ channel, identifier, code }) });

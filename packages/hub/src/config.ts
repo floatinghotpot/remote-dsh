@@ -87,8 +87,8 @@ export interface BackupConfig {
 
 /** 站点信息（品牌名 + 法务/客服外链；备案/版权等内容已迁静态落地页）。 */
 export interface SiteConfig {
-  /** 产品品牌名（登录页眉标；缺省 portal 回退 "RDSH.CN"） */
-  brand?: string;
+  /** 产品品牌名（中英文），登录页眉标 + 邮件模板 {brand} 占位符；未配置/缺项时由渲染层兜底 zh=鲸语通 en=WhaleLink */
+  brand?: { zh?: string; en?: string };
   /** 用户协议 URL；配置后指向静态站 /<lang>/terms/ */
   termsUrl?: string;
   /** 隐私政策 URL；配置后指向静态站 /<lang>/privacy/ */
@@ -287,6 +287,13 @@ export function normalizeHubConfig(raw: unknown, source = "config"): HubConfig {
   return out;
 }
 
+function normalizeLangPair(raw: unknown, label: string): { zh: string; en: string } {
+  if (typeof raw !== "object" || raw === null) throw new Error(`${label} must be an object { zh, en }`);
+  const p = raw as Record<string, unknown>;
+  if (typeof p.zh !== "string" || typeof p.en !== "string") throw new Error(`${label} needs zh/en strings`);
+  return { zh: p.zh, en: p.en };
+}
+
 function normalizeEmail(raw: unknown, source: string): EmailConfig {
   if (typeof raw !== "object" || raw === null) throw new Error(`${source}: "email" must be an object`);
   const e = raw as Record<string, unknown>;
@@ -329,6 +336,22 @@ function normalizeEmail(raw: unknown, source: string): EmailConfig {
       if (typeof a.endpoint !== "string") throw new Error(`${source}: "email.aliyun.endpoint" must be a string`);
       out.aliyun.endpoint = a.endpoint;
     }
+  }
+  if (e.codeTemplates !== undefined) {
+    const ct = e.codeTemplates as Record<string, unknown>;
+    if (typeof ct !== "object" || ct === null) throw new Error(`${source}: "email.codeTemplates" must be an object`);
+    const templates: NonNullable<EmailConfig["codeTemplates"]> = {};
+    for (const purpose of ["verify", "reset"] as const) {
+      const raw = ct[purpose];
+      if (raw === undefined) continue;
+      if (typeof raw !== "object" || raw === null) throw new Error(`${source}: "email.codeTemplates.${purpose}" must be an object`);
+      const t = raw as Record<string, unknown>;
+      templates[purpose] = {
+        subject: normalizeLangPair(t.subject, `${source}: "email.codeTemplates.${purpose}.subject"`),
+        text: normalizeLangPair(t.text, `${source}: "email.codeTemplates.${purpose}.text"`),
+      };
+    }
+    if (Object.keys(templates).length > 0) out.codeTemplates = templates;
   }
   return out;
 }
@@ -486,7 +509,14 @@ function normalizeSite(raw: unknown, source: string): SiteConfig {
   if (typeof raw !== "object" || raw === null) throw new Error(`${source}: "site" must be an object`);
   const s = raw as Record<string, unknown>;
   const out: SiteConfig = {};
-  for (const key of ["brand", "termsUrl", "privacyUrl", "customerServiceUrl"] as const) {
+  if (s.brand !== undefined) {
+    if (typeof s.brand !== "object" || s.brand === null) throw new Error(`${source}: "site.brand" must be an object { zh?, en? }`);
+    const b = s.brand as Record<string, unknown>;
+    if (b.zh !== undefined && typeof b.zh !== "string") throw new Error(`${source}: "site.brand.zh" must be a string`);
+    if (b.en !== undefined && typeof b.en !== "string") throw new Error(`${source}: "site.brand.en" must be a string`);
+    out.brand = { zh: b.zh as string | undefined, en: b.en as string | undefined };
+  }
+  for (const key of ["termsUrl", "privacyUrl", "customerServiceUrl"] as const) {
     if (s[key] !== undefined) {
       if (typeof s[key] !== "string") throw new Error(`${source}: "site.${key}" must be a string`);
       out[key] = s[key] as string;

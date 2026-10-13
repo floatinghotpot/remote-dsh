@@ -6,7 +6,7 @@ import { createSmtpSender } from "./smtp.ts";
 import { createAliyunSender } from "./aliyun.ts";
 import { createLogSender } from "./log.ts";
 
-export type { EmailMessage, EmailSender, EmailConfig, SmtpConfig, AliyunConfig } from "./types.ts";
+export type { EmailMessage, EmailSender, EmailConfig, EmailCodeTemplate, SmtpConfig, AliyunConfig } from "./types.ts";
 export { percentEncode, rpcSignature } from "./aliyun.ts";
 
 /** 按 config.email.provider 创建 sender；无 email 配置 → null（邮件功能禁用）。 */

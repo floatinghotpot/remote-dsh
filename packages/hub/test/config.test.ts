@@ -154,3 +154,29 @@ test("billing.plans[].vipTier：多档缺省按声明顺序推导 1/2/3（兼容
     /must be unique/,
   );
 });
+
+test("site.brand：对象规范化 + 非法报错", () => {
+  assert.deepEqual(normalizeHubConfig({ site: { brand: { zh: "鲸语通", en: "WhaleLink" } } }).site?.brand, { zh: "鲸语通", en: "WhaleLink" });
+  assert.deepEqual(normalizeHubConfig({ site: { brand: { zh: "鲸语通" } } }).site?.brand, { zh: "鲸语通", en: undefined });
+  assert.deepEqual(normalizeHubConfig({ site: { brand: {} } }).site?.brand, { zh: undefined, en: undefined });
+  assert.throws(() => normalizeHubConfig({ site: { brand: "鲸语通 - WhaleLink" } }), /"site.brand" must be an object/);
+  assert.throws(() => normalizeHubConfig({ site: { brand: { zh: 123 } } }), /"site.brand.zh" must be a string/);
+});
+
+test("email.codeTemplates：规范化 + 部分配置 + 非法报错", () => {
+  const tpl = {
+    subject: { zh: "{brand} 验证码", en: "{brand} verification code" },
+    text: { zh: "【{brand}】{code}", en: "[{brand}] {code}" },
+  };
+  const cfg = normalizeHubConfig({ email: { provider: "log", codeTemplates: { verify: tpl } } });
+  assert.deepEqual(cfg.email?.codeTemplates, { verify: tpl });
+  // 只配 verify → reset 不写入（渲染层用内置兜底）
+  assert.equal(cfg.email?.codeTemplates?.reset, undefined);
+  // 非法：subject 缺 en
+  assert.throws(
+    () => normalizeHubConfig({
+      email: { provider: "log", codeTemplates: { verify: { subject: { zh: "x" }, text: { zh: "x", en: "y" } } } },
+    }),
+    /"email.codeTemplates.verify.subject" needs zh\/en strings/,
+  );
+});

@@ -518,7 +518,7 @@ function legalLink(url: string | undefined, label: string, style: React.CSSPrope
 // ---- 登录 / 首次设密 ----
 
 function Login(): React.JSX.Element {
-  const { t } = useT();
+  const { t, lang } = useT();
   const rawNext = new URLSearchParams(window.location.search).get("next");
   const next = rawNext !== null && rawNext.startsWith("/portal") ? rawNext.slice("/portal".length) || "/" : rawNext;
   const home = next !== null && next.startsWith("/") && !next.startsWith("//") && next !== "/" ? next : "/hosts";
@@ -528,13 +528,16 @@ function Login(): React.JSX.Element {
   const [totpPending, setTotpPending] = useState<string | null>(null);
   const [totpCode, setTotpCode] = useState("");
   const [trustDevice, setTrustDevice] = useState(false);
-  const [brand, setBrand] = useState("RDSH.CN");
+  const [brand, setBrand] = useState<{ zh?: string; en?: string } | null>(null);
   const [wechatEnabled, setWechatEnabled] = useState(false);
   const { err, run } = useError();
 
   useEffect(() => {
-    void api.capabilities().then((c) => { if (c.site?.brand !== undefined && c.site.brand !== "") setBrand(c.site.brand); if (c.wechatLoginEnabled === true) setWechatEnabled(true); }).catch(() => undefined);
+    void api.capabilities().then((c) => { if (c.site?.brand !== undefined) setBrand(c.site.brand); if (c.wechatLoginEnabled === true) setWechatEnabled(true); }).catch(() => undefined);
   }, []);
+
+  // 眉标：按界面语言取品牌名；未配置/缺 zh/en 用内置兜底（与服务端邮件渲染一致）
+  const brandText = lang === "en" ? (brand?.en ?? "WhaleLink") : (brand?.zh ?? "鲸语通");
 
   // ③：已登录访问 /login 时跳回主机页（避免历史栈/收藏夹里的登录页造成"假掉线"）。
   // accountInfo 走 probe 模式：401 不触发 redirectToLogin，而是抛 ApiError(401) → 留在登录页。
@@ -568,7 +571,7 @@ function Login(): React.JSX.Element {
     return (
       <div style={{ maxWidth: 360, margin: "80px auto", padding: "0 16px", fontFamily: "system-ui, sans-serif" }}>
         <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}><LangToggle /></div>
-        <p style={{ fontSize: 22, fontWeight: 700, color: "var(--rdsh-fg)", letterSpacing: 0.5, margin: "0 0 8px" }}>{brand}</p>
+        <p style={{ fontSize: 22, fontWeight: 700, color: "var(--rdsh-fg)", letterSpacing: 0.5, margin: "0 0 8px" }}>{brandText}</p>
         <h1 style={{ fontSize: 20, marginBottom: 4 }}>{t("微信登录")}</h1>
         <p style={{ color: "var(--rdsh-fg-muted)", fontSize: 13, marginBottom: 20 }}>{t("未找到已绑定的账号，是否创建新账号？")}</p>
         {err !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{err}</p>}
@@ -607,7 +610,7 @@ function Login(): React.JSX.Element {
       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
         <LangToggle />
       </div>
-      <p style={{ fontSize: 22, fontWeight: 700, color: "var(--rdsh-fg)", letterSpacing: 0.5, margin: "0 0 8px" }}>{brand}</p>
+      <p style={{ fontSize: 22, fontWeight: 700, color: "var(--rdsh-fg)", letterSpacing: 0.5, margin: "0 0 8px" }}>{brandText}</p>
       <h1 style={{ fontSize: 20, marginBottom: 4 }}>{t("你的 AI 智能体，随处安全可达")}</h1>
       <p style={{ color: "var(--rdsh-fg-muted)", fontSize: 13, marginBottom: 24 }}>
         {totpPending !== null ? t("输入你的两步验证码（TOTP）") : t("远程指挥你的 DeepSeek Harness 智能体，仅需浏览器，任意设备、随时随地，端到端加密")}
