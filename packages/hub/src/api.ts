@@ -3502,9 +3502,12 @@ async function handleUnicpayStoreVerify(req: IncomingMessage, res: ServerRespons
     return;
   }
   const data = result.data as Record<string, unknown>;
-  // 映射 unicpay 响应 { goodsId, orderType, purchase, subscription } → SDK 期望的 { purchase }。
+  // 映射 unicpay 响应 { goodsId, orderType, goodsType, purchase, subscription } → SDK 期望的 { purchase }（透传 goodsType 供客户端判定充值/订阅）。
   res.writeHead(200, { "content-type": "application/json" });
-  res.end(JSON.stringify({ purchase: typeof data.purchase === "string" ? data.purchase : null }));
+  res.end(JSON.stringify({
+    purchase: typeof data.purchase === "string" ? data.purchase : null,
+    goodsType: typeof data.goodsType === "string" ? data.goodsType : null,
+  }));
 }
 
 /** 入站 webhook：验签 + 幂等 + 落订阅事实/入账；退款只记录 + 告警，不撤权益（req R5）。 */
@@ -3623,18 +3626,23 @@ async function handleUnicpayWebhook(req: IncomingMessage, res: ServerResponse, r
     try {
       runtime.db.markOrderPaid(appOrderId, "unicpay", paymentId);
       runtime.db.createPayment(randomUUID(), appOrderId, order.userId, "unicpay", paymentId, order.amountCny, Date.now(), rawBody);
-      const plan = (runtime.config.billing?.plans ?? []).find((p) => p.id === order.planId);
-      if (plan !== undefined) {
-        activateSubscription(runtime, order.userId, plan);
-      } else {
+      // 充值判定以 goodsType 为准（契约：orderType 只有 payment/subscription，consumable 是商品类型）。
+      // 保留 planId 前缀兜底：goodsType 是 omitempty 新增字段，缺失时不能静默丢单。
+      const goodsType = typeof body.goodsType === "string" ? body.goodsType : "";
+      const product = creditProductById(order.planId);
+      if (goodsType === "consumable" || (goodsType === "" && product !== undefined)) {
         // 点数充值（consumable）：goodsId = credits_* → 入账 purchased 桶（幂等键 = unicpay 支付单号）
-        const product = creditProductById(order.planId);
         if (product !== undefined) {
           creditRecharge(runtime.db, order.userId, product.credits * CREDITS_MICRO_PER_CREDIT, {
             sourceType: "unicpay",
             sourceId: paymentId,
             idempotencyKey: `unicpay:${paymentId}`,
           });
+        }
+      } else {
+        const plan = (runtime.config.billing?.plans ?? []).find((p) => p.id === order.planId);
+        if (plan !== undefined) {
+          activateSubscription(runtime, order.userId, plan);
         }
       }
       runtime.db.db.exec("COMMIT");
@@ -3663,6 +3671,65 @@ async function handleUnicpayWebhook(req: IncomingMessage, res: ServerResponse, r
     }
     runtime.db.recordAudit(null, "billing.unicpay.refunded", { paymentId, appOrderId: body.appOrderId ?? null }, ip);
     console.error(`[unicpay] refunded: paymentId=${paymentId} appOrderId=${String(body.appOrderId ?? "")}`);
+  } else if (eventType === "store.purchase.succeeded" || eventType === "store.purchase.refunded" || eventType === "store.purchase.revoked") {
+    // B 类一次性商品（consumable 充值 / non_consumable 买断）事件：succeeded → 入账；refunded/revoked → 冲正。
+    const store = typeof body.store === "string" ? body.store : "";
+    const storeTransactionId = typeof body.storeTransactionId === "string" ? body.storeTransactionId : "";
+    const goodsType = typeof body.goodsType === "string" ? body.goodsType : "";
+    const goodsId = typeof body.goodsId === "string" ? body.goodsId : "";
+    const userIdRaw = typeof body.userId === "string" ? body.userId : "";
+    // 非充值（non_consumable 买断）本期不处理 → ack（避免死信告警）。
+    if (goodsType !== "consumable") {
+      runtime.db.recordAudit(null, "billing.unicpay.store_ignored", { eventType, goodsType, goodsId }, ip);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, ignored: `goodsType=${goodsType || "(none)"}` }));
+      return;
+    }
+    if (store === "" || storeTransactionId === "" || goodsId === "") {
+      writeError(res, 400, "BAD_REQUEST", "store, storeTransactionId and goodsId required");
+      return;
+    }
+    const userIdNum = Number(userIdRaw);
+    const user = Number.isInteger(userIdNum) && userIdNum > 0 ? runtime.db.getUserById(userIdNum) : null;
+    if (user === null) {
+      runtime.db.recordAudit(null, "billing.unicpay.store_unknown_user", { eventType, storeTransactionId, userId: userIdRaw }, ip);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, ignored: "unknown userId" }));
+      return;
+    }
+    const userId = user.id;
+    const product = creditProductById(goodsId);
+    if (product === undefined) {
+      runtime.db.recordAudit(userId, "billing.unicpay.store_unknown_goods", { eventType, goodsId, storeTransactionId }, ip);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, ignored: "unknown goods" }));
+      return;
+    }
+    if (eventType === "store.purchase.succeeded") {
+      // 入账 purchased 桶（幂等键 = store + storeTransactionId，即 apple:<transactionId> / google:<purchaseToken>）。
+      creditRecharge(runtime.db, userId, product.credits * CREDITS_MICRO_PER_CREDIT, {
+        sourceType: store,
+        sourceId: storeTransactionId,
+        idempotencyKey: `${store}:${storeTransactionId}`,
+      });
+    } else {
+      // refunded / revoked → 冲正 purchased 桶（幂等键 = refund:<store>:<storeTransactionId>）。
+      // 冲正前反查原入账流水：webhook 两条独立投递，refunded 可能先于 succeeded 到达，乱序会冲成负余额。
+      const rechargeLedger = runtime.db.getCreditLedgerByIdempotencyKey(`${store}:${storeTransactionId}`);
+      if (rechargeLedger === null) {
+        // 原入账未到 → 非 2xx 让平台退避重试（等 succeeded 到达后再冲正）。
+        runtime.db.recordAudit(userId, "billing.unicpay.store_refund_before_recharge", { eventType, goodsId, store, storeTransactionId }, ip);
+        writeError(res, 503, "RECHARGE_NOT_FOUND", "refund arrived before recharge; retry later");
+        return;
+      }
+      creditRefund(runtime.db, userId, product.credits * CREDITS_MICRO_PER_CREDIT, {
+        platform: store,
+        transactionId: storeTransactionId,
+      });
+      // 退款/撤销告警（与 A 类 payment.refunded 对齐，供运维对账）。
+      console.error(`[unicpay] ${eventType}: store=${store} storeTransactionId=${storeTransactionId} goodsId=${goodsId} userId=${userId}`);
+    }
+    runtime.db.recordAudit(userId, `billing.unicpay.${eventType}`, { goodsId, store, storeTransactionId }, ip);
   } else {
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify({ ok: true, ignored: eventType }));

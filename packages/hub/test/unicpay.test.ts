@@ -17,6 +17,7 @@ import { startHubServer } from "../src/server.ts";
 import type { RunningHub } from "../src/server.ts";
 import type { HubRuntime } from "../src/api.ts";
 import type { HubConfig } from "../src/config.ts";
+import { CREDITS_MICRO_PER_CREDIT } from "../src/credits.ts";
 
 let server: RunningHub | null = null;
 let base = "";
@@ -269,4 +270,177 @@ test("H6a + H1: store/verify 转发用 users.id 且不带 environment", async ()
   assert.equal(capturedVerify.body.userId, String(user.id));
   assert.ok(!("environment" in capturedVerify.body));
   assert.equal(capturedVerify.authorization, "UnicPay-App rdsh");
+});
+
+test("store.purchase.succeeded → 入账 purchased 桶（幂等去重）", async () => {
+  const user = db.createUser("wh-store", await hashPassword("pw123456"));
+  const evt = {
+    eventType: "store.purchase.succeeded",
+    goodsId: "credits_1_usd",
+    goodsType: "consumable",
+    store: "apple",
+    storeTransactionId: "tx-1001",
+    userId: String(user.id),
+    amount: 800,
+    currency: "CNY",
+  };
+  const r1 = await postWebhook(evt);
+  assert.equal(r1.status, 200);
+  assert.equal(db.getCreditBalances(user.id).purchased, 800 * CREDITS_MICRO_PER_CREDIT);
+  // 重复事件：幂等去重，不重复入账
+  const r2 = await postWebhook(evt);
+  assert.equal(r2.status, 200);
+  assert.equal(db.getCreditBalances(user.id).purchased, 800 * CREDITS_MICRO_PER_CREDIT);
+});
+
+test("store.purchase.refunded → 冲正 purchased 桶", async () => {
+  const user = db.getUserByName("wh-store")!;
+  const before = db.getCreditBalances(user.id).purchased;
+  const r = await postWebhook({
+    eventType: "store.purchase.refunded",
+    goodsId: "credits_1_usd",
+    goodsType: "consumable",
+    store: "apple",
+    storeTransactionId: "tx-1001",
+    userId: String(user.id),
+  });
+  assert.equal(r.status, 200);
+  assert.equal(db.getCreditBalances(user.id).purchased, before - 800 * CREDITS_MICRO_PER_CREDIT);
+});
+
+test("store.purchase: 非 consumable（买断）→ ack 忽略", async () => {
+  const r = await postWebhook({
+    eventType: "store.purchase.succeeded",
+    goodsId: "unlock_forever",
+    goodsType: "non_consumable",
+    store: "apple",
+    storeTransactionId: "tx-2001",
+    userId: "1",
+  });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.ignored, "goodsType=non_consumable");
+});
+
+test("store.purchase: 未知用户 → ack 忽略", async () => {
+  const r = await postWebhook({
+    eventType: "store.purchase.succeeded",
+    goodsId: "credits_1_usd",
+    goodsType: "consumable",
+    store: "apple",
+    storeTransactionId: "tx-3001",
+    userId: "999999",
+  });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.ignored, "unknown userId");
+});
+
+test("store.purchase: refunded 先于 succeeded（乱序）→ 503 重试；succeeded 到达后冲正成功", async () => {
+  const user = db.createUser("wh-store-oob", await hashPassword("pw123456"));
+  const refundEvt = {
+    eventType: "store.purchase.refunded",
+    goodsId: "credits_1_usd",
+    goodsType: "consumable",
+    store: "apple",
+    storeTransactionId: "tx-oob-1",
+    userId: String(user.id),
+  };
+  // 乱序：refunded 先到，无入账流水 → 503（不冲成负余额）
+  const r1 = await postWebhook(refundEvt);
+  assert.equal(r1.status, 503);
+  assert.equal(db.getCreditBalances(user.id).purchased, 0);
+  // succeeded 到达 → 入账
+  const r2 = await postWebhook({ ...refundEvt, eventType: "store.purchase.succeeded" });
+  assert.equal(r2.status, 200);
+  assert.equal(db.getCreditBalances(user.id).purchased, 800 * CREDITS_MICRO_PER_CREDIT);
+  // refunded 重试 → 冲正
+  const r3 = await postWebhook(refundEvt);
+  assert.equal(r3.status, 200);
+  assert.equal(db.getCreditBalances(user.id).purchased, 0);
+});
+
+test("store.purchase.revoked → 冲正 purchased 桶", async () => {
+  const user = db.createUser("wh-store-rev", await hashPassword("pw123456"));
+  const evt = {
+    eventType: "store.purchase.succeeded",
+    goodsId: "credits_1_usd",
+    goodsType: "consumable",
+    store: "apple",
+    storeTransactionId: "tx-rev-1",
+    userId: String(user.id),
+  };
+  await postWebhook(evt);
+  assert.equal(db.getCreditBalances(user.id).purchased, 800 * CREDITS_MICRO_PER_CREDIT);
+  const r = await postWebhook({ ...evt, eventType: "store.purchase.revoked" });
+  assert.equal(r.status, 200);
+  assert.equal(db.getCreditBalances(user.id).purchased, 0);
+});
+
+test("A 类 payment.succeeded + goodsType=consumable → 入账", async () => {
+  const user = db.createUser("wh-a-consumable", await hashPassword("pw123456"));
+  db.createOrder("o-credits", user.id, "credits_1_usd", 8); // 8 元 = 800 分
+  const r = await postWebhook({
+    eventType: "payment.succeeded",
+    paymentId: "p-credits",
+    appOrderId: "o-credits",
+    amount: 800,
+    currency: "CNY",
+    goodsType: "consumable",
+  });
+  assert.equal(r.status, 200);
+  assert.equal(db.getCreditBalances(user.id).purchased, 800 * CREDITS_MICRO_PER_CREDIT);
+});
+
+test("A 类 payment.succeeded + goodsType 缺失 → planId 兜底入账（P1-2 回归）", async () => {
+  const user = db.createUser("wh-a-fallback", await hashPassword("pw123456"));
+  db.createOrder("o-fallback", user.id, "credits_1_usd", 8);
+  const r = await postWebhook({
+    eventType: "payment.succeeded",
+    paymentId: "p-fallback",
+    appOrderId: "o-fallback",
+    amount: 800,
+    currency: "CNY",
+  });
+  assert.equal(r.status, 200);
+  assert.equal(db.getCreditBalances(user.id).purchased, 800 * CREDITS_MICRO_PER_CREDIT);
+});
+
+test("store.purchase.succeeded（google）→ 入账，幂等键 google:<purchaseToken>", async () => {
+  const user = db.createUser("wh-store-g", await hashPassword("pw123456"));
+  const evt = {
+    eventType: "store.purchase.succeeded",
+    goodsId: "credits_5_usd",
+    goodsType: "consumable",
+    store: "google",
+    storeTransactionId: "purchase-token-1",
+    userId: String(user.id),
+  };
+  await postWebhook(evt);
+  assert.equal(db.getCreditBalances(user.id).purchased, 5000 * CREDITS_MICRO_PER_CREDIT);
+  await postWebhook(evt); // 重复 → 幂等
+  assert.equal(db.getCreditBalances(user.id).purchased, 5000 * CREDITS_MICRO_PER_CREDIT);
+});
+
+test("store.purchase: 未知 goodsId → ack 忽略", async () => {
+  const user = db.createUser("wh-store-ug", await hashPassword("pw123456"));
+  const r = await postWebhook({
+    eventType: "store.purchase.succeeded",
+    goodsId: "no_such_product",
+    goodsType: "consumable",
+    store: "apple",
+    storeTransactionId: "tx-ug-1",
+    userId: String(user.id),
+  });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.ignored, "unknown goods");
+});
+
+test("store.purchase.refunded 幂等：两次 refunded 只冲正一次", async () => {
+  const user = db.createUser("wh-store-r2", await hashPassword("pw123456"));
+  const succ = { eventType: "store.purchase.succeeded", goodsId: "credits_1_usd", goodsType: "consumable", store: "apple", storeTransactionId: "tx-r2-1", userId: String(user.id) };
+  const refund = { ...succ, eventType: "store.purchase.refunded" };
+  await postWebhook(succ);
+  assert.equal(db.getCreditBalances(user.id).purchased, 800 * CREDITS_MICRO_PER_CREDIT);
+  await postWebhook(refund);
+  await postWebhook(refund); // 重复 refunded → 幂等，不重复冲正
+  assert.equal(db.getCreditBalances(user.id).purchased, 0);
 });
