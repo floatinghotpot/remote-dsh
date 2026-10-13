@@ -84,6 +84,10 @@ export function App(): React.JSX.Element {
   const page =
     path === "/billing" ? (
       <BillingPage />
+    ) : path === "/credits/pricing" ? (
+      <CreditsPricingPage />
+    ) : path === "/credits" ? (
+      <CreditsPage />
     ) : path === "/settings/password" ? (
       <PasswordPage />
     ) : path === "/usage" ? (
@@ -151,6 +155,7 @@ function AppShell({ children }: { children: React.ReactNode }): React.JSX.Elemen
   const tabs = [
     { p: "/settings/account", label: t("账户与安全") },
     { p: "/usage", label: t("用量统计") },
+    { p: "/credits", label: t("点数充值", { en: "Credits" }) },
     { p: "/hosts", label: t("我的主机") },
     ...(me !== null && me.role !== "user" ? [{ p: "/admin", label: t("管理后台") }] : []),
   ];
@@ -2315,6 +2320,134 @@ function BillingPage(): React.JSX.Element {
         </div>
       )}
     </>
+  );
+}
+
+/** 点数微单位 → 点数（后端余额为整数微单位，1 点数 = 10000）。 */
+const CREDITS_MICRO = 10000;
+
+/** 6 档点数充值商品（与 hub credits.ts 的 CREDIT_PRODUCTS 一致）。 */
+const CREDIT_TIERS: Array<{ id: string; credits: number; priceCny: number }> = [
+  { id: "credits_1_usd", credits: 800, priceCny: 8 },
+  { id: "credits_5_usd", credits: 5000, priceCny: 38 },
+  { id: "credits_10_usd", credits: 12000, priceCny: 68 },
+  { id: "credits_20_usd", credits: 25000, priceCny: 138 },
+  { id: "credits_50_usd", credits: 65000, priceCny: 348 },
+  { id: "credits_100_usd", credits: 140000, priceCny: 698 },
+];
+
+function CreditsPage(): React.JSX.Element {
+  const { t } = useT();
+  const [balance, setBalance] = useState<number | null>(null);
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [agreed, setAgreed] = useState(false);
+  const { toast, show } = useToast();
+  const { err, run } = useError();
+
+  const load = (): void => {
+    void run(async () => {
+      const b = await api.creditsBalance();
+      setBalance(b.total / CREDITS_MICRO);
+    });
+  };
+  useEffect(load, []);
+
+  const doRecharge = async (tier: { id: string }): Promise<void> => {
+    if (!agreed) return;
+    const before = balance;
+    const ok = await run(async () => {
+      const r = await api.creditsRecharge(tier.id, "native");
+      const nativeUrl = r.payParams?.nativeUrl;
+      if (typeof nativeUrl === "string") {
+        const dataUrl = await QRCode.toDataURL(nativeUrl, { width: 220, margin: 1 });
+        setQrDataUrl(dataUrl);
+        const timer = window.setInterval(() => {
+          void api.creditsBalance().then((b) => {
+            const now = b.total / CREDITS_MICRO;
+            if (before !== null && now > before) {
+              window.clearInterval(timer);
+              setQrDataUrl(null);
+              show("ok", t("点数充值成功", { en: "Credits added" }));
+              load();
+            }
+          }).catch(() => {});
+        }, 2000);
+        window.setTimeout(() => window.clearInterval(timer), 5 * 60 * 1000);
+      } else {
+        show("err", t("支付已取消或失败", { en: "Payment cancelled or failed" }));
+      }
+    });
+    if (!ok) load();
+  };
+
+  const fmt = (n: number): string => n.toLocaleString();
+
+  return (
+    <>
+      <Shell title={t("点数充值", { en: "Credits" })}>
+        <Toast toast={toast} />
+        {err !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{err}</p>}
+        <Card title={t("点数余额", { en: "Credits balance" })}>
+          <div style={{ fontSize: 24, fontWeight: 700 }}>
+            {balance === null ? "—" : fmt(balance)} <span style={{ fontSize: 14, fontWeight: 400 }}>{t("点数", { en: "credits" })}</span>
+          </div>
+          <p style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", margin: "4px 0 0" }}>
+            {t("1 点数 = 1 分钱，用于云端中转流量", { en: "1 credit = ¥0.01, used for cloud relay traffic" })}
+          </p>
+        </Card>
+        <Card title={t("选择充值档位", { en: "Choose amount" })}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 10 }}>
+            {CREDIT_TIERS.map((tier) => (
+              <div key={tier.id} style={{ border: "1px solid var(--rdsh-border)", borderRadius: 10, padding: "14px 12px", textAlign: "center" }}>
+                <div style={{ fontSize: 15, fontWeight: 700 }}>¥{tier.priceCny} → {fmt(tier.credits)} {t("点数", { en: "credits" })}</div>
+                <button disabled={!agreed} onClick={() => doRecharge(tier)} style={{ ...btnStyle(), width: "100%", marginTop: 10, opacity: agreed ? 1 : 0.5, cursor: agreed ? "pointer" : "not-allowed" }}>{t("充值", { en: "Top up" })}</button>
+              </div>
+            ))}
+          </div>
+        </Card>
+        <Card title={t("说明", { en: "Note" })}>
+          <label style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", fontSize: 13, color: "var(--rdsh-fg-muted)" }}>
+            <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} style={{ marginTop: 2 }} />
+            <span>{t("我已阅读并同意《充值协议》：虚拟数字内容，购买后不可退款、不可提现、不可转让。", { en: "I have read and agree to the Terms: virtual digital content, non-refundable, non-withdrawable, non-transferable." })}</span>
+          </label>
+        </Card>
+      </Shell>
+      {qrDataUrl !== null && (
+        <div style={{ position: "fixed", inset: 0, background: "var(--rdsh-scrim)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setQrDataUrl(null)}>
+          <div style={{ background: "var(--rdsh-bg-surface)", padding: 20, borderRadius: 12, textAlign: "center", maxWidth: 280 }} onClick={(e) => e.stopPropagation()}>
+            <img src={qrDataUrl} width={220} height={220} alt="qr" />
+            <p style={{ margin: "12px 0 8px", fontSize: 14 }}>{t("请用微信扫一扫完成支付")}</p>
+            <button onClick={() => setQrDataUrl(null)} style={btnStyle("ghost")}>{t("取消")}</button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+function CreditsPricingPage(): React.JSX.Element {
+  const { t } = useT();
+  return (
+    <Shell title={t("点数价格说明", { en: "Credits pricing" })}>
+      <Card title={t("点数价值", { en: "Credit value" })}>
+        <p style={{ fontSize: 14, margin: 0 }}>{t("¥1 = 100 点数，即 1 点数 = 1 分钱。", { en: "¥1 = 100 credits, i.e. 1 credit = ¥0.01." })}</p>
+      </Card>
+      <Card title={t("充值档位", { en: "Top-up tiers" })}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
+          <tbody>
+            {CREDIT_TIERS.map((tier) => (
+              <tr key={tier.id} style={{ borderBottom: "1px solid var(--rdsh-border)" }}>
+                <td style={{ padding: "8px 0" }}>¥{tier.priceCny}</td>
+                <td style={{ padding: "8px 0", textAlign: "right" }}>{tier.credits.toLocaleString()} {t("点数", { en: "credits" })}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
+      <Card title={t("消耗标准", { en: "Usage rate" })}>
+        <p style={{ fontSize: 14, margin: 0 }}>{t("云端中转流量：1 点数 = 3 MB（上行 + 下行合计）。本地识别与内网直连不消耗点数。", { en: "Cloud relay traffic: 1 credit = 3 MB (up + down combined). Local ASR and LAN direct connection cost nothing." })}</p>
+      </Card>
+    </Shell>
   );
 }
 

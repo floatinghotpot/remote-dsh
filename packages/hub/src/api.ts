@@ -22,6 +22,7 @@ import { createSmsSender } from "./sms/index.ts";
 import type { SmsSender } from "./sms/index.ts";
 import { createPaymentProvider, verifyWechatCallback, decryptWechatResource, getWechatOpenid } from "./billing/index.ts";
 import { UnicPayClient, verifyWebhookSignature } from "./billing/unicpay.ts";
+import { creditRecharge, creditRefund, creditProductById, CREDITS_MICRO_PER_CREDIT } from "./credits.ts";
 import { exchangeWechatLoginCode, wechatLoginUrl } from "./wechat-login.ts";
 import { verifyAppleIdToken, exchangeAppleCode, revokeAppleToken, makeAppleClientSecret, loadApplePrivateKey, encryptToken, decryptToken } from "./apple-login.ts";
 import { createChallenge, verifyChallenge } from "./captcha.ts";
@@ -212,6 +213,16 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
   // ---- 读端点（readonly 可读） ----
   if (path === "/api/admin/me" && method === "GET") {
     res.end(JSON.stringify({ userId: auth.userId, name: auth.name, role: auth.role }));
+    return true;
+  }
+  if (path === "/api/admin/credits" && method === "GET") {
+    const userIdParam = url.searchParams.get("userId");
+    const userId = Number(userIdParam);
+    if (!Number.isInteger(userId) || userId <= 0) {
+      writeError(res, 400, "BAD_REQUEST", "invalid userId");
+      return true;
+    }
+    res.end(JSON.stringify({ balances: db.getCreditBalances(userId), ledger: db.listCreditLedger(userId) }));
     return true;
   }
   if (path === "/api/admin/dashboard" && method === "GET") {
@@ -861,6 +872,14 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, runti
   }
   if (path === "/api/billing/unicpay/webhook" && method === "POST") {
     await handleUnicpayWebhook(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/credits/balance" && method === "GET") {
+    await handleCreditsBalance(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/credits/recharge" && method === "POST") {
+    await handleCreditsRecharge(req, res, runtime);
     return true;
   }
   if (path === "/api/wechat/oauth/authorize" && method === "GET") {
@@ -2165,6 +2184,81 @@ async function handleHostReportUsage(req: IncomingMessage, res: ServerResponse, 
   runtime.db.upsertUsageDaily(host.ownerId, day, { hostId: host.id, instanceId, source: "gateway" });
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({ ok: true }));
+}
+
+async function handleCreditsBalance(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const auth = authenticate(req, runtime);
+  if (auth === null) {
+    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
+    return;
+  }
+  const balances = runtime.db.getCreditBalances(auth.userId);
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({
+    purchased: balances.purchased,
+    bonusCarried: balances.bonusCarried,
+    bonusCurrent: balances.bonusCurrent,
+    total: balances.total,
+  }));
+}
+
+/** 点数充值下单（unicpay consumable）：选档 → 下单 → 返回支付参数。 */
+async function handleCreditsRecharge(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const client = getUnicpayClient(runtime);
+  if (client === null) {
+    writeError(res, 404, "NOT_CONFIGURED", "unicpay not configured");
+    return;
+  }
+  const auth = authenticate(req, runtime);
+  if (auth === null) {
+    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
+    return;
+  }
+  const body = await readJsonBody(req);
+  if (body === null) {
+    writeError(res, 400, "BAD_REQUEST", "invalid JSON");
+    return;
+  }
+  const goodsId = typeof body.goodsId === "string" ? body.goodsId : "";
+  const product = creditProductById(goodsId);
+  if (product === undefined) {
+    writeError(res, 400, "BAD_REQUEST", "unknown goodsId");
+    return;
+  }
+  const sceneRaw = typeof body.scene === "string" ? body.scene : "native";
+  if (sceneRaw !== "app" && sceneRaw !== "native" && sceneRaw !== "miniapp" && sceneRaw !== "alipay") {
+    writeError(res, 400, "BAD_REQUEST", "unknown scene");
+    return;
+  }
+  const scene = sceneRaw as "app" | "native" | "miniapp" | "alipay";
+  const appOrderId = randomUUID().replaceAll("-", "");
+  runtime.db.createOrder(appOrderId, auth.userId, product.id, product.priceCny);
+
+  const initiated = await client.initiate({
+    scene,
+    appOrderId,
+    goodsId: product.id,
+    orderType: "payment",
+    userId: String(auth.userId),
+  });
+  if (initiated.status !== 200) {
+    writeError(res, 502, "UPSTREAM_ERROR", "unicpay initiate failed");
+    return;
+  }
+  const initiatedData = initiated.data as Record<string, unknown>;
+  const ticketRaw = initiatedData.ticket;
+  const ticket = typeof ticketRaw === "string" ? ticketRaw : "";
+  if (ticket === "") {
+    writeError(res, 502, "UPSTREAM_ERROR", "unicpay initiate returned no ticket");
+    return;
+  }
+  const prepaid = await client.prepay(ticket);
+  if (prepaid.status !== 200) {
+    writeError(res, 502, "UPSTREAM_ERROR", "unicpay prepay failed");
+    return;
+  }
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ appOrderId, payParams: prepaid.data }));
 }
 
 async function handleReportUsage(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
@@ -3530,7 +3624,19 @@ async function handleUnicpayWebhook(req: IncomingMessage, res: ServerResponse, r
       runtime.db.markOrderPaid(appOrderId, "unicpay", paymentId);
       runtime.db.createPayment(randomUUID(), appOrderId, order.userId, "unicpay", paymentId, order.amountCny, Date.now(), rawBody);
       const plan = (runtime.config.billing?.plans ?? []).find((p) => p.id === order.planId);
-      if (plan !== undefined) activateSubscription(runtime, order.userId, plan);
+      if (plan !== undefined) {
+        activateSubscription(runtime, order.userId, plan);
+      } else {
+        // 点数充值（consumable）：goodsId = credits_* → 入账 purchased 桶（幂等键 = unicpay 支付单号）
+        const product = creditProductById(order.planId);
+        if (product !== undefined) {
+          creditRecharge(runtime.db, order.userId, product.credits * CREDITS_MICRO_PER_CREDIT, {
+            sourceType: "unicpay",
+            sourceId: paymentId,
+            idempotencyKey: `unicpay:${paymentId}`,
+          });
+        }
+      }
       runtime.db.db.exec("COMMIT");
     } catch (e) {
       runtime.db.db.exec("ROLLBACK");
@@ -3539,6 +3645,22 @@ async function handleUnicpayWebhook(req: IncomingMessage, res: ServerResponse, r
     runtime.db.recordAudit(order.userId, "billing.unicpay.payment", { paymentId, appOrderId }, ip);
   } else if (eventType === "payment.refunded") {
     const paymentId = typeof body.paymentId === "string" ? body.paymentId : "";
+    const refundOrderId = typeof body.appOrderId === "string" ? body.appOrderId : "";
+    // 点数订单退款：冲正 purchased 桶（幂等键 = refund:unicpay:paymentId）
+    if (refundOrderId !== "") {
+      const refundOrder = runtime.db.getOrder(refundOrderId);
+      if (refundOrder !== null) {
+        const refundProduct = creditProductById(refundOrder.planId);
+        // 仅对「已支付」的点数订单冲正，避免对 created / amount-mismatch 未入账订单误扣成负余额。
+        if (refundProduct !== undefined && refundOrder.status === "paid") {
+          creditRefund(runtime.db, refundOrder.userId, refundProduct.credits * CREDITS_MICRO_PER_CREDIT, {
+            platform: "unicpay",
+            transactionId: paymentId,
+          });
+          runtime.db.markOrderRefunded(refundOrderId);
+        }
+      }
+    }
     runtime.db.recordAudit(null, "billing.unicpay.refunded", { paymentId, appOrderId: body.appOrderId ?? null }, ip);
     console.error(`[unicpay] refunded: paymentId=${paymentId} appOrderId=${String(body.appOrderId ?? "")}`);
   } else {

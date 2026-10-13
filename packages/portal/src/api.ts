@@ -303,6 +303,12 @@ export const api = {
   usageHost(hostId: string, from: string, to: string): Promise<{ days: UsageDay[] }> {
     return jsonFetch(`/api/usage/host?hostId=${encodeURIComponent(hostId)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
   },
+  creditsBalance(): Promise<{ purchased: number; bonusCarried: number; bonusCurrent: number; total: number }> {
+    return jsonFetch("/api/credits/balance");
+  },
+  creditsRecharge(goodsId: string, scene: "app" | "native" | "miniapp" | "alipay"): Promise<{ appOrderId: string; payParams?: { kind?: string; nativeUrl?: string } }> {
+    return jsonFetch("/api/credits/recharge", { method: "POST", body: JSON.stringify({ goodsId, scene }) });
+  },
 };
 
 // ---- 管理后台（/api/admin/*，独立会话；401 不触发用户续期/跳登录） ----

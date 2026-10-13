@@ -22,6 +22,7 @@ import { sha256 } from "./jwt.ts";
 import { HubDb } from "./db.ts";
 import { HubAuth } from "./auth.ts";
 import { authenticate, clientIp, handleApi, writeError, sweepBilling } from "./api.ts";
+import { sweepCredits } from "./credits.ts";
 import type { HubRuntime } from "./api.ts";
 import type { EmailConfig } from "./email/types.ts";
 import type { SmsConfig } from "./sms/types.ts";
@@ -202,6 +203,20 @@ export async function startHubServer(opts: HubServerOptions): Promise<RunningHub
       runtime.relayUsage.flush();
     } catch (err) {
       console.error("[usage] relay flush failed:", err instanceof Error ? err.message : err);
+    }
+  }, 60 * 1000).unref();
+
+  // 点数账本月度结算（每分钟检查，跨月才执行一次）：结转 + 订阅赠点
+  let lastCreditSweepMonth = "";
+  setInterval(() => {
+    const now = new Date();
+    const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    if (monthKey === lastCreditSweepMonth) return;
+    lastCreditSweepMonth = monthKey;
+    try {
+      sweepCredits(runtime.db, runtime.config.billing?.plans ?? []);
+    } catch (err) {
+      console.error("[credits] monthly sweep failed:", err instanceof Error ? err.message : err);
     }
   }, 60 * 1000).unref();
 

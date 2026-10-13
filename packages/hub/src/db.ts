@@ -230,6 +230,26 @@ export interface UsageDayRow {
   updatedAt: number;
 }
 
+export interface CreditLedgerRow {
+  id: number;
+  userId: number;
+  delta: number;
+  bucket: string;
+  reason: string;
+  sourceType: string | null;
+  sourceId: string | null;
+  idempotencyKey: string | null;
+  balanceAfter: number | null;
+  createdAt: number;
+}
+
+export interface CreditBalances {
+  purchased: number;
+  bonusCarried: number;
+  bonusCurrent: number;
+  total: number;
+}
+
 export class HubDb {
   readonly db: DatabaseSync;
   /** 数据库文件路径（:memory: 测试用） */
@@ -271,7 +291,10 @@ export class HubDb {
         last_login_at INTEGER,
         apple_sub TEXT,
         apple_email TEXT,
-        apple_full_name TEXT
+        apple_full_name TEXT,
+        purchased_credits INTEGER NOT NULL DEFAULT 0,
+        bonus_carried INTEGER NOT NULL DEFAULT 0,
+        bonus_current INTEGER NOT NULL DEFAULT 0
       );
       CREATE TABLE IF NOT EXISTS hosts (
         id TEXT PRIMARY KEY,
@@ -380,6 +403,22 @@ export class HubDb {
         paid_at INTEGER NOT NULL,
         raw TEXT NOT NULL DEFAULT '{}'
       );
+      CREATE TABLE IF NOT EXISTS credits_ledger (
+        id INTEGER PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        delta INTEGER NOT NULL,
+        bucket TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        source_type TEXT,
+        source_id TEXT,
+        idempotency_key TEXT UNIQUE,
+        balance_after INTEGER,
+        created_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS apple_tokens (
         user_id INTEGER PRIMARY KEY REFERENCES users(id),
         refresh_token TEXT,
@@ -457,6 +496,9 @@ export class HubDb {
       ["apple_sub", "apple_sub TEXT"],
       ["apple_email", "apple_email TEXT"],
       ["apple_full_name", "apple_full_name TEXT"],
+      ["purchased_credits", "purchased_credits INTEGER NOT NULL DEFAULT 0"],
+      ["bonus_carried", "bonus_carried INTEGER NOT NULL DEFAULT 0"],
+      ["bonus_current", "bonus_current INTEGER NOT NULL DEFAULT 0"],
     ];
     for (const [name, ddl] of addCols) {
       if (!userCols.has(name)) this.db.exec(`ALTER TABLE users ADD COLUMN ${ddl}`);
@@ -719,6 +761,21 @@ export class HubDb {
       amountCny: Number(row.amount_cny),
       paidAt: Number(row.paid_at),
       raw: String(row.raw ?? "{}"),
+    };
+  }
+
+  private mapCreditLedger(row: Record<string, unknown>): CreditLedgerRow {
+    return {
+      id: Number(row.id),
+      userId: Number(row.user_id),
+      delta: Number(row.delta),
+      bucket: String(row.bucket),
+      reason: String(row.reason),
+      sourceType: row.source_type === null || row.source_type === undefined ? null : String(row.source_type),
+      sourceId: row.source_id === null || row.source_id === undefined ? null : String(row.source_id),
+      idempotencyKey: row.idempotency_key === null || row.idempotency_key === undefined ? null : String(row.idempotency_key),
+      balanceAfter: row.balance_after === null || row.balance_after === undefined ? null : Number(row.balance_after),
+      createdAt: Number(row.created_at),
     };
   }
 
@@ -1673,6 +1730,91 @@ export class HubDb {
   getPaymentByChannelOrderId(channel: string, channelOrderId: string): PaymentRow | null {
     const row = this.db.prepare("SELECT * FROM payments WHERE channel = ? AND channel_order_id = ?").get(channel, channelOrderId);
     return row === undefined ? null : this.mapPayment(row as unknown as Record<string, unknown>);
+  }
+
+  // ---- 点数账本（09-credits-wallet）----
+
+  /** 读用户三桶余额（整数微单位）。 */
+  getCreditBalances(userId: number): CreditBalances {
+    const row = this.db.prepare("SELECT purchased_credits, bonus_carried, bonus_current FROM users WHERE id = ?").get(userId) as unknown as Record<string, unknown> | undefined;
+    const purchased = row === undefined ? 0 : Number(row.purchased_credits);
+    const carried = row === undefined ? 0 : Number(row.bonus_carried);
+    const current = row === undefined ? 0 : Number(row.bonus_current);
+    return { purchased, bonusCarried: carried, bonusCurrent: current, total: purchased + carried + current };
+  }
+
+  /** 按幂等键查流水（充值/赠点/退款幂等）。 */
+  getCreditLedgerByIdempotencyKey(key: string): CreditLedgerRow | null {
+    const row = this.db.prepare("SELECT * FROM credits_ledger WHERE idempotency_key = ?").get(key);
+    return row === undefined ? null : this.mapCreditLedger(row as unknown as Record<string, unknown>);
+  }
+
+  /**
+   * 追加一笔点数流水并原子更新对应桶余额（事务）。
+   * 返回 false = 幂等键已存在（重复回调），不重复入账。
+   * bucket 仅接受 purchased | bonus_carried | bonus_current（内部契约，由 credits.ts 校验）。
+   */
+  appendCreditLedger(
+    userId: number,
+    delta: number,
+    bucket: string,
+    reason: string,
+    opts: { sourceType?: string | null; sourceId?: string | null; idempotencyKey?: string | null; now?: number } = {},
+  ): boolean {
+    const now = opts.now ?? Date.now();
+    if (opts.idempotencyKey != null) {
+      if (this.getCreditLedgerByIdempotencyKey(opts.idempotencyKey) !== null) return false;
+    }
+    // 白名单映射列名，非法 bucket 直接抛错（不静默落到 bonus_current）。
+    const BUCKET_COLUMNS: Record<string, string> = {
+      purchased: "purchased_credits",
+      bonus_carried: "bonus_carried",
+      bonus_current: "bonus_current",
+    };
+    const col = BUCKET_COLUMNS[bucket];
+    if (col === undefined) {
+      throw new Error(`invalid credit bucket: ${bucket}`);
+    }
+    // SAVEPOINT 可嵌套：调用方（如 api.ts 的 payment.succeeded）可能已在外层 BEGIN 事务内，
+    // 普通 BEGIN 会抛 "cannot start a transaction within a transaction"。
+    this.db.exec("SAVEPOINT credits_append");
+    try {
+      this.db.prepare(`UPDATE users SET ${col} = ${col} + ? WHERE id = ?`).run(delta, userId);
+      const balances = this.getCreditBalances(userId);
+      const balanceAfter = bucket === "purchased" ? balances.purchased : bucket === "bonus_carried" ? balances.bonusCarried : balances.bonusCurrent;
+      this.db
+        .prepare("INSERT INTO credits_ledger (user_id, delta, bucket, reason, source_type, source_id, idempotency_key, balance_after, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(userId, delta, bucket, reason, opts.sourceType ?? null, opts.sourceId ?? null, opts.idempotencyKey ?? null, balanceAfter, now);
+      this.db.exec("RELEASE credits_append");
+      return true;
+    } catch (e) {
+      this.db.exec("ROLLBACK TO credits_append");
+      this.db.exec("RELEASE credits_append");
+      throw e;
+    }
+  }
+
+  /** 管理面：某用户账本流水（按 id 倒序）。 */
+  listCreditLedger(userId: number): CreditLedgerRow[] {
+    const rows = this.db.prepare("SELECT * FROM credits_ledger WHERE user_id = ? ORDER BY id DESC LIMIT 1000").all(userId) as unknown as Array<Record<string, unknown>>;
+    return rows.map((r) => this.mapCreditLedger(r));
+  }
+
+  /** 结转用：返回所有 bonus 桶非零的用户 id。 */
+  listUsersWithBonusCredits(): number[] {
+    const rows = this.db.prepare("SELECT id FROM users WHERE bonus_carried != 0 OR bonus_current != 0").all() as unknown as Array<Record<string, unknown>>;
+    return rows.map((r) => Number(r.id));
+  }
+
+  /** 读 meta 键值（点数月度结算等持久化状态）。 */
+  getMeta(key: string): string | null {
+    const row = this.db.prepare("SELECT value FROM meta WHERE key = ?").get(key) as { value: string } | undefined;
+    return row === undefined ? null : String(row.value);
+  }
+
+  /** 写 meta 键值（upsert）。 */
+  setMeta(key: string, value: string): void {
+    this.db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
   }
 
   // ---- 账号删除（R7：墓碑化，保留 orders/payments 账务 + audit 留痕）----

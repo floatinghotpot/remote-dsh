@@ -50,6 +50,11 @@ export interface PlanSpec {
    * 客户端据此显示身份与档位对比表 —— 契约见 `API.md` §13。
    */
   vipTier?: number;
+  /**
+   * 每月赠点数（点数，非微单位；0 = 不赠）。
+   * 数值待成本模型回填，缺省 0（本期不发赠点，仅保留结转逻辑）。
+   */
+  bonusCredits?: number;
 }
 
 export interface BillingConfig {
@@ -448,7 +453,7 @@ function normalizeBilling(raw: unknown, source: string): BillingConfig {
       if (plans.some((x) => x.vipTier === vipTier)) {
         throw new Error(`${source}: "billing.plans[].vipTier" must be unique (duplicate ${vipTier})`);
       }
-      plans.push({ id: plan.id, name: plan.name, hosts: plan.hosts as number, priceCny: plan.priceCny, priceUsd: typeof plan.priceUsd === "number" ? plan.priceUsd : undefined, intervalMonths: plan.intervalMonths as number, vipTier });
+      plans.push({ id: plan.id, name: plan.name, hosts: plan.hosts as number, priceCny: plan.priceCny, priceUsd: typeof plan.priceUsd === "number" ? plan.priceUsd : undefined, intervalMonths: plan.intervalMonths as number, vipTier, bonusCredits: typeof plan.bonusCredits === "number" && plan.bonusCredits >= 0 ? plan.bonusCredits : 0 });
     }
   }
   const out: BillingConfig = { plans };
