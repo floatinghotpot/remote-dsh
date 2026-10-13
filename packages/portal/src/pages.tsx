@@ -1328,6 +1328,8 @@ function ResetPasswordPage(): React.JSX.Element {
   const [newPassword, setNewPassword] = useState("");
   const [sent, setSent] = useState(false);
   const [cap, setCap] = useState<Capabilities | null>(null);
+  const [seconds, startCountdown] = useCountdown();
+  const { toast, show } = useToast();
   const { err, run, pending } = useError();
 
   // sms 未配置 → 隐藏手机号通道（未登录，走公开 /api/capabilities）
@@ -1338,20 +1340,35 @@ function ResetPasswordPage(): React.JSX.Element {
     }).catch(() => undefined);
   }, []);
 
+  const resend = (): void => {
+    void run(async () => {
+      try {
+        await api.resetRequest(channel, identifier.trim(), captchaPayload);
+      } catch (e) {
+        setCaptchaPayload({}); // 一次性票据已消费/失效 → 清票，强制重新过人机验证
+        throw e;
+      }
+      setCaptchaPayload({}); // 成功后同样清票，再重发需重新验证
+      startCountdown();
+      show("ok", t("重置码已重新发送"));
+    });
+  };
+
   return (
     <div style={{ maxWidth: 360, margin: "80px auto", padding: "0 16px", fontFamily: "system-ui, sans-serif" }}>
       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
         <LangToggle />
       </div>
+      <Toast toast={toast} />
       <h1 style={{ fontSize: 20 }}>{t("找回密码")}</h1>
-      <div style={{ display: "flex", gap: 8, margin: "12px 0" }}>
-        <button onClick={() => setChannel("email")} style={channel === "email" ? btnStyle() : btnStyle("ghost")}>{t("邮箱")}</button>
-        {cap?.smsEnabled !== false && (
-          <button onClick={() => setChannel("phone")} style={channel === "phone" ? btnStyle() : btnStyle("ghost")}>{t("手机号")}</button>
-        )}
-      </div>
       {!sent ? (
         <>
+          <div style={{ display: "flex", gap: 8, margin: "12px 0" }}>
+            <button onClick={() => setChannel("email")} style={channel === "email" ? btnStyle() : btnStyle("ghost")}>{t("邮箱")}</button>
+            {cap?.smsEnabled !== false && (
+              <button onClick={() => setChannel("phone")} style={channel === "phone" ? btnStyle() : btnStyle("ghost")}>{t("手机号")}</button>
+            )}
+          </div>
           {field(channel === "email" ? t("注册邮箱") : t("手机号（+86）"), identifier, setIdentifier)}
           <CaptchaGate captcha={captchaPayload} onCaptcha={setCaptchaPayload} />
           {err !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{err}</p>}
@@ -1364,7 +1381,9 @@ function ResetPasswordPage(): React.JSX.Element {
                   setCaptchaPayload({}); // 一次性票据已消费/失效 → 清票，强制重新过人机验证
                   throw e;
                 }
+                setCaptchaPayload({}); // 成功后清票，sent 态重新过人机验证才能重发
                 setSent(true);
+                startCountdown();
               })
             }
             disabled={pending}
@@ -1376,6 +1395,10 @@ function ResetPasswordPage(): React.JSX.Element {
           <p style={{ fontSize: 13, color: "var(--rdsh-fg-muted)" }}>{t("若该{channel}已注册，重置码已发送（10 分钟内有效）。", { params: { channel: channel === "email" ? t("邮箱") : t("手机号") } })}</p>
           {field(t("重置码"), code, setCode)}
           {field(t("新密码（至少 8 位）"), newPassword, setNewPassword, "password")}
+          <CaptchaGate captcha={captchaPayload} onCaptcha={setCaptchaPayload} />
+          <div style={{ display: "flex", gap: 8, marginTop: 8, marginBottom: 12 }}>
+            <SendCodeButton label={t("重发重置码")} seconds={seconds} onClick={resend} disabled={pending} />
+          </div>
           {err !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{err}</p>}
           <button onClick={() => void run(async () => { await api.resetConfirm(channel, identifier.trim(), code.trim(), newPassword); navigate("/login"); })} style={{ ...btnStyle(), width: "100%" }}>{t("重置密码")}</button>
         </>
@@ -2012,7 +2035,15 @@ function VerifyPage(): React.JSX.Element {
   const channel = (q.get("channel") === "phone" ? "phone" : "email") as "email" | "phone";
   const identifier = q.get("identifier") ?? "";
   const [code, setCode] = useState("");
-  const { err, run } = useError();
+  const [captchaPayload, setCaptchaPayload] = useState<CaptchaPayload>({});
+  const [seconds, startCountdown] = useCountdown();
+  const { toast, show } = useToast();
+  const { err, run, pending } = useError();
+
+  // 注册页刚发过一码，进入验证页即启动 60s 倒计时，重发与首次发送保持同一间隔
+  useEffect(() => {
+    startCountdown();
+  }, []);
 
   const submit = (): void => {
     void run(async () => {
@@ -2021,14 +2052,33 @@ function VerifyPage(): React.JSX.Element {
     });
   };
 
+  const resend = (): void => {
+    void run(async () => {
+      try {
+        await api.registerResend(channel, identifier, captchaPayload);
+      } catch (e) {
+        setCaptchaPayload({}); // 一次性票据已消费/失效 → 清票，强制重新过人机验证
+        throw e;
+      }
+      setCaptchaPayload({}); // 成功后同样清票，再重发需重新验证
+      startCountdown();
+      show("ok", t("验证码已重新发送"));
+    });
+  };
+
   return (
     <div style={{ maxWidth: 360, margin: "80px auto", padding: "0 16px", fontFamily: "system-ui, sans-serif" }}>
       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
         <LangToggle />
       </div>
+      <Toast toast={toast} />
       <h1 style={{ fontSize: 20 }}>{t("验证{channel}", { params: { channel: channel === "email" ? t("邮箱") : t("手机号") } })}</h1>
       <p style={{ color: "var(--rdsh-fg-muted)", fontSize: 13, marginBottom: 24 }}>{t("验证码已发送至 {identifier}（10 分钟内有效）。", { params: { identifier } })}</p>
       {field(t("6 位验证码"), code, setCode)}
+      <CaptchaGate captcha={captchaPayload} onCaptcha={setCaptchaPayload} />
+      <div style={{ display: "flex", gap: 8, marginTop: 8, marginBottom: 12 }}>
+        <SendCodeButton label={t("重发验证码")} seconds={seconds} onClick={resend} disabled={pending} />
+      </div>
       {err !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{err}</p>}
       <button onClick={submit} style={{ ...btnStyle(), width: "100%" }}>{t("验证并登录")}</button>
     </div>

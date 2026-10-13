@@ -173,6 +173,10 @@ const EN: Record<string, string> = {
   "到期 {date}": "Expires {date}",
   "吊销": "Revoke",
   "重新发送 {s}s": "Resend in {s}s",
+  "重发验证码": "Resend code",
+  "重发重置码": "Resend reset code",
+  "验证码已重新发送": "Code resent",
+  "重置码已重新发送": "Reset code resent",
 
   // ---- 登录 ----
   "远程指挥你的 DeepSeek Harness 智能体，仅需浏览器，任意设备、随时随地，端到端加密":
