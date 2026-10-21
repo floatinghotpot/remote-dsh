@@ -35,6 +35,7 @@ import { DailyWindowLimiter } from "./ratelimit.ts";
 import { clearHostCookie, rootDomain } from "./server.ts";
 import { AdminError } from "./admin.ts";
 import { handleNodeRegister, handleNodeHeartbeat, handleNodeHosts, handleNodeSync, handleNodeLeave, handleNodeAssign } from "./nodes.ts";
+import { handleInternalApi } from "./internal-llm.ts";
 import type { HostCookieSigner } from "./hostcookie.ts";
 import type { AdminCtx, AdminCreateUserInput } from "./admin.ts";
 import * as admin from "./admin.ts";
@@ -819,6 +820,12 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, runti
   if (path.startsWith("/api/admin/")) {
     await handleAdminApi(req, res, runtime);
     return true;
+  }
+
+  // ---- 内部服务 API（/api/internal/*，服务令牌鉴权） ----
+  if (path.startsWith("/api/internal/")) {
+    const handled = await handleInternalApi(req, res, runtime);
+    if (handled) return true;
   }
 
   // ---- 认证端点 ----

@@ -334,6 +334,54 @@ export interface CreditSpendResult {
   balance: CreditBalances;
 }
 
+export interface ServiceTokenRow {
+  id: string;
+  name: string;
+  tokenHash: string;
+  scopes: string; // comma-separated
+  createdAt: number;
+  revokedAt: number | null;
+}
+
+export type LlmKeyStatus = "active" | "revoked";
+
+export interface LlmKeyRow {
+  id: string;
+  userId: number;
+  agentId: string;
+  tokenHash: string;
+  name: string;
+  modelAllowlist: string | null; // comma-separated; null/empty = all
+  budgetMicro: number; // 0 = unlimited
+  spentMicro: number;
+  status: LlmKeyStatus;
+  expiresAt: number | null;
+  createdAt: number;
+  lastUsedAt: number | null;
+}
+
+export interface LlmRequestRow {
+  id: string;
+  userId: number;
+  agentId: string;
+  keyId: string;
+  modelAlias: string;
+  provider: string;
+  upstreamModel: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  reasoningTokens: number;
+  providerCostMicro: number;
+  chargedMicro: number;
+  status: string; // ok | error
+  errorCode: string | null;
+  latencyMs: number | null;
+  ttftMs: number | null;
+  createdAt: number;
+}
+
 const USAGE_UPSERT_SQL = `INSERT INTO usage_daily (user_id, host_id, date, instance_id, source, relay_seconds, relay_bytes_up, relay_bytes_down, direct_bytes_up, direct_bytes_down, cloud_asr_seconds, local_asr_seconds, cloud_tts_chars, local_tts_chars, sessions, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(user_id, host_id, date, instance_id) DO UPDATE SET
@@ -530,6 +578,52 @@ export class HubDb {
       );
       CREATE INDEX IF NOT EXISTS idx_credit_holds_user_status ON credit_holds(user_id, status);
       CREATE INDEX IF NOT EXISTS idx_credit_holds_expires ON credit_holds(status, expires_at);
+      CREATE TABLE IF NOT EXISTS service_tokens (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        token_hash TEXT UNIQUE NOT NULL,
+        scopes TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        revoked_at INTEGER
+      );
+      CREATE TABLE IF NOT EXISTS llm_keys (
+        id TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        agent_id TEXT NOT NULL,
+        token_hash TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL,
+        model_allowlist TEXT,
+        budget_micro INTEGER NOT NULL DEFAULT 0,
+        spent_micro INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL,
+        expires_at INTEGER,
+        created_at INTEGER NOT NULL,
+        last_used_at INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS idx_llm_keys_agent ON llm_keys(agent_id);
+      CREATE TABLE IF NOT EXISTS llm_requests (
+        id TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        agent_id TEXT NOT NULL,
+        key_id TEXT NOT NULL,
+        model_alias TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        upstream_model TEXT NOT NULL,
+        input_tokens INTEGER NOT NULL DEFAULT 0,
+        output_tokens INTEGER NOT NULL DEFAULT 0,
+        cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+        cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+        reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+        provider_cost_micro INTEGER NOT NULL DEFAULT 0,
+        charged_micro INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL,
+        error_code TEXT,
+        latency_ms INTEGER,
+        ttft_ms INTEGER,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_llm_requests_user ON llm_requests(user_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_llm_requests_agent ON llm_requests(agent_id, created_at);
       CREATE TABLE IF NOT EXISTS meta (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -2494,6 +2588,137 @@ export class HubDb {
   /** 写 meta 键值（upsert）。 */
   setMeta(key: string, value: string): void {
     this.db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
+  }
+
+  // ---- 内部服务令牌（49-llm-router 前置）----
+
+  private mapServiceToken(row: Record<string, unknown>): ServiceTokenRow {
+    return {
+      id: String(row.id),
+      name: String(row.name),
+      tokenHash: String(row.token_hash),
+      scopes: String(row.scopes),
+      createdAt: Number(row.created_at),
+      revokedAt: row.revoked_at === null || row.revoked_at === undefined ? null : Number(row.revoked_at),
+    };
+  }
+
+  createServiceToken(id: string, name: string, tokenHash: string, scopes: string, createdAt = Date.now()): ServiceTokenRow {
+    this.db.prepare("INSERT INTO service_tokens (id, name, token_hash, scopes, created_at) VALUES (?, ?, ?, ?, ?)").run(id, name, tokenHash, scopes, createdAt);
+    const row = this.db.prepare("SELECT * FROM service_tokens WHERE id = ?").get(id);
+    return this.mapServiceToken(row as unknown as Record<string, unknown>);
+  }
+
+  findServiceTokenByHash(tokenHash: string): ServiceTokenRow | null {
+    const row = this.db.prepare("SELECT * FROM service_tokens WHERE token_hash = ?").get(tokenHash);
+    return row === undefined ? null : this.mapServiceToken(row as unknown as Record<string, unknown>);
+  }
+
+  listServiceTokens(): ServiceTokenRow[] {
+    const rows = this.db.prepare("SELECT * FROM service_tokens ORDER BY created_at").all() as unknown as Array<Record<string, unknown>>;
+    return rows.map((r) => this.mapServiceToken(r));
+  }
+
+  revokeServiceToken(id: string, now = Date.now()): boolean {
+    const info = this.db.prepare("UPDATE service_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL").run(now, id);
+    return info.changes > 0;
+  }
+
+  // ---- LLM key（per-agent 虚拟 key）----
+
+  private mapLlmKey(row: Record<string, unknown>): LlmKeyRow {
+    return {
+      id: String(row.id),
+      userId: Number(row.user_id),
+      agentId: String(row.agent_id),
+      tokenHash: String(row.token_hash),
+      name: String(row.name),
+      modelAllowlist: row.model_allowlist === null || row.model_allowlist === undefined ? null : String(row.model_allowlist),
+      budgetMicro: Number(row.budget_micro),
+      spentMicro: Number(row.spent_micro),
+      status: String(row.status) as LlmKeyStatus,
+      expiresAt: row.expires_at === null || row.expires_at === undefined ? null : Number(row.expires_at),
+      createdAt: Number(row.created_at),
+      lastUsedAt: row.last_used_at === null || row.last_used_at === undefined ? null : Number(row.last_used_at),
+    };
+  }
+
+  createLlmKey(input: {
+    id: string; userId: number; agentId: string; tokenHash: string; name: string;
+    modelAllowlist?: string | null; budgetMicro?: number; expiresAt?: number | null; now?: number;
+  }): LlmKeyRow {
+    const now = input.now ?? Date.now();
+    this.db
+      .prepare("INSERT INTO llm_keys (id, user_id, agent_id, token_hash, name, model_allowlist, budget_micro, spent_micro, status, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'active', ?, ?)")
+      .run(input.id, input.userId, input.agentId, input.tokenHash, input.name, input.modelAllowlist ?? null, input.budgetMicro ?? 0, input.expiresAt ?? null, now);
+    const row = this.db.prepare("SELECT * FROM llm_keys WHERE id = ?").get(input.id);
+    return this.mapLlmKey(row as unknown as Record<string, unknown>);
+  }
+
+  findLlmKeyByHash(tokenHash: string): LlmKeyRow | null {
+    const row = this.db.prepare("SELECT * FROM llm_keys WHERE token_hash = ?").get(tokenHash);
+    return row === undefined ? null : this.mapLlmKey(row as unknown as Record<string, unknown>);
+  }
+
+  getLlmKeyById(id: string): LlmKeyRow | null {
+    const row = this.db.prepare("SELECT * FROM llm_keys WHERE id = ?").get(id);
+    return row === undefined ? null : this.mapLlmKey(row as unknown as Record<string, unknown>);
+  }
+
+  revokeLlmKey(id: string, now = Date.now()): boolean {
+    const info = this.db.prepare("UPDATE llm_keys SET status = 'revoked' WHERE id = ? AND status = 'active'").run(id);
+    return info.changes > 0;
+  }
+
+  addLlmKeySpent(id: string, micro: number): void {
+    this.db.prepare("UPDATE llm_keys SET spent_micro = spent_micro + ?, last_used_at = ? WHERE id = ?").run(micro, Date.now(), id);
+  }
+
+  // ---- LLM usage 记录 ----
+
+  private mapLlmRequest(row: Record<string, unknown>): LlmRequestRow {
+    return {
+      id: String(row.id),
+      userId: Number(row.user_id),
+      agentId: String(row.agent_id),
+      keyId: String(row.key_id),
+      modelAlias: String(row.model_alias),
+      provider: String(row.provider),
+      upstreamModel: String(row.upstream_model),
+      inputTokens: Number(row.input_tokens),
+      outputTokens: Number(row.output_tokens),
+      cacheReadTokens: Number(row.cache_read_tokens),
+      cacheWriteTokens: Number(row.cache_write_tokens),
+      reasoningTokens: Number(row.reasoning_tokens),
+      providerCostMicro: Number(row.provider_cost_micro),
+      chargedMicro: Number(row.charged_micro),
+      status: String(row.status),
+      errorCode: row.error_code === null || row.error_code === undefined ? null : String(row.error_code),
+      latencyMs: row.latency_ms === null || row.latency_ms === undefined ? null : Number(row.latency_ms),
+      ttftMs: row.ttft_ms === null || row.ttft_ms === undefined ? null : Number(row.ttft_ms),
+      createdAt: Number(row.created_at),
+    };
+  }
+
+  createLlmRequest(r: LlmRequestRow): void {
+    this.db
+      .prepare(
+        "INSERT INTO llm_requests (id, user_id, agent_id, key_id, model_alias, provider, upstream_model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens, provider_cost_micro, charged_micro, status, error_code, latency_ms, ttft_ms, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(r.id, r.userId, r.agentId, r.keyId, r.modelAlias, r.provider, r.upstreamModel, r.inputTokens, r.outputTokens, r.cacheReadTokens, r.cacheWriteTokens, r.reasoningTokens, r.providerCostMicro, r.chargedMicro, r.status, r.errorCode, r.latencyMs, r.ttftMs, r.createdAt);
+  }
+
+  listLlmRequests(opts: { userId?: number; agentId?: string; from?: number; to?: number; limit?: number } = {}): LlmRequestRow[] {
+    const conds: string[] = [];
+    const params: Array<number | string> = [];
+    if (opts.userId !== undefined) { conds.push("user_id = ?"); params.push(opts.userId); }
+    if (opts.agentId !== undefined) { conds.push("agent_id = ?"); params.push(opts.agentId); }
+    if (opts.from !== undefined) { conds.push("created_at >= ?"); params.push(opts.from); }
+    if (opts.to !== undefined) { conds.push("created_at <= ?"); params.push(opts.to); }
+    const where = conds.length > 0 ? `WHERE ${conds.join(" AND ")}` : "";
+    const limit = Math.min(Math.max(opts.limit ?? 1000, 1), 10000);
+    const rows = this.db.prepare(`SELECT * FROM llm_requests ${where} ORDER BY created_at DESC LIMIT ?`).all(...params, limit) as unknown as Array<Record<string, unknown>>;
+    return rows.map((r) => this.mapLlmRequest(r));
   }
 
   // ---- 账号删除（R7：墓碑化，保留 orders/payments 账务 + audit 留痕）----

@@ -8,7 +8,7 @@ import type { Pool, PoolClient } from "pg";
 import type {
   UserRow, HostRow, NodeRow, RefreshRow, JoinTokenRow, BindSessionRow, HostShareRow,
   AuditEventRow, EmailCodeRow, SmsCodeRow, SubscriptionRow, OrderRow, PaymentRow, CreditLedgerRow,
-  CreditHoldRow, CreditHoldStatus,
+  CreditHoldRow, CreditHoldStatus, ServiceTokenRow, LlmKeyRow, LlmKeyStatus, LlmRequestRow,
 } from "../db.ts";
 
 /** 查询句柄：方法内既可能是 Pool（无事务）也可能是 PoolClient（事务内）。 */
@@ -202,6 +202,58 @@ export function mapCreditHold(row: Record<string, unknown>): CreditHoldRow {
     settledMicro: Number(row.settled_micro),
     status: String(row.status) as CreditHoldStatus,
     expiresAt: Number(row.expires_at),
+    createdAt: Number(row.created_at),
+  };
+}
+
+export function mapServiceToken(row: Record<string, unknown>): ServiceTokenRow {
+  return {
+    id: String(row.id),
+    name: String(row.name),
+    tokenHash: String(row.token_hash),
+    scopes: String(row.scopes),
+    createdAt: Number(row.created_at),
+    revokedAt: row.revoked_at === null || row.revoked_at === undefined ? null : Number(row.revoked_at),
+  };
+}
+
+export function mapLlmKey(row: Record<string, unknown>): LlmKeyRow {
+  return {
+    id: String(row.id),
+    userId: Number(row.user_id),
+    agentId: String(row.agent_id),
+    tokenHash: String(row.token_hash),
+    name: String(row.name),
+    modelAllowlist: row.model_allowlist === null || row.model_allowlist === undefined ? null : String(row.model_allowlist),
+    budgetMicro: Number(row.budget_micro),
+    spentMicro: Number(row.spent_micro),
+    status: String(row.status) as LlmKeyStatus,
+    expiresAt: row.expires_at === null || row.expires_at === undefined ? null : Number(row.expires_at),
+    createdAt: Number(row.created_at),
+    lastUsedAt: row.last_used_at === null || row.last_used_at === undefined ? null : Number(row.last_used_at),
+  };
+}
+
+export function mapLlmRequest(row: Record<string, unknown>): LlmRequestRow {
+  return {
+    id: String(row.id),
+    userId: Number(row.user_id),
+    agentId: String(row.agent_id),
+    keyId: String(row.key_id),
+    modelAlias: String(row.model_alias),
+    provider: String(row.provider),
+    upstreamModel: String(row.upstream_model),
+    inputTokens: Number(row.input_tokens),
+    outputTokens: Number(row.output_tokens),
+    cacheReadTokens: Number(row.cache_read_tokens),
+    cacheWriteTokens: Number(row.cache_write_tokens),
+    reasoningTokens: Number(row.reasoning_tokens),
+    providerCostMicro: Number(row.provider_cost_micro),
+    chargedMicro: Number(row.charged_micro),
+    status: String(row.status),
+    errorCode: row.error_code === null || row.error_code === undefined ? null : String(row.error_code),
+    latencyMs: row.latency_ms === null || row.latency_ms === undefined ? null : Number(row.latency_ms),
+    ttftMs: row.ttft_ms === null || row.ttft_ms === undefined ? null : Number(row.ttft_ms),
     createdAt: Number(row.created_at),
   };
 }

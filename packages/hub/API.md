@@ -401,3 +401,31 @@ UI 文案必须写「**可云端中转主机数**」，**不要**写「主机配
 用户点按**第 N 台之后**的云端主机时，弹提示「当前主机数已超出套餐配额，请升级或续费」，引导其进入套餐页。
 
 **后果（已接受）**：这是**软提示而非硬拦** —— 隧道仍连着（避免风暴），若用户持有旧书签 / 共享链接直接访问，中继仍会转发。
+
+## 14. 内部服务 API（/api/internal/*，49-llm-router，2026-10-21）
+
+> 仅供 LLM Router（私有 `rdsh-cloud`）等内部服务调用；鉴权 = `Authorization: Bearer <service-token>`，
+> 按 scope 校验，不走用户会话。token 由管理面发放（`service_tokens` 表）。
+
+### 14.1 鉴权与错误
+
+- 头：`Authorization: Bearer <service-token>`；
+- 失败：401 `UNAUTHORIZED`（缺失/无效/吊销/scope 不足）；
+- 错误体统一 `{error:{code,message}}`。
+
+### 14.2 端点
+
+| 方法 | 路径 | scope | 说明 |
+|---|---|---|---|
+| POST | `/api/internal/llm/keys` | `llm:key:create` | 签发 per-agent key；返回一次性 `token`（只存 hash） |
+| POST | `/api/internal/llm/keys/{id}/revoke` | `llm:key:revoke` | 吊销 key |
+| POST | `/api/internal/llm/authorize` | `llm:authorize` | 验 key + 模型白名单 + 预算 + `reserveCreditHold` → `holdId` |
+| POST | `/api/internal/llm/holds/{id}/settle` | `llm:settle` | 按实际金额结算 + 记 `llm_requests` + 累加 key spent |
+| POST | `/api/internal/llm/holds/{id}/release` | `llm:release` | 释放 hold，不扣费 |
+| GET | `/api/internal/llm/usage?userId=&agentId=&from=&to=` | `llm:usage:read` | 查询 `llm_requests` |
+
+**authorize 请求**：`{token, model, requestId, estimateMicro, ttlMs?}`；返回 `{keyId, userId, agentId, holdId, availableMicro}`。
+错误：401 `UNAUTHORIZED`（key 无效/吊销/过期/用户不活跃）、403 `MODEL_NOT_ALLOWED`、402 `QUOTA_EXCEEDED`/`INSUFFICIENT_CREDITS`。
+
+**settle 请求**：`{keyId, actualMicro, requestId?, modelAlias?, provider?, upstreamModel?, usage?{inputTokens,outputTokens,cacheReadTokens,cacheWriteTokens,reasoningTokens}, providerCostMicro?, latencyMs?, ttftMs?}`。
+返回 `{chargedMicro, balance}`。幂等：同一 hold 重复 settle 返回 `already_settled`；`release` 后 settle 返回 409 `CONFLICT`。
