@@ -96,6 +96,37 @@ test("issue → authorize → settle → usage 全链路", async () => {
   }
 });
 
+test("settle 幂等：重复 settle 不重复累加 spent / 不重复写 usage", async () => {
+  const ctx = await boot();
+  try {
+    const uid = ctx.db.createUser("eve", "hash").id;
+    ctx.db.appendCreditLedger(uid, 100 * 10000, "purchased", "test");
+    const { token, keyId } = await issueKey(ctx, { userId: uid, agentId: "agent-idem", budgetMicro: 100 * 10000 });
+    const authRes = await fetch(`${ctx.base}/api/internal/llm/authorize`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${ctx.svcToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ token, model: "deepseek-v4-flash", requestId: "req-idem", estimateMicro: 10000 }),
+    });
+    assert.equal(authRes.status, 200);
+    const auth = (await authRes.json()) as { holdId: string };
+
+    const body = JSON.stringify({ keyId, actualMicro: 6000, requestId: "req-idem", modelAlias: "deepseek-v4-flash", provider: "deepseek", upstreamModel: "deepseek-chat", usage: { inputTokens: 10, outputTokens: 20 } });
+    const first = await fetch(`${ctx.base}/api/internal/llm/holds/${auth.holdId}/settle`, {
+      method: "POST", headers: { authorization: `Bearer ${ctx.svcToken}`, "content-type": "application/json" }, body,
+    });
+    assert.equal(first.status, 200);
+    const second = await fetch(`${ctx.base}/api/internal/llm/holds/${auth.holdId}/settle`, {
+      method: "POST", headers: { authorization: `Bearer ${ctx.svcToken}`, "content-type": "application/json" }, body,
+    });
+    assert.equal(second.status, 200);
+
+    assert.equal(ctx.db.getLlmKeyById(keyId)!.spentMicro, 6000);
+    assert.equal(ctx.db.listLlmRequests({ userId: uid }).length, 1);
+  } finally {
+    await close(ctx);
+  }
+});
+
 test("模型白名单：不允许的模型 → 403", async () => {
   const ctx = await boot();
   try {

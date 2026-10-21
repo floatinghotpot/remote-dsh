@@ -150,6 +150,10 @@ export async function handleInternalApi(req: IncomingMessage, res: ServerRespons
     if (settle.status === "not_found") return void writeError(res, 404, "NOT_FOUND", "hold not found"), true;
     if (settle.status === "released") return void writeError(res, 409, "CONFLICT", "hold already released"), true;
     if (settle.status === "insufficient") return void writeError(res, 402, "INSUFFICIENT_CREDITS", "insufficient credits"), true;
+    if (settle.status === "already_settled") {
+      // 幂等重试：hold 已结算，不再累加 spent / 重复写 usage。
+      return void json(res, 200, { chargedMicro: settle.chargedMicro, balance: settle.balance }), true;
+    }
     if (actualMicro > 0) await runtime.store.addLlmKeySpent(key.id, actualMicro);
     const usage = (body.usage ?? {}) as Record<string, unknown>;
     const created = Date.now();
