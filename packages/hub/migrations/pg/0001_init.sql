@@ -290,7 +290,7 @@ CREATE TABLE service_tokens (
 CREATE TABLE llm_keys (
   id text PRIMARY KEY,
   user_id bigint NOT NULL REFERENCES users(id),
-  agent_id text NOT NULL,
+  agent_id text,
   token_hash text UNIQUE NOT NULL,
   name text NOT NULL,
   model_allowlist text,
@@ -307,7 +307,7 @@ CREATE INDEX idx_llm_keys_agent ON llm_keys(agent_id);
 CREATE TABLE llm_requests (
   id text PRIMARY KEY,
   user_id bigint NOT NULL REFERENCES users(id),
-  agent_id text NOT NULL,
+  agent_id text,
   key_id text NOT NULL,
   model_alias text NOT NULL,
   provider text NOT NULL,

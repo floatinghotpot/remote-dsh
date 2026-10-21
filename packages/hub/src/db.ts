@@ -348,7 +348,7 @@ export type LlmKeyStatus = "active" | "revoked";
 export interface LlmKeyRow {
   id: string;
   userId: number;
-  agentId: string;
+  agentId: string | null; // null = user self-service key (not bound to an agent)
   tokenHash: string;
   name: string;
   modelAllowlist: string | null; // comma-separated; null/empty = all
@@ -363,7 +363,7 @@ export interface LlmKeyRow {
 export interface LlmRequestRow {
   id: string;
   userId: number;
-  agentId: string;
+  agentId: string | null;
   keyId: string;
   modelAlias: string;
   provider: string;
@@ -589,7 +589,7 @@ export class HubDb {
       CREATE TABLE IF NOT EXISTS llm_keys (
         id TEXT PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id),
-        agent_id TEXT NOT NULL,
+        agent_id TEXT,
         token_hash TEXT UNIQUE NOT NULL,
         name TEXT NOT NULL,
         model_allowlist TEXT,
@@ -604,7 +604,7 @@ export class HubDb {
       CREATE TABLE IF NOT EXISTS llm_requests (
         id TEXT PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id),
-        agent_id TEXT NOT NULL,
+        agent_id TEXT,
         key_id TEXT NOT NULL,
         model_alias TEXT NOT NULL,
         provider TEXT NOT NULL,
@@ -2630,7 +2630,7 @@ export class HubDb {
     return {
       id: String(row.id),
       userId: Number(row.user_id),
-      agentId: String(row.agent_id),
+      agentId: row.agent_id === null || row.agent_id === undefined ? null : String(row.agent_id),
       tokenHash: String(row.token_hash),
       name: String(row.name),
       modelAllowlist: row.model_allowlist === null || row.model_allowlist === undefined ? null : String(row.model_allowlist),
@@ -2644,7 +2644,7 @@ export class HubDb {
   }
 
   createLlmKey(input: {
-    id: string; userId: number; agentId: string; tokenHash: string; name: string;
+    id: string; userId: number; agentId: string | null; tokenHash: string; name: string;
     modelAllowlist?: string | null; budgetMicro?: number; expiresAt?: number | null; now?: number;
   }): LlmKeyRow {
     const now = input.now ?? Date.now();
@@ -2665,6 +2665,11 @@ export class HubDb {
     return row === undefined ? null : this.mapLlmKey(row as unknown as Record<string, unknown>);
   }
 
+  listLlmKeysByUser(userId: number): LlmKeyRow[] {
+    const rows = this.db.prepare("SELECT * FROM llm_keys WHERE user_id = ? ORDER BY created_at DESC").all(userId) as unknown as Array<Record<string, unknown>>;
+    return rows.map((r) => this.mapLlmKey(r));
+  }
+
   revokeLlmKey(id: string, now = Date.now()): boolean {
     const info = this.db.prepare("UPDATE llm_keys SET status = 'revoked' WHERE id = ? AND status = 'active'").run(id);
     return info.changes > 0;
@@ -2680,7 +2685,7 @@ export class HubDb {
     return {
       id: String(row.id),
       userId: Number(row.user_id),
-      agentId: String(row.agent_id),
+      agentId: row.agent_id === null || row.agent_id === undefined ? null : String(row.agent_id),
       keyId: String(row.key_id),
       modelAlias: String(row.model_alias),
       provider: String(row.provider),

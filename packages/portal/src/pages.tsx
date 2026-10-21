@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
 import { api, ApiError, subscribeEvents, adminApi } from "./api.ts";
-import type { HostInfo, JoinTokenInfo, CaptchaPayload, AccountInfo, Capabilities, UsageDay, WechatPayInfo, AdminMe, AdminUserRow, AdminHostRow, AdminNodeRow, AdminOrderRow, AdminPaymentRow, AdminAuditRow, AdminSubscriptionRow, AdminUserDetail, AdminDashboard, AdminConfig } from "./api.ts";
+import type { HostInfo, JoinTokenInfo, CaptchaPayload, AccountInfo, Capabilities, UsageDay, WechatPayInfo, AdminMe, AdminUserRow, AdminHostRow, AdminNodeRow, AdminOrderRow, AdminPaymentRow, AdminAuditRow, AdminSubscriptionRow, AdminUserDetail, AdminDashboard, AdminConfig, LlmKeyInfo } from "./api.ts";
 import { fingerprint } from "./e2ee.ts";
 import { useT, getLang } from "./i18n.ts";
 import type { T } from "./i18n.ts";
@@ -100,6 +100,8 @@ export function App(): React.JSX.Element {
       <PhoneSettingsPage />
     ) : path === "/settings/2fa" ? (
       <TwoFaSettingsPage />
+    ) : path === "/settings/llm-keys" ? (
+      <LlmKeysPage />
     ) : path === "/settings/danger" ? (
       <DangerZonePage />
     ) : path === "/add-host" ? (
@@ -1114,6 +1116,11 @@ function AccountPage(): React.JSX.Element {
         badge={<Badge ok={info?.totpEnabled === true} text={info?.totpEnabled ? t("已开启") : t("未开启")} />}
         onClick={() => navigate("/settings/2fa")}
       />
+      <SettingRow
+        label={t("LLM API Key")}
+        desc={t("创建用于 DSH 模型接入的虚拟 Key，额度由账户点数决定")}
+        onClick={() => navigate("/settings/llm-keys")}
+      />
       {wechatEnabled ? (
         <SettingRow
           label={t("绑定微信")}
@@ -1126,6 +1133,79 @@ function AccountPage(): React.JSX.Element {
         <SettingLink label={t("微信客服")} desc={t("遇到问题？联系在线客服")} href={customerServiceUrl} />
       ) : null}
       <SettingRow label={t("删除账号")} desc={t("立即断开全部主机并清除个人数据，不可恢复")} danger onClick={() => navigate("/settings/danger")} />
+    </Shell>
+  );
+}
+
+/** LLM API Key（用户自助：创建一次性显示 / 列表 / 吊销）。 */
+function LlmKeysPage(): React.JSX.Element {
+  const { t } = useT();
+  const [keys, setKeys] = useState<LlmKeyInfo[]>([]);
+  const [created, setCreated] = useState<string | null>(null);
+  const { toast, show } = useToast();
+  const { err, run } = useError();
+
+  const load = async (): Promise<void> => setKeys((await api.listLlmKeys()).keys);
+  useEffect(() => {
+    void run(load);
+  }, []);
+
+  const create = (): void => {
+    void run(async () => {
+      const r = await api.createLlmKey(`key-${new Date().toISOString().slice(0, 10)}`);
+      setCreated(r.token);
+      await load();
+    });
+  };
+
+  const revoke = (id: string): void => {
+    void run(async () => {
+      await api.revokeLlmKey(id);
+      show("ok", t("已吊销"));
+      await load();
+    });
+  };
+
+  const copy = (text: string): void => {
+    void navigator.clipboard.writeText(text).then(
+      () => show("ok", t("已复制")),
+      () => show("err", t("复制失败，请手动复制")),
+    );
+  };
+
+  return (
+    <Shell title={t("LLM API Key")}>
+      <BackToAccount />
+      <Toast toast={toast} />
+      {err !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{err}</p>}
+      {created !== null && (
+        <Card title={t("新 Key（只显示一次）")}>
+          <p style={{ fontSize: 13, color: "var(--rdsh-fg-muted)", marginTop: 0 }}>
+            {t("请立即复制保存，刷新后不再显示；把它填到 DSH 的模型 API Key 里。")}
+          </p>
+          <code style={{ display: "block", padding: 8, background: "var(--rdsh-bg-subtle)", borderRadius: 6, wordBreak: "break-all", fontSize: 12 }}>{created}</code>
+          <button onClick={() => copy(created)} style={{ ...btnStyle(), marginTop: 8 }}>{t("复制")}</button>
+        </Card>
+      )}
+      <Card title={t("我的 Key")}>
+        {keys.length === 0 && (
+          <p style={{ fontSize: 13, color: "var(--rdsh-fg-muted)", marginTop: 0 }}>{t("还没有 Key。创建一个，填到你的 DSH 里使用。")}</p>
+        )}
+        {keys.map((k) => (
+          <div key={k.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid var(--rdsh-border-soft)" }}>
+            <div>
+              <div style={{ fontSize: 14 }}>{k.name}</div>
+              <div style={{ fontSize: 12, color: "var(--rdsh-fg-muted)" }}>
+                {k.status === "revoked" ? t("已吊销") : t("已消耗 {x} 点", { params: { x: String(k.spentMicro / 10000) } })}
+              </div>
+            </div>
+            {k.status === "active" && (
+              <button onClick={() => revoke(k.id)} style={btnStyle("ghost")}>{t("吊销")}</button>
+            )}
+          </div>
+        ))}
+        <button onClick={create} style={{ ...btnStyle(), marginTop: 12 }}>{t("创建 Key")}</button>
+      </Card>
     </Shell>
   );
 }

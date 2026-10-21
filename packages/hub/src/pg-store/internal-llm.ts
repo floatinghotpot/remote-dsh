@@ -18,6 +18,7 @@ export function internalLlm(
   | "createLlmKey"
   | "findLlmKeyByHash"
   | "getLlmKeyById"
+  | "listLlmKeysByUser"
   | "revokeLlmKey"
   | "addLlmKeySpent"
   | "createLlmRequest"
@@ -45,7 +46,7 @@ export function internalLlm(
     },
 
     createLlmKey: async (input: {
-      id: string; userId: number; agentId: string; tokenHash: string; name: string;
+      id: string; userId: number; agentId: string | null; tokenHash: string; name: string;
       modelAllowlist?: string | null; budgetMicro?: number; expiresAt?: number | null; now?: number;
     }): Promise<LlmKeyRow> => {
       const now = input.now ?? Date.now();
@@ -63,6 +64,11 @@ export function internalLlm(
     getLlmKeyById: async (id: string): Promise<LlmKeyRow | null> => {
       const row = one(await q(txDb(pool), "SELECT * FROM llm_keys WHERE id = $1", [id]));
       return row === null ? null : mapLlmKey(row);
+    },
+
+    listLlmKeysByUser: async (userId: number): Promise<LlmKeyRow[]> => {
+      const rows = (await q(txDb(pool), "SELECT * FROM llm_keys WHERE user_id = $1 ORDER BY created_at DESC", [userId])).rows;
+      return rows.map((r) => mapLlmKey(r));
     },
 
     revokeLlmKey: async (id: string, _now = Date.now()): Promise<boolean> => {

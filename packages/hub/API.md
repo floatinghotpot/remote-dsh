@@ -429,3 +429,17 @@ UI 文案必须写「**可云端中转主机数**」，**不要**写「主机配
 
 **settle 请求**：`{keyId, actualMicro, requestId?, modelAlias?, provider?, upstreamModel?, usage?{inputTokens,outputTokens,cacheReadTokens,cacheWriteTokens,reasoningTokens}, providerCostMicro?, latencyMs?, ttftMs?}`。
 返回 `{chargedMicro, balance}`。幂等：同一 hold 重复 settle 返回 `already_settled`；`release` 后 settle 返回 409 `CONFLICT`。
+
+## 15. 用户自助 LLM API Key（/api/account/llm/keys，2026-10-21）
+
+> 用户会话鉴权（`Authorization: Bearer <access>`）；仅供用户管理**自己的** key。
+> token 仅创建时返回一次，之后只回元数据（永不回 token / hash）。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/account/llm/keys` | 列出自己的 key：`{id,name,status,spentMicro,budgetMicro,createdAt,lastUsedAt}` |
+| POST | `/api/account/llm/keys` | 创建，`{name?}` → `{keyId, token, name}`（token 前缀 `sk-rdsh-`，仅此一次） |
+| POST | `/api/account/llm/keys/{id}/revoke` | 吊销自己的 key → `{ok}` |
+
+- 未登录 401 `UNAUTHORIZED`；操作他人 key 404 `NOT_FOUND`；
+- key 用于 DSH 的 `DEEPSEEK_API_KEY`（经 `rdsh-router`）；额度 = 用户钱包点数，余额不足时 Router 返回 402。

@@ -221,7 +221,7 @@ export function mapLlmKey(row: Record<string, unknown>): LlmKeyRow {
   return {
     id: String(row.id),
     userId: Number(row.user_id),
-    agentId: String(row.agent_id),
+    agentId: row.agent_id === null || row.agent_id === undefined ? null : String(row.agent_id),
     tokenHash: String(row.token_hash),
     name: String(row.name),
     modelAllowlist: row.model_allowlist === null || row.model_allowlist === undefined ? null : String(row.model_allowlist),
@@ -238,7 +238,7 @@ export function mapLlmRequest(row: Record<string, unknown>): LlmRequestRow {
   return {
     id: String(row.id),
     userId: Number(row.user_id),
-    agentId: String(row.agent_id),
+    agentId: row.agent_id === null || row.agent_id === undefined ? null : String(row.agent_id),
     keyId: String(row.key_id),
     modelAlias: String(row.model_alias),
     provider: String(row.provider),

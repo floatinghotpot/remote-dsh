@@ -18,7 +18,7 @@ function bearerToken(req: IncomingMessage): string | null {
   return null;
 }
 
-async function readJson(req: IncomingMessage): Promise<Record<string, unknown> | null> {
+export async function readJson(req: IncomingMessage): Promise<Record<string, unknown> | null> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req) {

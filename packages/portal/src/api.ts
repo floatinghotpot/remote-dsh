@@ -63,6 +63,16 @@ export interface JoinTokenInfo {
   revoked: boolean;
 }
 
+export interface LlmKeyInfo {
+  id: string;
+  name: string;
+  status: string;
+  spentMicro: number;
+  budgetMicro: number;
+  createdAt: number;
+  lastUsedAt: number | null;
+}
+
 export interface AccountInfo {
   name: string;
   role: string;
@@ -292,6 +302,15 @@ export const api = {
   },
   accountInfo(opts?: { probe?: boolean }): Promise<AccountInfo> {
     return jsonFetch("/api/account", undefined, opts);
+  },
+  listLlmKeys(): Promise<{ keys: LlmKeyInfo[] }> {
+    return jsonFetch("/api/account/llm/keys");
+  },
+  createLlmKey(name: string): Promise<{ keyId: string; token: string; name: string }> {
+    return jsonFetch("/api/account/llm/keys", { method: "POST", body: JSON.stringify({ name }) });
+  },
+  revokeLlmKey(keyId: string): Promise<{ ok: boolean }> {
+    return jsonFetch(`/api/account/llm/keys/${keyId}/revoke`, { method: "POST", body: "{}" });
   },
   capabilities(): Promise<Capabilities> {
     return jsonFetch("/api/capabilities");
