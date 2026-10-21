@@ -1,0 +1,11 @@
+packages:
+  - "packages/*"
+  - "apps/*"
+
+# pnpm 11 supply-chain protection: allow build scripts only for these deps.
+# esbuild (vite's dependency, portal only) needs its postinstall.
+allowBuilds:
+  esbuild: true
+
+minimumReleaseAgeExclude:
+  - rdsh-gateway@0.1.0

@@ -1,0 +1,124 @@
+# rdsh-tunnel 协议（冻结 v1）
+
+> **状态**: `FROZEN v1`（2026-08-23，M3 定稿）。跨语言契约 —— rdsh-hub（TS 原型 / 未来 Go
+> 生产实现）与 rdsh-gateway 之间的**唯一**线协议。任何变更必须先更新本文档再改实现，
+> 并补 conformance 互操作测试（TS ↔ Go，`e2e/`）。
+>
+> 参考：私有仓 `doc/feature/03-hub/solution.md` §5.1（内部设计文档）。
+
+## 传输
+
+- 载体：WebSocket（WSS，TLS 1.3）
+- 方向：gateway **出站**连接 hub；一个 host 一条隧道长连接
+- 隧道认证：WSS 握手头 `Authorization: Bearer <hostToken>`（首选，不入 URL 避免日志泄露）；旧版 query `?token=` 向后兼容保留（WSS 已加密）
+- 节点分配能力声明：新 gateway 在 WSS 握手额外带 `x-rdsh-relay-follow: 1`，声明能跟随节点分配的 `307` 重定向；hub **仅对带此头的连接**做动态节点分配，老 gateway（不带此头）直接兜底直连，避免拿到 307 连不上而循环重试。
+- 帧即 WS message（binary），一条 WS message 恰为一帧（长度由帧头 length 字段约束）
+
+## 帧格式
+
+| 字段 | 长度 | 说明 |
+|---|---|---|
+| magic | 4B | `0x52 0x44 0x53 0x48`（"RDSH"） |
+| version | 1B | 协议版本（当前 1） |
+| flags | 1B | bit0（`FLAG_E2E` = 0x01）: E2E 帧标记（09 已实现，见「E2E 加密（raw stream）」）；实现必须**忽略未知位并原样透传** |
+| type | 1B | 帧类型（下表） |
+| streamId | 4B | 流 id（大端，多路复用） |
+| length | 4B | payload 长度（大端） |
+| payload | N | 负载（JSON 或原始字节，见 type 表） |
+
+帧头长度固定 15B；payload 上限 **16 MiB**（DATA 分片转发，超出属协议错误）。
+
+## 帧类型与 payload
+
+| type | 值 | payload 编码 | 语义 |
+|---|---|---|---|
+| OPEN | 0x01 | JSON（见下） | 流开始。**hub→gateway = 客户端请求**；**gateway→hub = 上游响应**（复用同一 streamId） |
+| DATA | 0x02 | 原始字节 | 请求/响应体分片（流式，禁止整体缓冲；按背压转发） |
+| CLOSE | 0x03 | JSON `{code?, message?}` | 流正常结束（code 0）或异常 |
+| PING | 0x04 | JSON `{ts}` | 心跳探测（毫秒时间戳） |
+| PONG | 0x05 | JSON `{ts}` | 心跳回显 |
+| ERROR | 0x06 | JSON `{code, message}` | 协议级错误（认证失败、host 不存在、上游不可达等），关闭对应流 |
+
+### 帧分域（frame domain，A1，2026-10-10）
+
+- `type < 0x80`（0x00–0x7F）= **核心帧**：即上表 OPEN..ERROR（0x01–0x06）。
+  **未知核心帧 = 协议错误**：收到侧回 `ERROR {code:"UNKNOWN_FRAME"}` 并断开该连接。
+- `type ≥ 0x80`（0x80–0xFF）= **扩展帧**：首个为 `REDIRECT = 0x80`（见下）。
+  **未知扩展帧 = 忽略**（向前兼容：老实现对新增扩展帧不崩、原样跳过）。
+
+### REDIRECT（0x80，扩展帧，A2 预留 → P1.5 实现）
+
+| 项 | 说明 |
+|---|---|
+| 值 | `0x80`（扩展帧，首个）|
+| payload | JSON `{ "nodeUrl": "wss://<node>/tunnel", "expiresAt": <毫秒时间戳>, "sig": <hex> }` |
+| 认证语义（P0-2）| `sig` = 账号服务 Ed25519 私钥对 `hostId + "." + nodeUrl + "." + expiresAt` 的签名（hex 128 字符）；gateway 用账号服务公钥（注册时下发）验签，**验签失败或过期即忽略**（防中间人伪造迁移目标、劫持隧道 token）|
+| 状态 | P1 预留帧号 + 认证语义；**P1.5 实现**（节点 draining 时向存量主机下发）|
+
+### OPEN payload
+
+**请求（hub → gateway）**：
+
+```json
+{ "kind": "http", "method": "POST", "path": "/api/session.list", "headers": { "content-type": "application/json" } }
+{ "kind": "ws", "path": "/api/events.mux", "headers": { "sec-websocket-version": "13" } }
+{ "kind": "raw" }
+```
+
+- `kind: "raw"` 建立 **E2EE 原始字节流**（见下「E2E 加密（raw stream）」）：无 method/path/headers，DATA 帧双向承载 Noise 握手 + 密文。
+
+**响应（gateway → hub）**：
+
+```json
+{ "kind": "http", "status": 200, "reason": "OK", "headers": { "content-type": "application/json" } }
+```
+
+- headers 为字符串键值对（多值头用逗号拼接；实现需按语义处理 `set-cookie` 等多值头时在 headers 中允许数组）
+- 流方向由发送方决定，无需方向字段
+
+## 多路复用
+
+- streamId 由 **hub 分配**（原子递增 uint32），gateway 在响应流中**原样回显**
+- 单隧道支持并发 HTTP / SSE / WebSocket 升级流（DSH 依赖 `/api/events.mux`、`events.host`）
+- **WS 流内容按文本帧转发**（2026-08-24 定案）：DSH 前端与 events.mux 为 text/JSON 协议；
+  隧道转发固定 binary 会把文本消息变成 binary 帧，前端会丢弃（表现为实时界面不刷新）。
+  未来若需二进制 WS 内容，再扩展帧类型。
+- 借鉴 DSH 自身 mux 帧设计（`/api/events.mux`）
+
+## 心跳与重连
+
+- **心跳双方对称**：任一侧都每 **30s** 发 PING（payload `{ts}`）；收到 PING **必须**回 PONG（原样回显 payload）。两侧都发、也都应答。
+- **发送方负责超时判定**：发出 PING 后 **10s 内未收到对端任何帧**（PONG 或其它帧都算存活证据）→ 判定连接已死，**主动断开**（不再等待处于半开状态的连接）：
+  - gateway 断开 → 按下方退避策略重连；
+  - hub 断开 → 从隧道注册表移除该 host 并推送 `host.offline`。
+- gateway 重连：指数退避 1s → 60s（×2）+ 随机抖动；重连后重新认证（token）
+
+> 实现约束（2026-09-11 补）：本判定**必须两侧各自实现**——不得依赖"对端会维护超时"的假设（历史缺陷：两侧都只应答、都不判定；详见私有仓 fix 记录）。
+>
+> 前置假设（2026-09-11 补）：本判定假定**转发层不暂停隧道读侧**——链路活着就一定能读到帧，数据帧本身即存活证据。若某侧实现引入读侧背压（下游慢时 pause 隧道读），大流量下行会出现"10s 读不到帧但连接健康" ⇒ **必须改为活跃流期间暂停判死**，否则会误杀活连接（当前 TS 实现无此问题：relay 数据面忽略下游背压）。
+
+## 背压与流式
+
+- 大负载（DSH 请求体上限 300 MB）必须**流式分片转发、禁止整体缓冲**
+- 上下游 write backpressure 联动（DATA 帧按上游可写状态节奏发送）
+
+## E2E 加密（raw stream）
+
+- `flags` bit0（`FLAG_E2E` = 0x01）为 E2EE 帧标记；OPEN `kind:"raw"` 建立 E2EE 原始字节流。
+- **raw stream 语义**：OPEN `{ kind:"raw" }` 后，该 streamId 的 DATA 帧双向承载**原始字节**（内层 Noise NK 握手消息 + AES-256-GCM 密文）；hub 只做纯字节双向转发、不解析内容。
+- 当前实现必须**忽略未知 flag 位并原样透传**，保证向后兼容（老 gateway/hub 无 raw 分支、bit=0 走 http/ws 转发）。
+
+## 错误映射（数据面）
+
+| 场景 | 行为 |
+|---|---|
+| hostId 无对应隧道 | hub 直接回 `{error:{code:"HOST_OFFLINE", message}}`（503） |
+| gateway 侧 dsh 不可达 | gateway 发 ERROR → hub 回 502 |
+| token 无效/吊销 | 隧道建立被拒（WSS 101 后首个 ERROR 或直接断开）；重连同样被拒 |
+
+## 变更记录
+
+| 日期 | 变更 |
+|---|---|
+| 2026-08-23 | **冻结 v1**：payload 编码定稿（OPEN/DATA/CLOSE/PING/PONG/ERROR 语义 + HTTP/WS 封装 + 隧道认证 + 错误映射） |
+| 2026-08-28 | **E2EE raw stream**：OPEN 加 `kind:"raw"`；定义 raw stream 语义（`flags` bit0 + DATA 原始字节透传） |

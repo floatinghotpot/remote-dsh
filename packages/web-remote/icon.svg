@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- Microphone mark, transparent background. #3B82F6 keeps 3.68:1 on white and 5.14:1 on the
+       dark surface, so one colour reads on both without a tile. -->
+  <rect x="25" y="10" width="14" height="26" rx="7" fill="#3B82F6"/>
+  <g fill="none" stroke="#3B82F6" stroke-width="4.2" stroke-linecap="round">
+    <path d="M19 30v2a13 13 0 0 0 26 0v-2"/>
+    <path d="M32 45v8"/>
+    <path d="M23 53h18"/>
+  </g>
+</svg>

@@ -1,0 +1,41 @@
+/**
+ * rdsh-gateway — host-side component. One process, two modes:
+ * - `serve` (MVP): LAN auth gateway in front of a spawned `dsh web`
+ * - `join` (M2): outbound tunnel endpoint connected to rdsh-hub
+ */
+export { serve } from "./serve.ts";
+export type { ServeOptions } from "./serve.ts";
+export { SessionManager, SESSION_COOKIE, sessionTokenFromCookie } from "./session.ts";
+export type { SessionPayload } from "./session.ts";
+export { startGateway } from "./server.ts";
+export type { GatewayOptions, RunningGateway } from "./server.ts";
+export { findDsh, spawnDsh, dshSpawnEnv, RDSH_REMOTE_TTY, checkRemotePickerGraph, remotePickerWarning, exchangeDshSessionCookie, detectDshVersion, compareDshVersions, dshVersionWarning, DSH_COMPAT_MIN, DSH_COMPAT_MAX } from "./spawn-dsh.ts";
+export type { SpawnedDsh } from "./spawn-dsh.ts";
+export { forwardHttp, createUpgradeProxy, rewriteHeadersForDsh } from "./proxy.ts";
+export type { ProxyTarget } from "./proxy.ts";
+export { loadConfig, normalizeConfig, resolveConfigPath, saveConfig, generateAccessCode, DEFAULT_HOST_CONFIG_PATH } from "./config.ts";
+export type { RdshConfig, AuthMode, AuthUser, AuthConfig, TlsConfig, HostMode } from "./config.ts";
+export { hashPassword, verifyPassword, UserManager } from "./auth.ts";
+export { ipInCidrs, parseCidr, ipToInt } from "./cidr.ts";
+export { loadTls } from "./tls.ts";
+export type { TlsMaterial } from "./tls.ts";
+export { loginPageHtml } from "./login-page.ts";
+export { installService, uninstallService, serviceStatus, startService, stopService, restartService, systemdUnit, launchdPlist, SERVICE_NAME, JOIN_SERVICE_NAME, HOST_SERVICE_NAME, HUB_SERVICE_NAME } from "./service.ts";
+export type { ServiceSpec } from "./service.ts";
+
+export const NAME = "rdsh-gateway";
+export { join, startJoin, registerJoin, detectInsecure, selfRevoke, patchLoopbackJs, hubRequest, UsageReporter } from "./join.ts";
+export type { JoinOptions, RegisterOutcome, JoinState, JoinHooks, StartJoinOptions, JoinHandle } from "./join.ts";
+export { startDirect, lanCandidates, isPrivateIpv4 } from "./direct.ts";
+export type { DirectOptions, DirectHandle } from "./direct.ts";
+export { UsageMeter, localDate } from "./usage.ts";
+export type { UsageSnapshot } from "./usage.ts";
+export { createDirectTicketManager } from "./direct-ticket.ts";
+export type { DirectTicketManager } from "./direct-ticket.ts";
+export { loadOrCreateDirectSecret, directSecretPath } from "./direct-secret.ts";
+export { readPersistedToken, persistToken, clearPersistedToken, readJoinMeta, persistJoinMeta } from "./token-store.ts";
+export { acquireJoinLock, releaseJoinLock, readJoinLock, readJoinLockRaw, snapshotJoinLock, rawJoinLockFromSnapshot, removeJoinLockIfUnchanged, JOIN_LOCK_PATH, FRESH_LOCK_MS } from "./lock.ts";
+export type { JoinLock, JoinLockRole, RawJoinLock, LockSnapshot } from "./lock.ts";
+export { describeLock, describeJoinLockAt, forceUnlockJoinLock, probeProcess } from "./lock-report.ts";
+export type { ProcessProbe, LockReason, LockReport, DescribeLockInput } from "./lock-report.ts";
+export { loadOrCreateE2eeKeyPair, e2eeKeyFilePath } from "./e2ee-key-store.ts";

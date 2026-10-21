@@ -1,0 +1,34 @@
+{
+  "name": "rdsh-gateway",
+  "version": "0.15.2",
+  "description": "rdsh host-side component: LAN auth gateway + outbound tunnel endpoint (spawns dsh web)",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.map"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "ws": "^8.18.0",
+    "rdsh-tunnel": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepack": "pnpm run build",
+    "test": "node --test \"test/*.test.ts\""
+  }
+}

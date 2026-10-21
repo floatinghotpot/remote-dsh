@@ -1,0 +1,329 @@
+/**
+ * relay.ts — 数据面：`/h/<hostId>/...` 经隧道透传到对应 host 的 gateway → 本地 dsh。
+ *
+ * 纯透传：hub 不解析/改写业务报文（仅认证 + 路由）；Host/Origin 重写由
+ * gateway join 侧完成（DSH 围栏兼容，M1 转发内核复用）。
+ */
+import type { IncomingMessage, ServerResponse } from "node:http";
+import type { Duplex } from "node:stream";
+import { WebSocketServer } from "ws";
+import type { WebSocket } from "ws";
+import { MAX_PAYLOAD_LENGTH } from "rdsh-tunnel";
+import { writeError } from "./api.ts";
+import { parseCookies, HOST_COOKIE } from "./server.ts";
+import type { HubRuntime } from "./api.ts";
+import { injectE2eeShim } from "./e2ee-shim.ts";
+
+/**
+ * 中继上的浏览器 WS。`maxPayload` 必须等于隧道协议单帧上限：
+ * 超过它的浏览器消息 hub 无法封装成 DATA 帧，若放进来会让 `encodeFrame` 抛 ProtocolError ——
+ * 而抛点在 ws 的 message 回调里，**未捕获异常会直接打死整个 hub 进程**（远程 DoS：一个
+ * 已授权的浏览器发一条 17 MiB 消息即可；2026-09-14 真机复现：E2EE 下上传 18 MiB 附件，
+ * 页面走 RPC + base64 ⇒ 25,007,697 B 的单条 WS 消息 ⇒ hub crash，全体租户掉线）。
+ * 交给 ws 层在解帧阶段就按 1009 关闭，比收到消息后再判断更早、更省内存。
+ */
+const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD_LENGTH });
+
+/**
+ * 授权 host 访问：验 HMAC 签名 host cookie（进入 host 时签发，7 天，绑定会话版本）。
+ * 不依赖 rdsh_hub_session —— 进入后 DSH 持续可用；改密（ver+1）或吊销后立即失效。
+ */
+async function authorizeHost(req: IncomingMessage, runtime: HubRuntime): Promise<{ hostId: string; userId: number } | null> {
+  const cookies = parseCookies(req.headers.cookie);
+  const raw = cookies[HOST_COOKIE];
+  if (raw === undefined) return null;
+  const v = runtime.auth.verifyHostCookie(raw);
+  if (v === null) return null;
+  const host = await runtime.store.getHostById(v.hostId);
+  if (host === null) return null;
+  // 归属或共享成员均可访问（与 handleEnterHost 一致）；getShare 为实时查询 → 撤销共享即时生效
+  const isMember = host.ownerId === v.userId || (await runtime.store.getShare(v.hostId, v.userId)) !== null;
+  if (!isMember) return null;
+  return { hostId: v.hostId, userId: v.userId };
+}
+
+export interface RelayOptions {
+  /** 缓冲 text/html 响应以便注入 E2EE shim（host 转发的门户壳）。 */
+  bufferHtml?: boolean;
+}
+
+/**
+ * HTTP/SSE 透传。返回是否已处理（false = 路径不属于数据面）。
+ */
+export async function handleRelay(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime, path: string, opts?: RelayOptions): Promise<boolean> {
+  const auth = await authorizeHost(req, runtime);
+  if (auth === null) {
+    writeError(res, 401, "UNAUTHORIZED", "invalid host session");
+    return true;
+  }
+  const hostId = auth.hostId;
+  const conn = runtime.tunnels.get(hostId);
+  if (conn === null) {
+    // 浏览器导航（Accept text/html）→ 友好页面 + 清 host cookie 引导回 portal；API 调用仍返回 JSON
+    if ((req.headers.accept ?? "").includes("text/html")) {
+      const clearCookie = `${HOST_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`;
+      res.writeHead(503, { "content-type": "text/html; charset=utf-8", "set-cookie": clearCookie });
+      res.end(
+        `<!doctype html><meta charset="utf-8"><body style="font-family:system-ui,sans-serif;max-width:560px;margin:80px auto;padding:0 16px;color:#1f2937">` +
+          `<h1 style="font-size:20px">主机离线</h1>` +
+          `<p style="color:#6b7280">这台主机当前未接入（join 隧道未运行），或已重新绑定。请回到门户重新选择主机。</p>` +
+          `<a href="/portal/hosts" style="color:#2563eb">← 返回主机列表</a></body>`,
+      );
+      return true;
+    }
+    writeError(res, 503, "HOST_OFFLINE", "host is offline");
+    return true;
+  }
+
+  const headers = normalizeHeaders(req.headers);
+  let responded = false;
+  let streamId = 0;
+  // E2EE shim 注入：text/html 响应缓冲（KB 级）后注入；其余流量流式
+  let htmlBuf: Buffer[] | null = null;
+  streamId = conn.openStream("http", path, req.method ?? "GET", headers, {
+    onResponse: (status, _reason, respHeaders) => {
+      responded = true;
+      const ct = typeof respHeaders["content-type"] === "string" ? (respHeaders["content-type"] as string) : "";
+      const canInject =
+        opts?.bufferHtml === true &&
+        ct.includes("text/html") &&
+        respHeaders["content-encoding"] === undefined &&
+        respHeaders["transfer-encoding"] === undefined;
+      if (canInject) {
+        htmlBuf = [];
+        // 缓冲注入时去掉 content-length（回写时重算）
+        const h: Record<string, string | string[]> = { ...respHeaders };
+        delete h["content-length"];
+        res.writeHead(status, h);
+      } else {
+        res.writeHead(status, respHeaders as Record<string, string | string[]>);
+      }
+    },
+    onData: (chunk) => {
+      runtime.usage.addRelayBytes(auth.userId, hostId, 0, chunk.length);
+      if (res.destroyed) return;
+      if (htmlBuf !== null) htmlBuf.push(chunk);
+      else res.write(chunk);
+    },
+    onClose: (_code, _message) => {
+      if (res.destroyed) return;
+      if (htmlBuf !== null) {
+        let html = Buffer.concat(htmlBuf).toString("utf8");
+        // E2EE shim 注入到 <head> 最前（须先于 DSH 脚本 wrap fetch/WebSocket；off 时不注入）
+        // 同时注入 hostId：host cookie 是 HttpOnly，shim 读不到它（2026-09-14 实测）
+        if ((runtime.config.e2ee?.mode ?? "optional") !== "off") {
+          html = injectE2eeShim(html, hostId);
+        }
+        res.end(html);
+      } else {
+        res.end();
+      }
+    },
+    onError: (code, message) => {
+      if (!responded) {
+        writeError(res, 502, "UPSTREAM_ERROR", `${code}: ${message}`);
+      } else if (!res.destroyed) {
+        res.end();
+      }
+    },
+  });
+
+  // 请求体流式转发
+  req.on("data", (chunk: Buffer) => {
+    runtime.usage.addRelayBytes(auth.userId, hostId, chunk.length, 0);
+    conn.sendData(streamId, chunk);
+  });
+  req.on("end", () => {
+    // 请求体结束（GET 立即触发）→ 只通知 gateway，保留 handler 等响应
+    conn.endRequest(streamId);
+  });
+  req.on("error", () => {
+    conn.abortStream(streamId);
+  });
+  res.on("close", () => {
+    // 客户端中断 → 结束隧道流（含 handler）
+    conn.abortStream(streamId);
+  });
+  return true;
+}
+
+/** 网关访问 cookie 名（feature 15；gateway 侧同名常量见 packages/gateway/src/access-gate.ts GATE_COOKIE，注释互指）。 */
+const GATE_COOKIE = "rdsh_gate";
+
+/** 从 cookie 头提取 rdsh_gate 值（D12 白名单；无则 null）。 */
+function extractGateCookie(v: string | string[] | undefined): string | null {
+  const s = Array.isArray(v) ? v.join(";") : typeof v === "string" ? v : "";
+  for (const part of s.split(";")) {
+    const idx = part.indexOf("=");
+    if (idx <= 0) continue;
+    if (part.slice(0, idx).trim() === GATE_COOKIE) return part.slice(idx + 1).trim();
+  }
+  return null;
+}
+
+export function normalizeHeaders(headers: IncomingMessage["headers"]): Record<string, string | string[]> {
+  const out: Record<string, string | string[]> = {};
+  for (const [k, v] of Object.entries(headers)) {
+    if (v === undefined) continue;
+    if (k === "connection" || k === "upgrade" || k === "host" || k === "authorization") continue; // hop-by-hop / Host 由 gateway 重写 / 会话凭证不下发 host
+    if (k === "cookie") {
+      // D12：仅放行网关专用 rdsh_gate（F7 剥离会话 cookie 不变；gateway 访问口令标记）
+      const gate = extractGateCookie(v);
+      if (gate !== null) out["cookie"] = `${GATE_COOKIE}=${gate}`;
+      continue;
+    }
+    out[k] = Array.isArray(v) ? v : String(v);
+  }
+  return out;
+}
+
+/**
+ * WebSocket upgrade 透传（DSH 依赖 /api/events.mux、events.host）。
+ * 返回是否已处理。
+ */
+export async function handleRelayUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer, runtime: HubRuntime, path: string): Promise<boolean> {
+  const auth = await authorizeHost(req, runtime);
+  if (auth === null) {
+    socket.write(`HTTP/1.1 401 Unauthorized\r\n\r\n`);
+    socket.destroy();
+    return true;
+  }
+  const hostId = auth.hostId;
+  const conn = runtime.tunnels.get(hostId);
+  if (conn === null) {
+    socket.write(`HTTP/1.1 503 Service Unavailable\r\n\r\n`);
+    socket.destroy();
+    return true;
+  }
+
+  wss.handleUpgrade(req, socket, head, (clientWs) => {
+    const headers = normalizeHeaders(req.headers);
+    const streamId = conn.openStream("ws", path, "GET", headers, {
+      onData: (chunk) => {
+        runtime.usage.addRelayBytes(auth.userId, hostId, 0, chunk.length);
+        if (clientWs.readyState === clientWs.OPEN) clientWs.send(chunk, { binary: false }); // DSH WS 为 text(JSON)，转发必须保持文本帧
+      },
+      onClose: () => {
+        try {
+          clientWs.terminate();
+        } catch {
+          /* 已关闭 */
+        }
+        conn.abortStream(streamId);
+      },
+      onError: () => {
+        try {
+          clientWs.terminate();
+        } catch {
+          /* 已关闭 */
+        }
+        conn.abortStream(streamId);
+      },
+    });
+
+    clientWs.on("message", (data, isBinary) => {
+      const buf = Array.isArray(data)
+        ? Buffer.concat(data as Buffer[])
+        : Buffer.isBuffer(data)
+          ? (data as Buffer)
+          : Buffer.from(data as ArrayBuffer);
+      // 兜底：任何"封装不了"的帧只废掉这一条流，绝不允许异常逃逸到进程
+      //（maxPayload 已在 ws 层拦下超限消息；这里是纵深防御 + 未来路径的护栏）
+      try {
+        runtime.usage.addRelayBytes(auth.userId, hostId, buf.length, 0);
+        conn.sendData(streamId, buf);
+      } catch (err) {
+        console.error(`[relay] ws frame rejected (${buf.length}B): ${err instanceof Error ? err.message : String(err)}`);
+        try {
+          clientWs.close(1009, "message too big");
+        } catch {
+          /* 忽略 */
+        }
+        conn.abortStream(streamId);
+      }
+    });
+    const close = (): void => {
+      conn.abortStream(streamId);
+    };
+    clientWs.on("close", close);
+    clientWs.on("error", close);
+  });
+  return true;
+}
+
+/**
+ * E2EE raw 流透传：浏览器 WS ↔ 隧道 raw 流字节互转（内层 Noise 握手 + 密文，hub 不解析内容）。
+ * 返回是否已处理。受 `config.e2ee.mode` 控制：off 拒绝。
+ */
+export async function handleRawUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer, runtime: HubRuntime): Promise<boolean> {
+  if ((runtime.config.e2ee?.mode ?? "optional") === "off") {
+    socket.write(`HTTP/1.1 403 Forbidden\r\n\r\n`);
+    socket.destroy();
+    return true;
+  }
+  const auth = await authorizeHost(req, runtime);
+  if (auth === null) {
+    socket.write(`HTTP/1.1 401 Unauthorized\r\n\r\n`);
+    socket.destroy();
+    return true;
+  }
+  const conn = runtime.tunnels.get(auth.hostId);
+  if (conn === null) {
+    socket.write(`HTTP/1.1 503 Service Unavailable\r\n\r\n`);
+    socket.destroy();
+    return true;
+  }
+
+  wss.handleUpgrade(req, socket, head, (clientWs) => {
+    const streamId = conn.openRawStream({
+      onData: (chunk) => {
+        runtime.usage.addRelayBytes(auth.userId, auth.hostId, 0, chunk.length);
+        if (clientWs.readyState === clientWs.OPEN) clientWs.send(chunk, { binary: true });
+      },
+      onClose: () => {
+        try {
+          clientWs.terminate();
+        } catch {
+          /* 已关闭 */
+        }
+        conn.abortStream(streamId);
+      },
+      onError: () => {
+        try {
+          clientWs.terminate();
+        } catch {
+          /* 已关闭 */
+        }
+        conn.abortStream(streamId);
+      },
+    });
+
+    clientWs.on("message", (data) => {
+      const buf = Array.isArray(data)
+        ? Buffer.concat(data as Buffer[])
+        : Buffer.isBuffer(data)
+          ? (data as Buffer)
+          : Buffer.from(data as ArrayBuffer);
+      // E2EE raw 流是"一条 WS 消息 = 一个隧道 DATA 帧"（host 侧按 AES-GCM 包逐帧解密，
+      // 见 gateway join.ts handleRawData），所以超限消息既不能拆也不能封装 ⇒ 只能废流。
+      try {
+        runtime.usage.addRelayBytes(auth.userId, auth.hostId, buf.length, 0);
+        conn.sendRawData(streamId, buf);
+      } catch (err) {
+        console.error(`[relay] raw ws frame rejected (${buf.length}B): ${err instanceof Error ? err.message : String(err)}`);
+        try {
+          clientWs.close(1009, "message too big");
+        } catch {
+          /* 忽略 */
+        }
+        conn.abortStream(streamId);
+      }
+    });
+    const close = (): void => {
+      conn.abortStream(streamId);
+    };
+    clientWs.on("close", close);
+    clientWs.on("error", close);
+  });
+  return true;
+}

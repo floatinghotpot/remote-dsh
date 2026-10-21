@@ -1,0 +1,112 @@
+{
+  "protocolVersion": 1,
+  "headerLength": 15,
+  "description": "Language-agnostic rdsh-tunnel v1 frame fixtures. Both the public TS implementation and the private Go implementation must decode/re-encode these exact bytes.",
+  "cases": [
+    {
+      "name": "data-hello",
+      "encodedHex": "52445348010002000000070000000568656c6c6f",
+      "version": 1,
+      "flags": 0,
+      "type": 2,
+      "streamId": 7,
+      "payloadHex": "68656c6c6f"
+    },
+    {
+      "name": "open-http",
+      "encodedHex": "52445348010001000000010000002f7b226b696e64223a2268747470222c226d6574686f64223a22504f5354222c2270617468223a222f6170692f78227d",
+      "version": 1,
+      "flags": 0,
+      "type": 1,
+      "streamId": 1,
+      "payloadHex": "7b226b696e64223a2268747470222c226d6574686f64223a22504f5354222c2270617468223a222f6170692f78227d"
+    },
+    {
+      "name": "close-stream2",
+      "encodedHex": "52445348010003000000020000000a7b22636f6465223a307d",
+      "version": 1,
+      "flags": 0,
+      "type": 3,
+      "streamId": 2,
+      "payloadHex": "7b22636f6465223a307d"
+    },
+    {
+      "name": "ping-ts",
+      "encodedHex": "52445348010004000000000000000a7b227473223a3132337d",
+      "version": 1,
+      "flags": 0,
+      "type": 4,
+      "streamId": 0,
+      "payloadHex": "7b227473223a3132337d"
+    },
+    {
+      "name": "data-big-stream-id",
+      "encodedHex": "524453480100021234abcd0000000178",
+      "version": 1,
+      "flags": 0,
+      "type": 2,
+      "streamId": 305441741,
+      "payloadHex": "78"
+    },
+    {
+      "name": "data-e2e-unknown-flags",
+      "encodedHex": "52445348018102000000010000000178",
+      "version": 1,
+      "flags": 129,
+      "type": 2,
+      "streamId": 1,
+      "payloadHex": "78"
+    },
+    {
+      "name": "redirect",
+      "encodedHex": "5244534801008000000000000000477b226e6f646555726c223a227773733a2f2f6e6f64652e6578616d706c652e636f6d2f74756e6e656c222c22657870697265734174223a3132332c22736967223a22616263227d",
+      "version": 1,
+      "flags": 0,
+      "type": 128,
+      "streamId": 0,
+      "payloadHex": "7b226e6f646555726c223a227773733a2f2f6e6f64652e6578616d706c652e636f6d2f74756e6e656c222c22657870697265734174223a3132332c22736967223a22616263227d"
+    },
+    {
+      "name": "pong-empty",
+      "encodedHex": "524453480100050000000000000000",
+      "version": 1,
+      "flags": 0,
+      "type": 5,
+      "streamId": 0,
+      "payloadHex": ""
+    }
+  ],
+  "sticky": {
+    "name": "sticky-three",
+    "encodedHex": "52445348010002000000010000000161524453480100020000000200000002626252445348010003000000020000000a7b22636f6465223a307d",
+    "frames": [
+      {
+        "name": "sticky-data-1",
+        "encodedHex": "52445348010002000000010000000161",
+        "version": 1,
+        "flags": 0,
+        "type": 2,
+        "streamId": 1,
+        "payloadHex": "61"
+      },
+      {
+        "name": "sticky-data-2",
+        "encodedHex": "5244534801000200000002000000026262",
+        "version": 1,
+        "flags": 0,
+        "type": 2,
+        "streamId": 2,
+        "payloadHex": "6262"
+      },
+      {
+        "name": "sticky-close-2",
+        "encodedHex": "52445348010003000000020000000a7b22636f6465223a307d",
+        "version": 1,
+        "flags": 0,
+        "type": 3,
+        "streamId": 2,
+        "payloadHex": "7b22636f6465223a307d"
+      }
+    ]
+  }
+}

@@ -1,0 +1,224 @@
+/**
+ * service.ts — 服务化：生成并安装 systemd unit（Linux）/ launchd plist（macOS）。
+ *
+ * 设计（roadmap M2）：不自带 fork 后台 —— 交给系统进程管理器托管 rdsh（连带其
+ * spawn 的 dsh）；用户级安装（~/.config/systemd/user / ~/Library/LaunchAgents），
+ * 无需 sudo；开机自启 + 崩溃重启（Restart=on-failure / KeepAlive）。
+ *
+ * 服务名：serve/hub 共用 "rdsh"；join 用 "rdsh-join"（同机可与 hub 并存，互不覆盖）。
+ */
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+const execFileP = promisify(execFile);
+
+/** serve/hub 共用的服务名。 */
+export const SERVICE_NAME = "rdsh";
+/** join 的独立服务名（同机可与 hub 的 rdsh.service 并存）。 */
+export const JOIN_SERVICE_NAME = "rdsh-join";
+/** host 独立服务（lan/cloud）的独立服务名。 */
+export const HOST_SERVICE_NAME = "rdsh-host";
+/** hub 的独立服务名（与 host/join 区分，避免共用 rdsh.service）。 */
+export const HUB_SERVICE_NAME = "rdsh-hub";
+
+const SYSTEMD_DIR = join(homedir(), ".config", "systemd", "user");
+const LAUNCHD_DIR = join(homedir(), "Library", "LaunchAgents");
+
+function systemdUnitPath(name: string): string {
+  return join(SYSTEMD_DIR, `${name}.service`);
+}
+
+function launchdPlistPath(name: string): string {
+  return join(LAUNCHD_DIR, `com.${name}.plist`);
+}
+
+function isLinux(): boolean {
+  return process.platform === "linux";
+}
+
+/** 日志文件：rdsh → service.log（历史兼容）；其余按服务名（如 rdsh-join.log）。 */
+function serviceLogPath(name: string): string {
+  return join(homedir(), ".rdsh", name === SERVICE_NAME ? "service.log" : `${name}.log`);
+}
+
+/** 服务化规格。 */
+export interface ServiceSpec {
+  /** 服务名（systemd unit 文件名 / launchd Label）。 */
+  name: string;
+  /** 命令参数（不含 --config）。如 ["serve"] / ["hub","serve"] / ["join",hubUrl,"--dsh",abs]。 */
+  args: string[];
+  /** 配置文件路径；提供则追加 `--config <path>`（serve/hub）。 */
+  configPath?: string;
+  /** 环境文件路径；提供则在 systemd unit 追加 `EnvironmentFile=-<path>`（launchd 暂不支持，忽略）。 */
+  envFile?: string;
+  /** 子进程（spawn dsh）所需的 PATH（nvm/自装 node 环境下补 node 目录，防 dsh shebang 127）。 */
+  pathEnv?: string;
+}
+
+/** 命令参数（是否追加 --config）。 */
+function commandArgs(spec: ServiceSpec): string[] {
+  return spec.configPath !== undefined ? [...spec.args, "--config", spec.configPath] : spec.args;
+}
+
+/** systemd 用户级 unit 模板。 */
+export function systemdUnit(execStart: string, spec: ServiceSpec): string {
+  const envLine = spec.envFile !== undefined ? `EnvironmentFile=-${spec.envFile}\n` : "";
+  const pathLine = spec.pathEnv !== undefined ? `Environment=PATH=${spec.pathEnv}\n` : "";
+  return `[Unit]
+Description=rdsh — remote access for DeepSeek Harness
+After=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+${envLine}${pathLine}ExecStart=${execStart} ${commandArgs(spec).join(" ")}
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+`;
+}
+
+/** launchd plist 模板。program 为启动前缀 argv（[node, 脚本]），命令参数由 spec 提供——
+ * launchd 不做空格切分，每个 <string> 是一个 argv 元素，故 node 与脚本必须分开。 */
+export function launchdPlist(program: string[], spec: ServiceSpec): string {
+  const argLines = [...program, ...commandArgs(spec)].map((a) => `    <string>${a}</string>`).join("\n");
+  const envBlock =
+    spec.pathEnv !== undefined
+      ? `  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>${spec.pathEnv}</string>
+  </dict>
+`
+      : "";
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.${spec.name}</string>
+  <key>ProgramArguments</key>
+  <array>
+${argLines}
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+${envBlock}  <key>StandardOutPath</key>
+  <string>${serviceLogPath(spec.name)}</string>
+  <key>StandardErrorPath</key>
+  <string>${serviceLogPath(spec.name)}</string>
+</dict>
+</plist>
+`;
+}
+
+async function run(cmd: string, args: string[]): Promise<string> {
+  try {
+    const { stdout } = await execFileP(cmd, args);
+    return String(stdout).trim();
+  } catch (err) {
+    throw new Error(`${cmd} ${args.join(" ")} failed: ${(err as Error).message}`);
+  }
+}
+
+/** 安装并启动服务（用户级）。 */
+export async function installService(spec: ServiceSpec): Promise<string> {
+  const bin = process.argv[1];
+  if (bin === undefined) {
+    throw new Error("cannot install a service: the running entry script (process.argv[1]) is unknown");
+  }
+  if (isLinux()) {
+    const execStart = `${process.execPath} ${bin}`;
+    await mkdir(SYSTEMD_DIR, { recursive: true });
+    await writeFile(systemdUnitPath(spec.name), systemdUnit(execStart, spec), { mode: 0o600 });
+    await run("systemctl", ["--user", "daemon-reload"]);
+    await run("systemctl", ["--user", "enable", "--now", spec.name]);
+    return `installed systemd user unit: ${systemdUnitPath(spec.name)}`;
+  }
+  // macOS（launchd）：ProgramArguments 不做空格切分 —— node 与脚本必须作为独立 argv 元素
+  const plistPath = launchdPlistPath(spec.name);
+  await mkdir(LAUNCHD_DIR, { recursive: true });
+  await writeFile(plistPath, launchdPlist([process.execPath, bin], spec), { mode: 0o600 });
+  await run("launchctl", ["unload", plistPath]).catch(() => undefined); // 重装幂等：先卸旧 job（不存在时忽略）
+  await run("launchctl", ["load", plistPath]);
+  return `installed launchd plist: ${plistPath}`;
+}
+
+/** 服务状态。 */
+export async function serviceStatus(name: string = SERVICE_NAME): Promise<string> {
+  if (isLinux()) {
+    try {
+      const active = await run("systemctl", ["--user", "is-active", name]);
+      return `active: ${active}`;
+    } catch {
+      return "inactive";
+    }
+  }
+  try {
+    const out = await run("launchctl", ["print", `com.${name}`]);
+    // loaded 但进程已退出的 job（如 exec 失败）print 仍成功 —— 按 state 细分
+    return out.includes("state = running") ? "active" : "loaded (not running)";
+  } catch {
+    return "unloaded";
+  }
+}
+
+/** 停止并移除服务。 */
+export async function uninstallService(name: string = SERVICE_NAME): Promise<string> {
+  if (isLinux()) {
+    await run("systemctl", ["--user", "disable", "--now", name]).catch(() => undefined);
+    await rm(systemdUnitPath(name), { force: true });
+    await run("systemctl", ["--user", "daemon-reload"]).catch(() => undefined);
+    return `removed ${systemdUnitPath(name)}`;
+  }
+  await run("launchctl", ["unload", launchdPlistPath(name)]).catch(() => undefined);
+  await rm(launchdPlistPath(name), { force: true });
+  return `removed ${launchdPlistPath(name)}`;
+}
+
+/** 启动服务（运行时控制，不改变开机自启配置）。 */
+export async function startService(name: string = SERVICE_NAME): Promise<string> {
+  if (isLinux()) {
+    await run("systemctl", ["--user", "start", name]);
+    return `started ${name}`;
+  }
+  // macOS：kickstart -k 无法重启被 bootout 卸载的 job —— 先 bootstrap 再 kickstart。
+  const domain = `gui/${process.getuid!()}`;
+  await run("launchctl", ["bootstrap", domain, launchdPlistPath(name)]).catch(() => undefined);
+  await run("launchctl", ["kickstart", "-k", `${domain}/com.${name}`]);
+  return `started com.${name}`;
+}
+
+/** 停止服务（运行时控制，不改变开机自启配置）。 */
+export async function stopService(name: string = SERVICE_NAME): Promise<string> {
+  if (isLinux()) {
+    await run("systemctl", ["--user", "stop", name]);
+    return `stopped ${name}`;
+  }
+  // macOS：`stop` 只停当前实例，KeepAlive（失败退出重启）可能立即拉起 —— 用 bootout 卸载 job
+  // 才能真正停住（bootout 后 KeepAlive 不再生效）；fallback 到 stop 兼容旧 launchctl。
+  const domain = `gui/${process.getuid!()}`;
+  await run("launchctl", ["bootout", `${domain}/com.${name}`]).catch(() => run("launchctl", ["stop", `com.${name}`]).catch(() => undefined));
+  return `stopped com.${name}`;
+}
+
+/** 重启服务（运行时控制，不改变开机自启配置）。 */
+export async function restartService(name: string = SERVICE_NAME): Promise<string> {
+  if (isLinux()) {
+    await run("systemctl", ["--user", "restart", name]);
+    return `restarted ${name}`;
+  }
+  await run("launchctl", ["kickstart", "-k", `com.${name}`]);
+  return `restarted com.${name}`;
+}

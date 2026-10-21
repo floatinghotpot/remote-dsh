@@ -1,0 +1,74 @@
+# On the road, still reach your home DSH: VPN back into the LAN, access code works as usual
+
+> 2026-09-28 · remote-dsh ≥ 0.14 (commands per the current tree; LAN auth is the **access code**)
+> Scenario series: LAN access — ① direct · **⑧ VPN back to the LAN (this post)**
+
+**中文版**：[中文](../zh/01-02-vpn-lan.md)
+
+---
+
+## The scenario
+
+You're traveling, but home (or the office) already has a **VPN** — WireGuard, OpenVPN, or a corporate VPN.
+
+Once the VPN is up, your device is **effectively on the LAN** (it gets an internal IP and can reach internal resources). Accessing that home DSH agent is then **plain LAN play**: `rdsh setup lan` + `rdsh serve`, access code works as usual.
+
+No public hub to set up, no ports exposed — **the VPN handles the link, rdsh handles the auth.**
+
+## Prerequisites
+
+- **Home/office**: A DSH host (Windows/Mac/Linux) with `remote-dsh` installed
+- **VPN**: WireGuard / OpenVPN / corporate VPN, reachable from outside
+- **On the road**: Laptop/phone with the VPN client
+
+## Three steps
+
+### ① Start rdsh on the home host (as usual)
+
+```bash
+# On the host running DSH at home
+rdsh setup lan           # writes host.json (mode: lan, default 0.0.0.0:8442) + generates an access code
+rdsh serve
+# Binds 0.0.0.0:8442 by default — reachable over the VPN subnet too
+```
+
+> `setup lan` prints the **access code** once — write it down (`rdsh gate set` rotates it any time).
+
+### ② Connect the VPN from your device
+
+Confirm you got an internal IP:
+
+```bash
+# WireGuard example
+sudo wg-quick up wg0
+ip addr show wg0        # see a 10.x.x.x VPN-subnet IP
+```
+
+If you can ping the home host (or its VPN virtual IP), the link is up.
+
+### ③ Browse + access code
+
+```bash
+# On the road, in the browser:
+http://<home-host-IP>:8442
+# Enter the access code → you're in DSH
+```
+
+The access code is **printed once on the home host's terminal** — a physical trust anchor, safe even inside the VPN tunnel; rotating it invalidates old cookies immediately.
+
+## VPN backhaul vs the public hub
+
+- **VPN backhaul (this post)**: Already have a VPN at work/home; Reuse existing infra, zero extra deployment; `rdsh serve` access code works as-is
+- **[rdsh cloud hub (`rdsh join`)](01-03-rdsh-account.md)**: No VPN; Outbound tunnel, no network config at all, one URL for all machines
+
+## Notes
+
+- **Firewall**: allow 8442 (or another port) on the home host; make sure the VPN server/router doesn't block subnet-to-subnet traffic
+- **Latency**: VPN link quality matters; the live event stream (WebSocket) stays smooth within a few hundred ms
+- **Security**: rdsh's access code + HttpOnly signed cookie are the auth layer; the VPN tunnel is the transport layer — keep both on
+- **Tested**: `rdsh serve` LAN access is verified; VPN client connectivity is a generic networking step — follow your VPN's config
+
+## About the project
+
+- GitHub: [github.com/floatinghotpot/remote-dsh](https://github.com/floatinghotpot/remote-dsh)
+- Install: `npm i -g remote-dsh` (MIT license, open source)

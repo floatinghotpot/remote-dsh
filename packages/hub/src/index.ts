@@ -1,0 +1,41 @@
+/**
+ * rdsh-hub — server library. Prototype phase: TypeScript (consumed by the
+ * `rdsh-hub-cli` package, bin `rdsh-hub`). Production phase: Go single binary.
+ */
+export { loadHubConfig, normalizeHubConfig, resolveHubConfigPath, DEFAULT_HUB_CONFIG_PATH, BILLING_DEFAULTS } from "./config.ts";
+export type { HubConfig, PlanSpec, BillingConfig, SiteConfig, E2eeConfig, BackupConfig } from "./config.ts";
+export { HubDb } from "./db.ts";
+export type { UserRow, HostRow, RefreshRow, HostShareRow, AuditEventRow, EmailCodeRow, SmsCodeRow, SubscriptionRow, OrderRow, PaymentRow } from "./db.ts";
+export { createEmailSender, percentEncode, rpcSignature } from "./email/index.ts";
+export type { EmailMessage, EmailSender, EmailConfig, SmtpConfig, AliyunConfig } from "./email/index.ts";
+export { createSmsSender } from "./sms/index.ts";
+export type { SmsMessage, SmsSender, SmsConfig, AliyunSmsConfig } from "./sms/index.ts";
+export { getWechatOpenid } from "./billing/wechat-oauth.ts";
+export type { WechatOauthConfig } from "./billing/wechat-oauth.ts";
+export { createChallenge, verifyChallenge } from "./captcha.ts";
+export { generateSecret, totp, verifyTotp } from "./totp.ts";
+export { Jwt, randomToken, sha256 } from "./jwt.ts";
+export type { JwtClaims } from "./jwt.ts";
+export { HubAuth, hashPassword, verifyPassword, createLoginLimiter, ACCESS_TTL_MS, REFRESH_TTL_MS, ADMIN_TTL_MS } from "./auth.ts";
+export type { TokenPair } from "./auth.ts";
+export { ADMIN_ROLES, AdminError, listUsers, listHosts, listOrders, listPayments, listAudit, getUser, getHost, banUser, unbanUser, resetUserPassword, unlockUser, resetUser2fa, adjustPlan, grantTrial, grantSubscription, revokeHost, refundOrder, deleteUser, setUserRole, removeAdmin, creditOrder } from "./admin.ts";
+export type { AdminRole, AdminCtx, GrantSubscriptionInput } from "./admin.ts";
+export { handleApi, authenticate, writeError, SESSION_COOKIE, sweepBilling } from "./api.ts";
+export type { HubRuntime, AuthResult } from "./api.ts";
+export { TunnelConn, TunnelRegistry } from "./tunnel.ts";
+export type { StreamHandler } from "./tunnel.ts";
+export { EventHub, createEventsServer } from "./events.ts";
+export { handleRelay, handleRelayUpgrade } from "./relay.ts";
+export { startHubServer, loadHubTls } from "./server.ts";
+export type { HubServerOptions, RunningHub } from "./server.ts";
+export { serveHub, loadJwtKey } from "./serve.ts";
+export type { HubServeOptions } from "./serve.ts";
+export { servePortal, defaultPortalDir } from "./portal.ts";
+export { backupNow, pruneBackups, lastBackupAt } from "./backup.ts";
+export { createPgPool, migratePg, withTransaction, txDb } from "./pg.ts";
+export type { PgPoolOptions } from "./pg.ts";
+export { createSqliteStore } from "./store.ts";
+export type { HubStore } from "./store.ts";
+export { createPgStore } from "./pg-store/index.ts";
+export { migrateSqliteToPg, preflight, backup, copy, verify } from "./migrate.ts";
+export type { MigrateOptions, MigrateReport } from "./migrate.ts";

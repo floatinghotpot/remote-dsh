@@ -1,0 +1,44 @@
+{
+  "name": "rdsh-hub",
+  "version": "0.19.0",
+  "description": "rdsh server: control plane (auth, host registry, routing) + data plane (tunnel relay)",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.map",
+    "migrations",
+    "portal"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "nodemailer": "^6.10.1",
+    "pg": "^8.23.1",
+    "qrcode": "^1.5.4",
+    "rdsh-tunnel": "workspace:*",
+    "sm-crypto": "^0.5.7",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/nodemailer": "^6.4.24",
+    "@types/pg": "^8.23.1",
+    "@types/qrcode": "^1.5.5",
+    "@types/sm-crypto": "^0.3.4",
+    "@types/ws": "^8.5.10"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/copy-portal.mjs",
+    "prepack": "pnpm run build",
+    "test": "node --test \"test/*.test.ts\""
+  }
+}

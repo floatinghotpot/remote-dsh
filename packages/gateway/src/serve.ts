@@ -1,0 +1,177 @@
+/**
+ * serve.ts — `rdsh serve` 编排：加载 config（CLI 覆盖）→ 解析 TLS → 启动网关 → 生命周期。
+ */
+import { networkInterfaces } from "node:os";
+import type { NetworkInterfaceInfo } from "node:os";
+import { startGateway } from "./server.ts";
+import type { RunningGateway } from "./server.ts";
+import { findDsh, spawnDsh, exchangeDshSessionCookie, detectDshVersion, dshVersionWarning, checkRemotePickerGraph, remotePickerWarning } from "./spawn-dsh.ts";
+import { loadConfig, resolveConfigPath } from "./config.ts";
+import type { RdshConfig } from "./config.ts";
+import { UserManager } from "./auth.ts";
+import { loadTls } from "./tls.ts";
+
+export interface ServeOptions {
+  host?: string;
+  port?: number;
+  sessionTtlSeconds?: number;
+  dshPath?: string;
+  reset?: boolean;
+  noCode?: boolean;
+  /** 配置文件路径（--config / $RDSH_CONFIG / 默认 ~/.rdsh/config.json） */
+  configPath?: string;
+}
+
+/**
+ * 启动网关。进程常驻：SIGINT/SIGTERM/SIGHUP 时先关网关再终止 dsh 子进程。
+ * 启动失败（dsh 缺失/TLS 缺失/端口占用/安全约束）→ 抛错（CLI 以非零码退出）。
+ */
+export async function serve(opts: ServeOptions): Promise<void> {
+  const configPath = resolveConfigPath(opts.configPath);
+  const config: RdshConfig = await loadConfig(configPath);
+
+  // CLI 参数优先于 config（持久配置在 config，CLI 做临时覆盖/调试）
+  const host = opts.host ?? config.host;
+  const port = opts.port ?? config.port;
+  const sessionTtlSeconds = opts.sessionTtlSeconds ?? config.sessionTtlSeconds;
+  const dshPath = opts.dshPath ?? config.dshPath;
+  const authMode = opts.noCode ? "none" : config.auth.mode;
+  const accessCode = config.gateway?.accessCode ?? null;
+
+  const foundDsh = findDsh(dshPath);
+  if (foundDsh === null) {
+    throw new Error("cannot find 'dsh' in PATH. Install DeepSeek Harness first, or set dshPath in config / pass --dsh <path>.");
+  }
+
+  // 版本窗口外 → warn（不硬拒）：dsh 太新建议升 rdsh / 太旧建议升 dsh
+  const dshVersion = await detectDshVersion(foundDsh);
+  const versionWarn = dshVersionWarning(dshVersion);
+  if (versionWarn !== null) console.warn(`\n⚠  ${versionWarn}\n`);
+
+  const dsh = await spawnDsh(foundDsh);
+
+  // 0.1.2+：就绪行带 launch token → 换发浏览器会话 cookie 并代持注入转发。
+  // 一次性失败会让整个进程生命周期内所有远程访问永久 401——重试几次，仍失败则快速失败
+  //（抛错 → 启动失败 → supervisor 重启重试）。
+  let dshAuthCookieHeader: string | null = null;
+  if (dsh.authToken !== undefined) {
+    try {
+      for (let attempt = 1; attempt <= 3 && dshAuthCookieHeader === null; attempt += 1) {
+        dshAuthCookieHeader = await exchangeDshSessionCookie(dsh.port, dsh.authToken);
+        if (dshAuthCookieHeader === null && attempt < 3) {
+          await new Promise((r) => setTimeout(r, 500));
+        }
+      }
+      if (dshAuthCookieHeader === null) {
+        throw new Error("dsh 0.1.2+ 会话 cookie 换发失败——远程访问将返回 401（请确认 dsh web 已就绪或暂用 dsh@0.1.1-rc.2）");
+      }
+    } catch (err) {
+      // fail-fast 之前先停掉已 spawn 的 dsh——否则泄漏孤儿 dsh（监听随机端口），
+      // 在 supervisor 崩溃重试下无界累积（与下方 startGateway 失败路径的 dsh.stop() 对齐）。
+      await dsh.stop().catch(() => undefined);
+      throw err;
+    }
+  }
+
+  // 自检：目录选择器必须是浏览器内形态（否则远端浏览器只会看到弹在宿主屏幕上的原生对话框）
+  if ((await checkRemotePickerGraph(dsh.port, dshAuthCookieHeader)) === false) {
+    console.warn(`\n⚠  ${remotePickerWarning()}\n`);
+  }
+
+  // TLS 决策：有 tls.cert/key → https；无 → http（behindProxy 或 pair/none）。
+  // password + http + 非反代 → server.ts 安全约束拒绝启动（需自行提供证书）。
+  // loadTls 读证书失败会抛，且此处在 startGateway 的 try/catch 之外——失败先停 dsh 再 rethrow，
+  // 否则泄漏孤儿 dsh（与 cookie 换发 / startGateway 两条失败路径对齐）。
+  let tlsMaterial: Awaited<ReturnType<typeof loadTls>>;
+  let userManager: UserManager | undefined;
+  try {
+    tlsMaterial = await loadTls(config.tls, config.behindProxy);
+    userManager = authMode === "password" ? new UserManager(configPath) : undefined;
+  } catch (err) {
+    await dsh.stop().catch(() => undefined);
+    throw err;
+  }
+
+  if (accessCode === null && authMode !== "password") {
+    console.warn(
+      "\n⚠  rdsh: 认证已禁用（未设访问口令且 auth.mode=none）—— 任何能访问该端口的设备将直接操作 DSH！\n" +
+        "     仅限完全可信网络！用 `rdsh host gate set <口令>` 开启访问口令。\n",
+    );
+  }
+
+  let gateway: RunningGateway;
+  try {
+    gateway = await startGateway({
+      host,
+      port,
+      sessionTtlSeconds,
+      dshPort: dsh.port,
+      dshAuthCookieHeader,
+      reset: opts.reset,
+      noCode: opts.noCode,
+      authMode,
+      accessCode,
+      authVersion: config.auth.version,
+      allowFrom: config.allowFrom,
+      behindProxy: config.behindProxy,
+      dshUiCompat: config.dshUiCompat,
+      tlsMaterial,
+      userManager,
+      configPath,
+    });
+  } catch (err) {
+    // 启动失败（端口占用 / 安全约束拒绝）→ 先停掉已 spawn 的 dsh，避免残留
+    await dsh.stop().catch(() => undefined);
+    throw err;
+  }
+
+  const lan = lanAddresses();
+  const scheme = tlsMaterial === null ? "http" : "https";
+  const displayHost = host === "0.0.0.0" ? (lan[0] ?? "127.0.0.1") : host;
+  console.log(`rdsh serve: gateway on ${scheme}://${displayHost}:${gateway.actualPort}`);
+  if (host === "0.0.0.0" && lan.length > 0) {
+    console.log(`rdsh serve: LAN: ${lan.map((ip) => `${scheme}://${ip}:${gateway.actualPort}`).join(", ")}`);
+  }
+  console.log(`rdsh serve: dsh web on 127.0.0.1:${dsh.port}`);
+  console.log(`rdsh serve: auth mode: ${accessCode !== null ? "accessCode" : authMode}${authMode === "password" ? ` (config: ${configPath})` : ""}`);
+  if (config.allowFrom.length > 0) console.log(`rdsh serve: allow_from: ${config.allowFrom.join(", ")}`);
+  if (tlsMaterial !== null) console.log(`rdsh serve: TLS: custom cert (${config.tls!.cert})`);
+  if (config.behindProxy) console.log("rdsh serve: behind_proxy: true (TLS terminated by reverse proxy)");
+  if (authMode === "password") console.log("rdsh serve: sign in with `rdsh user` credentials in the browser login page.");
+  else if (accessCode !== null) console.log("rdsh serve: 访问口令已启用（经隧道或直连访问都需先输入口令）。");
+
+  let shuttingDown = false;
+  const shutdown = async (signal: string): Promise<void> => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`\nrdsh: received ${signal}, shutting down...`);
+    gateway.server.close();
+    let code: number;
+    try {
+      code = await dsh.stop();
+    } catch {
+      code = 1;
+    }
+    process.exit(code === 0 ? 0 : 1);
+  };
+  process.on("SIGINT", () => void shutdown("SIGINT"));
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+  process.on("SIGHUP", () => void shutdown("SIGHUP"));
+  // dsh 看门狗：dsh 崩溃/退出后网关会一直转发到死端口 → 永久 502、无自愈。
+  // 显式非零退出，交给 systemd/launchd 的 Restart=on-failure 重启整个网关 + dsh。
+  dsh.child.on("exit", (code, signal) => {
+    if (shuttingDown) return;
+    console.error(`\nrdsh: dsh web exited (code=${code ?? "null"}, signal=${signal ?? "null"}) — exiting for supervisor restart`);
+    process.exit(1);
+  });
+  // 常驻：进程靠信号退出（shutdown 里 process.exit）；防止函数返回后
+  // CLI 的 main().then(exit) 误退出服务进程
+  await new Promise<void>(() => {});
+}
+
+function lanAddresses(): string[] {
+  return Object.values(networkInterfaces())
+    .flat()
+    .filter((i): i is NetworkInterfaceInfo => i !== undefined && i.family === "IPv4" && !i.internal)
+    .map((i) => i.address);
+}

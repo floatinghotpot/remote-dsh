@@ -1,0 +1,21 @@
+{
+  "name": "remote-dsh",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Secure remote access layer for DeepSeek Harness (rdsh)",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "pnpm --filter ./packages/portal build && pnpm -r --filter \"!rdsh-portal\" build",
+    "test": "pnpm -r test",
+    "clean": "pnpm -r exec rm -rf dist",
+    "release:publish": "bash scripts/publish.sh"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}

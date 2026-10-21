@@ -1,0 +1,501 @@
+/**
+ * server.ts — hub HTTP(S) 服务器：路由 + 隧道 upgrade + events upgrade + portal 静态。
+ *
+ * 路由（2026-08-23 架构修订：host 访问用"根路径 + cookie 选 host"，DSH 零改动）：
+ *   /api/*            → 无 rdsh_host cookie 时为层 1 API；有则为当前 host 的 DSH API
+ *   /portal*          → portal 静态（进入 portal 即清除 rdsh_host）
+ *   /h/<hostId>/*     → 进入该 host：校验归属 → Set-Cookie rdsh_host → 302 到根路径
+ *   其余（/、/assets/* 等）→ 有 rdsh_host 转发该 host；无 → portal
+ *   /tunnel?token=    → gateway 出站隧道（层 2）
+ *   /api/events       → portal 在线推送（无 rdsh_host 时）
+ *
+ * 安全：无 TLS 证书 → 拒绝启动（公网 hub 必须 TLS，req R1/R10）。
+ */
+import { createServer as createHttpServer } from "node:http";
+import { createServer as createHttpsServer } from "node:https";
+import { readFile } from "node:fs/promises";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import type { Duplex } from "node:stream";
+import { WebSocketServer } from "ws";
+import type { WebSocket } from "ws";
+import { sha256 } from "./jwt.ts";
+import { HubDb } from "./db.ts";
+import { HubAuth } from "./auth.ts";
+import { authenticate, clientIp, handleApi, writeError, sweepBilling } from "./api.ts";
+import { sweepCredits } from "./credits.ts";
+import type { HubRuntime } from "./api.ts";
+import type { EmailConfig } from "./email/types.ts";
+import type { SmsConfig } from "./sms/types.ts";
+import type { CaptchaConfig, SecurityConfig, BillingConfig, SiteConfig, E2eeConfig, BackupConfig, WechatLoginConfig, WechatAppLoginConfig, AppleLoginConfig } from "./config.ts";
+import { TunnelConn, TunnelRegistry } from "./tunnel.ts";
+import type { TunnelTimings } from "./tunnel.ts";
+import { EventHub, createEventsServer } from "./events.ts";
+import { handleRelay, handleRelayUpgrade, handleRawUpgrade } from "./relay.ts";
+import { servePortal } from "./portal.ts";
+import { UsageAccumulator } from "./relay-usage.ts";
+import { PresenceDirectory } from "./presence.ts";
+import { HubMetrics } from "./metrics.ts";
+import { createSqliteStore, type HubStore } from "./store.ts";
+import { hostOf } from "./nodes.ts";
+import type { HostCookieSigner } from "./hostcookie.ts";
+
+export interface HubServerOptions {
+  host: string;
+  port: number;
+  tls?: { cert: string; key: string };
+  /** 反代终止 TLS：信任回环连接的 X-Forwarded-For（限流按真实 IP） */
+  behindProxy?: boolean;
+  db?: HubDb;
+  store?: HubStore;
+  /** DB 大小来源（PG 由 serve 注入）；缺省走 db 文件 size。 */
+  dbSize?: () => Promise<number>;
+  auth: HubAuth;
+  tunnels: TunnelRegistry;
+  events: EventHub;
+  portalDir: string;
+  /** 邮件/验证码/安全配置（serve.ts 从 hub.json 传入）。 */
+  email?: EmailConfig;
+  captcha?: CaptchaConfig;
+  security?: SecurityConfig;
+  /** 短信/注册/计费（08-saas，serve.ts 从 hub.json 传入）。 */
+  sms?: SmsConfig;
+  registration?: "open" | "closed";
+  /** 注册每日上限（滚动 24h；缺省不限） */
+  registrationDailyLimit?: number;
+  /** 注册总量上限（全库用户数；缺省不限） */
+  registrationMaxUsers?: number;
+  billing?: BillingConfig;
+  /** 微信登录（12-portal-wechat-login，serve.ts 从 hub.json 传入）。 */
+  wechatLogin?: WechatLoginConfig;
+  /** App 微信登录（移动应用，serve.ts 从 hub.json 传入）。 */
+  wechatAppLogin?: WechatAppLoginConfig;
+  /** App 回跳 scheme 白名单（serve.ts 从 hub.json 传入）。 */
+  appSchemes?: string[];
+  /** 苹果登录（Sign in with Apple，serve.ts 从 hub.json 传入）。 */
+  appleLogin?: AppleLoginConfig;
+  /** 站点信息（portal 页脚导航，serve.ts 从 hub.json 传入）。 */
+  site?: SiteConfig;
+  /** 端到端加密策略（serve.ts 从 hub.json 传入）。 */
+  e2ee?: E2eeConfig;
+  /** 每日快照备份（dir 已解析；serve.ts 从 hub.json 传入）。 */
+  backup?: BackupConfig;
+  /** 转发点（relay node）上报用量的共享令牌（serve.ts 从 hub.json 传入）。 */
+  relayNodeToken?: string;
+  /** host cookie 的 Ed25519 公钥（hex，R17；serve.ts 派生自私钥文件） */
+  hostCookiePubKey?: string;
+  /** host cookie 的 Domain（区域根域，如 .rdsh.cn；节点子域需接收该 cookie） */
+  hostCookieDomain?: string;
+  /** 默认 relay 的对客 URL；配置后 host 列表与进入 302 强制走该 URL（避免与站点根路径混用） */
+  defaultRelayUrl?: string;
+  /** host cookie 的 Ed25519 签名器（R17；迁移票据签发 + 公钥下发） */
+  hostCookieSigner?: HostCookieSigner;
+  /**
+   * 隧道心跳时序（缺省 30s/10s，见 PROTOCOL.md「心跳与重连」）。
+   * 仅供测试注入毫秒级小值以快速验证超时判离线，生产不传。
+   */
+  tunnelTimings?: TunnelTimings;
+}
+
+export interface RunningHub {
+  server: ReturnType<typeof createHttpServer> | ReturnType<typeof createHttpsServer>;
+  actualPort: number;
+  usage: UsageAccumulator;
+  presence: PresenceDirectory;
+}
+
+const TUNNEL_PATH = "/tunnel";
+/** 选中 host 的 cookie：DSH 在根路径运行，由该 cookie 路由到对应隧道。 */
+export const HOST_COOKIE = "rdsh_host";
+/** portal 根路径前缀。 */
+export const PORTAL_PREFIX = "/portal";
+const HOST_COOKIE_MAX_AGE = 7 * 24 * 60 * 60; // 7 天（签名 host cookie，含会话版本）
+
+/**
+ * 无 host 上下文时的兜底 web app manifest。
+ *
+ * 为什么需要：浏览器取 manifest 时**不带 cookie**（规范要求 credentials omit），hub 因此无法
+ * 判断是哪台 host；此前会落到 portal 兜底返回 HTML，Chrome 报
+ * `Manifest: Line 1, column 1, Syntax error`（2026-09-14 用户实测）。
+ * 这里给一个合法的同源 manifest，保证解析通过（有 host 上下文时仍原样转发 DSH 自己的 manifest）。
+ */
+const HUB_MANIFEST = {
+  id: "/",
+  name: "rdsh",
+  short_name: "rdsh",
+  start_url: "/",
+  scope: "/",
+  display: "standalone",
+  background_color: "#0b0f14",
+  theme_color: "#0b0f14",
+} as const;
+
+function hostCookie(hostId: string, userId: number, auth: HubAuth, domain?: string): string {
+  const token = auth.signHostCookie(hostId, userId);
+  // 区域根域 Domain（如 .rdsh.cn）→ 节点子域能收到 cookie（跨域 cookie，见 solution §6.3）
+  const domainAttr = domain !== undefined && domain !== "" ? `; Domain=${domain}` : "";
+  return `${HOST_COOKIE}=${token}; HttpOnly; SameSite=Lax; Path=/${domainAttr}; Max-Age=${HOST_COOKIE_MAX_AGE}`;
+}
+
+export function clearHostCookie(domain?: string): string {
+  // 必须带与 hostCookie() 相同的 Domain 属性，否则浏览器匹配不到原 cookie、清不掉
+  // （2026-10-12 生产事故：残留 rdsh_host → 登录后 /api/* 仍被转发进 host 隧道 → 404）。
+  const domainAttr = domain !== undefined && domain !== "" ? `; Domain=${domain}` : "";
+  return `${HOST_COOKIE}=; HttpOnly; SameSite=Lax; Path=/${domainAttr}; Max-Age=0`;
+}
+
+/** 从请求 Host 计算根域：>2 词去掉第一个（子域），前缀加 `.`。例 rdsh.cn → .rdsh.cn，cn-relay-01.rdsh.cn → .rdsh.cn。 */
+export function rootDomain(host: string | undefined): string {
+  const words = ((host ?? "").split(":")[0] ?? "").split(".").filter(Boolean);
+  if (words.length > 2) words.shift();
+  return "." + words.join(".");
+}
+
+/** 解析 Cookie 头（relay 复用）。 */
+export function parseCookies(header?: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (typeof header !== 'string') return out;
+  for (const part of header.split(";")) {
+    const idx = part.indexOf("=");
+    if (idx > 0) out[part.slice(0, idx).trim()] = part.slice(idx + 1).trim();
+  }
+  return out;
+}
+
+
+
+export async function startHubServer(opts: HubServerOptions): Promise<RunningHub> {
+  const runtime: HubRuntime = {
+    tunnelTimings: opts.tunnelTimings,
+    config: {
+      host: opts.host,
+      port: opts.port,
+      tls: opts.tls,
+      dbPath: "",
+      jwtKeyPath: "",
+      behindProxy: opts.behindProxy === true,
+      email: opts.email,
+      captcha: opts.captcha,
+      security: opts.security,
+      sms: opts.sms,
+      registration: opts.registration,
+      registrationDailyLimit: opts.registrationDailyLimit,
+      registrationMaxUsers: opts.registrationMaxUsers,
+      billing: opts.billing,
+      site: opts.site,
+      wechatLogin: opts.wechatLogin,
+      wechatAppLogin: opts.wechatAppLogin,
+      appSchemes: opts.appSchemes,
+      appleLogin: opts.appleLogin,
+      e2ee: opts.e2ee,
+      backup: opts.backup,
+      relayNodeToken: opts.relayNodeToken,
+      hostCookiePubKey: opts.hostCookiePubKey,
+      hostCookieDomain: opts.hostCookieDomain,
+      defaultRelayUrl: opts.defaultRelayUrl,
+    },
+    db: opts.db,
+    store: opts.store ?? (opts.db !== undefined ? createSqliteStore(opts.db) : (() => { throw new Error("hub server requires db or store"); })()),
+    dbSize: opts.dbSize,
+    usage: new UsageAccumulator(opts.store ?? (opts.db !== undefined ? createSqliteStore(opts.db) : (() => { throw new Error("hub server requires db or store"); })())),
+    auth: opts.auth,
+    tunnels: opts.tunnels,
+    events: opts.events,
+    presence: new PresenceDirectory(),
+    metrics: new HubMetrics(),
+    hostCookieSigner: opts.hostCookieSigner,
+  };
+
+  // 计费状态机定时扫描（每分钟）：trial/subscribed 到期 → grace → free
+  void sweepBilling(runtime);
+  setInterval(() => void sweepBilling(runtime), 60 * 1000).unref();
+
+  // 用量定时 flush（每分钟）：内存累计 → usage_daily（分批事务，幂等 MAX 合并）
+  setInterval(async () => {
+    try {
+      await runtime.usage.flush();
+      const st = runtime.usage.stats();
+      if (st.lastFlushRows > 0) {
+        console.log(`[usage] flushed ${st.lastFlushRows} rows in ${st.lastFlushMs}ms (dirty=${st.dirty}, rows=${st.rows})`);
+      }
+    } catch (err) {
+      console.error("[usage] flush failed:", err instanceof Error ? err.message : err);
+    }
+  }, 60 * 1000).unref();
+
+  // 在线状态过期清理（惰性读取之外，保证 size/指标不虚高）
+  setInterval(() => runtime.presence.sweep(), 60 * 1000).unref();
+
+  // 点数账本月度结算（每分钟检查，跨月才执行一次）：结转 + 订阅赠点
+  let lastCreditSweepMonth = "";
+  setInterval(async () => {
+    const now = new Date();
+    const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    if (monthKey === lastCreditSweepMonth) return;
+    lastCreditSweepMonth = monthKey;
+    try {
+      await sweepCredits(runtime.store, runtime.config.billing?.plans ?? []);
+    } catch (err) {
+      console.error("[credits] monthly sweep failed:", err instanceof Error ? err.message : err);
+    }
+  }, 60 * 1000).unref();
+
+  const requestHandler = (req: IncomingMessage, res: ServerResponse): void => {
+    void handleHttp(req, res, runtime, opts.portalDir).catch((err) => {
+      // 打真实错误到日志（journalctl 可见），而不是只回通用 500
+      console.error(`[hub] request error ${req.method} ${req.url}:`, err instanceof Error ? err.message : err);
+      if (!res.headersSent) writeError(res, 500, "INTERNAL", "internal error");
+      else res.end();
+    });
+  };
+
+  const server =
+    opts.tls === undefined
+      ? createHttpServer(requestHandler)
+      : createHttpsServer({ key: opts.tls.key, cert: opts.tls.cert }, requestHandler);
+
+  const eventsServer = createEventsServer(runtime.events);
+
+  server.on("upgrade", async (req, socket, head) => {
+    const url = new URL(req.url ?? "/", "http://rdsh.local");
+    try {
+      const pathname = url.pathname;
+      const cookies = parseCookies(req.headers.cookie);
+      const hostId = cookies[HOST_COOKIE];
+
+      if (pathname === TUNNEL_PATH) {
+        await handleTunnelUpgrade(req, socket, head, runtime, url);
+        return;
+      }
+      // portal 的在线推送（无 host 上下文时）
+      if (pathname === "/api/events" && hostId === undefined) {
+        handleEventsUpgrade(req, socket, head, runtime, eventsServer);
+        return;
+      }
+      // 有 host 上下文：根路径 WS（DSH 的 events.mux / events.host）
+      if (pathname === "/e2e" && hostId !== undefined) {
+        await handleRawUpgrade(req, socket, head, runtime);
+        return;
+      }
+      if (hostId !== undefined) {
+        await handleRelayUpgrade(req, socket, head, runtime, pathname + url.search);
+        return;
+      }
+      // /h/<hostId>/ 的 WS：进入瞬间（罕见）——校验后转发（cookie 由进入的 HTTP 请求已设）
+      const h = /^\/h\/([^/]+)(\/.*)?$/.exec(pathname);
+      if (h !== null) {
+        const auth = authenticate(req, runtime);
+        if (auth !== null) {
+          const hid = decodeURIComponent(h[1]!);
+          const host = await runtime.store.getHostById(hid);
+          if (host !== null && host.ownerId === auth.userId) {
+            await handleRelayUpgrade(req, socket, head, runtime, `${h[2] ?? "/"}${url.search}`);
+            return;
+          }
+        }
+        socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+        socket.destroy();
+        return;
+      }
+      socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
+      socket.destroy();
+    } catch {
+      socket.destroy();
+    }
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(opts.port, opts.host, () => resolve());
+  });
+  const address = server.address();
+  const actualPort = typeof address === "object" && address !== null ? address.port : opts.port;
+  return { server, actualPort, usage: runtime.usage, presence: runtime.presence };
+}
+
+async function handleHttp(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime, portalDir: string): Promise<void> {
+  const url = new URL(req.url ?? "/", "http://rdsh.local");
+  const pathname = url.pathname;
+  const cookies = parseCookies(req.headers.cookie);
+  const hostId = cookies[HOST_COOKIE];
+
+  // portal 区域：进入 portal 即退出 host 上下文（清 cookie）
+  if (pathname === PORTAL_PREFIX || pathname.startsWith(PORTAL_PREFIX + "/")) {
+    if (hostId !== undefined) res.setHeader("set-cookie", clearHostCookie(runtime.config.hostCookieDomain ?? rootDomain(req.headers.host)));
+    const handled = await servePortal(req, res, portalDir);
+    if (!handled) writeError(res, 404, "NOT_FOUND", "not found");
+    return;
+  }
+
+  // 进入 host：/h/<hostId>/... → 校验归属 → Set-Cookie + 302 根路径
+  const h = /^\/h\/([^/]+)(\/.*)?$/.exec(pathname);
+  if (h !== null) {
+    await handleEnterHost(req, res, runtime, decodeURIComponent(h[1]!), h[2] ?? "/", url.search);
+    return;
+  }
+
+  // 有 host 上下文：根路径全部转发给该 host（DSH 无感知，绝对路径 /assets /api 原样）
+  if (hostId !== undefined) {
+    await handleRelay(req, res, runtime, pathname + url.search, { bufferHtml: true });
+    return;
+  }
+
+  // hub API（无 host 上下文）
+  if (pathname.startsWith("/api/")) {
+    await handleApi(req, res, runtime);
+    return;
+  }
+
+  // web app manifest（无 host 上下文）：浏览器按**规范以 credentials omit** 取 manifest，
+  // 所以这里**永远拿不到 rdsh_host** —— 若继续走 portal 兜底会返回 HTML，Chrome 报
+  // "Manifest: Line 1, column 1, Syntax error"（2026-09-14 用户实测）。
+  // hub 此时不知道是哪台 host，给一个合法的同源 manifest（start_url 仍为 /），先把错误消掉。
+  if (pathname === "/manifest.webmanifest" || pathname.endsWith(".webmanifest")) {
+    res.writeHead(200, { "content-type": "application/manifest+json; charset=utf-8", "cache-control": "no-store" });
+    res.end(JSON.stringify(HUB_MANIFEST));
+    return;
+  }
+
+  // 无上下文：portal（历史路径兼容 /login /hosts）
+  const handled = await servePortal(req, res, portalDir);
+  if (!handled) writeError(res, 404, "NOT_FOUND", "not found");
+}
+
+async function handleEnterHost(
+  req: IncomingMessage,
+  res: ServerResponse,
+  runtime: HubRuntime,
+  hostId: string,
+  rest: string,
+  search: string,
+): Promise<void> {
+  // 入口凭据：优先 access（Bearer / rdsh_hub_session，1h，首次进入）；access 失效时回退
+  // 7d capability cookie（rdsh_host）——已进入过该主机的客户端在 cookie 有效期内重进 / 刷新 /
+  // 被系统回收后重建都不再依赖 access，与 relay 的 capability 语义一致（2026-10-08 fix）。
+  let userId = authenticate(req, runtime)?.userId ?? null;
+  if (userId === null) {
+    const raw = parseCookies(req.headers.cookie)[HOST_COOKIE];
+    if (raw !== undefined) {
+      const v = runtime.auth.verifyHostCookie(raw);
+      // 绑定 hostId：不允许用主机 A 的 cookie 进入主机 B
+      if (v !== null && v.hostId === hostId) userId = v.userId;
+    }
+  }
+
+  if (userId === null) {
+    // 导航型请求（Accept text/html）给可读、可操作的 HTML；API / 其它保持结构化 JSON。
+    // 状态仍为 401，供 App 侧 onHttpError 识别后走续期重试。
+    if ((req.headers.accept ?? "").includes("text/html")) {
+      const next = encodeURIComponent(`/h/${hostId}${rest}${search}`);
+      res.writeHead(401, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+      res.end(
+        `<!doctype html><meta charset="utf-8"><body style="font-family:system-ui,sans-serif;max-width:560px;margin:80px auto;padding:0 16px;color:#1f2937">` +
+          `<h1 style="font-size:20px">会话已过期</h1>` +
+          `<p style="color:#6b7280">登录已过期，请重新登录后再进入主机。</p>` +
+          `<a href="/portal/login?next=${next}" style="color:#2563eb">重新登录</a></body>`,
+      );
+      return;
+    }
+    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
+    return;
+  }
+
+  const host = await runtime.store.getHostById(hostId);
+  if (host === null) {
+    writeError(res, 404, "NOT_FOUND", "host not found");
+    return;
+  }
+  const isOwner = host.ownerId === userId;
+  const isMember = isOwner || (await runtime.store.getShare(hostId, userId)) !== null;
+  if (!isMember) {
+    writeError(res, 403, "FORBIDDEN", "host not owned by you or shared with you");
+    return;
+  }
+  await runtime.store.recordAudit(userId, "host.enter", { hostId, role: isOwner ? "owner" : "member" }, clientIp(req, runtime));
+  // Set-Cookie（Ed25519 签名 host cookie，7d，Domain=区域根域）+ 302。
+  // 30-relay-node R9：在线外部节点 → 节点根路径；hub 内置 relay → defaultRelayUrl（配置了才强制，避免与站点根路径混用）；否则回退 hub 根路径。
+  const node = host.nodeId !== null ? await runtime.store.getNodeById(host.nodeId) : null;
+  const enterBase = node !== null && node.status === "online" ? node.advertiseUrl : (runtime.config.defaultRelayUrl ?? "");
+  const location = enterBase !== "" ? `${enterBase}${rest}${search}` : `${rest}${search}`;
+  const cookieDomain = runtime.config.hostCookieDomain ?? rootDomain(req.headers.host);
+  res.writeHead(302, { location, "set-cookie": hostCookie(hostId, userId, runtime.auth, cookieDomain) });
+  res.end();
+}
+
+async function handleTunnelUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer, runtime: HubRuntime, url: URL): Promise<void> {
+  const authHeader = req.headers["authorization"];
+  // 首选 Authorization: Bearer（不入 URL/日志）；向后兼容旧 gateway 的 query ?token=
+  const token =
+    typeof authHeader === "string" && authHeader.startsWith("Bearer ")
+      ? authHeader.slice(7).trim()
+      : url.searchParams.get("token");
+  if (token === null || token.length < 16) {
+    socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+    socket.destroy();
+    return;
+  }
+  const host = await runtime.store.findHostByTokenHash(sha256(token));
+  if (host === null) {
+    // 吊销后重连被拒。附机器可读 code，网关据此区分「权威吊销」与「分配层失败」。
+    socket.write("HTTP/1.1 401 Unauthorized\r\nx-rdsh-error: HOST_TOKEN_REVOKED\r\n\r\n");
+    socket.destroy();
+    return;
+  }
+  // 动态分配（R35/R35a）：sticky 节点在线则沿用；离线/不存在则重新 pickNode（自愈）。
+  // 仅对声明能跟随 307 的新 gateway 生效（握手头 x-rdsh-relay-follow: 1）；老 gateway 不带此头，
+  // 拿到 307 只会 terminate + 重连循环，故直接兜底直连。
+  const follow = req.headers["x-rdsh-relay-follow"];
+  if ((Array.isArray(follow) ? follow[0] : follow) === "1") {
+    let node = host.nodeId !== null ? await runtime.store.getNodeById(host.nodeId) : null;
+    if (node === null || node.status !== "online") {
+      node = await runtime.store.pickNode();
+    }
+    if (node !== null) {
+      await runtime.store.setHostNode(host.id, node.id);
+      const assign = runtime.auth.signAssignToken(host.id, node.id);
+      socket.write(`HTTP/1.1 307 Temporary Redirect\r\nLocation: wss://${hostOf(node.advertiseUrl)}/tunnel?assign=${assign}\r\n\r\n`);
+      socket.destroy();
+      return;
+    }
+  }
+  // 兜底直连（无可用节点 / 老 gateway）→ hub 直接转发。统一清掉残留节点分配，
+  // 否则 isHostOnline 读 DB online 列（节点路由）会误判离线（markNodesOffline 不清 hosts.node_id）。
+  if (host.nodeId !== null) {
+    await runtime.store.setHostNode(host.id, null);
+  }
+  const wss = new WebSocketServer({ noServer: true });
+  wss.handleUpgrade(req, socket, head, (ws) => {
+    const conn = new TunnelConn(ws, host.id, (hostId) => {
+      // 身份校验：重连时旧连接被 terminate，其 close 晚于新连接注册，
+      // 若不校验会把新连接一起摘掉（host 假离线）。
+      runtime.tunnels.unregister(hostId, conn);
+      // 仅当确实已无活跃连接时才推 offline；已被新连接接管则保持在线状态。
+      if (!runtime.tunnels.isOnline(hostId)) {
+        runtime.events.pushToUser(host.ownerId, { type: "host.offline", hostId });
+      }
+    }, runtime.tunnelTimings);
+    runtime.tunnels.register(conn);
+    runtime.events.pushToUser(host.ownerId, { type: "host.online", hostId: host.id });
+  });
+}
+
+function handleEventsUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer, runtime: HubRuntime, eventsServer: ReturnType<typeof createEventsServer>): void {
+  const auth = authenticate(req, runtime);
+  if (auth === null) {
+    socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+    socket.destroy();
+    return;
+  }
+  eventsServer.handleUpgrade(req, socket, head, (ws) => {
+    (ws as WebSocket & { rdshUserId?: number }).rdshUserId = auth.userId;
+    eventsServer.emit("connection", ws, req);
+  });
+}
+
+/** TLS 材料加载（hub 专用：无证书 → 报错，公网必须 TLS）。 */
+export async function loadHubTls(tls?: { cert: string; key: string }): Promise<{ cert: string; key: string }> {
+  if (tls === undefined) {
+    throw new Error("hub requires TLS. Set tls.cert/key in ~/.rdsh/hub.json (Let's Encrypt / cloud cert).");
+  }
+  const [cert, key] = await Promise.all([readFile(tls.cert, "utf8"), readFile(tls.key, "utf8")]);
+  return { cert, key };
+}
