@@ -134,7 +134,7 @@ plan.md 的强制格式见 **附录 E**。
 - **构建**: `pnpm build`（先构建 `packages/portal`，再构建其余包）、`pnpm test`（`node --test`）。
 - **测试**: 内置 `node:test` + `node:assert`（零依赖）；测试文件放各包 `test/`。
 - **npm 发布**: npm 包名 **`remote-dsh`**（CLI 命令仍是 `rdsh`）；`rdsh` 裸名被 npm 的 typo-squatting 防护拒绝，不能作为包名。子包名：`rdsh-tunnel` / `rdsh-hub` / `rdsh-portal` / `rdsh-hub-cli`（服务端 CLI）。**发布即对外**，必须先得到用户显式确认；版本号与发布记录写入 `CHANGELOG`，不写进本文件。
-- **MVP 节奏**: 实现严格按私有仓的 `doc/feature/01-remote-access/plan.md`（归档：`whalelink/doc/archive/remote-dsh/feature/01-remote-access/plan.md`）推进；未列入 plan 的功能不得顺手实现。**本仓不复制该 plan。**
+- **MVP 节奏**: 实现严格按私有仓的 `whalelink/doc/feature/01-remote-access/plan.md` 推进；未列入 plan 的功能不得顺手实现。**本仓不复制该 plan。**
 - **依赖纪律**: 依赖最小化——能用 Node 内置（`node:http`、`node:sqlite` ≥22.5、`node:crypto`、`node:test`）就不加包；必须新增依赖时先说明理由。
 - **项目布局**（内容会变，改动时按实际目录核对，勿凭记忆）:
   - `packages/tunnel` — `rdsh-tunnel`：线协议（零依赖；`PROTOCOL.md` 是跨语言契约）

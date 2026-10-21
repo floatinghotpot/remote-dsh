@@ -24,9 +24,10 @@ Implementation-process and operations docs live in the **private repository**
 - `doc/ops/` — production/staging runbooks (real hosts, IPs, paths)
 - `doc/saas/` — legal/product source docs (the published static HTML lives in the website repo)
 
-They were moved out of this repository on 2026-10-21 and archived at
-`whalelink/doc/archive/remote-dsh/`. **Do not recreate these directories here.**
-CI fails if `doc/feature`, `doc/fix`, `doc/review`, `doc/ops`, or `doc/saas` appears.
+They were moved out of this repository on 2026-10-21 into the private workspace
+under `whalelink/doc/{feature,fix,review,ops,saas}/`. **Do not recreate these
+directories here.** CI fails if `doc/feature`, `doc/fix`, `doc/review`, `doc/ops`,
+or `doc/saas` appears.
 
 ## Contributing docs
 

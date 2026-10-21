@@ -225,6 +225,6 @@
 
 - 产品提案：`proposal.md`
 - 功能清单 / 路线图：`features.md`（+ `features.zh.md`）/ `roadmap.md`
-- 特性管线：实施过程文档在私有仓归档（`whalelink/doc/archive/remote-dsh/feature/`）；本仓不保留。
+- 特性管线：实施过程文档在私有仓（`whalelink/doc/feature/`）；本仓不保留。
 - 层 2 协议：`packages/tunnel/PROTOCOL.md`
 - 变更流程：本文件随里程碑评审更新（M1–M5 / 09 E2EE 已定稿；M6 SaaS / M8 App / M9 小程序；Go hub 未排期）
