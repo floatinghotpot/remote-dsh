@@ -64,7 +64,7 @@ export interface BillingConfig {
   /**
    * **点数/订阅商品清单文件**（单一真相）—— hub 启动时读它取点数档位。
    *
-   * 就是 App 的 `private/rdsh-app/assets/iap_products.json`（App 展示、商店导出、
+   * 就是 App 仓库的 assets/iap_products.json（App 展示、商店导出、
    * hub 记账三方共用一份），部署时 scp 到服务器并在配置里写绝对路径。
    * 读的是 `products.consumable[]`（字段 `id` / `package.credits` / `priceCNY` / `priceUSD`）。
    */
@@ -563,7 +563,7 @@ function parseCreditEntries(raw: unknown, source: string, where: string): Credit
 }
 
 /**
- * 读商品清单文件（`private/rdsh-app/assets/iap_products.json`）：
+ * 读商品清单文件（App 仓库的 assets/iap_products.json）：
  * `products.consumable[]` → 点数档位，`products.subscription[]` → 套餐（plans）。
  *
  * **配置错误要吵**：路径写了但文件读不到 / JSON 坏 / 缺字段 ⇒ 启动失败（而不是静默不卖点数）。

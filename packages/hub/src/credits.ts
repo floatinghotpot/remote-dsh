@@ -16,7 +16,7 @@ export const CREDITS_MICRO_PER_CREDIT = 10000;
 /**
  * 点数充值档位 —— **来自 `config.billing.credits`，不在代码里写死**（与订阅 `billing.plans` 同构）。
  *
- * 权威清单由 `private/rdsh-app/assets/iap_products.json` 维护（App 与商店导出共用），
+ * 权威清单由 App 仓库的 assets/iap_products.json 维护（App 与商店导出共用），
  * 部署时同步到 hub 配置；hub 只关心「某 goodsId 送多少点数」与「下单记多少钱」。
  */
 export interface CreditProduct {

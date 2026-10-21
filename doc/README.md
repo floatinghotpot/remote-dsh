@@ -15,8 +15,7 @@ This directory is the **public** documentation surface of `remote-dsh`.
 
 ## What does **not** belong here
 
-Implementation-process and operations docs live in the **private repository**
-(`whalelink`):
+Implementation-process and operations docs live in the **private repository**:
 
 - `doc/feature/` — discussion / req / solution / plan / code-review / verification / summary / TODO
 - `doc/fix/` — bug investigations and fix records
@@ -24,9 +23,8 @@ Implementation-process and operations docs live in the **private repository**
 - `doc/ops/` — production/staging runbooks (real hosts, IPs, paths)
 - `doc/saas/` — legal/product source docs (the published static HTML lives in the website repo)
 
-They were moved out of this repository on 2026-10-21 into the private workspace
-under `whalelink/doc/{feature,fix,review,ops,saas}/`. **Do not recreate these
-directories here.** CI fails if `doc/feature`, `doc/fix`, `doc/review`, `doc/ops`,
+They were moved out of this repository on 2026-10-21 into the private repository.
+**Do not recreate these directories here.** CI fails if `doc/feature`, `doc/fix`, `doc/review`, `doc/ops`,
 or `doc/saas` appears.
 
 ## Contributing docs

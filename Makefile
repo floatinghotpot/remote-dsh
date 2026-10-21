@@ -1,7 +1,7 @@
 # remote-dsh monorepo — common entry points (thin wrapper over pnpm/scripts).
 # Usage: `make <target>`; `make help` lists all targets.
 #
-# Scale-out relay (Go) moved to the private rdsh-cloud repo.
+# Scale-out relay (Go) moved to the private commercial repo.
 # Single-node self-hosting uses the hub's built-in relay; no Go build here.
 
 .PHONY: help deps build test clean pub pub-check \

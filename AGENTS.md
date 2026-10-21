@@ -57,19 +57,19 @@ Vibe Coding 八荣八耻
 
 > ⚠️ **公开仓 / 私有仓文档边界（2026-10-21 起）**
 > 本仓**只放公开文档**：`doc/blog/`、`doc/overview/`（脱敏版）、`packages/*/README.md`、`packages/tunnel/PROTOCOL.md`、`packages/hub/API.md`、`e2e/`。
-> **实施过程 / 内部文档一律在私有仓 `whalelink`**：`doc/feature/`、`doc/fix/`、`doc/review/`、`doc/ops/`、`doc/saas/`、`doc/daily/`、`doc/task/`。
+> **实施过程 / 内部文档一律在私有仓**（不在本仓）。**本仓不得引用私有仓的文件、路径或仓库名**；需要提及时只说“私有仓 / 商业版”。
 > **本仓不建 `doc/feature|fix|review|ops|saas`**；CI 会检查，出现即 fail。
 
-- **Feature Pipeline（私有仓）**: Follow `discussion → req → solution → plan → code-review → verification → summary + TODO` in `whalelink/doc/feature/{NN-name}/`，特性目录以两位数字编号作索引（如 `01-xxx`、`02-xxx`）。**本仓不复制该管线。**
+- **Feature Pipeline（私有仓）**: Follow `discussion → req → solution → plan → code-review → verification → summary + TODO` in the private repository；特性目录以两位数字编号作索引（如 `01-xxx`、`02-xxx`）。**本仓不复制该管线，也不引用其路径。**
 - **架构/概览/提案文档**: 公开仓放 `doc/overview/`（脱敏版：`architecture.md`、`roadmap.md`、`proposal.md`）；完整版/内部版在私有仓。
 - **博客**: 场景化教程/传播文章放 `doc/blog/`，按语言分子目录 `doc/blog/zh/`（中文，`NN-name.md`）与 `doc/blog/en/`（英文，`NN-name.md`），两版互链；README 双语各自链接对应语言版本。**博客一律不用 Markdown 表格**——结构信息用加粗引导条目（`- **标题**：说明`）表达，保证手机/微信内浏览器阅读体验。
 - **市场/营销**: 市场分析、定位、定价对标**不入本仓**（属内部活文档）；对外只发布脱敏后的 `doc/blog/` 文章。基于事实带来源，查不到标"待查证"。
-- **Bugfix Pipeline（私有仓）**: complex fixes go to `whalelink/doc/fix/{name}/`; simple public fixes are recorded in `CHANGELOG` only.
-- **Consistency（私有仓）**: Keep `whalelink/doc/daily/YYYYMMDD.md` updated at the end of task series upon user request.
+- **Bugfix Pipeline（私有仓）**: complex fixes go to the private repository; simple public fixes are recorded in `CHANGELOG` only.
+- **Consistency（私有仓）**: keep the private repository's daily summary updated at the end of task series upon user request.
 
 ### Feature Pipeline（私有仓，MANDATORY）
 
-> 本仓**不执行**这套流程；它只在私有仓 `whalelink` 落地。公开仓出现 `doc/feature/` 会被 CI 拒绝。
+> 本仓**不执行**这套流程；它只在私有仓落地。公开仓出现 `doc/feature/` 会被 CI 拒绝。
 
 ```
 discussion.md → req.md → solution.md → plan.md → (implementation) → code-review.md → verification.md → plan.md review → summary.md + TODO.md
@@ -125,7 +125,7 @@ plan.md 的强制格式见 **附录 E**。
 ### A.1 项目速览
 
 - **产品**：`remote-dsh`（代码名 `rdsh`）—— 为 DeepSeek Harness 构建安全远程访问层：`rdsh serve` / `rdsh join <hub>`（用户侧）与 `rdsh-hub`（服务端）。里程碑见 `doc/overview/roadmap.md`，不在本文件维护。
-- **技术栈**：TypeScript monorepo（`packages/*`，pnpm workspace）。Go 规模化组件（relay / Bay Controller / Scheduler）在**私有仓 `rdsh-cloud`**，不在本仓；本仓只保留 Node 单机自托管系统 + 公开协议。未来若用 Go 实现 hub，也进私有仓（**当前未排期**）。
+- **技术栈**：TypeScript monorepo（`packages/*`，pnpm workspace）。Go 规模化组件在**私有商业仓**（不在本仓）；本仓只保留 Node 单机自托管系统 + 公开协议。未来若用 Go 实现 hub，也进私有仓（**当前未排期**）。**本仓不引用私有仓的文件/路径/仓库名。**
 
 ### A.2 工具链与命令
 
@@ -134,7 +134,7 @@ plan.md 的强制格式见 **附录 E**。
 - **构建**: `pnpm build`（先构建 `packages/portal`，再构建其余包）、`pnpm test`（`node --test`）。
 - **测试**: 内置 `node:test` + `node:assert`（零依赖）；测试文件放各包 `test/`。
 - **npm 发布**: npm 包名 **`remote-dsh`**（CLI 命令仍是 `rdsh`）；`rdsh` 裸名被 npm 的 typo-squatting 防护拒绝，不能作为包名。子包名：`rdsh-tunnel` / `rdsh-hub` / `rdsh-portal` / `rdsh-hub-cli`（服务端 CLI）。**发布即对外**，必须先得到用户显式确认；版本号与发布记录写入 `CHANGELOG`，不写进本文件。
-- **MVP 节奏**: 实现严格按私有仓的 `whalelink/doc/feature/01-remote-access/plan.md` 推进；未列入 plan 的功能不得顺手实现。**本仓不复制该 plan。**
+- **MVP 节奏**: 实现严格按私有仓的 MVP plan 推进；未列入 plan 的功能不得顺手实现。**本仓不复制该 plan，也不引用其路径。**
 - **依赖纪律**: 依赖最小化——能用 Node 内置（`node:http`、`node:sqlite` ≥22.5、`node:crypto`、`node:test`）就不加包；必须新增依赖时先说明理由。
 - **项目布局**（内容会变，改动时按实际目录核对，勿凭记忆）:
   - `packages/tunnel` — `rdsh-tunnel`：线协议（零依赖；`PROTOCOL.md` 是跨语言契约）
@@ -143,13 +143,13 @@ plan.md 的强制格式见 **附录 E**。
   - `packages/portal` — `rdsh-portal`：Web 门户（Vite + React 18，与 DSH 前端同构）
   - `packages/cli` — `remote-dsh`：`rdsh` 用户侧 bin（setup/join/serve/service/leave/user/gate，短形式为主、`host` 兼容别名；不含 hub）
   - `packages/hub-cli` — `rdsh-hub-cli`：`rdsh-hub` 服务端 bin（serve/user/audit/host/service）；其余 `packages/*`（`web-remote` / `agent-mesh` / `whale-link` 等）见目录本身
-  - **私有仓 `rdsh-cloud`（不在本仓）** — Go 规模化组件：`cmd/rdsh-relay` 中继节点、`cmd/rdsh-bay`、`cmd/rdsh-cloud-scheduler`、`internal/tunnel` 的 Go 实现
+  - **私有仓（不在本仓）** — Go 规模化组件；本仓不写其文件、路径或仓库名
   - `e2e/` — 公开 conformance fixtures 与最小 TS harness；Go 实现在私有仓跑同一套 fixtures
   - `media/` — logo 资产（品牌，不随 MIT，见 NOTICE）；`doc/` — **公开文档**（`blog/`、`overview/`；实施过程与内部文档在私有仓，见 §5）
 
 ## Appendix B: 协议与契约路径
 
-- **隧道协议**（gateway ↔ hub 的线协议）：`packages/tunnel/PROTOCOL.md` —— 跨语言契约；Go 实现（relay / 未来 hub）在私有仓 `rdsh-cloud`，必须与本文一致。
+- **隧道协议**（gateway ↔ hub 的线协议）：`packages/tunnel/PROTOCOL.md` —— 跨语言契约；Go 实现（relay / 未来 hub）在私有仓，必须与本文一致。
 - **对外 API**（客户端 ↔ hub 的 REST + WSS）：`packages/hub/API.md`；消费方是客户端 App 与未来第三方接入。
 - **跨语言 conformance**：公开 fixtures 在 `e2e/`；私有仓的 Go 实现在 CI 里跑同一套 fixtures（私有仓不得反向要求本仓依赖它）。
 - **"gateway 永不需要改动"的承诺出处**：`doc/overview/proposal.md` §7（技术栈建议）。

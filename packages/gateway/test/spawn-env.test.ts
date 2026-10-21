@@ -3,7 +3,7 @@
  * - `dshSpawnEnv`：注入 SSH 信号（上游 `resolveDirectoryPickerBackend` 的输入）
  * - `checkRemotePickerGraph`：boot graph 自检（browse 客户端模块在不在）
  *
- * 依据：doc/fix/20260917-remote-workspace-picker/（discussion F2/F4/F8、solution T3/T4）
+ * 依据：the internal fix record（discussion F2/F4/F8、solution T3/T4）
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";

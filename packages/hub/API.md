@@ -389,7 +389,7 @@ UI 文案必须写「**可云端中转主机数**」，**不要**写「主机配
 | **weapp** | ⏭️ 未开始 |
 
 > 上述两个 ⛔ 属**门禁缺口**，修复方案与验收标准见私有仓
-> `doc/fix/20261011-account-identity-entitlements/solution.md` §5（S7a / S7b）。
+> the internal fix record §5（S7a / S7b）。
 
 ### 13.6 超配额主机的处理（**UI 软提示**，非后端硬拦 —— 2026-10-11 决策）
 

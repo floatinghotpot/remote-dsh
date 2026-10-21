@@ -1,7 +1,7 @@
 /**
  * E2EE shim 的 WebSocket 门面回归测试（2026-09-14）。
  *
- * 背景（doc/fix/20260914-remote-webui-settings）：DSH 的 API 网关远端流
+ * 背景（the internal fix record）：DSH 的 API 网关远端流
  * （`@deepseek-ai/dsh-api-gateway/lib/client.js`）用 `addEventListener`/`removeEventListener`
  * 订阅 WebSocket，并用 `readyState === WebSocket.OPEN` 判定状态；而 shim 早期只实现了
  * `on*` 回调 ⇒ E2EE 下远端流通道建不起来（设置页 Models 报

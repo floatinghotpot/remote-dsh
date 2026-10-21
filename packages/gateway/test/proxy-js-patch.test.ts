@@ -1,5 +1,5 @@
 /**
- * LAN 路径的 loopback 补丁（因素③，doc/fix/20260914-remote-webui-settings）+ 压缩回归。
+ * LAN 路径的 loopback 补丁（因素③，the internal fix record）+ 压缩回归。
  *
  * `forwardHttp(..., { jsPatch: patchLoopbackJs })` 必须：
  *  - 命中：identity / gzip / br 都要替换为 `true`，并保持原编码、重算 content-length；

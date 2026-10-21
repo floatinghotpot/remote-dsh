@@ -358,10 +358,10 @@ rdsh-app (Flutter)
 **语言策略（已定，2026-08-22）——分阶段双栈**：
 
 - **原型期（M1–M3）**：全 TypeScript/Node —— rdsh-hub 以 TS 实现并随 `rdsh` npm 包分发，单一语言、迭代最快；
-- **生产期（价值验证后，未排期）**：rdsh-hub 用 **Go 重写**为单静态二进制（`go:embed` 内嵌 portal 前端），独立分发（GitHub Release / Docker），服务器免 Node 运行时；**Go 版属商业版/私有仓 `rdsh-cloud`**。
+- **生产期（价值验证后，未排期）**：rdsh-hub 用 **Go 重写**为单静态二进制（`go:embed` 内嵌 portal 前端），独立分发（GitHub Release / Docker），服务器免 Node 运行时；**Go 版属商业版/私有商业仓**。
 - **前提契约**：tunnel 线协议与 hub 对外 API 在原型期**文档先行、定稿**，作为 Go 重写的唯一契约 —— gateway 与客户端永不需要改动。
 
-> **2026-10-21 open-core 调整**：Go 规模化组件（relay / 未来 hub）迁入私有仓 `rdsh-cloud`；本仓保留 Node 单机自托管系统 + 公开协议。**B 已定：若将来用 Go 实现 hub，则进私有仓；当前不在实现计划内、未排期。**
+> **2026-10-21 open-core 调整**：Go 规模化组件（relay / 未来 hub）迁入私有商业仓；本仓保留 Node 单机自托管系统 + 公开协议。**B 已定：若将来用 Go 实现 hub，则进私有仓；当前不在实现计划内、未排期。**
 
 ### 原型期技术栈（TS 全栈，依赖最小化）
 
@@ -402,7 +402,7 @@ remote-dsh/
 ├── apps/
 │   ├── app/          # rdsh-app：Flutter（Android/iOS）
 │   └── weapp/        # rdsh-weapp：微信小程序
-├── go/               # （已迁出）生产期 Go 组件在私有仓 rdsh-cloud，不在本仓
+├── go/               # （已迁出）生产期 Go 组件在私有商业仓，不在本仓
 └── doc/
 ```
 
@@ -450,7 +450,7 @@ remote-dsh/
 | Q5 | 端到端加密 | **MVP 不实现，协议层预留**（rdsh-tunnel 帧格式留加密扩展位）；未来公共 SaaS hub 时实现 —— 届时客户端已原生化（E2E 在 Web 端有"改页面 JS"局限，原生 App 中才真正成立） |
 | Q6 | hub 分发 | **提供 Docker 镜像**（2026-08-22 用户确认）：原型期包装 npm 包、生产期包装 Go 单二进制；Docker 是包装而非唯一路径，主分发形态分别为 npm 包 / 单二进制 |
 | Q7 | 移动端范围 | **纯 WebView 壳**（Flutter）+ 登录态原生存储；验收须含 WebView 交互验证（剪贴板/输入法/文件下载），剪贴板不可用时加最小原生桥；原生推送/文件管理后置 |
-| Q8 | 技术栈 | **分阶段双栈**：原型期全 TS/Node（rdsh-hub 随 npm 包）；生产期 rdsh-hub 用 **Go 重写**（标准生态，单二进制；**Go 版属商业版/私有仓 `rdsh-cloud`，未排期**）；rdsh-app 用 **Flutter/Dart**；rdsh-weapp 原生小程序。契约前提：tunnel 协议与 hub API 文档先行（见 §7） |
+| Q8 | 技术栈 | **分阶段双栈**：原型期全 TS/Node（rdsh-hub 随 npm 包）；生产期 rdsh-hub 用 **Go 重写**（标准生态，单二进制；**Go 版属商业版/私有商业仓，未排期**）；rdsh-app 用 **Flutter/Dart**；rdsh-weapp 原生小程序。契约前提：tunnel 协议与 hub API 文档先行（见 §7） |
 | Q9 | MVP 范围 | **仅 rdsh-gateway（LAN 模式）**：`npm i -g remote-dsh` 与 dsh 同装，另一台笔记本即刻可用；hub / portal / App / 小程序全部后置 |
 | Q10 | 安装形式 | MVP：**独立 npm 包 `remote-dsh`**（2026-08-22 已发布 0.1.0 占名；`rdsh` 裸名被 npm typo-squatting 防护拒绝）；未来同时提供 **dsh 插件形态**（薄适配层复用核心包），两种安装路径并存 |
 

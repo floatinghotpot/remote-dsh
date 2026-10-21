@@ -4,7 +4,7 @@ Language-agnostic test vectors for the canonical `rdsh-tunnel` v1 wire protocol
 (see [`../../packages/tunnel/PROTOCOL.md`](../../packages/tunnel/PROTOCOL.md)).
 
 **One source of truth:** the public TypeScript implementation and the private Go
-implementation (`rdsh-cloud`) both consume `frames.json`. Do not add
+implementation both consume `frames.json`. Do not add
 implementation-specific fixtures here.
 
 ## Schema
@@ -52,7 +52,7 @@ implementation-specific fixtures here.
 | Implementation | Location | How |
 |---|---|---|
 | TypeScript | `packages/tunnel/test/conformance.test.ts` | `pnpm --filter rdsh-tunnel test` |
-| Go | private `rdsh-cloud/internal/tunnel/conformance_test.go` | `RDSH_E2E_FIXTURES=/abs/path/to/e2e/fixtures/frames.json go test ./...` |
+| Go | private Go conformance test | `RDSH_E2E_FIXTURES=/abs/path/to/e2e/fixtures/frames.json go test ./...` |
 
 > **Path note:** Go resolves relative paths from the package directory
 > (`internal/tunnel`), so pass an **absolute path** (or `../../../remote-dsh/e2e/fixtures/frames.json`

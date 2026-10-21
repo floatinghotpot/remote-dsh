@@ -22,7 +22,7 @@
 ### M0 需求确认 ✅
 
 - **内容**：产品提案、需求、方案、计划定稿
-- **交付物**：`proposal.md`、`doc/overview/architecture.md`；实施文档在**私有仓** `doc/feature/01-remote-access/`（本仓不保留）
+- **交付物**：`proposal.md`、`doc/overview/architecture.md`；实施文档在私有仓（本仓不保留）
 - **关键决策**：Q1–Q10 全部定案（自托管起步、整实例授权、TS→Go 双栈、E2E 协议预留等）
 
 ### M1 MVP（LAN）✅
@@ -72,14 +72,14 @@
 #### 04-cli-refactor ✅（2026-08-24 完成）
 
 - **内容**：CLI 组件化重构 —— `rdsh host {setup lan|cloud, join, serve, service, leave, user}` + `rdsh hub *`；`~/.rdsh/host.json` 唯一配置（**3 模式 lan/cloud/join**）；`config.json` 自动迁移；**self-revoke 端点**；证书自动检测；服务名对齐（`rdsh-host` / `rdsh-join` / `rdsh-hub`）
-- **来源**：私有仓 `doc/feature/04-cli-refactor/`（discussion/req/solution/plan；plan T1–T6 全 ✅）
+- **来源**：私有仓（discussion/req/solution/plan；plan T1–T6 全 ✅）
 - **验收**：命令树正确；host.json 读写/迁移；`setup lan/cloud`、`join` 配置向导；`serve` 按 mode 分发；`leave` 自注销回未配置；证书自动检测；三服务名互不覆盖；hub 命令行为不变 —— 达成（随 05 发布 `rdsh-gateway@0.3.0`）
 
 #### 05-join-easy ✅（2026-08-24 完成并发布）
 
 - **内容**：join 接入体验 —— portal 自助生成**用户级 join token**（30 天默认可配、只显示一次、可吊销、哈希存储）；`rdsh host join <hub>` 交互注册免配对；`rdsh host service install --token/--name`；portal「添加主机」页（生成/复制命令）；**join token 取代 hub 侧配对码 bind**（`pending`/`bind` 端点移除；LAN `serve` 的 pair 认证保留）
 - **依赖**：04-cli-refactor（命令树）
-- **来源**：私有仓 `doc/feature/05-join-easy/`（discussion/req/solution/plan；实现完成）
+- **来源**：私有仓（discussion/req/solution/plan；实现完成）
 - **验收**：portal 生成 → 机器粘贴 → 注册 → 在线；重启免配；吊销/过期被拒；API key 由 DSH 自管 —— 达成（发布 `rdsh-hub@0.3.0` / `rdsh-gateway@0.3.0` / `remote-dsh@0.5.0` / `rdsh-tunnel@0.1.0`）
 
 ### M4 dsh 插件（远程访问）✅（2026-08-23 新增，2026-08-24 实现 + 冒烟通过 + 发布）
@@ -87,7 +87,7 @@
 - **背景**：host 侧接入目前需 `npm i -g remote-dsh` + `rdsh serve/join`；DSH 插件生态（Cordis）允许把 gateway 能力做进插件 —— 用户 `dsh plugin add` 即获同能力，免装 CLI
 - **内容**：`dsh-*` 插件（npm 包）—— **内嵌 join 核心**（不 spawn，转发到本进程 dsh `127.0.0.1:<port>`）+ 复用 05 已验证的 join 隧道/转发内核；DSH 界面「远程访问」面板（接入/断开/注销 + 实时状态点 + 外部托管只读 + **启动自动接入** + **兼容模式复选框** `trustE2EEAsLoopback`）；与 CLI 双通道分发
 - **验收**：在 dsh 里装插件 → 面板粘贴 hub URL + join token → 接入 → hub 在线；断开/注销可用；无需单独安装 rdsh CLI
-- **进度**：私有仓 `doc/feature/06-dsh-plugin/` 全流程（discussion/req/solution/plan/verification/summary/TODO）；D1–D6 决议、P1–P5 查证、P6（npm org）推迟；**2026-08-24 真实 DSH 冒烟通过 + 发布**（`rdsh-gateway@0.4.0` + `dsh-web-remote@0.1.0`）
+- **进度**：私有仓全流程（discussion/req/solution/plan/verification/summary/TODO）；D1–D6 决议、P1–P5 查证、P6（npm org）推迟；**2026-08-24 真实 DSH 冒烟通过 + 发布**（`rdsh-gateway@0.4.0` + `dsh-web-remote@0.1.0`）
 - **相关决策**：插件与 CLI 双通道分发（CLI 保留）；单身份铁律（host.json 唯一 + pid 锁防双隧道）；MVP 面板四态 + 外部托管只读；RPC 走 `connection.rpc`（非 `/api` 内置契约）
 
 ### M5 多租户增强 ✅（2026-08-24 完成）
@@ -100,7 +100,7 @@
 - **内容**：端到端加密（浏览器 ↔ host，hub 中转但不可读内容）
 - **方案**：raw stream（`flags` bit0）+ 内层 Noise NK（X25519 + HKDF-SHA256 + AES-256-GCM）+ **data-plane-only**（HTML/JS 壳明文，API/WS 加密）+ portal TOFU pin（localStorage，绝不上 hub）；hub `e2ee.mode: off|optional|required`（默认 optional）
 - **进度**：代码完成 + 单测全绿（hub 64/64、gateway 81/81、`pnpm build` 全绿）+ 真实环境验证（新 host 端到端加密 / 老 host 明文降级 / 生产 portal 已部署 E2EE UI）
-- **来源**：私有仓 `doc/feature/09-e2e-encryption/`（discussion/req/solution/plan/verification/summary/TODO）
+- **来源**：私有仓（discussion/req/solution/plan/verification/summary/TODO）
 - **剩余**：host 侧 `e2ee` 开关 defer（见 feature TODO）
 - **验收**：hub 无法读取业务报文内容（仅路由元数据可见）—— 达成
 

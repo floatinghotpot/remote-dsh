@@ -4,8 +4,7 @@
  * 出站（initiate / store/verify）用 `auth_secret` 做 HMAC-SHA256 签名（caller→unicpay）；
  * 入站 webhook 用 `webhook_secret` 验签（unicpay→caller），两把密钥分离（req R8）。
  *
- * 契约来源：unicpay `backend/doc/api/01-app-api.md` §4（签名）、§1/§3（initiate/prepay）、
- * `04-store-api.md` §1（store/verify）、`03-webhook.md` §3（webhook 验签）。
+ * 契约来源：unicpay 的支付渠道文档（签名、initiate/prepay、store/verify、webhook 验签）。
  */
 import { createHmac, createHash, randomBytes, timingSafeEqual } from "node:crypto";
 

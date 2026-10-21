@@ -1,11 +1,11 @@
 /**
  * rdsh-webview-api.ts — 智能体 API 契约适配脚本（注入 DSH 首页，feature 22）。
  *
- * 挂出稳定契约 `window.__rdshWebViewApi`（version 1），供 WebView 客户端（如 garsync App）优先消费，
+ * 挂出稳定契约 `window.__rdshWebViewApi`（version 1），供 WebView 客户端（如 the App）优先消费，
  * 以把「DSH 版本适配」从 App（发版慢）挪到 gateway（随 npm 包快速发布）。
  *
- * 契约正文与语义以 garsync `doc/feature/108_agent_api_contract/req.md` R7 为准；
- * 本脚本是 garsync `lib/rdsh/rdsh_web_bridge.dart` 的 `_bridgeJs` 的**精简等价物**：
+ * 契约正文与语义以 App 内部契约文档 R7 为准；
+ * 本脚本是 App 的 WebView bridge 的 `_bridgeJs` 的**精简等价物**：
  * - 保留：isDshPage / readReply / fillAndSend 三方法及其 DOM 细节（Lexical 写入管线、
  *   键盘守卫、最后一轮答案提取、UTF-8 安全 base64）；
  * - 去掉：`report()` 通道与 105 诊断探针（那是 App 侧独有的 debug 机制）。

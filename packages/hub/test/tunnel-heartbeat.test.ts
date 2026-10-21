@@ -3,7 +3,7 @@
  *
  * hub 也主动发 PING，并在超时未收到对端任何帧时 terminate 该连接
  * → close → onClose（摘除隧道注册表 + 推送 host.offline）。
- * 历史缺陷：hub 从不发 PING，也不判定超时（见 doc/fix/20260911-heartbeat-pong-timeout/）。
+ * 历史缺陷：hub 从不发 PING，也不判定超时（见 the internal fix record）。
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";

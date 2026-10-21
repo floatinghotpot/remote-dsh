@@ -1,7 +1,7 @@
 /**
  * usage-report.test.ts — 用量计量/上报已上提到 `startJoin`（CLI 与插件共用同一份）。
  *
- * 回归背景（doc/fix/20261016-plugin-usage-reporting）：计量与上报原先只写在 CLI `join()`，
+ * 回归背景（the internal fix record）：计量与上报原先只写在 CLI `join()`，
  * 插件只调 `startJoin` ⇒ 插件的直连流量**从未被计量上报**（账号页「直连流量」恒 0）。
  *
  * 本文件锁两件事：

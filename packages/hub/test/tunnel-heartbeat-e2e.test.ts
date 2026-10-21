@@ -1,7 +1,7 @@
 /**
  * 心跳超时 → hub 摘除注册表 + 推送 host.offline（真实 hub 服务端到端）。
  *
- * 覆盖 doc/fix/20260911-heartbeat-pong-timeout 的验收标准第 1 条：
+ * 覆盖 the internal fix record 的验收标准第 1 条：
  * 对端静默 ≥ 心跳超时后，hub 侧隧道注册表不再包含该 host（门户据此显示离线）。
  * 时序用毫秒级注入（生产为 30s/10s）。
  */

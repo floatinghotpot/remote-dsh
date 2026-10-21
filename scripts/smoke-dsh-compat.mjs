@@ -5,7 +5,7 @@
  * 用法：node scripts/smoke-dsh-compat.mjs [--dsh <path>]
  * 输出每个断言 S1–S7 的通过/失败；任一失败退出码非 0。
  * 覆盖 remote-dsh × dsh 的传输契约面（非 dsh 业务功能），断言清单见
- * doc/fix/20260907-dsh-0.1.2-rc1-auth/discussion.md §6。
+ * the internal fix record §6。
  *
  * 依赖：gateway 已 build（dist/）；ws 升级用 node:http 手动握手（零第三方依赖）。
  */

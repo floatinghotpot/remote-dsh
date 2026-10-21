@@ -1,7 +1,7 @@
 /**
  * join-raw-authorize-shared.test.ts — raw 门禁的授权位必须是"一次授权、覆盖后续新建流"。
  *
- * 背景（见 doc/fix/20261004-raw-authorize-per-stream/discussion.md）：
+ * 背景（见 the internal fix record）：
  * `rawAuthorized` 原先声明在 `makeInnerDispatcher()` 内部，而该方法**每条 raw 流都调用一次**
  * （`startRawStream`）⇒ 页面注入脚本的 authorize 只能解锁"承载该请求的那一条流"；
  * 此后任何**新建**的 raw 流都回到未授权态，命中 fail-closed 分支被

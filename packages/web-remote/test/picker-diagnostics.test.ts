@@ -1,7 +1,7 @@
 /**
  * 只读诊断单测：`pickerDiagnostics` 必须如实反映当前目录选择器形态。
  *
- * 背景（doc/fix/20260917-remote-workspace-picker）：插件把选择器钉成 `browse`；
+ * 背景（the internal fix record）：插件把选择器钉成 `browse`；
  * 一旦解析结果不是 browse，远端浏览器就只会看到宿主屏幕上的原生对话框，
  * 面板必须能显示出来 —— 这是"上游判定变更 / 有第二个 pin 通道"的唯一可见信号。
  */

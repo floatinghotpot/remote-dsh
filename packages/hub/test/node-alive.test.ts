@@ -1,7 +1,7 @@
 /**
  * N2 心跳自愈：节点被离线扫描误判 offline 后，下一次心跳应把它拉回 online。
  *
- * 背景（见 doc/fix/20261012-relay-n4-host-online）：`markNodesOffline`（30s/90s）会把
+ * 背景（见 the internal fix record）：`markNodesOffline`（30s/90s）会把
  * 停止心跳的节点置 offline，而 N2 心跳此前只落 `last_heartbeat`、不写 `status`
  * → 节点一旦被判离线就只能靠重启恢复 ✗
  */

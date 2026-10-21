@@ -65,7 +65,7 @@ export const RDSH_REMOTE_TTY = "rdsh-remote";
 /**
  * 构造 spawn dsh 时的环境：保证 dsh 把目录选择器解析为 **browse**（浏览器内目录浏览器）。
  *
- * 事实依据（doc/fix/20260917-remote-workspace-picker/discussion.md F2/F4/F8）：
+ * 事实依据（the internal fix record F2/F4/F8）：
  * `@deepseek-ai/dsh-host-directory-picker-auto` 在 boot 时读 `SSH_CONNECTION`/`SSH_TTY`
  * （仅继承进程层，非空即可）——「操作者看不到宿主显示」正是 rdsh 的场景（等价于
  * SSH 端口转发下的无人值守宿主）。不注入它，宿主是 macOS/Windows/带 DISPLAY 的 Linux
@@ -75,7 +75,7 @@ export const RDSH_REMOTE_TTY = "rdsh-remote";
  * 用户真的在 SSH 会话里启动时（已有非空信号）保持原值不动。
  *
  * ⚠️ 这是上游启发式的输入：上游若改变判定信号，本注入会静默失效（spawn 后自检见
- * `checkRemotePickerGraph` 与 doc/fix/20260917-remote-workspace-picker/solution.md §6）。
+ * `checkRemotePickerGraph` 与 the internal fix record §6）。
  */
 export function dshSpawnEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const hasSignal = (base.SSH_TTY ?? "") !== "" || (base.SSH_CONNECTION ?? "") !== "";
@@ -183,7 +183,7 @@ const BROWSE_PICKER_MODULE = "@deepseek-ai/dsh-client-ui-directory-picker-browse
 /**
  * 自检：spawn 出的 dsh 是否真的把目录选择器解析成了 **browse**。
  *
- * 方法（与 doc/fix/20260917-remote-workspace-picker 的验证手段一致）：取一次首页，
+ * 方法（与 the internal fix record 的验证手段一致）：取一次首页，
  * 在注入的 boot graph 里找浏览器内选择器的客户端模块 —— 在 → 远端浏览器可用；
  * 不在 → 选择器是 `native`（原生对话框弹在宿主屏幕上）。
  *
@@ -308,16 +308,16 @@ export function compareDshVersions(a: string, b: string): number {
 
 /**
  * remote-dsh 已实测兼容的 dsh 版本窗口（registry 实存版本定界）。
- * ⚠️ 适配新的 dsh 版本并真机实测后，须同步扩展此窗口（见 doc/fix/20260907-dsh-0.1.2-rc1-auth/）。
+ * ⚠️ 适配新的 dsh 版本并真机实测后，须同步扩展此窗口（见 the internal fix record）。
  * 2026-09-11：MAX 扩到 `0.1.5-rc.2` —— 真机实测通过（spawn + ready 行 token + 会话 cookie 换发 +
  * `/api` 转发 + HTML 注入 + WS `/api/remote.mux` 桥接 + join 的 `patchLoopbackJs` 命中），
- * 见 doc/review/20260911-dsh-0.1.5-rc.2-plugin-compat.md §5。
+ * 见 the internal review record §5。
  * 2026-09-24：MAX 扩到 `0.1.7-rc.1` —— 同一份 G1–G7 清单重跑通过。0.1.7 只改前端 dist 形态
  * （`<base href="./">` + 相对 `plugins/…`），认证/RPC 未变；网关是同源透明代理，相对引用由浏览器
- * 解析成绝对路径后原样转发，故不受影响，见 doc/review/20260924-dsh-0.1.7-rc.1-compat.md。
+ * 解析成绝对路径后原样转发，故不受影响，见 the internal review record。
  * 2026-10-18：MAX 扩到 `0.2.1-rc.2` —— 0.2 引入内置行 `@deepseek-ai/dsh-api-remote-access`，与插件
  * 插入行的 id `remote-access` 撞名，导致 `remoteAccess` 服务不激活、`dsh web` 的 `/api` 请求失败；
- * 插件行 id 已改为 `dsh-web-remote`（见 doc/fix/20261018-web-remote-dsh-0.2.1-rc.2/）。
+ * 插件行 id 已改为 `dsh-web-remote`（见 the internal fix record）。
  * 证据：桌面版 0.2.1-rc.1（darwin x64）真机运行通过；0.2.1-rc.2 按发布提交逐项源码核对。
  * 完整 G1–G7 清单未在 0.2.x 重跑，CLI spawn 路径亦未单独验证——升级大版本前应补跑。
  */

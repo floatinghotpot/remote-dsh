@@ -1,7 +1,7 @@
 /**
  * 回归护栏：`cordis.patch.yml` 必须始终把目录选择器钉成 browse。
  *
- * 事实依据：doc/fix/20260917-remote-workspace-picker/（discussion F7/F13、
+ * 事实依据：the internal fix record（discussion F7/F13、
  * solution T1）。远端浏览器够不到宿主 OS 对话框，所以插件存在的意义就要求
  * `@deepseek-ai/dsh-host-directory-picker-auto` 不被允许解析成 native。
  *

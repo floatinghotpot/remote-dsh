@@ -2,7 +2,7 @@
  * conformance.test.ts — consume the language-agnostic fixtures in `e2e/fixtures/`.
  *
  * The same `frames.json` is consumed by the private Go implementation
- * (`rdsh-cloud`), so a change here is a protocol change (PROTOCOL.md first).
+ * (the private Go implementation), so a change here is a protocol change (PROTOCOL.md first).
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";

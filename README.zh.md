@@ -100,7 +100,7 @@ rdsh-hub serve                  # 自建 hub（内置 TLS 或反代部署）
 | 门户 | rdsh-portal | 网页登录 + host 列表（Vite + React） |
 | DSH 插件 | dsh-web-remote | DSH 界面内的远程访问面板（免装 CLI） |
 
-> **规模化 relay 节点**属于商业版（`rdsh-cloud`，私有）；单机自托管用 hub 内置 relay 即可，不需要额外组件。
+> **规模化 relay 节点**属于商业版（私有）；单机自托管用 hub 内置 relay 即可，不需要额外组件。
 
 ## 能力与状态
 
@@ -145,7 +145,7 @@ remote-dsh 跟随最新 DeepSeek Harness（dsh）。**一个 rdsh 版本实测�
 ## 开发
 
 - Node.js ≥ 22（见 `.nvmrc`）、pnpm ≥ 9
-- TypeScript monorepo（`packages/*`）；Go 规模化组件在私有仓 `rdsh-cloud`
+- TypeScript monorepo（`packages/*`）；Go 规模化组件在私有商业仓
 - 贡献指南见 [CONTRIBUTING.md](CONTRIBUTING.md)，公开文档见 `doc/`；实施过程文档在私有仓
 
 ## 许可证

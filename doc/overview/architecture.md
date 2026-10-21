@@ -109,7 +109,7 @@
 - **OPEN kind 三态**：`http` / `ws` / `raw`；`flags` bit0（`FLAG_E2E` = 0x01）= E2E 帧标记
 - **raw stream（09 已实现）**：OPEN `{ kind:"raw" }` 后，该 streamId 的 DATA 帧双向承载**原始字节**（内层 Noise NK 握手消息 + AES-256-GCM 密文）；hub 只做纯字节双向转发、不解析内容；老 gateway/hub 无 raw 分支、bit=0 走 http/ws 转发，向后兼容
 - 多路复用：单隧道按 streamId 分帧，支持并发 HTTP/WS upgrade
-- **契约纪律**：跨语言契约（TS ↔ Go），文档先行 + conformance 测试（公开 fixtures 在 `e2e/`；Go 实现在私有仓 `rdsh-cloud`，跑同一套 fixtures）
+- **契约纪律**：跨语言契约（TS ↔ Go），文档先行 + conformance 测试（公开 fixtures 在 `e2e/`；Go 实现在私有商业仓，跑同一套 fixtures）
 
 ### 层 2.5（逻辑）：内层 E2EE 通道（浏览器 ↔ host）
 
@@ -219,12 +219,12 @@
 | gateway 不动原则 | 层 2 契约稳定 → Go 重写 hub 时 gateway/客户端零改动 |
 | 前端复用 | 所有界面复用 `@deepseek-ai/dsh-web-frontend`，零重写 |
 | 依赖最小化 | Node 内置优先；唯一新增依赖 `ws`（DSH 同款） |
-| 语言双栈 | 原型 TS（gateway/hub）→ 若将来用 Go 重写 hub（go:embed portal，单二进制）；**Go 版属商业版/私有仓 `rdsh-cloud`，当前未排期** |
+| 语言双栈 | 原型 TS（gateway/hub）→ 若将来用 Go 重写 hub（go:embed portal，单二进制）；**Go 版属商业版/私有商业仓，当前未排期** |
 
 ## 6. 相关文档
 
 - 产品提案：`proposal.md`
 - 功能清单 / 路线图：`features.md`（+ `features.zh.md`）/ `roadmap.md`
-- 特性管线：实施过程文档在私有仓（`whalelink/doc/feature/`）；本仓不保留。
+- 特性管线：实施过程文档在私有仓；本仓不保留。
 - 层 2 协议：`packages/tunnel/PROTOCOL.md`
 - 变更流程：本文件随里程碑评审更新（M1–M5 / 09 E2EE 已定稿；M6 SaaS / M8 App / M9 小程序；Go hub 未排期）

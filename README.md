@@ -101,8 +101,7 @@ hub and gateway only — clients never implement it.
 | Portal | rdsh-portal | web login + host list (Vite + React) |
 | DSH plugin | dsh-web-remote | remote-access panel inside the DSH UI (no CLI) |
 
-> **Scale-out relay nodes** are part of the commercial edition (`rdsh-cloud`,
-> proprietary). A single self-hosted hub already includes a built-in relay; no
+> **Scale-out relay nodes** are part of the commercial edition (proprietary). A single self-hosted hub already includes a built-in relay; no
 > extra component is required for normal self-hosting.
 
 ## Capabilities & status
@@ -153,7 +152,7 @@ version matrix. Smoke-tested dsh versions:
 ## Development
 
 - Node.js ≥ 22 (see `.nvmrc`), pnpm ≥ 9
-- TypeScript monorepo (`packages/*`); Go scale-out components live in the private `rdsh-cloud` repo
+- TypeScript monorepo (`packages/*`); Go scale-out components live in the private commercial repo
 - See [CONTRIBUTING.md](CONTRIBUTING.md) and the public docs under `doc/`; implementation docs are maintained in the private repository
 
 ## License

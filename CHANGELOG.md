@@ -140,7 +140,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **dsh 0.1.7-rc.1 is no longer reported as "out of tested range"** (gateway): the smoke-tested dsh window now reaches `0.1.7-rc.1` (`DSH_COMPAT_MAX`, was `0.1.5-rc.2`), so hosts on it stop printing a misleading startup warning. 0.1.7 changes only the front-end dist shape (`<base href="./">` plus base-relative `plugins/…`), which a same-origin gateway is immune to; auth and RPC are unchanged. The G1–G7 checklist was re-run against the real package — see `doc/review/20260924-dsh-0.1.7-rc.1-compat.md`.
+- **dsh 0.1.7-rc.1 is no longer reported as "out of tested range"** (gateway): the smoke-tested dsh window now reaches `0.1.7-rc.1` (`DSH_COMPAT_MAX`, was `0.1.5-rc.2`), so hosts on it stop printing a misleading startup warning. 0.1.7 changes only the front-end dist shape (`<base href="./">` plus base-relative `plugins/…`), which a same-origin gateway is immune to; auth and RPC are unchanged. The G1–G7 checklist was re-run against the real package — see the internal review record.
 
 ### dsh compatibility matrix
 

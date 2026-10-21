@@ -113,7 +113,7 @@
 
 ### 修复
 
-- **dsh 0.1.7-rc.1 不再被误报为"超出实测范围"**（gateway）：实测窗口上界 `DSH_COMPAT_MAX` 由 `0.1.5-rc.2` 扩到 `0.1.7-rc.1`，跑在该版本上的 host 不再打印误导性的启动警告。0.1.7 只改前端 dist 形态（`<base href="./">` + 相对 `plugins/…`），同源网关天然免疫；认证与 RPC 未变。G1–G7 清单已对真实包重跑通过——见 `doc/review/20260924-dsh-0.1.7-rc.1-compat.md`。
+- **dsh 0.1.7-rc.1 不再被误报为"超出实测范围"**（gateway）：实测窗口上界 `DSH_COMPAT_MAX` 由 `0.1.5-rc.2` 扩到 `0.1.7-rc.1`，跑在该版本上的 host 不再打印误导性的启动警告。0.1.7 只改前端 dist 形态（`<base href="./">` + 相对 `plugins/…`），同源网关天然免疫；认证与 RPC 未变。G1–G7 清单已对真实包重跑通过——见 the internal review record。
 
 ### dsh 兼容矩阵
 

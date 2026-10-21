@@ -232,9 +232,9 @@ assert.deepEqual(cfg.billing?.credits.map((c) => c.id), ["from_file"]);
 });
 
 test("billing.productsFile：订阅段生成套餐（与 App/商店同一份清单）", (t) => {
-  const real = new URL("../../../private/rdsh-app/assets/iap_products.json", import.meta.url).pathname;
-  if (!existsSync(real)) {
-    t.skip("private/ 仓库未检出，跳过真实清单冒烟");
+  const real = process.env.RDSH_IAP_PRODUCTS_FILE;
+  if (real === undefined || !existsSync(real)) {
+    t.skip("RDSH_IAP_PRODUCTS_FILE not set，跳过真实清单冒烟");
     return;
   }
   const cfg = normalizeHubConfig({ billing: { productsFile: real } });
@@ -370,10 +370,10 @@ assert.throws(() => normalizeHubConfig({ billing: { productsFile: noCredits } })
 });
 
 test("billing.productsFile：真实 assets/iap_products.json 可解析（6 档）", (t) => {
-// `private/` 是独立 git 仓库；CI 只 checkout 外层仓库时此路径不存在 → skip 而非失败。
-const real = new URL("../../../private/rdsh-app/assets/iap_products.json", import.meta.url).pathname;
-if (!existsSync(real)) {
-  t.skip("private/ 仓库未检出，跳过真实清单冒烟");
+// 真实清单属于 App 仓库（私有）；设置 RDSH_IAP_PRODUCTS_FILE 指向它才跑这个冒烟。
+const real = process.env.RDSH_IAP_PRODUCTS_FILE;
+if (real === undefined || !existsSync(real)) {
+  t.skip("RDSH_IAP_PRODUCTS_FILE not set，跳过真实清单冒烟");
   return;
 }
 const cfg = normalizeHubConfig({ billing: { productsFile: real } });

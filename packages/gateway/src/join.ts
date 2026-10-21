@@ -585,7 +585,7 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
    *
    * 放在 `startJoin` 作用域 = **每个网关进程一份**：同一进程内共享（**含隧道重连**——`connect()`
    * 嵌在 `startJoin` 内、重连不重建该作用域），跨进程仍隔离。
-   * 2026-10-04 修复，详见 `doc/fix/20261004-raw-authorize-per-stream/`。
+   * 2026-10-04 修复，详见 the internal fix record。
    */
   let rawAuthorized = false;
   // raw 门禁 + 候选（24-direct-first）：提供 direct 回调即启用候选端点；raw 门禁（authorize）仅设口令时生效

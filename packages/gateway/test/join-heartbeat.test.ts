@@ -3,7 +3,7 @@
  *
  * 协议要求**双方对称**维护：发出 PING 后 10s（测试注入毫秒级）内未收到对端任何帧
  * → 判定连接已死并主动断开 → 触发既有退避重连。
- * 历史缺陷：两侧都只应答、都不判定（见 doc/fix/20260911-heartbeat-pong-timeout/）。
+ * 历史缺陷：两侧都只应答、都不判定（见 the internal fix record）。
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
