@@ -113,12 +113,13 @@ export async function handleNodeHeartbeat(req: IncomingMessage, res: ServerRespo
     return;
   }
   const body = await readJsonBody(req);
-  await runtime.store.recordNodeMetric(node.id, {
-    connections: Number(body?.connections ?? 0),
-    activeStreams: Number(body?.activeStreams ?? 0),
-    bytesIn: Number(body?.bytesIn ?? 0),
-    bytesOut: Number(body?.bytesOut ?? 0),
-  });
+  const now = Date.now();
+  // 心跳即存活证明：先写 last_heartbeat / online / presence，再写指标。
+  // 指标表任何异常都不能把节点判离线（2026-10-21 生产事故：bytes_out 超 int4，
+  // recordNodeMetric 抛错 → markNodeAlive 未执行 → relay 正常但节点被判定 offline）。
+  await runtime.store.updateNodeHeartbeat(node.id, now);
+  await runtime.store.markNodeAlive(node.id);
+  await runtime.store.updateNodeLastIp(node.id, clientIp(req, runtime)); // R23：源 IP 随心跳更新（反代走 XFF）
   // N2 携带本节点在线 host 列表（42 P0）：替换该节点 presence，不写 DB。
   // 只接受分配给本节点的 host，防伪造/串节点（节点 token 已认证，这里做归属校验）。
   const hosts = body?.hosts;
@@ -127,9 +128,17 @@ export async function handleNodeHeartbeat(req: IncomingMessage, res: ServerRespo
     const assigned = new Set((await runtime.store.listHostsByNode(node.id)).map((h) => h.id));
     runtime.presence.setNodeHosts(node.id, reported.filter((id) => assigned.has(id)));
   }
-  // 心跳即存活证明：节点被离线扫描误判后无需重启即可自愈（draining 不被改写）。
-  await runtime.store.markNodeAlive(node.id);
-  await runtime.store.updateNodeLastIp(node.id, clientIp(req, runtime)); // R23：源 IP 随心跳更新（反代走 XFF）
+  try {
+    await runtime.store.recordNodeMetric(node.id, {
+      connections: Number(body?.connections ?? 0),
+      activeStreams: Number(body?.activeStreams ?? 0),
+      bytesIn: Number(body?.bytesIn ?? 0),
+      bytesOut: Number(body?.bytesOut ?? 0),
+    }, now);
+  } catch (err) {
+    // 指标写失败只记日志：不能让监控数据问题影响节点存活与主机路由。
+    console.error(`[hub] node metric write failed for ${node.id}: ${err instanceof Error ? err.message : String(err)}`);
+  }
   res.writeHead(200, { "content-type": "application/json" });
   res.end("{}");
 }

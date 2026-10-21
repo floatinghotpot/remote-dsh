@@ -22,6 +22,14 @@ test("pg migrations：应用 20 表 + usage_daily 分区 + 幂等", async (t) =>
     await pool.query("CREATE SCHEMA public");
     const applied = await migratePg(pool);
     assert.ok(applied.includes("0001_init.sql"), "0001_init.sql applied");
+    assert.ok(applied.includes("0002_node_bytes_bigint.sql"), "0002_node_bytes_bigint.sql applied");
+    const byteCols = (await pool.query(
+      `SELECT data_type FROM information_schema.columns
+       WHERE table_name IN ('nodes', 'node_metrics')
+         AND column_name IN ('bytes_in', 'bytes_out')`,
+    )).rows as Array<{ data_type: string }>;
+    assert.equal(byteCols.length, 4, "four node byte columns");
+    for (const col of byteCols) assert.equal(col.data_type, "bigint", "node bytes are bigint");
 
     const tables = (await pool.query(
       `SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE' ORDER BY table_name`,

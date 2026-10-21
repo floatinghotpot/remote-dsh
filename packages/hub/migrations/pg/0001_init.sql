@@ -219,8 +219,8 @@ CREATE TABLE nodes (
   last_heartbeat bigint NOT NULL DEFAULT 0,
   connections integer NOT NULL DEFAULT 0,
   active_streams integer NOT NULL DEFAULT 0,
-  bytes_in integer NOT NULL DEFAULT 0,
-  bytes_out integer NOT NULL DEFAULT 0,
+  bytes_in bigint NOT NULL DEFAULT 0,
+  bytes_out bigint NOT NULL DEFAULT 0,
   created_at bigint NOT NULL
 );
 
@@ -229,8 +229,8 @@ CREATE TABLE node_metrics (
   ts bigint NOT NULL,
   connections integer NOT NULL DEFAULT 0,
   active_streams integer NOT NULL DEFAULT 0,
-  bytes_in integer NOT NULL DEFAULT 0,
-  bytes_out integer NOT NULL DEFAULT 0,
+  bytes_in bigint NOT NULL DEFAULT 0,
+  bytes_out bigint NOT NULL DEFAULT 0,
   PRIMARY KEY (node_id, ts)
 );
 

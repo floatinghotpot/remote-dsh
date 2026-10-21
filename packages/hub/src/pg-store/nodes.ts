@@ -252,7 +252,9 @@ export function nodes(pool: Pool): Pick<
     },
 
     nodeBandwidth: async (nodeId: string, now: number = Date.now()): Promise<NodeBandwidth> => {
-      const total = (r: { bytes_in: number; bytes_out: number } | null): number => (r === null ? 0 : r.bytes_in + r.bytes_out);
+      // pg returns bigint as string; coerce before summing (otherwise "+" concatenates).
+      const total = (r: { bytes_in: number | string; bytes_out: number | string } | null): number =>
+        r === null ? 0 : Number(r.bytes_in) + Number(r.bytes_out);
       const latest = one(
         await q(txDb(pool), "SELECT bytes_in, bytes_out, connections, active_streams FROM node_metrics WHERE node_id=$1 ORDER BY ts DESC LIMIT 1", [nodeId]),
       ) as unknown as { bytes_in: number; bytes_out: number; connections: number; active_streams: number } | null;
