@@ -56,9 +56,9 @@ Vibe Coding 八荣八耻
 ### Directory Convention
 
 > ⚠️ **公开仓 / 私有仓文档边界（2026-10-21 起）**
-> 本仓**只放公开文档**：`doc/blog/`、`doc/overview/`（脱敏版）、`doc/saas/`（暂留，构建依赖）、`packages/*/README.md`、`packages/tunnel/PROTOCOL.md`、`packages/hub/API.md`、`e2e/`。
-> **实施过程文档一律在私有仓 `whalelink`**：`doc/feature/`、`doc/fix/`、`doc/review/`、`doc/ops/`、`doc/daily/`、`doc/task/`。
-> **本仓不建 `doc/feature|fix|review|ops`**；CI 会检查，出现即 fail。
+> 本仓**只放公开文档**：`doc/blog/`、`doc/overview/`（脱敏版）、`packages/*/README.md`、`packages/tunnel/PROTOCOL.md`、`packages/hub/API.md`、`e2e/`。
+> **实施过程 / 内部文档一律在私有仓 `whalelink`**：`doc/feature/`、`doc/fix/`、`doc/review/`、`doc/ops/`、`doc/saas/`、`doc/daily/`、`doc/task/`。
+> **本仓不建 `doc/feature|fix|review|ops|saas`**；CI 会检查，出现即 fail。
 
 - **Feature Pipeline（私有仓）**: Follow `discussion → req → solution → plan → code-review → verification → summary + TODO` in `whalelink/doc/feature/{NN-name}/`，特性目录以两位数字编号作索引（如 `01-xxx`、`02-xxx`）。**本仓不复制该管线。**
 - **架构/概览/提案文档**: 公开仓放 `doc/overview/`（脱敏版：`architecture.md`、`roadmap.md`、`proposal.md`）；完整版/内部版在私有仓。
@@ -145,7 +145,7 @@ plan.md 的强制格式见 **附录 E**。
   - `packages/hub-cli` — `rdsh-hub-cli`：`rdsh-hub` 服务端 bin（serve/user/audit/host/service）；其余 `packages/*`（`web-remote` / `agent-mesh` / `whale-link` 等）见目录本身
   - **私有仓 `rdsh-cloud`（不在本仓）** — Go 规模化组件：`cmd/rdsh-relay` 中继节点、`cmd/rdsh-bay`、`cmd/rdsh-cloud-scheduler`、`internal/tunnel` 的 Go 实现
   - `e2e/` — 公开 conformance fixtures 与最小 TS harness；Go 实现在私有仓跑同一套 fixtures
-  - `media/` — logo 资产（品牌，不随 MIT，见 NOTICE）；`doc/` — **公开文档**（`blog/`、`overview/`、`saas/` 暂留；实施过程文档在私有仓，见 §5）
+  - `media/` — logo 资产（品牌，不随 MIT，见 NOTICE）；`doc/` — **公开文档**（`blog/`、`overview/`；实施过程与内部文档在私有仓，见 §5）
 
 ## Appendix B: 协议与契约路径
 

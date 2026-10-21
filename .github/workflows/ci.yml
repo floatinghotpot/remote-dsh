@@ -13,7 +13,7 @@ jobs:
 
       - name: Public docs boundary
         run: |
-          for d in doc/feature doc/fix doc/review doc/ops; do
+          for d in doc/feature doc/fix doc/review doc/ops doc/saas; do
             if [ -d "$d" ]; then
               echo "::error::$d must live in the private repo (whalelink)"
               exit 1

@@ -6,8 +6,7 @@
 // dist 不入库）就 **ENOENT 失败，并留下被删掉的入库产物**；不失败时也可能复制到上一轮的旧产物。
 //
 // 校验语义（mtime 是 DX 兜底，非安全边界；vite build 默认清空 dist，所以 index.html 新鲜 ≈ 全套产物新鲜）：
-//   ① 输入 = portal 源码白名单 + doc/saas（LEGAL 的真正来源，在 portal 包之外）；跳过 dotfiles / node_modules /
-//      以及 src/legal/generated.ts（生成物，真源是 doc/saas，且 `typecheck` 会重新生成它，不能据此判陈旧）。
+//   ① 输入 = portal 源码白名单；跳过 dotfiles / node_modules。
 //   ② dist/index.html 必须存在、且不旧于最新输入。
 //   ③ index.html 引用的 assets/*.js|css 必须都在（防"index.html 在但资源缺失"的半成品）。
 // 见私有仓 fix 记录（构建顺序）。
@@ -16,7 +15,6 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const hubRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
-const repoRoot = join(hubRoot, "..", "..");
 const portalRoot = join(hubRoot, "..", "portal");
 const src = join(portalRoot, "dist");
 const dest = join(hubRoot, "portal");
@@ -31,14 +29,12 @@ async function mtimeOrNull(p) {
 }
 
 /**
- * 递归求目录下最新 mtime。跳过：dotfiles（.DS_Store 等）、node_modules、
- * 以及 `legal/generated.ts`（构建/typecheck 会重新生成，真源是 doc/saas/*.md）。
+ * 递归求目录下最新 mtime。跳过：dotfiles（.DS_Store 等）、node_modules。
  */
 async function newestMtime(dir) {
   let newest = 0;
   for (const entry of await readdir(dir, { withFileTypes: true })) {
     if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
-    if (!entry.isDirectory() && entry.name === "generated.ts" && dir.endsWith("legal")) continue;
     const p = join(dir, entry.name);
     const m = entry.isDirectory() ? await newestMtime(p) : await mtimeOrNull(p);
     if (m !== null && m > newest) newest = m;
@@ -46,7 +42,7 @@ async function newestMtime(dir) {
   return newest;
 }
 
-// ① 输入最新 mtime（白名单 + LEGAL 源）
+// ① 输入最新 mtime（白名单）
 const inputDirs = ["src", "scripts", "public"];
 const inputFiles = ["index.html", "vite.config.ts", "tsconfig.json", "package.json"];
 let inputNewest = 0;
@@ -58,9 +54,6 @@ for (const rel of inputFiles) {
   const m = await mtimeOrNull(join(portalRoot, rel));
   if (m !== null && m > inputNewest) inputNewest = m;
 }
-const legalMtime = await newestMtime(join(repoRoot, "doc", "saas"));
-if (legalMtime > inputNewest) inputNewest = legalMtime;
-
 // ② dist/index.html 必须存在且不旧于最新输入
 const distHtml = join(src, "index.html");
 const distMtime = await mtimeOrNull(distHtml);
