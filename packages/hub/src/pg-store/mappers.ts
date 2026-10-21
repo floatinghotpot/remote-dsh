@@ -8,6 +8,7 @@ import type { Pool, PoolClient } from "pg";
 import type {
   UserRow, HostRow, NodeRow, RefreshRow, JoinTokenRow, BindSessionRow, HostShareRow,
   AuditEventRow, EmailCodeRow, SmsCodeRow, SubscriptionRow, OrderRow, PaymentRow, CreditLedgerRow,
+  CreditHoldRow, CreditHoldStatus,
 } from "../db.ts";
 
 /** 查询句柄：方法内既可能是 Pool（无事务）也可能是 PoolClient（事务内）。 */
@@ -186,6 +187,21 @@ export function mapCreditLedger(row: Record<string, unknown>): CreditLedgerRow {
     sourceId: row.source_id === null || row.source_id === undefined ? null : String(row.source_id),
     idempotencyKey: row.idempotency_key === null || row.idempotency_key === undefined ? null : String(row.idempotency_key),
     balanceAfter: row.balance_after === null || row.balance_after === undefined ? null : Number(row.balance_after),
+    createdAt: Number(row.created_at),
+  };
+}
+
+export function mapCreditHold(row: Record<string, unknown>): CreditHoldRow {
+  return {
+    id: String(row.id),
+    userId: Number(row.user_id),
+    scopeType: String(row.scope_type),
+    scopeId: row.scope_id === null || row.scope_id === undefined ? null : String(row.scope_id),
+    requestId: String(row.request_id),
+    amountMicro: Number(row.amount_micro),
+    settledMicro: Number(row.settled_micro),
+    status: String(row.status) as CreditHoldStatus,
+    expiresAt: Number(row.expires_at),
     createdAt: Number(row.created_at),
   };
 }

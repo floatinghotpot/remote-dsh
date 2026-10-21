@@ -80,6 +80,33 @@ test("PgStore 对拍：users/hosts/ledger/order/usage/audit/meta", async (t) => 
     const bal2 = await store.getCreditBalances(u.id);
     assert.equal(bal2.bonusCurrent, 500 * 10000);
 
+    // 点数消费：reserve / settle / spend + 多桶
+    const carol = await store.createUser("carol", "hash", new Date().toISOString(), false);
+    await store.appendCreditLedger(carol.id, 100 * 10000, "purchased", "test");
+    await store.appendCreditLedger(carol.id, 5 * 10000, "bonus_current", "test");
+    const hold = await store.reserveCreditHold(carol.id, 60 * 10000, {
+      scopeType: "llm_agent", scopeId: "a1", requestId: "parity-hold-1", ttlMs: 60_000,
+    });
+    assert.equal(hold.status, "held");
+    const settled = await store.settleCreditHold(hold.hold!.id, 25 * 10000, { reason: "consume_llm" });
+    assert.equal(settled.status, "settled");
+    assert.equal(settled.balance.bonusCurrent, 0);
+    assert.equal(settled.balance.purchased, 80 * 10000);
+    const spent = await store.spendCredits(carol.id, 10 * 10000, { reason: "consume_relay", idempotencyKey: "parity-spend-1" });
+    assert.equal(spent.status, "spent");
+    assert.equal(spent.balance.purchased, 70 * 10000);
+
+    // BIGINT 边界：PG bigint 余额/扣减不能被 Number 截断
+    const dave = await store.createUser("dave", "hash", new Date().toISOString(), false);
+    await store.appendCreditLedger(dave.id, 3_000_000_000, "purchased", "test");
+    const bigHold = await store.reserveCreditHold(dave.id, 2_500_000_000, {
+      scopeType: "llm_agent", requestId: "parity-bigint-1", ttlMs: 60_000,
+    });
+    assert.equal(bigHold.status, "held");
+    const bigSettle = await store.settleCreditHold(bigHold.hold!.id, 2_200_000_000, { reason: "consume_llm" });
+    assert.equal(bigSettle.status, "settled");
+    assert.equal(bigSettle.balance.purchased, 800_000_000);
+
     // 动态 WHERE 的 $n 重编号对拍：listUsersPage / listHostsPage / listOrders / listAuditPage
     await store.createUser("bob", "hash", new Date().toISOString(), false);
     await store.setRole((await store.getUserByName("bob"))!.id, "admin");

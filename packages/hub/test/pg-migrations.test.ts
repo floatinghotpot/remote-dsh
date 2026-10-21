@@ -8,7 +8,7 @@ import { createPgPool, migratePg } from "../src/pg.ts";
 
 const DSN = process.env.RDSH_TEST_PG_DSN ?? "postgres://rdsh:rdsh_dev_password@127.0.0.1:5432/rdsh_test";
 
-test("pg migrations：应用 20 表 + usage_daily 分区 + 幂等", async (t) => {
+test("pg migrations：应用 22 表 + usage_daily 分区 + 幂等", async (t) => {
   const pool = createPgPool(DSN, { max: 2, min: 0 });
   try {
     await pool.query("SELECT 1");
@@ -23,6 +23,7 @@ test("pg migrations：应用 20 表 + usage_daily 分区 + 幂等", async (t) =>
     const applied = await migratePg(pool);
     assert.ok(applied.includes("0001_init.sql"), "0001_init.sql applied");
     assert.ok(applied.includes("0002_node_bytes_bigint.sql"), "0002_node_bytes_bigint.sql applied");
+    assert.ok(applied.includes("0003_credit_spend.sql"), "0003_credit_spend.sql applied");
     const byteCols = (await pool.query(
       `SELECT data_type FROM information_schema.columns
        WHERE table_name IN ('nodes', 'node_metrics')
@@ -30,6 +31,13 @@ test("pg migrations：应用 20 表 + usage_daily 分区 + 幂等", async (t) =>
     )).rows as Array<{ data_type: string }>;
     assert.equal(byteCols.length, 4, "four node byte columns");
     for (const col of byteCols) assert.equal(col.data_type, "bigint", "node bytes are bigint");
+    const creditCols = (await pool.query(
+      `SELECT data_type FROM information_schema.columns
+       WHERE (table_name = 'users' AND column_name IN ('purchased_credits', 'bonus_carried', 'bonus_current'))
+          OR (table_name = 'credits_ledger' AND column_name = 'delta')`,
+    )).rows as Array<{ data_type: string }>;
+    assert.equal(creditCols.length, 4, "four credit columns");
+    for (const col of creditCols) assert.equal(col.data_type, "bigint", "credit balances/delta are bigint");
 
     const tables = (await pool.query(
       `SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE' ORDER BY table_name`,
@@ -37,7 +45,7 @@ test("pg migrations：应用 20 表 + usage_daily 分区 + 幂等", async (t) =>
     const expect = [
       "users", "hosts", "refresh_tokens", "join_tokens", "bind_sessions", "host_share",
       "audit_events", "email_codes", "sms_codes", "subscriptions", "orders", "payments",
-      "credits_ledger", "meta", "apple_tokens", "usage_daily", "usage_daily_default",
+      "credits_ledger", "credit_holds", "meta", "apple_tokens", "usage_daily", "usage_daily_default",
       "nodes", "node_metrics", "relay_join_tokens", "relay_join_events",
     ];
     for (const name of expect) assert.ok(tables.includes(name), `missing table ${name}`);

@@ -5,6 +5,7 @@
  * 安全基线（req R10）：密码 scrypt 哈希、host token / refresh token 只存 SHA-256 摘要。
  */
 import { DatabaseSync } from "node:sqlite";
+import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
@@ -299,6 +300,40 @@ export interface CreditBalances {
   total: number;
 }
 
+export type CreditHoldStatus = "held" | "settled" | "released" | "expired";
+
+export interface CreditHoldRow {
+  id: string;
+  userId: number;
+  scopeType: string;
+  scopeId: string | null;
+  requestId: string;
+  amountMicro: number;
+  settledMicro: number;
+  status: CreditHoldStatus;
+  expiresAt: number;
+  createdAt: number;
+}
+
+export interface CreditHoldReserveResult {
+  status: "held" | "existing" | "insufficient";
+  hold: CreditHoldRow | null;
+  availableMicro: number;
+}
+
+export interface CreditHoldSettleResult {
+  status: "settled" | "already_settled" | "not_found" | "released" | "insufficient";
+  chargedMicro: number;
+  balance: CreditBalances;
+  hold: CreditHoldRow | null;
+}
+
+export interface CreditSpendResult {
+  status: "spent" | "already_spent" | "insufficient";
+  chargedMicro: number;
+  balance: CreditBalances;
+}
+
 const USAGE_UPSERT_SQL = `INSERT INTO usage_daily (user_id, host_id, date, instance_id, source, relay_seconds, relay_bytes_up, relay_bytes_down, direct_bytes_up, direct_bytes_down, cloud_asr_seconds, local_asr_seconds, cloud_tts_chars, local_tts_chars, sessions, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(user_id, host_id, date, instance_id) DO UPDATE SET
@@ -481,6 +516,20 @@ export class HubDb {
         balance_after INTEGER,
         created_at INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS credit_holds (
+        id TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        scope_type TEXT NOT NULL,
+        scope_id TEXT,
+        request_id TEXT NOT NULL UNIQUE,
+        amount_micro INTEGER NOT NULL,
+        settled_micro INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_credit_holds_user_status ON credit_holds(user_id, status);
+      CREATE INDEX IF NOT EXISTS idx_credit_holds_expires ON credit_holds(status, expires_at);
       CREATE TABLE IF NOT EXISTS meta (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -2123,6 +2172,305 @@ export class HubDb {
       this.db.exec("RELEASE credits_append");
       throw e;
     }
+  }
+
+  // ---- 点数消费（reserve / settle / release / spend）----
+
+  /** 按请求幂等键查 hold（reserve/settle/spend 共用）。 */
+  getCreditHoldByRequestId(requestId: string): CreditHoldRow | null {
+    const row = this.db.prepare("SELECT * FROM credit_holds WHERE request_id = ?").get(requestId);
+    return row === undefined ? null : this.mapCreditHold(row as unknown as Record<string, unknown>);
+  }
+
+  /**
+   * 预占点数：不扣余额，只创建 hold。
+   * available = 三桶总额 - 该用户 active holds；不足返回 insufficient。
+   */
+  reserveCreditHold(
+    userId: number,
+    amountMicro: number,
+    opts: { scopeType: string; scopeId?: string | null; requestId: string; ttlMs: number; now?: number },
+  ): CreditHoldReserveResult {
+    this.assertMicroAmount(amountMicro, true);
+    if (opts.requestId.trim() === "") throw new Error("credit hold requestId required");
+    if (!Number.isSafeInteger(opts.ttlMs) || opts.ttlMs <= 0) throw new Error("credit hold ttlMs must be a positive integer");
+    const now = opts.now ?? Date.now();
+    const existing = this.getCreditHoldByRequestId(opts.requestId);
+    if (existing !== null) {
+      if (existing.userId !== userId) throw new Error("credit hold requestId belongs to another user");
+      return { status: "existing", hold: existing, availableMicro: this.availableCreditMicro(userId, now) };
+    }
+    this.db.exec("SAVEPOINT credit_reserve");
+    try {
+      const available = this.availableCreditMicro(userId, now);
+      if (available < amountMicro) {
+        this.db.exec("RELEASE credit_reserve");
+        return { status: "insufficient", hold: null, availableMicro: available };
+      }
+      const hold: CreditHoldRow = {
+        id: randomUUID(),
+        userId,
+        scopeType: opts.scopeType,
+        scopeId: opts.scopeId ?? null,
+        requestId: opts.requestId,
+        amountMicro,
+        settledMicro: 0,
+        status: "held",
+        expiresAt: now + opts.ttlMs,
+        createdAt: now,
+      };
+      this.db
+        .prepare(
+          "INSERT INTO credit_holds (id, user_id, scope_type, scope_id, request_id, amount_micro, settled_micro, status, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run(hold.id, hold.userId, hold.scopeType, hold.scopeId, hold.requestId, hold.amountMicro, hold.settledMicro, hold.status, hold.expiresAt, hold.createdAt);
+      this.db.exec("RELEASE credit_reserve");
+      return { status: "held", hold, availableMicro: available - amountMicro };
+    } catch (err) {
+      this.db.exec("ROLLBACK TO credit_reserve");
+      this.db.exec("RELEASE credit_reserve");
+      throw err;
+    }
+  }
+
+  /**
+   * 结算 hold：按实际金额多桶扣减，写 consume 流水，释放差额。
+   * hold 已 settled/released 时幂等返回；过期 hold 仍允许补 settle。
+   * allowOverdraft=true 只用于“provider 成本已发生”的场景；它允许越过其他 active holds，
+   * 调用方必须自行保证不会因此挤占其他请求的预留。
+   */
+  settleCreditHold(
+    holdId: string,
+    actualMicro: number,
+    opts: { reason?: string; allowOverdraft?: boolean; now?: number } = {},
+  ): CreditHoldSettleResult {
+    this.assertMicroAmount(actualMicro, false);
+    const now = opts.now ?? Date.now();
+    this.db.exec("SAVEPOINT credit_settle");
+    try {
+      const hold = this.getCreditHoldById(holdId);
+      if (hold === null) {
+        this.db.exec("RELEASE credit_settle");
+        return { status: "not_found", chargedMicro: 0, balance: this.getCreditBalances(0), hold: null };
+      }
+      const balance = this.getCreditBalances(hold.userId);
+      if (hold.status === "settled") {
+        this.db.exec("RELEASE credit_settle");
+        return { status: "already_settled", chargedMicro: hold.settledMicro, balance, hold };
+      }
+      if (hold.status === "released") {
+        this.db.exec("RELEASE credit_settle");
+        return { status: "released", chargedMicro: 0, balance, hold };
+      }
+      const heldOther = this.activeHeldMicro(hold.userId, now, holdId);
+      const maxPayable = balance.total - heldOther;
+      if (actualMicro > maxPayable && opts.allowOverdraft !== true) {
+        this.db.exec("RELEASE credit_settle");
+        return { status: "insufficient", chargedMicro: 0, balance, hold };
+      }
+      const debit = this.debitBuckets(hold.userId, actualMicro, {
+        reason: opts.reason ?? "consume",
+        sourceType: "credit_hold",
+        sourceId: holdId,
+        idempotencyPrefix: holdId,
+        allowOverdraft: opts.allowOverdraft === true,
+        now,
+      });
+      if (!debit.ok) {
+        this.db.exec("ROLLBACK TO credit_settle");
+        this.db.exec("RELEASE credit_settle");
+        return { status: "insufficient", chargedMicro: 0, balance, hold };
+      }
+      this.db.prepare("UPDATE credit_holds SET status = 'settled', settled_micro = ? WHERE id = ?").run(actualMicro, holdId);
+      const updated = this.getCreditHoldById(holdId);
+      this.db.exec("RELEASE credit_settle");
+      return { status: "settled", chargedMicro: actualMicro, balance: debit.balance, hold: updated };
+    } catch (err) {
+      this.db.exec("ROLLBACK TO credit_settle");
+      this.db.exec("RELEASE credit_settle");
+      throw err;
+    }
+  }
+
+  /** 释放 hold：只解冻，不写账本；已释放幂等返回 true，已结算返回 false。 */
+  releaseCreditHold(holdId: string): boolean {
+    const hold = this.getCreditHoldById(holdId);
+    if (hold === null) return false;
+    if (hold.status === "released") return true;
+    if (hold.status === "settled") return false;
+    const info = this.db.prepare("UPDATE credit_holds SET status = 'released' WHERE id = ? AND status IN ('held', 'expired')").run(holdId);
+    return info.changes > 0;
+  }
+
+  /**
+   * 无 hold 的批量扣减（relay 等已知金额场景）。
+   * requestId 作为请求级幂等键；内部也写一条 settled hold 供审计/去重。
+   * allowOverdraft=true 会允许负余额，调用方负责确认这是已发生成本。
+   */
+  spendCredits(
+    userId: number,
+    amountMicro: number,
+    opts: { reason: string; sourceType?: string | null; sourceId?: string | null; idempotencyKey: string; allowOverdraft?: boolean; now?: number },
+  ): CreditSpendResult {
+    this.assertMicroAmount(amountMicro, true);
+    if (opts.idempotencyKey.trim() === "") throw new Error("credit spend idempotencyKey required");
+    const now = opts.now ?? Date.now();
+    const existing = this.getCreditHoldByRequestId(opts.idempotencyKey);
+    if (existing !== null) {
+      if (existing.userId !== userId) throw new Error("credit spend requestId belongs to another user");
+      // requestId 已存在：无论 held 还是 settled，都不再扣第二次；调用方应使用独立 requestId。
+      return { status: "already_spent", chargedMicro: existing.settledMicro, balance: this.getCreditBalances(userId) };
+    }
+    this.db.exec("SAVEPOINT credit_spend");
+    try {
+      const balance = this.getCreditBalances(userId);
+      const available = this.availableCreditMicro(userId, now);
+      if (amountMicro > available && opts.allowOverdraft !== true) {
+        this.db.exec("RELEASE credit_spend");
+        return { status: "insufficient", chargedMicro: 0, balance };
+      }
+      const hold: CreditHoldRow = {
+        id: randomUUID(),
+        userId,
+        scopeType: "spend",
+        scopeId: null,
+        requestId: opts.idempotencyKey,
+        amountMicro,
+        settledMicro: amountMicro,
+        status: "settled",
+        expiresAt: now,
+        createdAt: now,
+      };
+      this.db
+        .prepare(
+          "INSERT INTO credit_holds (id, user_id, scope_type, scope_id, request_id, amount_micro, settled_micro, status, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run(hold.id, hold.userId, hold.scopeType, hold.scopeId, hold.requestId, hold.amountMicro, hold.settledMicro, hold.status, hold.expiresAt, hold.createdAt);
+      const debit = this.debitBuckets(userId, amountMicro, {
+        reason: opts.reason,
+        sourceType: opts.sourceType ?? null,
+        sourceId: opts.sourceId ?? null,
+        idempotencyPrefix: opts.idempotencyKey,
+        allowOverdraft: opts.allowOverdraft === true,
+        now,
+      });
+      if (!debit.ok) {
+        this.db.exec("ROLLBACK TO credit_spend");
+        this.db.exec("RELEASE credit_spend");
+        return { status: "insufficient", chargedMicro: 0, balance };
+      }
+      this.db.exec("RELEASE credit_spend");
+      return { status: "spent", chargedMicro: amountMicro, balance: debit.balance };
+    } catch (err) {
+      this.db.exec("ROLLBACK TO credit_spend");
+      this.db.exec("RELEASE credit_spend");
+      throw err;
+    }
+  }
+
+  /** 把过期未结算的 hold 标记 expired；返回处理数量。 */
+  sweepExpiredCreditHolds(now = Date.now()): number {
+    const info = this.db.prepare("UPDATE credit_holds SET status = 'expired' WHERE status = 'held' AND expires_at <= ?").run(now);
+    return Number(info.changes);
+  }
+
+  private assertMicroAmount(amountMicro: number, positive: boolean): void {
+    if (!Number.isSafeInteger(amountMicro) || (positive ? amountMicro <= 0 : amountMicro < 0)) {
+      throw new Error(`invalid credit micro amount: ${amountMicro}`);
+    }
+  }
+
+  private mapCreditHold(row: Record<string, unknown>): CreditHoldRow {
+    return {
+      id: String(row.id),
+      userId: Number(row.user_id),
+      scopeType: String(row.scope_type),
+      scopeId: row.scope_id === null || row.scope_id === undefined ? null : String(row.scope_id),
+      requestId: String(row.request_id),
+      amountMicro: Number(row.amount_micro),
+      settledMicro: Number(row.settled_micro),
+      status: String(row.status) as CreditHoldStatus,
+      expiresAt: Number(row.expires_at),
+      createdAt: Number(row.created_at),
+    };
+  }
+
+  private getCreditHoldById(holdId: string): CreditHoldRow | null {
+    const row = this.db.prepare("SELECT * FROM credit_holds WHERE id = ?").get(holdId);
+    return row === undefined ? null : this.mapCreditHold(row as unknown as Record<string, unknown>);
+  }
+
+  private activeHeldMicro(userId: number, now: number, excludeId?: string): number {
+    const row = excludeId === undefined
+      ? this.db
+          .prepare("SELECT COALESCE(SUM(amount_micro), 0) AS s FROM credit_holds WHERE user_id = ? AND status = 'held' AND expires_at > ?")
+          .get(userId, now) as { s: number }
+      : this.db
+          .prepare("SELECT COALESCE(SUM(amount_micro), 0) AS s FROM credit_holds WHERE user_id = ? AND status = 'held' AND expires_at > ? AND id != ?")
+          .get(userId, now, excludeId) as { s: number };
+    return Number(row.s);
+  }
+
+  private availableCreditMicro(userId: number, now: number): number {
+    const balances = this.getCreditBalances(userId);
+    return balances.total - this.activeHeldMicro(userId, now);
+  }
+
+  /** 事务内多桶扣减；调用方负责 SAVEPOINT/锁。 */
+  private debitBuckets(
+    userId: number,
+    amountMicro: number,
+    opts: {
+      reason: string;
+      sourceType: string | null;
+      sourceId: string | null;
+      idempotencyPrefix: string;
+      allowOverdraft: boolean;
+      now: number;
+    },
+  ): { ok: boolean; chargedMicro: number; balance: CreditBalances } {
+    const balances = this.getCreditBalances(userId);
+    if (amountMicro === 0) return { ok: true, chargedMicro: 0, balance: balances };
+    const order: Array<{ bucket: string; balance: number }> = [
+      { bucket: "bonus_carried", balance: balances.bonusCarried },
+      { bucket: "bonus_current", balance: balances.bonusCurrent },
+      { bucket: "purchased", balance: balances.purchased },
+    ];
+    let remaining = amountMicro;
+    const parts: Array<{ bucket: string; amount: number; balanceAfter: number }> = [];
+    for (const entry of order) {
+      if (remaining <= 0) break;
+      const take = Math.min(Math.max(0, entry.balance), remaining);
+      if (take > 0) {
+        parts.push({ bucket: entry.bucket, amount: take, balanceAfter: entry.balance - take });
+        remaining -= take;
+      }
+    }
+    if (remaining > 0) {
+      if (!opts.allowOverdraft) return { ok: false, chargedMicro: 0, balance: balances };
+      const purchasedPart = parts.find((p) => p.bucket === "purchased");
+      if (purchasedPart !== undefined) {
+        purchasedPart.amount += remaining;
+        purchasedPart.balanceAfter -= remaining;
+      } else {
+        parts.push({ bucket: "purchased", amount: remaining, balanceAfter: balances.purchased - remaining });
+      }
+      remaining = 0;
+    }
+    const columns: Record<string, string> = {
+      purchased: "purchased_credits",
+      bonus_carried: "bonus_carried",
+      bonus_current: "bonus_current",
+    };
+    for (const part of parts) {
+      const col = columns[part.bucket];
+      if (col === undefined) throw new Error(`invalid credit bucket: ${part.bucket}`);
+      this.db.prepare(`UPDATE users SET ${col} = ${col} - ? WHERE id = ?`).run(part.amount, userId);
+      this.db
+        .prepare("INSERT INTO credits_ledger (user_id, delta, bucket, reason, source_type, source_id, idempotency_key, balance_after, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(userId, -part.amount, part.bucket, opts.reason, opts.sourceType, opts.sourceId, `${opts.idempotencyPrefix}:${part.bucket}`, part.balanceAfter, opts.now);
+    }
+    return { ok: true, chargedMicro: amountMicro, balance: this.getCreditBalances(userId) };
   }
 
   /** 管理面：某用户账本流水（按 id 倒序）。 */
