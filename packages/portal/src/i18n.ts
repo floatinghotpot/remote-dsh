@@ -226,6 +226,7 @@ const EN: Record<string, string> = {
   "已删除": "Deleted",
   "创建于": "Created",
   "追踪 ID": "Tracking ID",
+  "Key 由主机接入时自动创建，无需手工配置。": "Keys are created automatically when a host connects; no manual setup needed.",
   "确定删除这个 Key？删除后无法恢复。": "Delete this key? This cannot be undone.",
   "微信登录需在服务端配置 hub.json wechatLogin": "WeChat sign-in requires hub.json wechatLogin",
 

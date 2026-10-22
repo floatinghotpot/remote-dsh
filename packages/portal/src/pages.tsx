@@ -1151,7 +1151,6 @@ function AccountPage(): React.JSX.Element {
 function LlmKeysPage(): React.JSX.Element {
   const { t } = useT();
   const [keys, setKeys] = useState<LlmKeyInfo[]>([]);
-  const [created, setCreated] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const { toast, show } = useToast();
@@ -1161,14 +1160,6 @@ function LlmKeysPage(): React.JSX.Element {
   useEffect(() => {
     void run(load);
   }, []);
-
-  const create = (): void => {
-    void run(async () => {
-      const r = await api.createLlmKey(`key-${new Date().toISOString().slice(0, 10)}`);
-      setCreated(r.token);
-      await load();
-    });
-  };
 
   const startEdit = (k: LlmKeyInfo): void => {
     setEditingId(k.id);
@@ -1195,13 +1186,6 @@ function LlmKeysPage(): React.JSX.Element {
     });
   };
 
-  const copy = (text: string): void => {
-    void navigator.clipboard.writeText(text).then(
-      () => show("ok", t("已复制")),
-      () => show("err", t("复制失败，请手动复制")),
-    );
-  };
-
   const fmtDate = (ms: number | null): string => {
     if (ms === null || ms === 0) return t("从未");
     const d = new Date(ms);
@@ -1214,15 +1198,6 @@ function LlmKeysPage(): React.JSX.Element {
       <BackToAccount />
       <Toast toast={toast} />
       {err !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{err}</p>}
-      {created !== null && (
-        <Card title={t("新 Key（只显示一次）")}>
-          <p style={{ fontSize: 13, color: "var(--rdsh-fg-muted)", marginTop: 0 }}>
-            {t("请立即复制保存，刷新后不再显示；把它填到 DSH 的模型 API Key 里。")}
-          </p>
-          <code style={{ display: "block", padding: 8, background: "var(--rdsh-bg-subtle)", borderRadius: 6, wordBreak: "break-all", fontSize: 12 }}>{created}</code>
-          <button onClick={() => copy(created)} style={{ ...btnStyle(), marginTop: 8 }}>{t("复制")}</button>
-        </Card>
-      )}
       <Card title={t("我的 Key")}>
         {keys.length === 0 && (
           <p style={{ fontSize: 13, color: "var(--rdsh-fg-muted)", marginTop: 0 }}>{t("还没有 Key。创建一个，填到你的 DSH 里使用。")}</p>
@@ -1275,7 +1250,9 @@ function LlmKeysPage(): React.JSX.Element {
           </div>
           );
         })}
-        <button onClick={create} style={{ ...btnStyle(), marginTop: 12 }}>{t("创建 Key")}</button>
+        <p style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", marginTop: 12, marginBottom: 0 }}>
+          {t("Key 由主机接入时自动创建，无需手工配置。")}
+        </p>
       </Card>
     </Shell>
   );
