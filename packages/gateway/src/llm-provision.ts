@@ -56,6 +56,8 @@ function dshJson(target: ProxyTarget, cookie: string | null, method: string, pay
         const chunks: Buffer[] = [];
         res.on("data", (c: Buffer) => chunks.push(c));
         res.on("end", () => {
+          const raw = Buffer.concat(chunks).toString("utf8");
+          if (method === "settings/describe") console.log(`rdsh: [debug] describe raw => ${raw.slice(0, 600)}`);
           if ((res.statusCode ?? 0) !== 200) {
             done(null);
             return;
