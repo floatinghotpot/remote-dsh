@@ -180,6 +180,7 @@ export async function serveHub(opts: HubServeOptions): Promise<void> {
     hostCookieDomain: config.hostCookieDomain,
     defaultRelayUrl: config.defaultRelayUrl,
     hostCookieSigner,
+    llm: config.llm,
   });
 
   const scheme = tls ? "https" : "http";

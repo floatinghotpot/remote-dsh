@@ -455,3 +455,46 @@ UI 文案必须写「**可云端中转主机数**」，**不要**写「主机配
 - 请求：`{userId, label?, ttlSeconds?}`；`userId` 必填正整数，用户不存在 404；
 - `ttlSeconds` 默认 600、上限 3600；
 - `label` 缺省自动填 `YYYYMMDDHHmmss`；token 只存 hash。
+
+## 17. LLM 模型目录（/api/admin/llm/* + /api/internal/llm/routers|config，51-llm-model-catalog，2026-10-22）
+
+> Hub 是模型目录与上游 key 池的唯一事实源；Router 经 join 注册/启用后拉取整段配置（密文密封）。
+> 上游 key 加密入库（信封 KEK/DEK）；管理后台只显示掩码，永不返回明文。
+
+### 17.1 Admin（管理员会话）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/admin/llm/models` | 模型目录列表（含 `enabled`/`nameSource`/价格/容量） |
+| POST | `/api/admin/llm/models` | 新增，`{id, displayName, provider?, upstreamModel?, 价格?, 容量?, sortOrder?}` |
+| PUT | `/api/admin/llm/models/{id}` | 编辑（含 `enabled`/`nameSource`） |
+| DELETE | `/api/admin/llm/models/{id}` | 软删（`enabled=0`） |
+| GET | `/api/admin/llm/upstream-keys` | 上游 key 列表（掩码，不含密文） |
+| POST | `/api/admin/llm/upstream-keys` | 新增（明文 `apiKey` 仅本次输入，加密入库），`{apiKey, label?, provider?, weight?}` |
+| PUT | `/api/admin/llm/upstream-keys/{id}` | 启停 / 改权重 |
+| DELETE | `/api/admin/llm/upstream-keys/{id}` | 吊销（`revoked_at` + `enabled=0`） |
+| GET | `/api/admin/llm/router-join-tokens` | join token 列表 |
+| POST | `/api/admin/llm/router-join-tokens` | 生成一次性 join token，`{label?, ttlMs?}` → `{id, token, label, expiresAt}` |
+| GET | `/api/admin/llm/routers` | Router 列表（`pending`/`active`/`revoked`） |
+| POST | `/api/admin/llm/routers/{id}/approve` | 启用（`pending → active`） |
+| POST | `/api/admin/llm/routers/{id}/revoke` | 吊销（置 `status=revoked` + 吊销其 service token） |
+
+写操作需 `operator`/`admin`（403 `FORBIDDEN`）；读操作 `readonly` 可读。
+
+### 17.2 内部（Router，服务令牌）
+
+| 方法 | 路径 | 鉴权 | 说明 |
+|---|---|---|---|
+| POST | `/api/internal/llm/routers/join` | join token（`Bearer`） | 一次性注册 → `{routerId, token}`（唯一 token，只此一次） |
+| GET | `/api/internal/llm/config` | 唯一 token + scope `llm:config:read` | 返回 `{v, payload}`（整段配置密文密封；`status=active` 才 200） |
+
+- join token 一次性、短 TTL；已用/过期 401；
+- config 未启用 Router → 403 `ROUTER_NOT_APPROVED`；
+- config 响应体用该 Router 唯一 token 派生密钥（HKDF-SHA256 + AES-256-GCM）加密；解密后为 `{provider:{name,baseURL,apiKey,keyId,protocol}, models:[...]}`。
+
+### 17.3 用户（会话）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/account/llm/models` | enabled 目录（`id`/`displayName`/`contextWindow`/`maxTokens`，不含价格） |
+| GET | `/api/account/llm/usage?from=&to=` | 按模型聚合用量，每模型带 `displayName`（关联目录） |

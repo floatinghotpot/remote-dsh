@@ -38,6 +38,8 @@ import { handleNodeRegister, handleNodeHeartbeat, handleNodeHosts, handleNodeSyn
 import { handleInternalApi } from "./internal-llm.ts";
 import { handleInternalHosts } from "./internal-hosts.ts";
 import { handleAccountLlm } from "./account-llm.ts";
+import { encryptUpstreamKey, loadKek } from "./crypto-upstream-keys.ts";
+import { currentKekVersion, kekDir } from "./llm-upstream-keys.ts";
 import type { HostCookieSigner } from "./hostcookie.ts";
 import type { AdminCtx, AdminCreateUserInput } from "./admin.ts";
 import * as admin from "./admin.ts";
@@ -803,6 +805,154 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
     } catch (err) {
       writeAdminError(res, err);
     }
+    return true;
+  }
+
+  // ---- 51：LLM 模型目录 / 上游 key 池 / Router 审批 ----
+  const isWrite = auth.role === "admin" || auth.role === "operator";
+  const auditAdmin = async (event: string, detail: unknown): Promise<void> => {
+    await store.recordAudit(null, event, detail, clientIp(req, runtime), Date.now(), { source: "admin", actorUserId: auth.userId });
+  };
+
+  if (path === "/api/admin/llm/models" && method === "GET") {
+    res.end(JSON.stringify({ models: await store.listLlmModels() }));
+    return true;
+  }
+  if (path === "/api/admin/llm/models" && method === "POST") {
+    if (!isWrite) { writeError(res, 403, "FORBIDDEN", "operator or admin required"); return true; }
+    const body = await readJsonBody(req);
+    const id = typeof body?.id === "string" ? body.id.trim() : "";
+    const displayName = typeof body?.displayName === "string" ? body.displayName.trim() : "";
+    const provider = typeof body?.provider === "string" && body.provider.trim() !== "" ? body.provider.trim() : "deepseek";
+    const upstreamModel = typeof body?.upstreamModel === "string" && body.upstreamModel.trim() !== "" ? body.upstreamModel.trim() : id;
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(id) || displayName === "") { writeError(res, 400, "BAD_REQUEST", "id + displayName required"); return true; }
+    const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : 0);
+    try {
+      const row = await store.createLlmModel({
+        id, displayName, provider, upstreamModel,
+        inputPriceMicro: num(body?.inputPriceMicro), outputPriceMicro: num(body?.outputPriceMicro),
+        cacheReadPriceMicro: num(body?.cacheReadPriceMicro), cacheWritePriceMicro: num(body?.cacheWritePriceMicro),
+        contextWindow: num(body?.contextWindow), maxTokens: num(body?.maxTokens), sortOrder: num(body?.sortOrder),
+      });
+      await auditAdmin("llm.model.create", { id: row.id });
+      res.end(JSON.stringify({ model: row }));
+    } catch (err) {
+      writeAdminError(res, err);
+    }
+    return true;
+  }
+  const modelEdit = /^\/api\/admin\/llm\/models\/([^/]+)$/.exec(path);
+  if (modelEdit !== null && method === "PUT") {
+    if (!isWrite) { writeError(res, 403, "FORBIDDEN", "operator or admin required"); return true; }
+    const id = decodeURIComponent(modelEdit[1]!);
+    const body = await readJsonBody(req);
+    const str = (k: string): string | undefined => (typeof body?.[k] === "string" && (body[k] as string).trim() !== "" ? (body[k] as string).trim() : undefined);
+    const num = (k: string): number | undefined => (typeof body?.[k] === "number" && Number.isFinite(body[k] as number) ? (body[k] as number) : undefined);
+    const bool = (k: string): boolean | undefined => (typeof body?.[k] === "boolean" ? (body[k] as boolean) : undefined);
+    const row = await store.updateLlmModel(id, {
+      displayName: str("displayName"), provider: str("provider"), upstreamModel: str("upstreamModel"),
+      inputPriceMicro: num("inputPriceMicro"), outputPriceMicro: num("outputPriceMicro"),
+      cacheReadPriceMicro: num("cacheReadPriceMicro"), cacheWritePriceMicro: num("cacheWritePriceMicro"),
+      contextWindow: num("contextWindow"), maxTokens: num("maxTokens"), enabled: bool("enabled"), sortOrder: num("sortOrder"),
+      nameSource: typeof body?.nameSource === "string" && (body.nameSource === "upstream" || body.nameSource === "manual") ? body.nameSource : undefined,
+    });
+    if (row === null) { writeError(res, 404, "NOT_FOUND", "model not found"); return true; }
+    await auditAdmin("llm.model.update", { id });
+    res.end(JSON.stringify({ model: row }));
+    return true;
+  }
+  if (modelEdit !== null && method === "DELETE") {
+    if (!isWrite) { writeError(res, 403, "FORBIDDEN", "operator or admin required"); return true; }
+    const ok = await store.deleteLlmModel(decodeURIComponent(modelEdit[1]!));
+    if (!ok) { writeError(res, 404, "NOT_FOUND", "model not found"); return true; }
+    await auditAdmin("llm.model.delete", { id: decodeURIComponent(modelEdit[1]!) });
+    res.end(JSON.stringify({ ok: true }));
+    return true;
+  }
+
+  if (path === "/api/admin/llm/upstream-keys" && method === "GET") {
+    const rows = await store.listLlmUpstreamKeys();
+    res.end(JSON.stringify({ keys: rows.map((k) => ({ id: k.id, provider: k.provider, label: k.label, weight: k.weight, enabled: k.enabled, kekVersion: k.kekVersion, createdAt: k.createdAt, lastAssignedAt: k.lastAssignedAt, revokedAt: k.revokedAt })) }));
+    return true;
+  }
+  if (path === "/api/admin/llm/upstream-keys" && method === "POST") {
+    if (!isWrite) { writeError(res, 403, "FORBIDDEN", "operator or admin required"); return true; }
+    const body = await readJsonBody(req);
+    const apiKey = typeof body?.apiKey === "string" ? body.apiKey.trim() : "";
+    const label = typeof body?.label === "string" && body.label.trim() !== "" ? body.label.trim() : "key";
+    const provider = typeof body?.provider === "string" && body.provider.trim() !== "" ? body.provider.trim() : "deepseek";
+    if (apiKey === "") { writeError(res, 400, "BAD_REQUEST", "apiKey required"); return true; }
+    const weight = typeof body?.weight === "number" && Number.isInteger(body.weight) && body.weight > 0 ? body.weight : 1;
+    const id = randomUUID();
+    const kekVersion = currentKekVersion(runtime);
+    const kek = loadKek(kekDir(runtime), kekVersion);
+    const { keyCipher, dekWrapped } = encryptUpstreamKey(apiKey, kek, kekVersion, id, provider);
+    const row = await store.createLlmUpstreamKey({ id, provider, label, keyCipher, dekWrapped, kekVersion, weight });
+    await auditAdmin("llm.upstream-key.create", { id, label });
+    res.end(JSON.stringify({ key: { id: row.id, provider: row.provider, label: row.label, weight: row.weight, enabled: row.enabled, kekVersion: row.kekVersion, createdAt: row.createdAt } }));
+    return true;
+  }
+  const keyEdit = /^\/api\/admin\/llm\/upstream-keys\/([^/]+)$/.exec(path);
+  if (keyEdit !== null && method === "PUT") {
+    if (!isWrite) { writeError(res, 403, "FORBIDDEN", "operator or admin required"); return true; }
+    const id = decodeURIComponent(keyEdit[1]!);
+    const body = await readJsonBody(req);
+    const row = await store.updateLlmUpstreamKey(id, {
+      enabled: typeof body?.enabled === "boolean" ? body.enabled : undefined,
+      weight: typeof body?.weight === "number" && Number.isInteger(body.weight) && body.weight > 0 ? body.weight : undefined,
+    });
+    if (row === null) { writeError(res, 404, "NOT_FOUND", "key not found"); return true; }
+    await auditAdmin("llm.upstream-key.update", { id });
+    res.end(JSON.stringify({ key: { id: row.id, provider: row.provider, label: row.label, weight: row.weight, enabled: row.enabled, kekVersion: row.kekVersion, createdAt: row.createdAt, revokedAt: row.revokedAt } }));
+    return true;
+  }
+  if (keyEdit !== null && method === "DELETE") {
+    if (!isWrite) { writeError(res, 403, "FORBIDDEN", "operator or admin required"); return true; }
+    const ok = await store.revokeLlmUpstreamKey(decodeURIComponent(keyEdit[1]!));
+    if (!ok) { writeError(res, 404, "NOT_FOUND", "key not found"); return true; }
+    await auditAdmin("llm.upstream-key.revoke", { id: decodeURIComponent(keyEdit[1]!) });
+    res.end(JSON.stringify({ ok: true }));
+    return true;
+  }
+
+  if (path === "/api/admin/llm/router-join-tokens" && method === "GET") {
+    const rows = await store.listLlmRouterJoinTokens();
+    res.end(JSON.stringify({ tokens: rows.map((t) => ({ id: t.id, label: t.label, expiresAt: t.expiresAt, usedAt: t.usedAt, createdAt: t.createdAt })) }));
+    return true;
+  }
+  if (path === "/api/admin/llm/router-join-tokens" && method === "POST") {
+    if (!isWrite) { writeError(res, 403, "FORBIDDEN", "operator or admin required"); return true; }
+    const body = await readJsonBody(req);
+    const label = typeof body?.label === "string" && body.label.trim() !== "" ? body.label.trim() : `router-${Date.now()}`;
+    const ttlMs = typeof body?.ttlMs === "number" && body.ttlMs >= 60_000 ? body.ttlMs : 600_000;
+    const token = `rdsh-join-${randomToken()}`;
+    const id = randomUUID();
+    await store.createLlmRouterJoinToken(id, label, sha256(token), Date.now() + ttlMs, auth.name);
+    await auditAdmin("llm.router.join-token.create", { id, label });
+    res.end(JSON.stringify({ id, token, label, expiresAt: Date.now() + ttlMs }));
+    return true;
+  }
+
+  if (path === "/api/admin/llm/routers" && method === "GET") {
+    const rows = await store.listLlmRouters();
+    res.end(JSON.stringify({ routers: rows }));
+    return true;
+  }
+  const routerAction = /^\/api\/admin\/llm\/routers\/([^/]+)\/(approve|revoke)$/.exec(path);
+  if (routerAction !== null && method === "POST") {
+    if (!isWrite) { writeError(res, 403, "FORBIDDEN", "operator or admin required"); return true; }
+    const id = decodeURIComponent(routerAction[1]!);
+    const action = routerAction[2]!;
+    const router = await store.getLlmRouter(id);
+    if (router === null) { writeError(res, 404, "NOT_FOUND", "router not found"); return true; }
+    if (action === "approve") {
+      await store.setLlmRouterStatus(id, "active", auth.name);
+    } else {
+      await store.setLlmRouterStatus(id, "revoked", auth.name);
+      await store.revokeServiceToken(router.tokenId);
+    }
+    await auditAdmin(`llm.router.${action}`, { id });
+    res.end(JSON.stringify({ ok: true }));
     return true;
   }
 

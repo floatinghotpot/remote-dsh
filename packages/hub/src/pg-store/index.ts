@@ -13,6 +13,7 @@ import { credits } from "./credits.ts";
 import { usage } from "./usage.ts";
 import { nodes } from "./nodes.ts";
 import { internalLlm } from "./internal-llm.ts";
+import { llmCatalog } from "./llm-catalog.ts";
 
 /** 由连接池构造 PostgreSQL 版 `HubStore`（供 `startHubServer` 在 `db.driver=postgres` 时使用）。 */
 export function createPgStore(pool: Pool): HubStore {
@@ -26,6 +27,7 @@ export function createPgStore(pool: Pool): HubStore {
     ...usage(pool),
     ...nodes(pool),
     ...internalLlm(pool),
+    ...llmCatalog(pool),
     withTransaction: (fn) => withTransaction(pool, async (client) => fn(client)),
     close: async () => {
       await pool.end();

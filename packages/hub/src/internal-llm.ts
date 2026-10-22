@@ -7,7 +7,9 @@
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { randomToken, sha256 } from "./jwt.ts";
-import { writeError, type HubRuntime } from "./api.ts";
+import { clientIp, writeError, type HubRuntime } from "./api.ts";
+import { sealConfig } from "./crypto-upstream-keys.ts";
+import { pickUpstreamKey } from "./llm-upstream-keys.ts";
 import type { ServiceTokenRow } from "./db.ts";
 
 const LLM_KEY_PREFIX = "sk-rdsh-";
@@ -203,6 +205,57 @@ export async function handleInternalApi(req: IncomingMessage, res: ServerRespons
       to: to === null ? undefined : Number(to),
     });
     return void json(res, 200, { requests: rows }), true;
+  }
+
+  // POST /api/internal/llm/routers/join（一次性 join token → 唯一 token + pending router）
+  if (path === "/api/internal/llm/routers/join" && method === "POST") {
+    const joinToken = bearerToken(req);
+    if (joinToken === null || joinToken.length < 16) return void writeError(res, 401, "UNAUTHORIZED", "missing join token"), true;
+    const jt = await runtime.store.findLlmRouterJoinTokenByHash(sha256(joinToken));
+    if (jt === null || jt.usedAt !== null || jt.expiresAt <= Date.now()) return void writeError(res, 401, "UNAUTHORIZED", "invalid, used or expired join token"), true;
+    const body = await readJson(req);
+    const name = body !== null && typeof body.name === "string" && body.name.trim() !== "" ? body.name.trim() : "router";
+    if (!(await runtime.store.markLlmRouterJoinTokenUsed(jt.id))) return void writeError(res, 409, "CONFLICT", "join token already used"), true;
+    const token = `rdsh-rt-${randomToken()}`;
+    const tokenRow = await runtime.store.createServiceToken(randomUUID(), `llm-router:${name}`, sha256(token), "llm:config:read,llm:authorize,llm:settle,llm:release");
+    const routerId = randomUUID();
+    await runtime.store.createLlmRouter(routerId, name, tokenRow.id, clientIp(req, runtime));
+    return void json(res, 200, { routerId, token }), true;
+  }
+
+  // GET /api/internal/llm/config（唯一 token + active 才返回整段配置，密文密封）
+  if (path === "/api/internal/llm/config" && method === "GET") {
+    const rawToken = bearerToken(req);
+    if (rawToken === null || rawToken.length < 16) return void writeError(res, 401, "UNAUTHORIZED", "missing or invalid service token"), true;
+    const row = await authenticateService(req, runtime, "llm:config:read");
+    if (row === null) return void writeError(res, 401, "UNAUTHORIZED", "missing or invalid service token"), true;
+    const router = await runtime.store.getLlmRouterByTokenId(row.id);
+    if (router === null || router.status !== "active") return void writeError(res, 403, "ROUTER_NOT_APPROVED", "router not approved"), true;
+    await runtime.store.touchLlmRouterSeen(router.id, clientIp(req, runtime));
+
+    const upstream = await pickUpstreamKey(runtime, row.id);
+    if (upstream === null) return void writeError(res, 503, "NO_UPSTREAM_KEY", "no enabled upstream key"), true;
+
+    const models = (await runtime.store.listLlmModels({ enabledOnly: true })).map((m) => ({
+      id: m.id,
+      upstream: m.upstreamModel,
+      displayName: m.displayName,
+      inputPriceMicro: m.inputPriceMicro,
+      outputPriceMicro: m.outputPriceMicro,
+      cacheReadPriceMicro: m.cacheReadPriceMicro,
+      cacheWritePriceMicro: m.cacheWritePriceMicro,
+      contextWindow: m.contextWindow,
+      maxTokens: m.maxTokens,
+    }));
+    const provider = {
+      name: runtime.config.llm?.provider?.name ?? "deepseek",
+      baseURL: runtime.config.llm?.provider?.baseURL ?? "https://api.deepseek.com/anthropic",
+      apiKey: upstream.apiKey,
+      keyId: upstream.keyId,
+      protocol: runtime.config.llm?.provider?.protocol ?? "anthropic-messages",
+    };
+    const payload = sealConfig(JSON.stringify({ provider, models }), rawToken, router.id);
+    return void json(res, 200, { v: 1, payload }), true;
   }
 
   return false;

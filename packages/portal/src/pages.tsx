@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
 import { api, ApiError, subscribeEvents, adminApi } from "./api.ts";
-import type { HostInfo, JoinTokenInfo, CaptchaPayload, AccountInfo, Capabilities, UsageDay, WechatPayInfo, AdminMe, AdminUserRow, AdminHostRow, AdminNodeRow, AdminOrderRow, AdminPaymentRow, AdminAuditRow, AdminSubscriptionRow, AdminUserDetail, AdminDashboard, AdminConfig, LlmKeyInfo, LlmUsageModel } from "./api.ts";
+import type { HostInfo, JoinTokenInfo, CaptchaPayload, AccountInfo, Capabilities, UsageDay, WechatPayInfo, AdminMe, AdminUserRow, AdminHostRow, AdminNodeRow, AdminOrderRow, AdminPaymentRow, AdminAuditRow, AdminSubscriptionRow, AdminUserDetail, AdminDashboard, AdminConfig, LlmKeyInfo, LlmUsageModel, LlmCatalogModel } from "./api.ts";
 import { fingerprint } from "./e2ee.ts";
 import { useT, getLang } from "./i18n.ts";
 import type { T } from "./i18n.ts";
@@ -2936,6 +2936,9 @@ function AdminApp({ path }: { path: string }): React.JSX.Element {  const { t } 
     { p: "/hosts", label: t("主机") },
     { p: "/nodes", label: t("中继节点", { en: "Relay Nodes" }) },
     { p: "/join-tokens", label: t("入网令牌", { en: "Join Tokens" }) },
+    { p: "/llm-models", label: t("模型目录") },
+    { p: "/llm-keys", label: t("上游 Key") },
+    { p: "/llm-routers", label: t("Router") },
     { p: "/billing", label: t("账单") },
     { p: "/audit", label: t("审计") },
     { p: "/health", label: t("健康") },
@@ -2971,6 +2974,12 @@ function AdminApp({ path }: { path: string }): React.JSX.Element {  const { t } 
         <AdminNodeDetail nodeId={path.slice("/nodes/".length)} isWrite={isWrite} />
       ) : path === "/join-tokens" ? (
         <AdminJoinTokens isWrite={isWrite} />
+      ) : path === "/llm-models" ? (
+        <AdminLlmModels isWrite={isWrite} />
+      ) : path === "/llm-keys" ? (
+        <AdminLlmKeys isWrite={isWrite} />
+      ) : path === "/llm-routers" ? (
+        <AdminLlmRouters isWrite={isWrite} />
       ) : path === "/billing" ? (
         <AdminBilling isWrite={isWrite} isAdmin={isAdmin} />
       ) : path === "/audit" ? (
@@ -2984,6 +2993,133 @@ function AdminApp({ path }: { path: string }): React.JSX.Element {  const { t } 
       ) : (
         <AdminDashboard />
       )}
+    </div>
+  );
+}
+
+type LlmModelRow = {
+  id: string; displayName: string; provider: string; upstreamModel: string; enabled: boolean; nameSource: string;
+  inputPriceMicro: number; outputPriceMicro: number; cacheReadPriceMicro: number; cacheWritePriceMicro: number;
+  contextWindow: number; maxTokens: number; sortOrder: number; nameSyncedAt: number | null;
+};
+type LlmUpstreamKeyRow = { id: string; provider: string; label: string; weight: number; enabled: boolean; kekVersion: number; createdAt: number; revokedAt: number | null };
+type LlmRouterRow = { id: string; name: string; tokenId: string; status: string; lastIp: string | null; createdAt: number; approvedAt: number | null; lastSeenAt: number | null };
+
+function AdminLlmModels({ isWrite }: { isWrite: boolean }): React.JSX.Element {
+  const { t } = useT();
+  const [models, setModels] = useState<LlmModelRow[]>([]);
+  const [msg, setMsg] = useState("");
+  const [form, setForm] = useState({ id: "", displayName: "", provider: "deepseek", upstreamModel: "" });
+  const reload = (): void => { adminApi.llmModels().then((r) => setModels(r.models as unknown as LlmModelRow[])).catch(() => setModels([])); };
+  useEffect(() => { reload(); }, []);
+  const create = (): void => {
+    adminApi.createLlmModel({ ...form, upstreamModel: form.upstreamModel || form.id }).then(() => { setMsg("ok"); setForm({ id: "", displayName: "", provider: "deepseek", upstreamModel: "" }); reload(); }).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed"));
+  };
+  const toggle = (m: LlmModelRow): void => {
+    adminApi.updateLlmModel(m.id, { enabled: !m.enabled }).then(() => reload()).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed"));
+  };
+  const del = (m: LlmModelRow): void => {
+    adminApi.deleteLlmModel(m.id).then(() => reload()).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed"));
+  };
+  return (
+    <div>
+      <h3 style={{ fontSize: 16, margin: "0 0 12px" }}>{t("模型目录")}</h3>
+      {msg !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{msg}</p>}
+      {isWrite && (
+        <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+          <input placeholder="id" value={form.id} onChange={(e) => setForm({ ...form, id: e.target.value })} style={{ padding: "6px 8px" }} />
+          <input placeholder={t("显示名")} value={form.displayName} onChange={(e) => setForm({ ...form, displayName: e.target.value })} style={{ padding: "6px 8px" }} />
+          <input placeholder="upstream" value={form.upstreamModel} onChange={(e) => setForm({ ...form, upstreamModel: e.target.value })} style={{ padding: "6px 8px" }} />
+          <button onClick={create} style={adminBtnStyle("primary")}>{t("新增")}</button>
+        </div>
+      )}
+      {models.map((m) => (
+        <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderTop: "1px solid var(--rdsh-border-soft)" }}>
+          <span style={{ fontFamily: "monospace" }}>{m.id}</span>
+          <span style={{ color: "var(--rdsh-fg-muted)" }}>{m.displayName}</span>
+          <span style={{ fontSize: 12, color: "var(--rdsh-fg-subtle)" }}>{m.nameSource === "upstream" ? "sync" : "manual"}</span>
+          <span style={{ marginLeft: "auto", fontSize: 12, color: m.enabled ? "#07c160" : "var(--rdsh-fg-muted)" }}>{m.enabled ? t("启用") : t("停用")}</span>
+          {isWrite && <button onClick={() => toggle(m)} style={adminBtnStyle("ghost")}>{m.enabled ? t("停用") : t("启用")}</button>}
+          {isWrite && <button onClick={() => del(m)} style={adminBtnStyle("danger")}>{t("删除")}</button>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AdminLlmKeys({ isWrite }: { isWrite: boolean }): React.JSX.Element {
+  const { t } = useT();
+  const [keys, setKeys] = useState<LlmUpstreamKeyRow[]>([]);
+  const [msg, setMsg] = useState("");
+  const [form, setForm] = useState({ apiKey: "", label: "", weight: 1 });
+  const reload = (): void => { adminApi.llmUpstreamKeys().then((r) => setKeys(r.keys as unknown as LlmUpstreamKeyRow[])).catch(() => setKeys([])); };
+  useEffect(() => { reload(); }, []);
+  const create = (): void => {
+    adminApi.createLlmUpstreamKey(form).then(() => { setMsg("ok"); setForm({ apiKey: "", label: "", weight: 1 }); reload(); }).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed"));
+  };
+  const toggle = (k: LlmUpstreamKeyRow): void => { adminApi.updateLlmUpstreamKey(k.id, { enabled: !k.enabled }).then(() => reload()).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed")); };
+  const revoke = (k: LlmUpstreamKeyRow): void => { adminApi.revokeLlmUpstreamKey(k.id).then(() => reload()).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed")); };
+  return (
+    <div>
+      <h3 style={{ fontSize: 16, margin: "0 0 12px" }}>{t("上游 Key 池")}</h3>
+      {msg !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{msg}</p>}
+      {isWrite && (
+        <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+          <input placeholder={t("上游 API Key（明文，仅本次输入）")} value={form.apiKey} onChange={(e) => setForm({ ...form, apiKey: e.target.value })} style={{ padding: "6px 8px", width: 280 }} />
+          <input placeholder={t("备注")} value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} style={{ padding: "6px 8px" }} />
+          <input type="number" placeholder="weight" value={form.weight} onChange={(e) => setForm({ ...form, weight: Number(e.target.value) || 1 })} style={{ padding: "6px 8px", width: 70 }} />
+          <button onClick={create} style={adminBtnStyle("primary")}>{t("新增")}</button>
+        </div>
+      )}
+      {keys.map((k) => (
+        <div key={k.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderTop: "1px solid var(--rdsh-border-soft)" }}>
+          <span style={{ fontFamily: "monospace" }}>{k.label}</span>
+          <span style={{ fontSize: 12, color: "var(--rdsh-fg-subtle)" }}>weight {k.weight}</span>
+          <span style={{ fontSize: 12, color: k.enabled && k.revokedAt === null ? "#07c160" : "var(--rdsh-fg-muted)" }}>{k.enabled && k.revokedAt === null ? t("启用") : t("停用")}</span>
+          <span style={{ marginLeft: "auto" }} />
+          {isWrite && <button onClick={() => toggle(k)} style={adminBtnStyle("ghost")}>{k.enabled ? t("停用") : t("启用")}</button>}
+          {isWrite && <button onClick={() => revoke(k)} style={adminBtnStyle("danger")}>{t("吊销")}</button>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AdminLlmRouters({ isWrite }: { isWrite: boolean }): React.JSX.Element {
+  const { t } = useT();
+  const [routers, setRouters] = useState<LlmRouterRow[]>([]);
+  const [tokens, setTokens] = useState<Array<{ id: string; label: string; expiresAt: number; usedAt: number | null }>>([]);
+  const [created, setCreated] = useState<{ label: string; token: string } | null>(null);
+  const [msg, setMsg] = useState("");
+  const reload = (): void => {
+    adminApi.llmRouters().then((r) => setRouters(r.routers as unknown as LlmRouterRow[])).catch(() => setRouters([]));
+    adminApi.llmRouterJoinTokens().then((r) => setTokens(r.tokens)).catch(() => setTokens([]));
+  };
+  useEffect(() => { reload(); }, []);
+  const gen = (): void => {
+    adminApi.createLlmRouterJoinToken({ label: `router-${Date.now()}`, ttlMs: 600_000 }).then((r) => { setCreated({ label: r.label, token: r.token }); reload(); }).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed"));
+  };
+  const approve = (id: string): void => { adminApi.approveLlmRouter(id).then(() => reload()).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed")); };
+  const revoke = (id: string): void => { adminApi.revokeLlmRouter(id).then(() => reload()).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed")); };
+  return (
+    <div>
+      <h3 style={{ fontSize: 16, margin: "0 0 12px" }}>{t("Router 注册 / 审批")}</h3>
+      {msg !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{msg}</p>}
+      {created !== null && (
+        <p style={{ color: "#07c160", fontSize: 13, wordBreak: "break-all" }}>{t("join token（仅显示一次）")}：<code>{created.token}</code></p>
+      )}
+      {isWrite && <button onClick={gen} style={adminBtnStyle("primary")}>{t("生成 join token")}</button>}
+      <h4 style={{ fontSize: 14, margin: "16px 0 8px" }}>{t("Router 列表")}</h4>
+      {routers.map((r) => (
+        <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderTop: "1px solid var(--rdsh-border-soft)" }}>
+          <span style={{ fontFamily: "monospace" }}>{r.name}</span>
+          <span style={{ fontSize: 12, color: r.status === "active" ? "#07c160" : r.status === "pending" ? "#f59e0b" : "var(--rdsh-fg-muted)" }}>{r.status}</span>
+          <span style={{ fontSize: 12, color: "var(--rdsh-fg-subtle)" }}>{r.lastIp ?? ""}</span>
+          <span style={{ marginLeft: "auto" }} />
+          {isWrite && r.status === "pending" && <button onClick={() => approve(r.id)} style={adminBtnStyle("primary")}>{t("启用")}</button>}
+          {isWrite && r.status === "active" && <button onClick={() => revoke(r.id)} style={adminBtnStyle("danger")}>{t("吊销")}</button>}
+        </div>
+      ))}
     </div>
   );
 }
@@ -4190,10 +4326,7 @@ function avgSeries(arr: Array<number | null>): number | null {
   return count === 0 ? null : sum / count;
 }
 
-const LLM_USAGE_MODELS = [
-  { id: "deepseek-flash", name: "DeepSeek-V4.1-Flash", color: "#3b82f6" },
-  { id: "deepseek-v4-pro", name: "DeepSeek-V4-Pro", color: "#8b5cf6" },
-] as const;
+const LLM_USAGE_COLORS = ["#3b82f6", "#8b5cf6", "#0ea5e9", "#f59e0b"];
 
 function UsagePage(): React.JSX.Element {
   const { t } = useT();
@@ -4206,6 +4339,7 @@ function UsagePage(): React.JSX.Element {
   // 取值失败保持 null，只影响余额区，不影响图表。
   const [creditBal, setCreditBal] = useState<{ purchased: number; bonus: number } | null>(null);
   const [llmUsage, setLlmUsage] = useState<LlmUsageModel[]>([]);
+  const [llmCatalog, setLlmCatalog] = useState<LlmCatalogModel[]>([]);
   const { err, run } = useError();
 
   useEffect(() => {
@@ -4234,6 +4368,10 @@ function UsagePage(): React.JSX.Element {
     void api.llmUsage(from, to).then((r) => setLlmUsage(r.models)).catch(() => setLlmUsage([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [range]);
+
+  useEffect(() => {
+    void api.llmModels().then((r) => setLlmCatalog(r.models)).catch(() => setLlmCatalog([]));
+  }, []);
 
   useEffect(() => {
     void run(async () => {
@@ -4348,15 +4486,19 @@ function UsagePage(): React.JSX.Element {
         ))}
       </div>
 
-      {/* LLM token 消费：按模型两张卡（输入+输出为每日柱状图；无数据也显示 0）*/}
+      {/* LLM token 消费：按模型目录渲染卡片（标题=ID，小字=显示名；无数据也显示 0）*/}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 12, marginBottom: 12 }}>
-        {LLM_USAGE_MODELS.map((m) => {
+        {llmCatalog.map((m, i) => {
           const data = llmUsage.find((x) => x.model === m.id);
           const series = seriesFromDays(from, to, data?.byDay ?? [], (d) => d.inputTokens + d.outputTokens);
           const total = sumSeries(series);
+          const color = LLM_USAGE_COLORS[i % LLM_USAGE_COLORS.length]!;
           return (
-            <Card key={m.id} title={m.name} badge={<span style={{ fontSize: 12, color: "var(--rdsh-fg-muted)" }}>{total.toLocaleString()} tokens</span>}>
-              <BarChart series={[series]} colors={[m.color]} />
+            <Card key={m.id} title={m.id} badge={<span style={{ fontSize: 12, color: "var(--rdsh-fg-muted)" }}>{total.toLocaleString()} tokens</span>}>
+              {m.displayName !== "" && m.displayName !== m.id && (
+                <div style={{ fontSize: 11, color: "var(--rdsh-fg-subtle)", marginBottom: 6 }}>{m.displayName}</div>
+              )}
+              <BarChart series={[series]} colors={[color]} />
               <div style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", marginTop: 6 }}>
                 {t("输入")} {(data?.inputTokens ?? 0).toLocaleString()} · {t("输出")} {(data?.outputTokens ?? 0).toLocaleString()} · {t("请求")} {data?.requests ?? 0} {t("次")}
               </div>

@@ -26,11 +26,12 @@ import { sweepCredits } from "./credits.ts";
 import type { HubRuntime } from "./api.ts";
 import type { EmailConfig } from "./email/types.ts";
 import type { SmsConfig } from "./sms/types.ts";
-import type { CaptchaConfig, SecurityConfig, BillingConfig, SiteConfig, E2eeConfig, BackupConfig, WechatLoginConfig, WechatAppLoginConfig, AppleLoginConfig } from "./config.ts";
+import type { CaptchaConfig, SecurityConfig, BillingConfig, SiteConfig, E2eeConfig, BackupConfig, WechatLoginConfig, WechatAppLoginConfig, AppleLoginConfig, LlmModelConfig } from "./config.ts";
 import { TunnelConn, TunnelRegistry } from "./tunnel.ts";
 import type { TunnelTimings } from "./tunnel.ts";
 import { EventHub, createEventsServer } from "./events.ts";
 import { handleRelay, handleRelayUpgrade, handleRawUpgrade } from "./relay.ts";
+import { startLlmModelSync } from "./llm-models-sync.ts";
 import { servePortal } from "./portal.ts";
 import { UsageAccumulator } from "./relay-usage.ts";
 import { PresenceDirectory } from "./presence.ts";
@@ -89,6 +90,8 @@ export interface HubServerOptions {
   defaultRelayUrl?: string;
   /** host cookie 的 Ed25519 签名器（R17；迁移票据签发 + 公钥下发） */
   hostCookieSigner?: HostCookieSigner;
+  /** LLM 模型目录（上游同步 + key 池 KEK；serve.ts 从 hub.json 传入） */
+  llm?: LlmModelConfig;
   /**
    * 隧道心跳时序（缺省 30s/10s，见 PROTOCOL.md「心跳与重连」）。
    * 仅供测试注入毫秒级小值以快速验证超时判离线，生产不传。
@@ -192,6 +195,7 @@ export async function startHubServer(opts: HubServerOptions): Promise<RunningHub
       hostCookiePubKey: opts.hostCookiePubKey,
       hostCookieDomain: opts.hostCookieDomain,
       defaultRelayUrl: opts.defaultRelayUrl,
+      llm: opts.llm,
     },
     db: opts.db,
     store: opts.store ?? (opts.db !== undefined ? createSqliteStore(opts.db) : (() => { throw new Error("hub server requires db or store"); })()),
@@ -224,6 +228,9 @@ export async function startHubServer(opts: HubServerOptions): Promise<RunningHub
 
   // 在线状态过期清理（惰性读取之外，保证 size/指标不虚高）
   setInterval(() => runtime.presence.sweep(), 60 * 1000).unref();
+
+  // 51：LLM 模型目录上游元数据同步（配置了 llm.upstream 才启用）
+  if (opts.llm?.upstream !== undefined) startLlmModelSync(runtime);
 
   // 点数账本月度结算（每分钟检查，跨月才执行一次）：结转 + 订阅赠点
   let lastCreditSweepMonth = "";

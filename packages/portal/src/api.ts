@@ -72,6 +72,13 @@ export interface LlmUsageModel {
   byDay: Array<{ date: string; inputTokens: number; outputTokens: number }>;
 }
 
+export interface LlmCatalogModel {
+  id: string;
+  displayName: string;
+  contextWindow: number;
+  maxTokens: number;
+}
+
 export interface LlmKeyInfo {
   id: string;
   name: string;
@@ -323,6 +330,9 @@ export const api = {
   },
   llmUsage(from: string, to: string): Promise<{ models: LlmUsageModel[] }> {
     return jsonFetch(`/api/account/llm/usage?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
+  },
+  llmModels(): Promise<{ models: LlmCatalogModel[] }> {
+    return jsonFetch("/api/account/llm/models");
   },
   capabilities(): Promise<Capabilities> {
     return jsonFetch("/api/capabilities");
@@ -637,6 +647,45 @@ export const adminApi = {
   },
   removeAdmin(id: number, reason: string): Promise<{ ok: boolean }> {
     return adminJson(`/api/admin/admins/${id}/remove`, { method: "POST", body: JSON.stringify({ reason }) });
+  },
+  llmModels(): Promise<{ models: Array<{ id: string; displayName: string; provider: string; upstreamModel: string; enabled: boolean; nameSource: string; inputPriceMicro: number; outputPriceMicro: number; cacheReadPriceMicro: number; cacheWritePriceMicro: number; contextWindow: number; maxTokens: number; sortOrder: number; nameSyncedAt: number | null }> }> {
+    return adminJson("/api/admin/llm/models");
+  },
+  createLlmModel(input: Record<string, unknown>): Promise<{ model: unknown }> {
+    return adminJson("/api/admin/llm/models", { method: "POST", body: JSON.stringify(input) });
+  },
+  updateLlmModel(id: string, input: Record<string, unknown>): Promise<{ model: unknown }> {
+    return adminJson(`/api/admin/llm/models/${id}`, { method: "PUT", body: JSON.stringify(input) });
+  },
+  deleteLlmModel(id: string): Promise<{ ok: boolean }> {
+    return adminJson(`/api/admin/llm/models/${id}`, { method: "DELETE", body: "{}" });
+  },
+  llmUpstreamKeys(): Promise<{ keys: Array<{ id: string; provider: string; label: string; weight: number; enabled: boolean; kekVersion: number; createdAt: number; revokedAt: number | null }> }> {
+    return adminJson("/api/admin/llm/upstream-keys");
+  },
+  createLlmUpstreamKey(input: Record<string, unknown>): Promise<{ key: unknown }> {
+    return adminJson("/api/admin/llm/upstream-keys", { method: "POST", body: JSON.stringify(input) });
+  },
+  updateLlmUpstreamKey(id: string, input: Record<string, unknown>): Promise<{ key: unknown }> {
+    return adminJson(`/api/admin/llm/upstream-keys/${id}`, { method: "PUT", body: JSON.stringify(input) });
+  },
+  revokeLlmUpstreamKey(id: string): Promise<{ ok: boolean }> {
+    return adminJson(`/api/admin/llm/upstream-keys/${id}`, { method: "DELETE", body: "{}" });
+  },
+  llmRouters(): Promise<{ routers: Array<{ id: string; name: string; tokenId: string; status: string; lastIp: string | null; createdAt: number; approvedAt: number | null; lastSeenAt: number | null }> }> {
+    return adminJson("/api/admin/llm/routers");
+  },
+  approveLlmRouter(id: string): Promise<{ ok: boolean }> {
+    return adminJson(`/api/admin/llm/routers/${id}/approve`, { method: "POST", body: "{}" });
+  },
+  revokeLlmRouter(id: string): Promise<{ ok: boolean }> {
+    return adminJson(`/api/admin/llm/routers/${id}/revoke`, { method: "POST", body: "{}" });
+  },
+  llmRouterJoinTokens(): Promise<{ tokens: Array<{ id: string; label: string; expiresAt: number; usedAt: number | null; createdAt: number }> }> {
+    return adminJson("/api/admin/llm/router-join-tokens");
+  },
+  createLlmRouterJoinToken(input: { label?: string; ttlMs?: number }): Promise<{ id: string; token: string; label: string; expiresAt: number }> {
+    return adminJson("/api/admin/llm/router-join-tokens", { method: "POST", body: JSON.stringify(input) });
   },
 };
 

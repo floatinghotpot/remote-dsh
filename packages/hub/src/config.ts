@@ -150,6 +150,16 @@ export interface AppleLoginConfig {
   tokenEncKey: string;
 }
 
+/** LLM 模型目录：上游元数据同步 + 上游 key 池 KEK。 */
+export interface LlmModelConfig {
+  /** 下发 Router 的 provider（name/baseURL 为 Anthropic Messages 端点/protocol）；缺省 deepseek */
+  provider?: { name?: string; baseURL?: string; protocol?: string };
+  /** 上游模型列表同步（OpenAI 风格 GET /models）；缺省 → 不启用同步 */
+  upstream?: { baseURL: string; syncIntervalMs?: number };
+  /** 上游 key 池的 KEK（信封加密主密钥） */
+  upstreamKeyPool?: { kekDir: string; kekVersion?: number };
+}
+
 export interface HubConfig {
   host: string;
   port: number;
@@ -201,6 +211,8 @@ export interface HubConfig {
   appSchemes?: string[];
   /** 苹果登录（Sign in with Apple；缺省 → 苹果登录禁用） */
   appleLogin?: AppleLoginConfig;
+  /** LLM 模型目录（上游同步 + key 池 KEK）；缺省 → 目录功能仍可用（仅无同步/无 KEK 目录） */
+  llm?: LlmModelConfig;
 }
 
 export const DEFAULT_HUB_CONFIG_PATH = join(homedir(), ".rdsh", "hub.json");
@@ -314,6 +326,7 @@ export function normalizeHubConfig(raw: unknown, source = "config"): HubConfig {
   if (cfg.wechatAppLogin !== undefined) out.wechatAppLogin = normalizeWechatAppLogin(cfg.wechatAppLogin, source);
   if (cfg.appSchemes !== undefined) out.appSchemes = normalizeAppSchemes(cfg.appSchemes, source);
   if (cfg.appleLogin !== undefined) out.appleLogin = normalizeAppleLogin(cfg.appleLogin, source);
+  if (cfg.llm !== undefined) out.llm = normalizeLlmConfig(cfg.llm, source);
   out.security = normalizeSecurity(cfg.security, source);
   return out;
 }
@@ -736,4 +749,39 @@ function normalizeAppleLogin(raw: unknown, source: string): AppleLoginConfig {
     privateKeyPath: a.privateKeyPath as string,
     tokenEncKey: a.tokenEncKey as string,
   };
+}
+
+function normalizeLlmConfig(raw: unknown, source: string): LlmModelConfig {
+  if (typeof raw !== "object" || raw === null) throw new Error(`${source}: "llm" must be an object`);
+  const c = raw as Record<string, unknown>;
+  const out: LlmModelConfig = {};
+  if (c.provider !== undefined) {
+    const p = c.provider as Record<string, unknown>;
+    if (typeof p !== "object" || p === null) throw new Error(`${source}: "llm.provider" must be an object`);
+    const provider: { name?: string; baseURL?: string; protocol?: string } = {};
+    if (p.name !== undefined) { if (typeof p.name !== "string" || p.name === "") throw new Error(`${source}: "llm.provider.name" must be a non-empty string`); provider.name = p.name; }
+    if (p.baseURL !== undefined) { if (typeof p.baseURL !== "string" || p.baseURL === "") throw new Error(`${source}: "llm.provider.baseURL" must be a non-empty string`); provider.baseURL = p.baseURL; }
+    if (p.protocol !== undefined) { if (typeof p.protocol !== "string" || p.protocol === "") throw new Error(`${source}: "llm.provider.protocol" must be a non-empty string`); provider.protocol = p.protocol; }
+    out.provider = provider;
+  }
+  if (c.upstream !== undefined) {
+    const u = c.upstream as Record<string, unknown>;
+    if (typeof u !== "object" || u === null) throw new Error(`${source}: "llm.upstream" must be an object`);
+    if (typeof u.baseURL !== "string" || u.baseURL === "") throw new Error(`${source}: "llm.upstream.baseURL" must be a non-empty string`);
+    const upstream: { baseURL: string; syncIntervalMs?: number } = { baseURL: u.baseURL };
+    if (u.syncIntervalMs !== undefined) {
+      if (!Number.isInteger(u.syncIntervalMs) || (u.syncIntervalMs as number) < 1000) throw new Error(`${source}: "llm.upstream.syncIntervalMs" must be an integer >= 1000`);
+      upstream.syncIntervalMs = u.syncIntervalMs as number;
+    }
+    out.upstream = upstream;
+  }
+  if (c.upstreamKeyPool !== undefined) {
+    const k = c.upstreamKeyPool as Record<string, unknown>;
+    if (typeof k !== "object" || k === null) throw new Error(`${source}: "llm.upstreamKeyPool" must be an object`);
+    if (typeof k.kekDir !== "string" || k.kekDir === "") throw new Error(`${source}: "llm.upstreamKeyPool.kekDir" must be a non-empty string`);
+    const kekVersion = k.kekVersion === undefined ? 1 : Number(k.kekVersion);
+    if (!Number.isInteger(kekVersion) || kekVersion < 1) throw new Error(`${source}: "llm.upstreamKeyPool.kekVersion" must be a positive integer`);
+    out.upstreamKeyPool = { kekDir: k.kekDir as string, kekVersion };
+  }
+  return out;
 }

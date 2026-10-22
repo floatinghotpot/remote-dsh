@@ -9,6 +9,7 @@ import type {
   UserRow, HostRow, NodeRow, RefreshRow, JoinTokenRow, BindSessionRow, HostShareRow,
   AuditEventRow, EmailCodeRow, SmsCodeRow, SubscriptionRow, OrderRow, PaymentRow, CreditLedgerRow,
   CreditHoldRow, CreditHoldStatus, ServiceTokenRow, LlmKeyRow, LlmKeyStatus, LlmRequestRow,
+  LlmModelRow, LlmUpstreamKeyRow, LlmRouterJoinTokenRow, LlmRouterRow, LlmRouterStatus, LlmModelNameSource,
 } from "../db.ts";
 
 /** 查询句柄：方法内既可能是 Pool（无事务）也可能是 PoolClient（事务内）。 */
@@ -255,5 +256,67 @@ export function mapLlmRequest(row: Record<string, unknown>): LlmRequestRow {
     latencyMs: row.latency_ms === null || row.latency_ms === undefined ? null : Number(row.latency_ms),
     ttftMs: row.ttft_ms === null || row.ttft_ms === undefined ? null : Number(row.ttft_ms),
     createdAt: Number(row.created_at),
+  };
+}
+
+export function mapLlmModel(row: Record<string, unknown>): LlmModelRow {
+  return {
+    id: String(row.id),
+    displayName: String(row.display_name),
+    provider: String(row.provider),
+    upstreamModel: String(row.upstream_model),
+    inputPriceMicro: Number(row.input_price_micro),
+    outputPriceMicro: Number(row.output_price_micro),
+    cacheReadPriceMicro: Number(row.cache_read_price_micro),
+    cacheWritePriceMicro: Number(row.cache_write_price_micro),
+    contextWindow: Number(row.context_window),
+    maxTokens: Number(row.max_tokens),
+    nameSource: String(row.name_source) as LlmModelNameSource,
+    nameSyncedAt: row.name_synced_at === null || row.name_synced_at === undefined ? null : Number(row.name_synced_at),
+    enabled: Number(row.enabled ?? 1) === 1,
+    sortOrder: Number(row.sort_order),
+    updatedAt: Number(row.updated_at),
+  };
+}
+
+export function mapLlmUpstreamKey(row: Record<string, unknown>): LlmUpstreamKeyRow {
+  return {
+    id: String(row.id),
+    provider: String(row.provider),
+    label: String(row.label),
+    keyCipher: String(row.key_cipher),
+    dekWrapped: String(row.dek_wrapped),
+    kekVersion: Number(row.kek_version),
+    weight: Number(row.weight ?? 1),
+    enabled: Number(row.enabled ?? 1) === 1,
+    createdAt: Number(row.created_at),
+    lastAssignedAt: row.last_assigned_at === null || row.last_assigned_at === undefined ? null : Number(row.last_assigned_at),
+    revokedAt: row.revoked_at === null || row.revoked_at === undefined ? null : Number(row.revoked_at),
+  };
+}
+
+export function mapLlmRouterJoinToken(row: Record<string, unknown>): LlmRouterJoinTokenRow {
+  return {
+    id: String(row.id),
+    label: String(row.label),
+    tokenHash: String(row.token_hash),
+    expiresAt: Number(row.expires_at),
+    usedAt: row.used_at === null || row.used_at === undefined ? null : Number(row.used_at),
+    createdBy: row.created_by === null || row.created_by === undefined ? null : String(row.created_by),
+    createdAt: Number(row.created_at),
+  };
+}
+
+export function mapLlmRouter(row: Record<string, unknown>): LlmRouterRow {
+  return {
+    id: String(row.id),
+    name: String(row.name),
+    tokenId: String(row.token_id),
+    status: String(row.status) as LlmRouterStatus,
+    lastIp: row.last_ip === null || row.last_ip === undefined ? null : String(row.last_ip),
+    createdAt: Number(row.created_at),
+    approvedAt: row.approved_at === null || row.approved_at === undefined ? null : Number(row.approved_at),
+    approvedBy: row.approved_by === null || row.approved_by === undefined ? null : String(row.approved_by),
+    lastSeenAt: row.last_seen_at === null || row.last_seen_at === undefined ? null : Number(row.last_seen_at),
   };
 }

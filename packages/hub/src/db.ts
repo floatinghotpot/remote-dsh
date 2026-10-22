@@ -382,6 +382,64 @@ export interface LlmRequestRow {
   createdAt: number;
 }
 
+export type LlmModelNameSource = "upstream" | "manual";
+
+export interface LlmModelRow {
+  id: string;
+  displayName: string;
+  provider: string;
+  upstreamModel: string;
+  inputPriceMicro: number;
+  outputPriceMicro: number;
+  cacheReadPriceMicro: number;
+  cacheWritePriceMicro: number;
+  contextWindow: number;
+  maxTokens: number;
+  nameSource: LlmModelNameSource;
+  nameSyncedAt: number | null;
+  enabled: boolean;
+  sortOrder: number;
+  updatedAt: number;
+}
+
+export interface LlmUpstreamKeyRow {
+  id: string;
+  provider: string;
+  label: string;
+  keyCipher: string; // base64: version(1) || nonce(12) || ciphertext || tag(16)
+  dekWrapped: string; // base64: nonce(12) || wrapped DEK || tag(16)
+  kekVersion: number;
+  weight: number;
+  enabled: boolean;
+  createdAt: number;
+  lastAssignedAt: number | null;
+  revokedAt: number | null;
+}
+
+export interface LlmRouterJoinTokenRow {
+  id: string;
+  label: string;
+  tokenHash: string;
+  expiresAt: number;
+  usedAt: number | null;
+  createdBy: string | null;
+  createdAt: number;
+}
+
+export type LlmRouterStatus = "pending" | "active" | "revoked";
+
+export interface LlmRouterRow {
+  id: string;
+  name: string;
+  tokenId: string;
+  status: LlmRouterStatus;
+  lastIp: string | null;
+  createdAt: number;
+  approvedAt: number | null;
+  approvedBy: string | null;
+  lastSeenAt: number | null;
+}
+
 const USAGE_UPSERT_SQL = `INSERT INTO usage_daily (user_id, host_id, date, instance_id, source, relay_seconds, relay_bytes_up, relay_bytes_down, direct_bytes_up, direct_bytes_down, cloud_asr_seconds, local_asr_seconds, cloud_tts_chars, local_tts_chars, sessions, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(user_id, host_id, date, instance_id) DO UPDATE SET
@@ -624,6 +682,56 @@ export class HubDb {
       );
       CREATE INDEX IF NOT EXISTS idx_llm_requests_user ON llm_requests(user_id, created_at);
       CREATE INDEX IF NOT EXISTS idx_llm_requests_agent ON llm_requests(agent_id, created_at);
+      CREATE TABLE IF NOT EXISTS llm_models (
+        id TEXT PRIMARY KEY,
+        display_name TEXT NOT NULL,
+        provider TEXT NOT NULL DEFAULT 'deepseek',
+        upstream_model TEXT NOT NULL,
+        input_price_micro INTEGER NOT NULL DEFAULT 0,
+        output_price_micro INTEGER NOT NULL DEFAULT 0,
+        cache_read_price_micro INTEGER NOT NULL DEFAULT 0,
+        cache_write_price_micro INTEGER NOT NULL DEFAULT 0,
+        context_window INTEGER NOT NULL DEFAULT 0,
+        max_tokens INTEGER NOT NULL DEFAULT 0,
+        name_source TEXT NOT NULL DEFAULT 'upstream',
+        name_synced_at INTEGER,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS llm_upstream_keys (
+        id TEXT PRIMARY KEY,
+        provider TEXT NOT NULL DEFAULT 'deepseek',
+        label TEXT NOT NULL,
+        key_cipher TEXT NOT NULL,
+        dek_wrapped TEXT NOT NULL,
+        kek_version INTEGER NOT NULL,
+        weight INTEGER NOT NULL DEFAULT 1,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at INTEGER NOT NULL,
+        last_assigned_at INTEGER,
+        revoked_at INTEGER
+      );
+      CREATE TABLE IF NOT EXISTS llm_router_join_tokens (
+        id TEXT PRIMARY KEY,
+        label TEXT NOT NULL,
+        token_hash TEXT UNIQUE NOT NULL,
+        expires_at INTEGER NOT NULL,
+        used_at INTEGER,
+        created_by TEXT,
+        created_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS llm_routers (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        token_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        last_ip TEXT,
+        created_at INTEGER NOT NULL,
+        approved_at INTEGER,
+        approved_by TEXT,
+        last_seen_at INTEGER
+      );
       CREATE TABLE IF NOT EXISTS meta (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -698,6 +806,12 @@ export class HubDb {
         at INTEGER NOT NULL
       );
     `);
+    // 51：模型目录种子（幂等）
+    const seedModel = this.db.prepare(
+      "INSERT OR IGNORE INTO llm_models (id, display_name, provider, upstream_model, input_price_micro, output_price_micro, cache_read_price_micro, cache_write_price_micro, context_window, max_tokens, name_source, enabled, sort_order, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'upstream', 1, ?, 0)",
+    );
+    seedModel.run("deepseek-flash", "DeepSeek-V4.1-Flash", "deepseek", "deepseek-flash", 2000000, 8000000, 40000, 0, 1048576, 393216, 0);
+    seedModel.run("deepseek-v4-pro", "DeepSeek-V4-Pro", "deepseek", "deepseek-v4-pro", 9000000, 27000000, 300000, 0, 1048576, 393216, 1);
     // 迁移守卫：既有库补列（SQLite ALTER ADD COLUMN 不支持 UNIQUE，邮箱唯一用独立索引）
     const userCols = new Set(
       (this.db.prepare("PRAGMA table_info(users)").all() as unknown as Array<{ name: string }>).map((c) => c.name),
@@ -2724,6 +2838,216 @@ export class HubDb {
     const limit = Math.min(Math.max(opts.limit ?? 1000, 1), 10000);
     const rows = this.db.prepare(`SELECT * FROM llm_requests ${where} ORDER BY created_at DESC LIMIT ?`).all(...params, limit) as unknown as Array<Record<string, unknown>>;
     return rows.map((r) => this.mapLlmRequest(r));
+  }
+
+  // ---- 51：模型目录 + 上游 key 池 + Router 注册 ----
+
+  private mapLlmModel(row: Record<string, unknown>): LlmModelRow {
+    return {
+      id: String(row.id),
+      displayName: String(row.display_name),
+      provider: String(row.provider),
+      upstreamModel: String(row.upstream_model),
+      inputPriceMicro: Number(row.input_price_micro),
+      outputPriceMicro: Number(row.output_price_micro),
+      cacheReadPriceMicro: Number(row.cache_read_price_micro),
+      cacheWritePriceMicro: Number(row.cache_write_price_micro),
+      contextWindow: Number(row.context_window),
+      maxTokens: Number(row.max_tokens),
+      nameSource: String(row.name_source) as LlmModelNameSource,
+      nameSyncedAt: row.name_synced_at === null || row.name_synced_at === undefined ? null : Number(row.name_synced_at),
+      enabled: Number(row.enabled ?? 1) === 1,
+      sortOrder: Number(row.sort_order),
+      updatedAt: Number(row.updated_at),
+    };
+  }
+
+  private mapLlmUpstreamKey(row: Record<string, unknown>): LlmUpstreamKeyRow {
+    return {
+      id: String(row.id),
+      provider: String(row.provider),
+      label: String(row.label),
+      keyCipher: String(row.key_cipher),
+      dekWrapped: String(row.dek_wrapped),
+      kekVersion: Number(row.kek_version),
+      weight: Number(row.weight ?? 1),
+      enabled: Number(row.enabled ?? 1) === 1,
+      createdAt: Number(row.created_at),
+      lastAssignedAt: row.last_assigned_at === null || row.last_assigned_at === undefined ? null : Number(row.last_assigned_at),
+      revokedAt: row.revoked_at === null || row.revoked_at === undefined ? null : Number(row.revoked_at),
+    };
+  }
+
+  private mapLlmRouterJoinToken(row: Record<string, unknown>): LlmRouterJoinTokenRow {
+    return {
+      id: String(row.id),
+      label: String(row.label),
+      tokenHash: String(row.token_hash),
+      expiresAt: Number(row.expires_at),
+      usedAt: row.used_at === null || row.used_at === undefined ? null : Number(row.used_at),
+      createdBy: row.created_by === null || row.created_by === undefined ? null : String(row.created_by),
+      createdAt: Number(row.created_at),
+    };
+  }
+
+  private mapLlmRouter(row: Record<string, unknown>): LlmRouterRow {
+    return {
+      id: String(row.id),
+      name: String(row.name),
+      tokenId: String(row.token_id),
+      status: String(row.status) as LlmRouterStatus,
+      lastIp: row.last_ip === null || row.last_ip === undefined ? null : String(row.last_ip),
+      createdAt: Number(row.created_at),
+      approvedAt: row.approved_at === null || row.approved_at === undefined ? null : Number(row.approved_at),
+      approvedBy: row.approved_by === null || row.approved_by === undefined ? null : String(row.approved_by),
+      lastSeenAt: row.last_seen_at === null || row.last_seen_at === undefined ? null : Number(row.last_seen_at),
+    };
+  }
+
+  listLlmModels(opts: { enabledOnly?: boolean } = {}): LlmModelRow[] {
+    const where = opts.enabledOnly === true ? "WHERE enabled = 1" : "";
+    const rows = this.db.prepare(`SELECT * FROM llm_models ${where} ORDER BY sort_order, id`).all() as unknown as Array<Record<string, unknown>>;
+    return rows.map((r) => this.mapLlmModel(r));
+  }
+
+  getLlmModel(id: string): LlmModelRow | null {
+    const row = this.db.prepare("SELECT * FROM llm_models WHERE id = ?").get(id);
+    return row === undefined ? null : this.mapLlmModel(row as unknown as Record<string, unknown>);
+  }
+
+  createLlmModel(input: {
+    id: string; displayName: string; provider: string; upstreamModel: string;
+    inputPriceMicro?: number; outputPriceMicro?: number; cacheReadPriceMicro?: number; cacheWritePriceMicro?: number;
+    contextWindow?: number; maxTokens?: number; sortOrder?: number; now?: number;
+  }): LlmModelRow {
+    const now = input.now ?? Date.now();
+    this.db.prepare(
+      "INSERT INTO llm_models (id, display_name, provider, upstream_model, input_price_micro, output_price_micro, cache_read_price_micro, cache_write_price_micro, context_window, max_tokens, name_source, enabled, sort_order, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', 1, ?, ?)",
+    ).run(input.id, input.displayName, input.provider, input.upstreamModel, input.inputPriceMicro ?? 0, input.outputPriceMicro ?? 0, input.cacheReadPriceMicro ?? 0, input.cacheWritePriceMicro ?? 0, input.contextWindow ?? 0, input.maxTokens ?? 0, input.sortOrder ?? 0, now);
+    const row = this.db.prepare("SELECT * FROM llm_models WHERE id = ?").get(input.id);
+    return this.mapLlmModel(row as unknown as Record<string, unknown>);
+  }
+
+  updateLlmModel(id: string, patch: {
+    displayName?: string; provider?: string; upstreamModel?: string;
+    inputPriceMicro?: number; outputPriceMicro?: number; cacheReadPriceMicro?: number; cacheWritePriceMicro?: number;
+    contextWindow?: number; maxTokens?: number; enabled?: boolean; sortOrder?: number; nameSource?: LlmModelNameSource; now?: number;
+  }): LlmModelRow | null {
+    const cur = this.getLlmModel(id);
+    if (cur === null) return null;
+    const now = patch.now ?? Date.now();
+    const displayName = patch.displayName ?? cur.displayName;
+    const provider = patch.provider ?? cur.provider;
+    const upstreamModel = patch.upstreamModel ?? cur.upstreamModel;
+    const inputPriceMicro = patch.inputPriceMicro ?? cur.inputPriceMicro;
+    const outputPriceMicro = patch.outputPriceMicro ?? cur.outputPriceMicro;
+    const cacheReadPriceMicro = patch.cacheReadPriceMicro ?? cur.cacheReadPriceMicro;
+    const cacheWritePriceMicro = patch.cacheWritePriceMicro ?? cur.cacheWritePriceMicro;
+    const contextWindow = patch.contextWindow ?? cur.contextWindow;
+    const maxTokens = patch.maxTokens ?? cur.maxTokens;
+    const enabled = patch.enabled === undefined ? cur.enabled : patch.enabled;
+    const sortOrder = patch.sortOrder ?? cur.sortOrder;
+    const nameSource = patch.nameSource ?? cur.nameSource;
+    this.db.prepare(
+      "UPDATE llm_models SET display_name = ?, provider = ?, upstream_model = ?, input_price_micro = ?, output_price_micro = ?, cache_read_price_micro = ?, cache_write_price_micro = ?, context_window = ?, max_tokens = ?, name_source = ?, enabled = ?, sort_order = ?, updated_at = ? WHERE id = ?",
+    ).run(displayName, provider, upstreamModel, inputPriceMicro, outputPriceMicro, cacheReadPriceMicro, cacheWritePriceMicro, contextWindow, maxTokens, nameSource, enabled ? 1 : 0, sortOrder, now, id);
+    return this.getLlmModel(id);
+  }
+
+  syncLlmModelMeta(id: string, displayName: string, contextWindow: number, maxTokens: number, now: number): boolean {
+    const info = this.db.prepare("UPDATE llm_models SET display_name = ?, context_window = ?, max_tokens = ?, name_synced_at = ?, updated_at = ? WHERE id = ? AND name_source = 'upstream'").run(displayName, contextWindow, maxTokens, now, now, id);
+    return info.changes > 0;
+  }
+
+  deleteLlmModel(id: string, now = Date.now()): boolean {
+    const info = this.db.prepare("UPDATE llm_models SET enabled = 0, updated_at = ? WHERE id = ?").run(now, id);
+    return info.changes > 0;
+  }
+
+  listLlmUpstreamKeys(): LlmUpstreamKeyRow[] {
+    const rows = this.db.prepare("SELECT * FROM llm_upstream_keys ORDER BY created_at").all() as unknown as Array<Record<string, unknown>>;
+    return rows.map((r) => this.mapLlmUpstreamKey(r));
+  }
+
+  getLlmUpstreamKey(id: string): LlmUpstreamKeyRow | null {
+    const row = this.db.prepare("SELECT * FROM llm_upstream_keys WHERE id = ?").get(id);
+    return row === undefined ? null : this.mapLlmUpstreamKey(row as unknown as Record<string, unknown>);
+  }
+
+  createLlmUpstreamKey(input: { id: string; provider: string; label: string; keyCipher: string; dekWrapped: string; kekVersion: number; weight?: number; now?: number }): LlmUpstreamKeyRow {
+    const now = input.now ?? Date.now();
+    this.db.prepare("INSERT INTO llm_upstream_keys (id, provider, label, key_cipher, dek_wrapped, kek_version, weight, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)").run(input.id, input.provider, input.label, input.keyCipher, input.dekWrapped, input.kekVersion, input.weight ?? 1, now);
+    const row = this.db.prepare("SELECT * FROM llm_upstream_keys WHERE id = ?").get(input.id);
+    return this.mapLlmUpstreamKey(row as unknown as Record<string, unknown>);
+  }
+
+  updateLlmUpstreamKey(id: string, patch: { enabled?: boolean; weight?: number }): LlmUpstreamKeyRow | null {
+    const cur = this.getLlmUpstreamKey(id);
+    if (cur === null) return null;
+    const enabled = patch.enabled === undefined ? cur.enabled : patch.enabled;
+    const weight = patch.weight ?? cur.weight;
+    this.db.prepare("UPDATE llm_upstream_keys SET enabled = ?, weight = ? WHERE id = ?").run(enabled ? 1 : 0, weight, id);
+    return this.getLlmUpstreamKey(id);
+  }
+
+  revokeLlmUpstreamKey(id: string, now = Date.now()): boolean {
+    const info = this.db.prepare("UPDATE llm_upstream_keys SET revoked_at = ?, enabled = 0 WHERE id = ?").run(now, id);
+    return info.changes > 0;
+  }
+
+  touchLlmUpstreamKeyAssigned(id: string, now = Date.now()): void {
+    this.db.prepare("UPDATE llm_upstream_keys SET last_assigned_at = ? WHERE id = ?").run(now, id);
+  }
+
+  createLlmRouterJoinToken(id: string, label: string, tokenHash: string, expiresAt: number, createdBy: string | null, now = Date.now()): LlmRouterJoinTokenRow {
+    this.db.prepare("INSERT INTO llm_router_join_tokens (id, label, token_hash, expires_at, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)").run(id, label, tokenHash, expiresAt, createdBy, now);
+    const row = this.db.prepare("SELECT * FROM llm_router_join_tokens WHERE id = ?").get(id);
+    return this.mapLlmRouterJoinToken(row as unknown as Record<string, unknown>);
+  }
+
+  findLlmRouterJoinTokenByHash(tokenHash: string): LlmRouterJoinTokenRow | null {
+    const row = this.db.prepare("SELECT * FROM llm_router_join_tokens WHERE token_hash = ?").get(tokenHash);
+    return row === undefined ? null : this.mapLlmRouterJoinToken(row as unknown as Record<string, unknown>);
+  }
+
+  markLlmRouterJoinTokenUsed(id: string, now = Date.now()): boolean {
+    const info = this.db.prepare("UPDATE llm_router_join_tokens SET used_at = ? WHERE id = ? AND used_at IS NULL").run(now, id);
+    return info.changes > 0;
+  }
+
+  listLlmRouterJoinTokens(): LlmRouterJoinTokenRow[] {
+    const rows = this.db.prepare("SELECT * FROM llm_router_join_tokens ORDER BY created_at DESC").all() as unknown as Array<Record<string, unknown>>;
+    return rows.map((r) => this.mapLlmRouterJoinToken(r));
+  }
+
+  createLlmRouter(id: string, name: string, tokenId: string, lastIp: string | null, now = Date.now()): LlmRouterRow {
+    this.db.prepare("INSERT INTO llm_routers (id, name, token_id, status, last_ip, created_at) VALUES (?, ?, ?, 'pending', ?, ?)").run(id, name, tokenId, lastIp, now);
+    const row = this.db.prepare("SELECT * FROM llm_routers WHERE id = ?").get(id);
+    return this.mapLlmRouter(row as unknown as Record<string, unknown>);
+  }
+
+  getLlmRouter(id: string): LlmRouterRow | null {
+    const row = this.db.prepare("SELECT * FROM llm_routers WHERE id = ?").get(id);
+    return row === undefined ? null : this.mapLlmRouter(row as unknown as Record<string, unknown>);
+  }
+
+  getLlmRouterByTokenId(tokenId: string): LlmRouterRow | null {
+    const row = this.db.prepare("SELECT * FROM llm_routers WHERE token_id = ?").get(tokenId);
+    return row === undefined ? null : this.mapLlmRouter(row as unknown as Record<string, unknown>);
+  }
+
+  listLlmRouters(): LlmRouterRow[] {
+    const rows = this.db.prepare("SELECT * FROM llm_routers ORDER BY created_at DESC").all() as unknown as Array<Record<string, unknown>>;
+    return rows.map((r) => this.mapLlmRouter(r));
+  }
+
+  setLlmRouterStatus(id: string, status: LlmRouterStatus, actor: string | null, now = Date.now()): boolean {
+    const info = this.db.prepare("UPDATE llm_routers SET status = ?, approved_at = ?, approved_by = ? WHERE id = ?").run(status, status === "active" ? now : null, status === "active" ? actor : null, id);
+    return info.changes > 0;
+  }
+
+  touchLlmRouterSeen(id: string, lastIp: string | null, now = Date.now()): void {
+    this.db.prepare("UPDATE llm_routers SET last_seen_at = ?, last_ip = ? WHERE id = ?").run(now, lastIp, id);
   }
 
   // ---- 账号删除（R7：墓碑化，保留 orders/payments 账务 + audit 留痕）----

@@ -79,6 +79,8 @@ export async function handleAccountLlm(req: IncomingMessage, res: ServerResponse
       return void writeError(res, 400, "BAD_REQUEST", "invalid from/to"), true;
     }
     const rows = await runtime.store.listLlmRequests({ userId: auth.userId, from: fromMs, to: toMs, limit: 10000 });
+    const catalog = await runtime.store.listLlmModels();
+    const nameById = new Map(catalog.map((m) => [m.id, m.displayName]));
     type DayAgg = { inputTokens: number; outputTokens: number };
     const byModel = new Map<string, { model: string; inputTokens: number; outputTokens: number; requests: number; chargedMicro: number; byDay: Map<string, DayAgg> }>();
     const pad = (n: number): string => String(n).padStart(2, "0");
@@ -102,11 +104,23 @@ export async function handleAccountLlm(req: IncomingMessage, res: ServerResponse
     }
     const models = [...byModel.values()].map((m) => ({
       model: m.model,
+      displayName: nameById.get(m.model) ?? null,
       inputTokens: m.inputTokens,
       outputTokens: m.outputTokens,
       requests: m.requests,
       chargedMicro: m.chargedMicro,
       byDay: [...m.byDay.entries()].map(([date, v]) => ({ date, inputTokens: v.inputTokens, outputTokens: v.outputTokens })).sort((a, b) => a.date.localeCompare(b.date)),
+    }));
+    return void json(res, 200, { models }), true;
+  }
+
+  // 用户侧模型目录（用量页渲染卡片用；只含公开字段，不含价格）
+  if (path === "/api/account/llm/models" && method === "GET") {
+    const models = (await runtime.store.listLlmModels({ enabledOnly: true })).map((m) => ({
+      id: m.id,
+      displayName: m.displayName,
+      contextWindow: m.contextWindow,
+      maxTokens: m.maxTokens,
     }));
     return void json(res, 200, { models }), true;
   }
