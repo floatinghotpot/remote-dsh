@@ -26,6 +26,8 @@ export type { ServiceSpec } from "./service.ts";
 export const NAME = "rdsh-gateway";
 export { join, startJoin, registerJoin, detectInsecure, selfRevoke, patchLoopbackJs, hubRequest, UsageReporter } from "./join.ts";
 export type { JoinOptions, RegisterOutcome, JoinState, JoinHooks, StartJoinOptions, JoinHandle } from "./join.ts";
+export { provisionLlm } from "./llm-provision.ts";
+export type { ProvisionOptions } from "./llm-provision.ts";
 export { startDirect, lanCandidates, isPrivateIpv4 } from "./direct.ts";
 export type { DirectOptions, DirectHandle } from "./direct.ts";
 export { UsageMeter, localDate } from "./usage.ts";

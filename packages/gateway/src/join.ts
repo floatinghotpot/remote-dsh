@@ -18,6 +18,7 @@ import { WebSocket } from "ws";
 import { FrameParser, FRAME_TYPE, encodeFrame, jsonPayload, parseJsonPayload, FLAG_E2E, MAX_PAYLOAD_LENGTH, isUnknownCoreType } from "rdsh-tunnel";
 import type { Frame } from "rdsh-tunnel";
 import { findDsh, spawnDsh, exchangeDshSessionCookie, detectDshVersion, dshVersionWarning, checkRemotePickerGraph, remotePickerWarning } from "./spawn-dsh.ts";
+import { provisionLlm } from "./llm-provision.ts";
 import { rewriteHeadersForDsh } from "./proxy.ts";
 import type { ProxyTarget } from "./proxy.ts";
 import { clearPersistedToken, persistToken, readPersistedToken, readJoinMeta, persistJoinMeta } from "./token-store.ts";
@@ -66,6 +67,8 @@ export interface JoinOptions {
   dshUiCompat?: { trustE2EEAsLoopback?: boolean };
   /** 网关访问口令（feature 15；accessCode null = 关闭） */
   gateway?: { accessCode?: string | null };
+  /** 52：自动配置 DSH 的 rdsh-llm-router provider + key（缺省开启；false 关闭） */
+  llm?: { provision?: boolean };
   /** 直连口（24-direct-first，A 案）：host/port 来自 host.json；缺省不监听 */
   direct?: { host?: string; port?: number };
   /** host E2EE 静态密钥对目录（缺省 ~/.rdsh；**仅供测试注入**，生产不要传 —— 见 e2ee-key-store.ts） */
@@ -111,6 +114,8 @@ export interface StartJoinOptions {
   dshUiCompat?: { trustE2EEAsLoopback?: boolean };
   /** 网关访问口令（feature 15；accessCode null = 关闭） */
   gateway?: { accessCode?: string | null };
+  /** 52：自动配置 DSH 的 rdsh-llm-router provider + key（缺省开启；false 关闭） */
+  llm?: { provision?: boolean };
   /** 直连相关回调（24-direct-first；提供时启用 raw 门禁 + 候选/直连票端点） */
   direct?: {
     candidates: () => { host: string; port: number }[];
@@ -1513,6 +1518,18 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
     releaseLockAndRethrow(err);
   }
 
+  // 52：自动配置 DSH 的 rdsh-llm-router provider + key（缺省开启；失败降级，不阻断网关）。
+  if (opts.llm?.provision !== false) {
+    void provisionLlm({
+      hubUrl: opts.hubUrl,
+      token: opts.token,
+      insecure: opts.insecure,
+      target: opts.target,
+      dshAuthCookie,
+      enabled: true,
+    }).catch((err) => log("warn", `llm provision error: ${err instanceof Error ? err.message : String(err)}`));
+  }
+
   return {
     meter,
     setUiCompat(trustE2EEAsLoopback: boolean): void {
@@ -1608,6 +1625,7 @@ export async function join(opts: JoinOptions): Promise<void> {
     role: "cli",
     dshUiCompat: opts.dshUiCompat,
     gateway: opts.gateway,
+    llm: opts.llm,
     direct:
       opts.direct !== undefined
         ? { candidates: () => directHandle?.candidates() ?? [], mintTicket: () => ticketManager.mint() }
