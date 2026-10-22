@@ -2,10 +2,10 @@
  * llm-provision.ts — 52-auto-provision-router：网关自动配置 DSH 的 `rdsh-llm-router` provider + key。
  *
  * 每次网关启动执行一次（`startJoin` 顶层 fire-and-forget，重连不重跑）：
- *   1. settings/describe 读 `llm-pi-ai` 的 revision（DSH 不可用/缺命名空间 → 降级返回）；
- *   2. Hub `/api/hosts/llm-key`（host token）→ { key, baseURL, models }（重签，旧 key 吊销）；
- *   3. settings/mutate 写 provider（displayName/apiKeyEnv/api/baseURL/models，5 个 set，覆盖同路径 = 幂等）；
- *   4. credentials/set 写 key（RDSH_ROUTER_API_KEY）。
+ *   1. Hub `/api/hosts/llm-key`（host token）→ { key, baseURL, models }（重签，旧 key 吊销）；
+ *   2. settings/mutate 写 provider（displayName/apiKeyEnv/api/baseURL/models，5 个 set，覆盖同路径 = 幂等；
+ *      `expectedRevision` 省略 = 无条件写入，网关是唯一写者，无需乐观锁）；
+ *   3. credentials/set 写 key（RDSH_ROUTER_API_KEY）。
  * 任何 DSH API 失败 → 记日志、返回（不阻断网关；保留手工配置路径）。模型目录随每次启动刷新。
  */
 import { request as httpRequest } from "node:http";
@@ -34,6 +34,14 @@ export interface ProvisionOptions {
 
 function dshJson(target: ProxyTarget, cookie: string | null, path: string, body: unknown): Promise<Record<string, unknown> | null> {
   return new Promise((resolve) => {
+    let settled = false;
+    let timer: NodeJS.Timeout | undefined;
+    const done = (v: Record<string, unknown> | null): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(v);
+    };
     const req = httpRequest(
       {
         host: target.host,
@@ -47,40 +55,25 @@ function dshJson(target: ProxyTarget, cookie: string | null, path: string, body:
         res.on("data", (c: Buffer) => chunks.push(c));
         res.on("end", () => {
           if ((res.statusCode ?? 0) !== 200) {
-            resolve(null);
+            done(null);
             return;
           }
           try {
-            resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>);
+            done(JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>);
           } catch {
-            resolve(null);
+            done(null);
           }
         });
+        res.on("error", () => done(null));
       },
     );
-    req.on("error", () => resolve(null));
-    req.setTimeout(10_000, () => req.destroy());
+    req.on("error", () => done(null));
+    timer = setTimeout(() => req.destroy(new Error("dsh timeout")), 10_000);
     req.end(JSON.stringify(body ?? {}));
   });
 }
 
-/** 读 `llm-pi-ai` 的 revision；DSH 不可用/缺命名空间/revision 非数字 → null。 */
-async function readRevision(target: ProxyTarget, cookie: string | null): Promise<number | null> {
-  const desc = await dshJson(target, cookie, "/api/settings/describe", {});
-  if (desc === null) return null;
-  const namespaces = desc.namespaces as Array<Record<string, unknown>> | undefined;
-  if (!Array.isArray(namespaces)) return null;
-  const ns = namespaces.find((n) => n.ns === NS);
-  if (ns === undefined || typeof ns.revision !== "number") return null;
-  return ns.revision;
-}
-
 export async function provisionLlm(opts: ProvisionOptions): Promise<void> {
-  const revision = await readRevision(opts.target, opts.dshAuthCookie);
-  if (revision === null) {
-    console.warn("rdsh: llm provision skipped (DSH settings API unavailable)");
-    return;
-  }
   const res = await hubRequest(opts.hubUrl, "/api/hosts/llm-key", { method: "POST", insecure: opts.insecure, body: { token: opts.token } });
   if (!res.ok) {
     console.warn(`rdsh: llm provision skipped (hub llm-key ${res.status})`);
@@ -109,7 +102,8 @@ export async function provisionLlm(opts: ProvisionOptions): Promise<void> {
     { op: "set", path: ["providers", PROVIDER_ID, "baseURL"], value: provision.baseURL },
     { op: "set", path: ["providers", PROVIDER_ID, "models"], value: models },
   ];
-  const mutated = await dshJson(opts.target, opts.dshAuthCookie, "/api/settings/mutate", { ns: NS, ops, expectedRevision: revision });
+  // expectedRevision 省略 = 无条件写入（网关唯一写者）。
+  const mutated = await dshJson(opts.target, opts.dshAuthCookie, "/api/settings/mutate", { ns: NS, ops });
   if (mutated === null) {
     console.warn("rdsh: llm provision skipped (settings/mutate failed)");
     return;
