@@ -5,8 +5,10 @@
  * 启动时打印 `dsh web: http://127.0.0.1:<port>`（dsh-web-app/lib/index.js）。
  */
 import { execFile, spawn } from "node:child_process";
-import { accessSync } from "node:fs";
+import { accessSync, rmSync } from "node:fs";
 import { get } from "node:http";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { createInterface } from "node:readline";
 import type { ChildProcess } from "node:child_process";
 
@@ -77,6 +79,15 @@ export const RDSH_REMOTE_TTY = "rdsh-remote";
  * ⚠️ 这是上游启发式的输入：上游若改变判定信号，本注入会静默失效（spawn 后自检见
  * `checkRemotePickerGraph` 与 the internal fix record §6）。
  */
+/** 52：spawn 前清理 DSH 凭据存储的陈旧锁（上次 DSH 被强杀遗留，会让新 DSH 启动卡死等锁）。 */
+function clearStaleDshLock(): void {
+  try {
+    rmSync(join(homedir(), ".dsh", ".credentials.yaml.lock"), { force: true });
+  } catch {
+    // 忽略：锁不存在/无权限都不阻断启动
+  }
+}
+
 export function dshSpawnEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const hasSignal = (base.SSH_TTY ?? "") !== "" || (base.SSH_CONNECTION ?? "") !== "";
   if (hasSignal) return { ...base };
@@ -90,6 +101,7 @@ export function dshSpawnEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.Proce
  */
 export function spawnDsh(dshPath: string): Promise<SpawnedDsh> {
   return new Promise((resolve, reject) => {
+    clearStaleDshLock();
     const child = spawn(dshPath, ["web", "--port", "0", "--no-open"], {
       stdio: ["ignore", "pipe", "pipe"],
       env: dshSpawnEnv(),
