@@ -1244,9 +1244,11 @@ function LlmKeysPage(): React.JSX.Element {
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <span style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", fontFamily: "monospace" }}>{k.tokenHead4 !== "" && k.tokenTail4 !== "" ? `sk-${k.tokenHead4}*****${k.tokenTail4}` : k.tokenTail4 !== "" ? `sk-*****${k.tokenTail4}` : "sk-*****"}</span>
-              {k.status === "active" && !isHost && !editing && (
+              {!isHost && !editing && (
                 <>
-                  <button title={t("重命名")} onClick={() => startEdit(k)} style={btnStyle("ghost")}>✎</button>
+                  {k.status === "active" && (
+                    <button title={t("重命名")} onClick={() => startEdit(k)} style={btnStyle("ghost")}>✎</button>
+                  )}
                   <button title={t("删除")} onClick={() => remove(k)} style={btnStyle("ghost")}>🗑</button>
                 </>
               )}
