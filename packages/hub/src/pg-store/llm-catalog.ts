@@ -155,7 +155,9 @@ export function llmCatalog(
     },
 
     setLlmRouterStatus: async (id: string, status: LlmRouterStatus, actor: string | null, now = Date.now()): Promise<boolean> => {
-      const r = await q(txDb(pool), "UPDATE llm_routers SET status = $1, approved_at = $2, approved_by = $3 WHERE id = $4", [status, status === "active" ? now : null, status === "active" ? actor : null, id]);
+      const r = status === "active"
+        ? await q(txDb(pool), "UPDATE llm_routers SET status = 'active', approved_at = $1, approved_by = $2 WHERE id = $3", [now, actor, id])
+        : await q(txDb(pool), "UPDATE llm_routers SET status = $1 WHERE id = $2", [status, id]);
       return r.rowCount > 0;
     },
 

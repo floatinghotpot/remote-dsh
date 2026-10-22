@@ -884,12 +884,16 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
     if (apiKey === "") { writeError(res, 400, "BAD_REQUEST", "apiKey required"); return true; }
     const weight = typeof body?.weight === "number" && Number.isInteger(body.weight) && body.weight > 0 ? body.weight : 1;
     const id = randomUUID();
-    const kekVersion = currentKekVersion(runtime);
-    const kek = loadKek(kekDir(runtime), kekVersion);
-    const { keyCipher, dekWrapped } = encryptUpstreamKey(apiKey, kek, kekVersion, id, provider);
-    const row = await store.createLlmUpstreamKey({ id, provider, label, keyCipher, dekWrapped, kekVersion, weight });
-    await auditAdmin("llm.upstream-key.create", { id, label });
-    res.end(JSON.stringify({ key: { id: row.id, provider: row.provider, label: row.label, weight: row.weight, enabled: row.enabled, kekVersion: row.kekVersion, createdAt: row.createdAt } }));
+    try {
+      const kekVersion = currentKekVersion(runtime);
+      const kek = loadKek(kekDir(runtime), kekVersion);
+      const { keyCipher, dekWrapped } = encryptUpstreamKey(apiKey, kek, kekVersion, id, provider);
+      const row = await store.createLlmUpstreamKey({ id, provider, label, keyCipher, dekWrapped, kekVersion, weight });
+      await auditAdmin("llm.upstream-key.create", { id, label });
+      res.end(JSON.stringify({ key: { id: row.id, provider: row.provider, label: row.label, weight: row.weight, enabled: row.enabled, kekVersion: row.kekVersion, createdAt: row.createdAt } }));
+    } catch (err) {
+      writeAdminError(res, err);
+    }
     return true;
   }
   const keyEdit = /^\/api\/admin\/llm\/upstream-keys\/([^/]+)$/.exec(path);
@@ -924,7 +928,7 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
     if (!isWrite) { writeError(res, 403, "FORBIDDEN", "operator or admin required"); return true; }
     const body = await readJsonBody(req);
     const label = typeof body?.label === "string" && body.label.trim() !== "" ? body.label.trim() : `router-${Date.now()}`;
-    const ttlMs = typeof body?.ttlMs === "number" && body.ttlMs >= 60_000 ? body.ttlMs : 600_000;
+    const ttlMs = typeof body?.ttlMs === "number" && body.ttlMs >= 60_000 && body.ttlMs <= 24 * 3600 * 1000 ? body.ttlMs : 600_000;
     const token = `rdsh-join-${randomToken()}`;
     const id = randomUUID();
     await store.createLlmRouterJoinToken(id, label, sha256(token), Date.now() + ttlMs, auth.name);

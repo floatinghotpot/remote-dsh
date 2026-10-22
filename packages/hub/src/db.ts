@@ -3042,7 +3042,9 @@ export class HubDb {
   }
 
   setLlmRouterStatus(id: string, status: LlmRouterStatus, actor: string | null, now = Date.now()): boolean {
-    const info = this.db.prepare("UPDATE llm_routers SET status = ?, approved_at = ?, approved_by = ? WHERE id = ?").run(status, status === "active" ? now : null, status === "active" ? actor : null, id);
+    const info = status === "active"
+      ? this.db.prepare("UPDATE llm_routers SET status = 'active', approved_at = ?, approved_by = ? WHERE id = ?").run(now, actor, id)
+      : this.db.prepare("UPDATE llm_routers SET status = ? WHERE id = ?").run(status, id);
     return info.changes > 0;
   }
 

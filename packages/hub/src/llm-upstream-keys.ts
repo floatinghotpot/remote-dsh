@@ -16,6 +16,8 @@ const sticky = new Map<string, { keyId: string; until: number }>();
 let rr = 0;
 
 export function kekDir(runtime: HubRuntime): string {
+  const env = process.env.RDSH_LLM_UPSTREAM_KEK_DIR;
+  if (env !== undefined && env !== "") return env;
   return runtime.config.llm?.upstreamKeyPool?.kekDir ?? join(homedir(), ".rdsh", "llm");
 }
 
@@ -38,6 +40,9 @@ export async function pickUpstreamKey(runtime: HubRuntime, routerTokenId: string
   const keys = await listEnabledKeys(runtime);
   if (keys.length === 0) return null;
   const now = Date.now();
+  for (const [k, v] of sticky) {
+    if (v.until <= now) sticky.delete(k);
+  }
 
   const hit = sticky.get(routerTokenId);
   if (hit !== undefined && hit.until > now) {

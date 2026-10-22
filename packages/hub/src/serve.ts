@@ -21,6 +21,7 @@ import { createPgStore } from "./pg-store/index.ts";
 import { defaultPortalDir } from "./portal.ts";
 import { backupNow, pruneBackups } from "./backup.ts";
 import { loadHostCookieSigner } from "./hostcookie.ts";
+import { loadKek } from "./crypto-upstream-keys.ts";
 
 /**
  * Q9：用户缓存同步失效——包装用户写方法，写后回读最新 UserRow 写回缓存。
@@ -138,6 +139,12 @@ export async function serveHub(opts: HubServeOptions): Promise<void> {
       }
     };
     setInterval(runBackup, 24 * 3600 * 1000).unref();
+  }
+
+  // 51：配置了 llm.upstreamKeyPool 时，启动即校验 KEK（缺失/长度错误 → 拒绝启动）
+  if (config.llm?.upstreamKeyPool !== undefined) {
+    const kekDir = process.env.RDSH_LLM_UPSTREAM_KEK_DIR ?? config.llm.upstreamKeyPool.kekDir;
+    loadKek(kekDir, config.llm.upstreamKeyPool.kekVersion ?? 1);
   }
 
   const jwt = new Jwt(await loadJwtKey(config.jwtKeyPath));

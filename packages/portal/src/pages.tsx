@@ -3010,6 +3010,8 @@ function AdminLlmModels({ isWrite }: { isWrite: boolean }): React.JSX.Element {
   const [models, setModels] = useState<LlmModelRow[]>([]);
   const [msg, setMsg] = useState("");
   const [form, setForm] = useState({ id: "", displayName: "", provider: "deepseek", upstreamModel: "" });
+  const [editId, setEditId] = useState<string | null>(null);
+  const [edit, setEdit] = useState({ displayName: "", inputPriceMicro: "", outputPriceMicro: "", contextWindow: "", maxTokens: "", sortOrder: "", nameSource: "manual" });
   const reload = (): void => { adminApi.llmModels().then((r) => setModels(r.models as unknown as LlmModelRow[])).catch(() => setModels([])); };
   useEffect(() => { reload(); }, []);
   const create = (): void => {
@@ -3020,6 +3022,19 @@ function AdminLlmModels({ isWrite }: { isWrite: boolean }): React.JSX.Element {
   };
   const del = (m: LlmModelRow): void => {
     adminApi.deleteLlmModel(m.id).then(() => reload()).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed"));
+  };
+  const startEdit = (m: LlmModelRow): void => {
+    setEditId(m.id);
+    setEdit({ displayName: m.displayName, inputPriceMicro: String(m.inputPriceMicro), outputPriceMicro: String(m.outputPriceMicro), contextWindow: String(m.contextWindow), maxTokens: String(m.maxTokens), sortOrder: String(m.sortOrder), nameSource: m.nameSource });
+  };
+  const num = (s: string): number => { const n = Number(s); return Number.isFinite(n) && n >= 0 ? n : 0; };
+  const saveEdit = (): void => {
+    if (editId === null) return;
+    adminApi.updateLlmModel(editId, {
+      displayName: edit.displayName, inputPriceMicro: num(edit.inputPriceMicro), outputPriceMicro: num(edit.outputPriceMicro),
+      contextWindow: num(edit.contextWindow), maxTokens: num(edit.maxTokens), sortOrder: num(edit.sortOrder),
+      nameSource: edit.nameSource,
+    }).then(() => { setMsg("ok"); setEditId(null); reload(); }).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed"));
   };
   return (
     <div>
@@ -3034,13 +3049,29 @@ function AdminLlmModels({ isWrite }: { isWrite: boolean }): React.JSX.Element {
         </div>
       )}
       {models.map((m) => (
-        <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderTop: "1px solid var(--rdsh-border-soft)" }}>
-          <span style={{ fontFamily: "monospace" }}>{m.id}</span>
-          <span style={{ color: "var(--rdsh-fg-muted)" }}>{m.displayName}</span>
-          <span style={{ fontSize: 12, color: "var(--rdsh-fg-subtle)" }}>{m.nameSource === "upstream" ? "sync" : "manual"}</span>
-          <span style={{ marginLeft: "auto", fontSize: 12, color: m.enabled ? "#07c160" : "var(--rdsh-fg-muted)" }}>{m.enabled ? t("启用") : t("停用")}</span>
-          {isWrite && <button onClick={() => toggle(m)} style={adminBtnStyle("ghost")}>{m.enabled ? t("停用") : t("启用")}</button>}
-          {isWrite && <button onClick={() => del(m)} style={adminBtnStyle("danger")}>{t("删除")}</button>}
+        <div key={m.id} style={{ borderTop: "1px solid var(--rdsh-border-soft)", padding: "8px 0" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontFamily: "monospace" }}>{m.id}</span>
+            <span style={{ color: "var(--rdsh-fg-muted)" }}>{m.displayName}</span>
+            <span style={{ fontSize: 12, color: "var(--rdsh-fg-subtle)" }}>{m.nameSource === "upstream" ? "sync" : "manual"}</span>
+            <span style={{ marginLeft: "auto", fontSize: 12, color: m.enabled ? "#07c160" : "var(--rdsh-fg-muted)" }}>{m.enabled ? t("启用") : t("停用")}</span>
+            {isWrite && <button onClick={() => startEdit(m)} style={adminBtnStyle("ghost")}>{t("编辑")}</button>}
+            {isWrite && <button onClick={() => toggle(m)} style={adminBtnStyle("ghost")}>{m.enabled ? t("停用") : t("启用")}</button>}
+            {isWrite && <button onClick={() => del(m)} style={adminBtnStyle("danger")}>{t("删除")}</button>}
+          </div>
+          {editId === m.id && (
+            <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <input placeholder={t("显示名")} value={edit.displayName} onChange={(e) => setEdit({ ...edit, displayName: e.target.value })} style={{ padding: "4px 6px", width: 180 }} />
+              <input placeholder="in" value={edit.inputPriceMicro} onChange={(e) => setEdit({ ...edit, inputPriceMicro: e.target.value })} style={{ padding: "4px 6px", width: 90 }} />
+              <input placeholder="out" value={edit.outputPriceMicro} onChange={(e) => setEdit({ ...edit, outputPriceMicro: e.target.value })} style={{ padding: "4px 6px", width: 90 }} />
+              <input placeholder="ctx" value={edit.contextWindow} onChange={(e) => setEdit({ ...edit, contextWindow: e.target.value })} style={{ padding: "4px 6px", width: 90 }} />
+              <input placeholder="max" value={edit.maxTokens} onChange={(e) => setEdit({ ...edit, maxTokens: e.target.value })} style={{ padding: "4px 6px", width: 90 }} />
+              <input placeholder="sort" value={edit.sortOrder} onChange={(e) => setEdit({ ...edit, sortOrder: e.target.value })} style={{ padding: "4px 6px", width: 60 }} />
+              <button onClick={() => setEdit({ ...edit, nameSource: edit.nameSource === "upstream" ? "manual" : "upstream" })} style={adminBtnStyle("ghost")}>{edit.nameSource}</button>
+              <button onClick={saveEdit} style={adminBtnStyle("primary")}>{t("保存")}</button>
+              <button onClick={() => setEditId(null)} style={adminBtnStyle("ghost")}>{t("取消")}</button>
+            </div>
+          )}
         </div>
       ))}
     </div>
@@ -4427,6 +4458,13 @@ function UsagePage(): React.JSX.Element {
   const green = "#07c160";
   const orange = "#f59e0b";
 
+  // LLM 卡片 = 目录 ∪ 用量（目录外的历史 alias 仍显示，仅 ID，无显示名 —— R6）
+  const llmCardModels = (() => {
+    const names = new Map(llmCatalog.map((m) => [m.id, m.displayName]));
+    const ids = new Set<string>([...names.keys(), ...llmUsage.map((u) => u.model)]);
+    return [...ids].map((id) => ({ id, displayName: names.get(id) ?? "" }));
+  })();
+
   const metric = (
     label: string,
     iconName: "relay" | "direct" | "cloud" | "local" | "speaker",
@@ -4488,7 +4526,7 @@ function UsagePage(): React.JSX.Element {
 
       {/* LLM token 消费：按模型目录渲染卡片（标题=ID，小字=显示名；无数据也显示 0）*/}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 12, marginBottom: 12 }}>
-        {llmCatalog.map((m, i) => {
+        {llmCardModels.map((m, i) => {
           const data = llmUsage.find((x) => x.model === m.id);
           const series = seriesFromDays(from, to, data?.byDay ?? [], (d) => d.inputTokens + d.outputTokens);
           const total = sumSeries(series);

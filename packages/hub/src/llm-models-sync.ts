@@ -22,7 +22,10 @@ export function startLlmModelSync(runtime: HubRuntime): void {
       const now = Date.now();
       for (const m of json.data ?? []) {
         if (typeof m.id !== "string" || m.id === "") continue;
-        await runtime.store.syncLlmModelMeta(m.id, m.name ?? m.id, m.context_window ?? 0, m.max_output_tokens ?? 0, now);
+        const displayName = typeof m.name === "string" && m.name !== "" ? m.name : m.id;
+        const contextWindow = typeof m.context_window === "number" && m.context_window > 0 ? m.context_window : 0;
+        const maxTokens = typeof m.max_output_tokens === "number" && m.max_output_tokens > 0 ? m.max_output_tokens : 0;
+        await runtime.store.syncLlmModelMeta(m.id, displayName, contextWindow, maxTokens, now);
       }
     } catch {
       // 同步失败保留上次值（记日志由调用方决定；此处静默）。

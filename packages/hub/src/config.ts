@@ -760,7 +760,7 @@ function normalizeLlmConfig(raw: unknown, source: string): LlmModelConfig {
     if (typeof p !== "object" || p === null) throw new Error(`${source}: "llm.provider" must be an object`);
     const provider: { name?: string; baseURL?: string; protocol?: string } = {};
     if (p.name !== undefined) { if (typeof p.name !== "string" || p.name === "") throw new Error(`${source}: "llm.provider.name" must be a non-empty string`); provider.name = p.name; }
-    if (p.baseURL !== undefined) { if (typeof p.baseURL !== "string" || p.baseURL === "") throw new Error(`${source}: "llm.provider.baseURL" must be a non-empty string`); provider.baseURL = p.baseURL; }
+    if (p.baseURL !== undefined) { if (typeof p.baseURL !== "string" || p.baseURL === "") throw new Error(`${source}: "llm.provider.baseURL" must be a non-empty string`); provider.baseURL = p.baseURL.replace(/\/+$/, ""); }
     if (p.protocol !== undefined) { if (typeof p.protocol !== "string" || p.protocol === "") throw new Error(`${source}: "llm.provider.protocol" must be a non-empty string`); provider.protocol = p.protocol; }
     out.provider = provider;
   }

@@ -55,6 +55,7 @@ export function decryptUpstreamKey(keyCipherB64: string, dekWrappedB64: string, 
   const dek = Buffer.concat([unwrap.update(dekCt), unwrap.final()]);
 
   const blob = Buffer.from(keyCipherB64, "base64");
+  if (blob[0] !== ENC_VERSION) throw new Error(`unsupported key cipher version ${blob[0]}`);
   const iv = blob.subarray(1, 13);
   const ct = blob.subarray(13, blob.length - 16);
   const tag = blob.subarray(blob.length - 16);
@@ -79,6 +80,7 @@ export function sealConfig(plainJson: string, routerToken: string, routerId: str
 /** 解密密封的 config（对称于 sealConfig；供调试/测试与 Go Router 交叉验证）。 */
 export function unsealConfig(payloadB64: string, routerToken: string, routerId: string): string {
   const blob = Buffer.from(payloadB64, "base64");
+  if (blob[0] !== ENC_VERSION) throw new Error(`unsupported seal version ${blob[0]}`);
   const salt = blob.subarray(1, 17);
   const iv = blob.subarray(17, 29);
   const ct = blob.subarray(29, blob.length - 16);
@@ -90,8 +92,3 @@ export function unsealConfig(payloadB64: string, routerToken: string, routerId: 
   return Buffer.concat([dec.update(ct), dec.final()]).toString("utf8");
 }
 
-/** 管理后台掩码展示（只保留尾 4 位）。 */
-export function maskUpstreamKey(plain: string): string {
-  if (plain.length <= 8) return "••••";
-  return `sk-…${plain.slice(-4)}`;
-}
