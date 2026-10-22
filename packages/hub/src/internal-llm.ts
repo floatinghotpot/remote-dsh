@@ -45,7 +45,7 @@ function scopesOf(token: ServiceTokenRow): Set<string> {
   return new Set(token.scopes.split(",").map((s) => s.trim()).filter((s) => s !== ""));
 }
 
-async function authenticateService(req: IncomingMessage, runtime: HubRuntime, scope: string): Promise<ServiceTokenRow | null> {
+export async function authenticateService(req: IncomingMessage, runtime: HubRuntime, scope: string): Promise<ServiceTokenRow | null> {
   const token = bearerToken(req);
   if (token === null || token.length < 16) return null;
   const row = await runtime.store.findServiceTokenByHash(sha256(token));

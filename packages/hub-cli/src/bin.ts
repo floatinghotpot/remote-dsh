@@ -14,6 +14,7 @@
  * 说明：由 `remote-dsh` 拆出（feature 47）；`setup`/`db` 与 backend-aware
  * 管理命令见 feature 48。服务单元工具复用 `rdsh-gateway` 的 installService。
  */
+import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
 import { existsSync } from "node:fs";
 import { writeFile, rename, mkdir } from "node:fs/promises";
@@ -30,6 +31,8 @@ import {
   createSqliteStore,
   migrateSqliteToPg,
   verify,
+  randomToken,
+  sha256,
 } from "rdsh-hub";
 import type { HubServeOptions, HubStore } from "rdsh-hub";
 import {
@@ -402,6 +405,12 @@ async function handleHubUser(args: string[], configPath?: string): Promise<void>
   }
 }
 
+/** host invite 的缺省 label：`YYYYMMDDHHmmss`（与 relay join token 默认名一致）。 */
+function defaultInviteLabel(now = new Date()): string {
+  const p = (n: number): string => String(n).padStart(2, "0");
+  return `${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}${p(now.getHours())}${p(now.getMinutes())}${p(now.getSeconds())}`;
+}
+
 async function handleHubHost(args: string[], configPath?: string): Promise<void> {
   const action = args[0];
   const store = await openHubStore(configPath);
@@ -428,8 +437,37 @@ async function handleHubHost(args: string[], configPath?: string): Promise<void>
         console.log(`rdsh-hub: host '${hostId}' revoked — its tunnel will drop and reconnects are rejected`);
         return;
       }
+      case "invite": {
+        const target = args[1];
+        if (target === undefined) throw new Error("usage: rdsh-hub host invite <name|id> [--label <s>] [--ttl <seconds>]");
+        let userId: number;
+        if (/^\d+$/.test(target)) {
+          const u = await store.getUserById(Number(target));
+          if (u === null) throw new Error(`user '${target}' not found`);
+          userId = u.id;
+        } else {
+          const u = await store.getUserByName(target);
+          if (u === null) throw new Error(`user '${target}' not found`);
+          userId = u.id;
+        }
+        let ttl = 600;
+        const ttlRaw = arg(args, "--ttl");
+        if (ttlRaw !== undefined) {
+          const t = Number(ttlRaw);
+          if (!Number.isInteger(t) || t <= 0 || t > 3600) throw new Error("ttl must be 1..3600 seconds");
+          ttl = t;
+        }
+        const labelRaw = arg(args, "--label");
+        const label = labelRaw !== undefined && labelRaw !== "" ? labelRaw.slice(0, 64) : defaultInviteLabel();
+        const id = randomUUID();
+        const token = randomToken();
+        const expiresAt = Date.now() + ttl * 1000;
+        await store.createJoinToken(id, label, userId, sha256(token), expiresAt);
+        console.log(JSON.stringify({ token, expiresAt }));
+        return;
+      }
       default:
-        throw new Error("usage: rdsh-hub host ls|revoke <hostId>");
+        throw new Error("usage: rdsh-hub host ls|revoke <hostId>|invite <name|id>");
     }
   } finally {
     await store.close();

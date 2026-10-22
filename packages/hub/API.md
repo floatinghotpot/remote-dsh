@@ -443,3 +443,15 @@ UI 文案必须写「**可云端中转主机数**」，**不要**写「主机配
 
 - 未登录 401 `UNAUTHORIZED`；操作他人 key 404 `NOT_FOUND`；
 - key 用于 DSH 的 `DEEPSEEK_API_KEY`（经 `rdsh-router`）；额度 = 用户钱包点数，余额不足时 Router 返回 402。
+
+## 16. 内部 host invite（/api/internal/hosts/invite，50-hub-host-invite，2026-10-22）
+
+> 仅供平台 / AI 以服务令牌调用，签发绑定 userId 的 host join token；消费端复用 `/api/hosts/register` + `rdsh join --token`。
+
+| 方法 | 路径 | scope | 说明 |
+|---|---|---|---|
+| POST | `/api/internal/hosts/invite` | `host:invite` | 签发生成 `{id, token, expiresAt}` |
+
+- 请求：`{userId, label?, ttlSeconds?}`；`userId` 必填正整数，用户不存在 404；
+- `ttlSeconds` 默认 600、上限 3600；
+- `label` 缺省自动填 `YYYYMMDDHHmmss`；token 只存 hash。

@@ -36,6 +36,7 @@ import { clearHostCookie, rootDomain } from "./server.ts";
 import { AdminError } from "./admin.ts";
 import { handleNodeRegister, handleNodeHeartbeat, handleNodeHosts, handleNodeSync, handleNodeLeave, handleNodeAssign } from "./nodes.ts";
 import { handleInternalApi } from "./internal-llm.ts";
+import { handleInternalHosts } from "./internal-hosts.ts";
 import { handleAccountLlmKeys } from "./account-llm.ts";
 import type { HostCookieSigner } from "./hostcookie.ts";
 import type { AdminCtx, AdminCreateUserInput } from "./admin.ts";
@@ -825,8 +826,8 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, runti
 
   // ---- 内部服务 API（/api/internal/*，服务令牌鉴权） ----
   if (path.startsWith("/api/internal/")) {
-    const handled = await handleInternalApi(req, res, runtime);
-    if (handled) return true;
+    if (await handleInternalApi(req, res, runtime)) return true;
+    if (await handleInternalHosts(req, res, runtime)) return true;
   }
 
   // ---- 认证端点 ----
