@@ -2983,7 +2983,7 @@ export class HubDb {
 
   updateLlmUpstreamKey(id: string, patch: { enabled?: boolean; weight?: number }): LlmUpstreamKeyRow | null {
     const cur = this.getLlmUpstreamKey(id);
-    if (cur === null) return null;
+    if (cur === null || cur.revokedAt !== null) return null;
     const enabled = patch.enabled === undefined ? cur.enabled : patch.enabled;
     const weight = patch.weight ?? cur.weight;
     this.db.prepare("UPDATE llm_upstream_keys SET enabled = ?, weight = ? WHERE id = ?").run(enabled ? 1 : 0, weight, id);

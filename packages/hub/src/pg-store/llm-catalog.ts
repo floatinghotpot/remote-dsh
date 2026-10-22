@@ -97,6 +97,7 @@ export function llmCatalog(
     updateLlmUpstreamKey: async (id: string, patch: { enabled?: boolean; weight?: number }): Promise<LlmUpstreamKeyRow | null> => {
       const cur = one(await q(txDb(pool), "SELECT * FROM llm_upstream_keys WHERE id = $1", [id]));
       if (cur === null) return null;
+      if (mapLlmUpstreamKey(cur).revokedAt !== null) return null;
       const c = mapLlmUpstreamKey(cur);
       const enabled = patch.enabled === undefined ? c.enabled : patch.enabled;
       const weight = patch.weight ?? c.weight;

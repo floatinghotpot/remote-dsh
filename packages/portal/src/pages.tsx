@@ -3106,10 +3106,10 @@ function AdminLlmKeys({ isWrite }: { isWrite: boolean }): React.JSX.Element {
         <div key={k.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderTop: "1px solid var(--rdsh-border-soft)" }}>
           <span style={{ fontFamily: "monospace" }}>{k.label}</span>
           <span style={{ fontSize: 12, color: "var(--rdsh-fg-subtle)" }}>weight {k.weight}</span>
-          <span style={{ fontSize: 12, color: k.enabled && k.revokedAt === null ? "#07c160" : "var(--rdsh-fg-muted)" }}>{k.enabled && k.revokedAt === null ? t("启用") : t("停用")}</span>
+          <span style={{ fontSize: 12, color: k.revokedAt !== null ? "var(--rdsh-danger)" : k.enabled ? "#07c160" : "var(--rdsh-fg-muted)" }}>{k.revokedAt !== null ? t("已吊销") : k.enabled ? t("启用") : t("停用")}</span>
           <span style={{ marginLeft: "auto" }} />
-          {isWrite && <button onClick={() => toggle(k)} style={adminBtnStyle("ghost")}>{k.enabled ? t("停用") : t("启用")}</button>}
-          {isWrite && <button onClick={() => revoke(k)} style={adminBtnStyle("danger")}>{t("吊销")}</button>}
+          {isWrite && k.revokedAt === null && <button onClick={() => toggle(k)} style={adminBtnStyle("ghost")}>{k.enabled ? t("停用") : t("启用")}</button>}
+          {isWrite && k.revokedAt === null && <button onClick={() => revoke(k)} style={adminBtnStyle("danger")}>{t("吊销")}</button>}
         </div>
       ))}
     </div>
