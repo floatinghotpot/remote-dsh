@@ -1233,23 +1233,21 @@ function LlmKeysPage(): React.JSX.Element {
                     <button onClick={() => setEditingId(null)} style={btnStyle("ghost")}>{t("取消")}</button>
                   </div>
                 ) : (
-                  <div style={{ fontSize: 14, display: "flex", alignItems: "center", gap: 8 }}>
-                    <span>{k.name}</span>
-                    {isHost && <span style={{ fontSize: 11, padding: "1px 6px", borderRadius: 4, background: "var(--rdsh-bg-subtle)", color: "var(--rdsh-fg-muted)" }}>{t("主机自动")}</span>}
-                  </div>
+                  <span style={{ fontSize: 14 }}>{k.name}</span>
                 )}
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <span style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", fontFamily: "monospace" }}>{k.tokenHead4 !== "" && k.tokenTail4 !== "" ? `sk-${k.tokenHead4}*****${k.tokenTail4}` : k.tokenTail4 !== "" ? `sk-*****${k.tokenTail4}` : "sk-*****"}</span>
-                {!isHost && !editing && (
-                  <>
-                    {k.status === "active" && (
-                      <button title={t("重命名")} onClick={() => startEdit(k)} style={btnStyle("ghost")}>✎</button>
-                    )}
-                    <button title={t("删除")} onClick={() => remove(k)} style={btnStyle("ghost")}>🗑</button>
-                  </>
-                )}
-              </div>
+              {isHost && <span style={{ fontSize: 11, padding: "1px 6px", borderRadius: 4, background: "var(--rdsh-bg-subtle)", color: "var(--rdsh-fg-muted)" }}>{t("主机自动")}</span>}
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginTop: 4 }}>
+              <span style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", fontFamily: "monospace" }}>{k.tokenHead4 !== "" && k.tokenTail4 !== "" ? `sk-${k.tokenHead4}*****${k.tokenTail4}` : k.tokenTail4 !== "" ? `sk-*****${k.tokenTail4}` : "sk-*****"}</span>
+              {!isHost && !editing && (
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  {k.status === "active" && (
+                    <button title={t("重命名")} onClick={() => startEdit(k)} style={btnStyle("ghost")}>✎</button>
+                  )}
+                  <button title={t("删除")} onClick={() => remove(k)} style={btnStyle("ghost")}>🗑</button>
+                </div>
+              )}
             </div>
             <div style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", marginTop: 4 }}>
               {t("创建于")} {fmtDate(k.createdAt)} · {t("最近使用")} {fmtDate(k.lastUsedAt)}
