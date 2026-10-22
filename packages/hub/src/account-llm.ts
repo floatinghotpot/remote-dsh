@@ -106,21 +106,15 @@ export async function handleAccountLlm(req: IncomingMessage, res: ServerResponse
   if (path === "/api/account/llm/usage" && method === "GET") {
     const from = url.searchParams.get("from") ?? "";
     const to = url.searchParams.get("to") ?? "";
-    const fromMs = Date.parse(`${from}T00:00:00`);
-    const toMs = Date.parse(`${to}T23:59:59.999`);
-    if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || fromMs > toMs) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) {
       return void writeError(res, 400, "BAD_REQUEST", "invalid from/to"), true;
     }
-    const rows = await runtime.store.listLlmRequests({ userId: auth.userId, from: fromMs, to: toMs, limit: 10000 });
+    const daily = await runtime.store.listLlmUsageDaily({ userId: auth.userId, from, to });
     const catalog = await runtime.store.listLlmModels();
     const nameById = new Map(catalog.map((m) => [m.id, m.displayName]));
     type DayAgg = { inputTokens: number; outputTokens: number };
     const byModel = new Map<string, { model: string; inputTokens: number; outputTokens: number; requests: number; chargedMicro: number; byDay: Map<string, DayAgg> }>();
-    const pad = (n: number): string => String(n).padStart(2, "0");
-    for (const r of rows) {
-      if (r.status !== "ok") continue;
-      const d = new Date(r.createdAt);
-      const day = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    for (const r of daily) {
       let m = byModel.get(r.modelAlias);
       if (m === undefined) {
         m = { model: r.modelAlias, inputTokens: 0, outputTokens: 0, requests: 0, chargedMicro: 0, byDay: new Map() };
@@ -128,12 +122,12 @@ export async function handleAccountLlm(req: IncomingMessage, res: ServerResponse
       }
       m.inputTokens += r.inputTokens;
       m.outputTokens += r.outputTokens;
-      m.requests += 1;
+      m.requests += r.requests;
       m.chargedMicro += r.chargedMicro;
-      const dayEntry = m.byDay.get(day) ?? { inputTokens: 0, outputTokens: 0 };
+      const dayEntry = m.byDay.get(r.date) ?? { inputTokens: 0, outputTokens: 0 };
       dayEntry.inputTokens += r.inputTokens;
       dayEntry.outputTokens += r.outputTokens;
-      m.byDay.set(day, dayEntry);
+      m.byDay.set(r.date, dayEntry);
     }
     const models = [...byModel.values()].map((m) => ({
       model: m.model,

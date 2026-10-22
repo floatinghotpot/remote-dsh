@@ -88,9 +88,10 @@ test("issue → authorize → settle → usage 全链路", async () => {
       headers: { authorization: `Bearer ${ctx.svcToken}` },
     });
     assert.equal(usageRes.status, 200);
-    const usage = (await usageRes.json()) as { requests: Array<{ chargedMicro: number }> };
-    assert.equal(usage.requests.length, 1);
-    assert.equal(usage.requests[0]!.chargedMicro, 6000);
+    const usage = (await usageRes.json()) as { daily: Array<{ chargedMicro: number; requests: number }> };
+    assert.equal(usage.daily.length, 1);
+    assert.equal(usage.daily[0]!.chargedMicro, 6000);
+    assert.equal(usage.daily[0]!.requests, 1);
   } finally {
     await close(ctx);
   }
@@ -121,7 +122,9 @@ test("settle 幂等：重复 settle 不重复累加 spent / 不重复写 usage",
     assert.equal(second.status, 200);
 
     assert.equal(ctx.db.getLlmKeyById(keyId)!.spentMicro, 6000);
-    assert.equal(ctx.db.listLlmRequests({ userId: uid }).length, 1);
+    const daily = ctx.db.listLlmUsageDaily({ userId: uid });
+    assert.equal(daily.length, 1);
+    assert.equal(daily[0]!.requests, 1);
   } finally {
     await close(ctx);
   }

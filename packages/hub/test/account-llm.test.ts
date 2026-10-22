@@ -149,16 +149,12 @@ test("LLM usage：按模型 + 天聚合", async () => {
     const { id: uid } = await makeUser(ctx.db, "alice");
     const at = await login(ctx.base, "alice", "pw123456");
     const now = Date.now();
-    const base = {
-      userId: uid, agentId: null, keyId: "k1", provider: "deepseek", upstreamModel: "x",
-      cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, providerCostMicro: 1,
-      chargedMicro: 10, status: "ok", errorCode: null, latencyMs: null, ttftMs: null, createdAt: now,
-    };
-    ctx.db.createLlmRequest({ ...base, id: "r1", modelAlias: "deepseek-flash", inputTokens: 100, outputTokens: 20 });
-    ctx.db.createLlmRequest({ ...base, id: "r2", modelAlias: "deepseek-flash", inputTokens: 50, outputTokens: 10 });
-    ctx.db.createLlmRequest({ ...base, id: "r3", modelAlias: "deepseek-v4-pro", inputTokens: 200, outputTokens: 40 });
     const d = new Date();
     const ymd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const base = { userId: uid, agentId: "", keyId: "k1", date: ymd, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, chargedMicro: 10, now };
+    ctx.db.upsertLlmUsageDaily({ ...base, modelAlias: "deepseek-flash", inputTokens: 100, outputTokens: 20 });
+    ctx.db.upsertLlmUsageDaily({ ...base, modelAlias: "deepseek-flash", inputTokens: 50, outputTokens: 10 });
+    ctx.db.upsertLlmUsageDaily({ ...base, modelAlias: "deepseek-v4-pro", inputTokens: 200, outputTokens: 40 });
     const res = await fetch(`${ctx.base}/api/account/llm/usage?from=${ymd}&to=${ymd}`, { headers: { authorization: `Bearer ${at}` } });
     assert.equal(res.status, 200);
     const json = (await res.json()) as { models: Array<{ model: string; inputTokens: number; outputTokens: number }> };

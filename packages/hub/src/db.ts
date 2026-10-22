@@ -385,6 +385,21 @@ export interface LlmRequestRow {
   createdAt: number;
 }
 
+export interface LlmUsageDailyRow {
+  userId: number;
+  agentId: string;
+  keyId: string;
+  modelAlias: string;
+  date: string; // YYYY-MM-DD (server local)
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  reasoningTokens: number;
+  requests: number;
+  chargedMicro: number;
+}
+
 export type LlmModelNameSource = "upstream" | "manual";
 
 export interface LlmModelRow {
@@ -754,6 +769,23 @@ export class HubDb {
         access_token TEXT,
         updated_at INTEGER NOT NULL DEFAULT 0
       );
+      CREATE TABLE IF NOT EXISTS llm_usage_daily (
+        user_id INTEGER NOT NULL,
+        agent_id TEXT NOT NULL DEFAULT '',
+        key_id TEXT NOT NULL DEFAULT '',
+        model_alias TEXT NOT NULL DEFAULT '',
+        date TEXT NOT NULL,
+        input_tokens INTEGER NOT NULL DEFAULT 0,
+        output_tokens INTEGER NOT NULL DEFAULT 0,
+        cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+        cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+        reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+        requests INTEGER NOT NULL DEFAULT 0,
+        charged_micro INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (user_id, agent_id, key_id, model_alias, date)
+      );
+
       CREATE TABLE IF NOT EXISTS usage_daily (
         id INTEGER PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id),
@@ -2891,6 +2923,39 @@ export class HubDb {
     const limit = Math.min(Math.max(opts.limit ?? 1000, 1), 10000);
     const rows = this.db.prepare(`SELECT * FROM llm_requests ${where} ORDER BY created_at DESC LIMIT ?`).all(...params, limit) as unknown as Array<Record<string, unknown>>;
     return rows.map((r) => this.mapLlmRequest(r));
+  }
+
+  /** 按天聚合的 LLM 用量（llm_usage_daily）：写时 UPSERT，读用量页用。 */
+  upsertLlmUsageDaily(r: { userId: number; agentId: string; keyId: string; modelAlias: string; date: string; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; reasoningTokens: number; chargedMicro: number; now: number }): void {
+    this.db.prepare(
+      "INSERT INTO llm_usage_daily (user_id, agent_id, key_id, model_alias, date, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens, requests, charged_micro, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?) ON CONFLICT (user_id, agent_id, key_id, model_alias, date) DO UPDATE SET input_tokens = input_tokens + excluded.input_tokens, output_tokens = output_tokens + excluded.output_tokens, cache_read_tokens = cache_read_tokens + excluded.cache_read_tokens, cache_write_tokens = cache_write_tokens + excluded.cache_write_tokens, reasoning_tokens = reasoning_tokens + excluded.reasoning_tokens, requests = requests + 1, charged_micro = charged_micro + excluded.charged_micro, updated_at = excluded.updated_at",
+    ).run(r.userId, r.agentId, r.keyId, r.modelAlias, r.date, r.inputTokens, r.outputTokens, r.cacheReadTokens, r.cacheWriteTokens, r.reasoningTokens, r.chargedMicro, r.now);
+  }
+
+  listLlmUsageDaily(opts: { userId?: number; agentId?: string; keyId?: string; from?: string; to?: string } = {}): LlmUsageDailyRow[] {
+    const conds: string[] = [];
+    const params: Array<number | string> = [];
+    if (opts.userId !== undefined) { conds.push("user_id = ?"); params.push(opts.userId); }
+    if (opts.agentId !== undefined) { conds.push("agent_id = ?"); params.push(opts.agentId); }
+    if (opts.keyId !== undefined) { conds.push("key_id = ?"); params.push(opts.keyId); }
+    if (opts.from !== undefined) { conds.push("date >= ?"); params.push(opts.from); }
+    if (opts.to !== undefined) { conds.push("date <= ?"); params.push(opts.to); }
+    const where = conds.length > 0 ? `WHERE ${conds.join(" AND ")}` : "";
+    const rows = this.db.prepare(`SELECT * FROM llm_usage_daily ${where} ORDER BY date ASC`).all(...params) as unknown as Array<Record<string, unknown>>;
+    return rows.map((r) => ({
+      userId: Number(r.user_id),
+      agentId: String(r.agent_id ?? ""),
+      keyId: String(r.key_id ?? ""),
+      modelAlias: String(r.model_alias ?? ""),
+      date: String(r.date),
+      inputTokens: Number(r.input_tokens ?? 0),
+      outputTokens: Number(r.output_tokens ?? 0),
+      cacheReadTokens: Number(r.cache_read_tokens ?? 0),
+      cacheWriteTokens: Number(r.cache_write_tokens ?? 0),
+      reasoningTokens: Number(r.reasoning_tokens ?? 0),
+      requests: Number(r.requests ?? 0),
+      chargedMicro: Number(r.charged_micro ?? 0),
+    }));
   }
 
   // ---- 51：模型目录 + 上游 key 池 + Router 注册 ----

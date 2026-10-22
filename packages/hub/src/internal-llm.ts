@@ -164,28 +164,24 @@ export async function handleInternalApi(req: IncomingMessage, res: ServerRespons
       return void json(res, 200, { chargedMicro: settle.chargedMicro, balance: settle.balance }), true;
     }
     if (actualMicro > 0) await runtime.store.addLlmKeySpent(key.id, actualMicro);
+    // 按天聚合（不写逐条明细）：存储量 = 用户 × key × 模型 × 天，而非请求数。
     const usage = (body.usage ?? {}) as Record<string, unknown>;
     const created = Date.now();
-    await runtime.store.createLlmRequest({
-      id: typeof body.requestId === "string" && body.requestId !== "" ? body.requestId : randomUUID(),
+    const day = new Date(created);
+    const date = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
+    await runtime.store.upsertLlmUsageDaily({
       userId: key.userId,
-      agentId: key.agentId,
+      agentId: key.agentId ?? "",
       keyId: key.id,
       modelAlias: typeof body.modelAlias === "string" ? body.modelAlias : "",
-      provider: typeof body.provider === "string" ? body.provider : "",
-      upstreamModel: typeof body.upstreamModel === "string" ? body.upstreamModel : "",
+      date,
       inputTokens: Number(usage.inputTokens ?? 0),
       outputTokens: Number(usage.outputTokens ?? 0),
       cacheReadTokens: Number(usage.cacheReadTokens ?? 0),
       cacheWriteTokens: Number(usage.cacheWriteTokens ?? 0),
       reasoningTokens: Number(usage.reasoningTokens ?? 0),
-      providerCostMicro: body.providerCostMicro === undefined ? 0 : Number(body.providerCostMicro),
       chargedMicro: actualMicro,
-      status: "ok",
-      errorCode: null,
-      latencyMs: body.latencyMs === undefined ? null : Number(body.latencyMs),
-      ttftMs: body.ttftMs === undefined ? null : Number(body.ttftMs),
-      createdAt: created,
+      now: created,
     });
     return void json(res, 200, { chargedMicro: actualMicro, balance: settle.balance }), true;
   }
@@ -205,13 +201,13 @@ export async function handleInternalApi(req: IncomingMessage, res: ServerRespons
     const agentId = url.searchParams.get("agentId");
     const from = url.searchParams.get("from");
     const to = url.searchParams.get("to");
-    const rows = await runtime.store.listLlmRequests({
+    const rows = await runtime.store.listLlmUsageDaily({
       userId: userId === null ? undefined : Number(userId),
       agentId: agentId ?? undefined,
-      from: from === null ? undefined : Number(from),
-      to: to === null ? undefined : Number(to),
+      from: from ?? undefined,
+      to: to ?? undefined,
     });
-    return void json(res, 200, { requests: rows }), true;
+    return void json(res, 200, { daily: rows }), true;
   }
 
   // POST /api/internal/llm/routers/join（一次性 join token → 唯一 token + pending router）
