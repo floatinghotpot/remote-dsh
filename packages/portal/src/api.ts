@@ -63,6 +63,15 @@ export interface JoinTokenInfo {
   revoked: boolean;
 }
 
+export interface LlmUsageModel {
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  requests: number;
+  chargedMicro: number;
+  byDay: Array<{ date: string; inputTokens: number; outputTokens: number }>;
+}
+
 export interface LlmKeyInfo {
   id: string;
   name: string;
@@ -311,6 +320,9 @@ export const api = {
   },
   revokeLlmKey(keyId: string): Promise<{ ok: boolean }> {
     return jsonFetch(`/api/account/llm/keys/${keyId}/revoke`, { method: "POST", body: "{}" });
+  },
+  llmUsage(from: string, to: string): Promise<{ models: LlmUsageModel[] }> {
+    return jsonFetch(`/api/account/llm/usage?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
   },
   capabilities(): Promise<Capabilities> {
     return jsonFetch("/api/capabilities");

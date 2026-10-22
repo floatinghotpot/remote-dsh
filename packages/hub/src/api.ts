@@ -37,7 +37,7 @@ import { AdminError } from "./admin.ts";
 import { handleNodeRegister, handleNodeHeartbeat, handleNodeHosts, handleNodeSync, handleNodeLeave, handleNodeAssign } from "./nodes.ts";
 import { handleInternalApi } from "./internal-llm.ts";
 import { handleInternalHosts } from "./internal-hosts.ts";
-import { handleAccountLlmKeys } from "./account-llm.ts";
+import { handleAccountLlm } from "./account-llm.ts";
 import type { HostCookieSigner } from "./hostcookie.ts";
 import type { AdminCtx, AdminCreateUserInput } from "./admin.ts";
 import * as admin from "./admin.ts";
@@ -955,8 +955,8 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, runti
     await handleResetConfirm(req, res, runtime);
     return true;
   }
-  if (path.startsWith("/api/account/llm/keys")) {
-    const handled = await handleAccountLlmKeys(req, res, runtime);
+  if (path.startsWith("/api/account/llm/")) {
+    const handled = await handleAccountLlm(req, res, runtime);
     if (handled) return true;
   }
   if (path === "/api/account/email" && method === "POST") {

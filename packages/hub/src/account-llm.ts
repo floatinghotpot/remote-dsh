@@ -28,7 +28,7 @@ function keyView(k: { id: string; name: string; status: string; spentMicro: numb
   };
 }
 
-export async function handleAccountLlmKeys(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<boolean> {
+export async function handleAccountLlm(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<boolean> {
   const url = new URL(req.url ?? "/", "http://rdsh.local");
   const path = url.pathname;
   const method = req.method ?? "GET";
@@ -67,6 +67,48 @@ export async function handleAccountLlmKeys(req: IncomingMessage, res: ServerResp
     }
     const ok = await runtime.store.revokeLlmKey(id);
     return void json(res, ok ? 200 : 404, { ok }), true;
+  }
+
+  // 用量统计：按模型 + 天聚合当前用户的 llm_requests（仅成功请求）。
+  if (path === "/api/account/llm/usage" && method === "GET") {
+    const from = url.searchParams.get("from") ?? "";
+    const to = url.searchParams.get("to") ?? "";
+    const fromMs = Date.parse(`${from}T00:00:00`);
+    const toMs = Date.parse(`${to}T23:59:59.999`);
+    if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || fromMs > toMs) {
+      return void writeError(res, 400, "BAD_REQUEST", "invalid from/to"), true;
+    }
+    const rows = await runtime.store.listLlmRequests({ userId: auth.userId, from: fromMs, to: toMs, limit: 10000 });
+    type DayAgg = { inputTokens: number; outputTokens: number };
+    const byModel = new Map<string, { model: string; inputTokens: number; outputTokens: number; requests: number; chargedMicro: number; byDay: Map<string, DayAgg> }>();
+    const pad = (n: number): string => String(n).padStart(2, "0");
+    for (const r of rows) {
+      if (r.status !== "ok") continue;
+      const d = new Date(r.createdAt);
+      const day = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+      let m = byModel.get(r.modelAlias);
+      if (m === undefined) {
+        m = { model: r.modelAlias, inputTokens: 0, outputTokens: 0, requests: 0, chargedMicro: 0, byDay: new Map() };
+        byModel.set(r.modelAlias, m);
+      }
+      m.inputTokens += r.inputTokens;
+      m.outputTokens += r.outputTokens;
+      m.requests += 1;
+      m.chargedMicro += r.chargedMicro;
+      const dayEntry = m.byDay.get(day) ?? { inputTokens: 0, outputTokens: 0 };
+      dayEntry.inputTokens += r.inputTokens;
+      dayEntry.outputTokens += r.outputTokens;
+      m.byDay.set(day, dayEntry);
+    }
+    const models = [...byModel.values()].map((m) => ({
+      model: m.model,
+      inputTokens: m.inputTokens,
+      outputTokens: m.outputTokens,
+      requests: m.requests,
+      chargedMicro: m.chargedMicro,
+      byDay: [...m.byDay.entries()].map(([date, v]) => ({ date, inputTokens: v.inputTokens, outputTokens: v.outputTokens })).sort((a, b) => a.date.localeCompare(b.date)),
+    }));
+    return void json(res, 200, { models }), true;
   }
 
   return false;

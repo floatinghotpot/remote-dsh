@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
 import { api, ApiError, subscribeEvents, adminApi } from "./api.ts";
-import type { HostInfo, JoinTokenInfo, CaptchaPayload, AccountInfo, Capabilities, UsageDay, WechatPayInfo, AdminMe, AdminUserRow, AdminHostRow, AdminNodeRow, AdminOrderRow, AdminPaymentRow, AdminAuditRow, AdminSubscriptionRow, AdminUserDetail, AdminDashboard, AdminConfig, LlmKeyInfo } from "./api.ts";
+import type { HostInfo, JoinTokenInfo, CaptchaPayload, AccountInfo, Capabilities, UsageDay, WechatPayInfo, AdminMe, AdminUserRow, AdminHostRow, AdminNodeRow, AdminOrderRow, AdminPaymentRow, AdminAuditRow, AdminSubscriptionRow, AdminUserDetail, AdminDashboard, AdminConfig, LlmKeyInfo, LlmUsageModel } from "./api.ts";
 import { fingerprint } from "./e2ee.ts";
 import { useT, getLang } from "./i18n.ts";
 import type { T } from "./i18n.ts";
@@ -4160,7 +4160,7 @@ function BarChart({ series, colors, height = 96, maxOverride }: { series: Array<
   );
 }
 
-function seriesFromDays(from: string, to: string, days: UsageDay[], pick: (d: UsageDay) => number): Array<number | null> {
+function seriesFromDays<T extends { date: string }>(from: string, to: string, days: T[], pick: (d: T) => number): Array<number | null> {
   const byDate = new Map(days.map((d) => [d.date, d]));
   const out: Array<number | null> = [];
   const d = new Date(`${from}T00:00:00`);
@@ -4190,6 +4190,11 @@ function avgSeries(arr: Array<number | null>): number | null {
   return count === 0 ? null : sum / count;
 }
 
+const LLM_USAGE_MODELS = [
+  { id: "deepseek-flash", name: "DeepSeek-V4.1-Flash", color: "#3b82f6" },
+  { id: "deepseek-v4-pro", name: "DeepSeek-V4-Pro", color: "#8b5cf6" },
+] as const;
+
 function UsagePage(): React.JSX.Element {
   const { t } = useT();
   const [range, setRange] = useState<UsageRange>("30d");
@@ -4200,6 +4205,7 @@ function UsagePage(): React.JSX.Element {
   // 赠送 = bonus_carried（上月结转，本月底到期）+ bonus_current（本月新发，下月底到期）；
   // 取值失败保持 null，只影响余额区，不影响图表。
   const [creditBal, setCreditBal] = useState<{ purchased: number; bonus: number } | null>(null);
+  const [llmUsage, setLlmUsage] = useState<LlmUsageModel[]>([]);
   const { err, run } = useError();
 
   useEffect(() => {
@@ -4220,6 +4226,12 @@ function UsagePage(): React.JSX.Element {
         setLoading(false);
       }
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [range]);
+
+  useEffect(() => {
+    const { from, to } = rangeFor(range);
+    void api.llmUsage(from, to).then((r) => setLlmUsage(r.models)).catch(() => setLlmUsage([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [range]);
 
@@ -4335,6 +4347,24 @@ function UsagePage(): React.JSX.Element {
           </button>
         ))}
       </div>
+
+      {/* LLM token 消费：按模型两张卡（输入+输出为每日柱状图；无数据也显示 0）*/}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 12, marginBottom: 12 }}>
+        {LLM_USAGE_MODELS.map((m) => {
+          const data = llmUsage.find((x) => x.model === m.id);
+          const series = seriesFromDays(from, to, data?.byDay ?? [], (d) => d.inputTokens + d.outputTokens);
+          const total = sumSeries(series);
+          return (
+            <Card key={m.id} title={m.name} badge={<span style={{ fontSize: 12, color: "var(--rdsh-fg-muted)" }}>{total.toLocaleString()} tokens</span>}>
+              <BarChart series={[series]} colors={[m.color]} />
+              <div style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", marginTop: 6 }}>
+                {t("输入")} {(data?.inputTokens ?? 0).toLocaleString()} · {t("输出")} {(data?.outputTokens ?? 0).toLocaleString()} · {t("请求")} {data?.requests ?? 0} {t("次")}
+              </div>
+            </Card>
+          );
+        })}
+      </div>
+
 
       {loading ? (
         <p style={{ color: "var(--rdsh-fg-muted)" }}>{t("加载中…")}</p>
