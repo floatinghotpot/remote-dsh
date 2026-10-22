@@ -56,7 +56,7 @@ test("52：provisionLlm 用 RPC 信封写 provider（reasoningEfforts + expected
     const modelsOp = ops.find((o) => o.path.join(".") === "providers.rdsh-llm-router.models");
     assert.ok(modelsOp !== undefined);
     const models = modelsOp!.value as Array<{ reasoningEfforts?: Record<string, string> }>;
-    assert.deepEqual(models[0]!.reasoningEfforts, { off: "", low: "low", high: "high", max: "max" });
+    assert.deepEqual(models[0]!.reasoningEfforts, { off: null, low: "low", high: "high", max: "max" });
     assert.ok(seen.some((s) => s.method === "credentials/set"));
   } finally {
     await new Promise<void>((r) => dsh.close(() => r()));

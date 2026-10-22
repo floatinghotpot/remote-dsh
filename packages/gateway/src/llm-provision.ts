@@ -56,8 +56,6 @@ function dshJson(target: ProxyTarget, cookie: string | null, method: string, pay
         const chunks: Buffer[] = [];
         res.on("data", (c: Buffer) => chunks.push(c));
         res.on("end", () => {
-          const raw = Buffer.concat(chunks).toString("utf8");
-          if (method === "settings/mutate" || method === "settings/describe") console.log(`rdsh: [debug] ${method} raw => ${raw.slice(0, 700)}`);
           if ((res.statusCode ?? 0) !== 200) {
             done(null);
             return;
@@ -121,7 +119,8 @@ export async function provisionLlm(opts: ProvisionOptions): Promise<void> {
   const models = provision.models.map((m) => {
     const model: Record<string, unknown> = { id: m.id, name: m.displayName ?? m.id, contextWindow: m.contextWindow, maxTokens: m.maxTokens };
     if (typeof m.effortLevels === "string" && m.effortLevels !== "") {
-      const efforts: Record<string, string> = { off: "" };
+      // DSH 校验：off 用 null（不是空字符串），其余档位用 wire 值。
+      const efforts: Record<string, string | null> = { off: null };
       for (const level of m.effortLevels.split(",").map((s) => s.trim()).filter((s) => s !== "")) efforts[level] = level;
       model.reasoningEfforts = efforts;
     }
