@@ -232,7 +232,6 @@ const EN: Record<string, string> = {
   "自己接入其他厂商的模型，需要自己填写地址和 Key。": "Connect another vendor's models yourself; you provide the base URL and key.",
   "鲸语通托管（推荐，免配置）": "WhaleLink managed (recommended, zero-config)",
   "主机接入时自动为你配好，不用填任何东西；费用从你的鲸语通点数里扣，用量可在「用量统计」查看。下面的 Key 就是这一种。": "Configured automatically when your host connects — nothing to fill in. Costs are deducted from your WhaleLink credits; see Usage for details. The key below belongs to this option.",
-  "Key 由主机接入时自动创建，无需手工配置。请勿分享给别人——拿到它的人可以消耗你的点数。": "Keys are created automatically when a host connects. Do not share a key — anyone who has it can spend your credits.",
   "追踪 ID": "Tracking ID",
   "已消耗": "Spent",
   "点": "points",

@@ -1273,7 +1273,7 @@ function LlmKeysPage(): React.JSX.Element {
           );
         })}
         <p style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", marginTop: 12, marginBottom: 0 }}>
-          {t("Key 由主机接入时自动创建，无需手工配置。请勿分享给别人——拿到它的人可以消耗你的点数。")}
+          {t("Key 由主机接入时自动创建，无需手工配置。")}
         </p>
       </Card>
     </Shell>
