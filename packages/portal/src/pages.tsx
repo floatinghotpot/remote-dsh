@@ -1187,22 +1187,28 @@ function LlmKeysPage(): React.JSX.Element {
         {keys.length === 0 && (
           <p style={{ fontSize: 13, color: "var(--rdsh-fg-muted)", marginTop: 0 }}>{t("还没有 Key。创建一个，填到你的 DSH 里使用。")}</p>
         )}
-        {keys.map((k) => (
+        {keys.map((k) => {
+          const isHost = k.hostId !== null;
+          return (
           <div key={k.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid var(--rdsh-border-soft)" }}>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 14 }}>{k.name}</div>
+              <div style={{ fontSize: 14, display: "flex", alignItems: "center", gap: 8 }}>
+                <span>{k.name}</span>
+                {isHost && <span style={{ fontSize: 11, padding: "1px 6px", borderRadius: 4, background: "var(--rdsh-bg-subtle)", color: "var(--rdsh-fg-muted)" }}>{t("主机自动")}</span>}
+              </div>
               <div style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", marginTop: 2 }}>
                 {k.status === "revoked" ? t("已吊销") : t("已消耗 {x} 点", { params: { x: String(k.spentMicro / 10000) } })}
               </div>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
               <span style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", fontFamily: "monospace" }}>{k.tokenHead4 !== "" && k.tokenTail4 !== "" ? `sk-rdsh-${k.tokenHead4}…${k.tokenTail4}` : k.tokenTail4 !== "" ? `sk-rdsh-…${k.tokenTail4}` : "sk-rdsh-…"}</span>
-              {k.status === "active" && (
+              {k.status === "active" && !isHost && (
                 <button onClick={() => revoke(k.id)} style={btnStyle("ghost")}>{t("吊销")}</button>
               )}
             </div>
           </div>
-        ))}
+          );
+        })}
         <button onClick={create} style={{ ...btnStyle(), marginTop: 12 }}>{t("创建 Key")}</button>
       </Card>
     </Shell>
@@ -3006,7 +3012,7 @@ type LlmModelRow = {
   contextWindow: number; maxTokens: number; sortOrder: number; nameSyncedAt: number | null;
 };
 type LlmUpstreamKeyRow = { id: string; provider: string; label: string; weight: number; enabled: boolean; kekVersion: number; createdAt: number; revokedAt: number | null };
-type LlmRouterRow = { id: string; name: string; tokenId: string; status: string; lastIp: string | null; createdAt: number; approvedAt: number | null; lastSeenAt: number | null };
+type LlmRouterRow = { id: string; name: string; tokenId: string; status: string; lastIp: string | null; publicBaseUrl: string | null; createdAt: number; approvedAt: number | null; lastSeenAt: number | null };
 
 function AdminLlmModels({ isWrite }: { isWrite: boolean }): React.JSX.Element {
   const { t } = useT();
@@ -3144,16 +3150,21 @@ function AdminLlmRouters({ isWrite }: { isWrite: boolean }): React.JSX.Element {
       )}
       {isWrite && <button onClick={gen} style={adminBtnStyle("primary")}>{t("生成 join token")}</button>}
       <h4 style={{ fontSize: 14, margin: "16px 0 8px" }}>{t("Router 列表")}</h4>
-      {routers.map((r) => (
+      {routers.map((r) => {
+        const online = r.status === "active" && r.lastSeenAt !== null && Date.now() - r.lastSeenAt < 180_000;
+        return (
         <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderTop: "1px solid var(--rdsh-border-soft)" }}>
           <span style={{ fontFamily: "monospace" }}>{r.name}</span>
           <span style={{ fontSize: 12, color: r.status === "active" ? "#07c160" : r.status === "pending" ? "#f59e0b" : "var(--rdsh-fg-muted)" }}>{r.status}</span>
+          <span style={{ fontSize: 12, color: online ? "#07c160" : "var(--rdsh-fg-muted)" }}>{r.status === "active" ? (online ? t("在线") : t("离线")) : ""}</span>
           <span style={{ fontSize: 12, color: "var(--rdsh-fg-subtle)" }}>{r.lastIp ?? ""}</span>
+          {r.publicBaseUrl !== null && r.publicBaseUrl !== "" && <span style={{ fontSize: 12, color: "var(--rdsh-fg-subtle)", fontFamily: "monospace" }}>{r.publicBaseUrl}</span>}
           <span style={{ marginLeft: "auto" }} />
           {isWrite && r.status === "pending" && <button onClick={() => approve(r.id)} style={adminBtnStyle("primary")}>{t("启用")}</button>}
           {isWrite && r.status === "active" && <button onClick={() => revoke(r.id)} style={adminBtnStyle("danger")}>{t("吊销")}</button>}
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

@@ -82,6 +82,7 @@ export interface LlmCatalogModel {
 export interface LlmKeyInfo {
   id: string;
   name: string;
+  hostId: string | null;
   tokenHead4: string;
   tokenTail4: string;
   status: string;
@@ -674,7 +675,7 @@ export const adminApi = {
   revokeLlmUpstreamKey(id: string): Promise<{ ok: boolean }> {
     return adminJson(`/api/admin/llm/upstream-keys/${id}`, { method: "DELETE", body: "{}" });
   },
-  llmRouters(): Promise<{ routers: Array<{ id: string; name: string; tokenId: string; status: string; lastIp: string | null; createdAt: number; approvedAt: number | null; lastSeenAt: number | null }> }> {
+  llmRouters(): Promise<{ routers: Array<{ id: string; name: string; tokenId: string; status: string; lastIp: string | null; publicBaseUrl: string | null; createdAt: number; approvedAt: number | null; lastSeenAt: number | null }> }> {
     return adminJson("/api/admin/llm/routers");
   },
   approveLlmRouter(id: string): Promise<{ ok: boolean }> {
