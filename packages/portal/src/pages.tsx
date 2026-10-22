@@ -1209,8 +1209,8 @@ function LlmKeysPage(): React.JSX.Element {
             {" — "}{t("自己接入其他厂商的模型，需要自己填写地址和 Key。")}
           </li>
           <li>
-            <span style={{ color: "var(--rdsh-fg)", fontWeight: 600 }}>{t("鲸湾托管（推荐，免配置）")}</span>
-            {" — "}{t("主机接入时自动为你配好，不用填任何东西；费用从你的鲸湾点数里扣，用量可在「用量统计」查看。下面的 Key 就是这一种。")}
+            <span style={{ color: "var(--rdsh-fg)", fontWeight: 600 }}>{t("鲸语通托管（推荐，免配置）")}</span>
+            {" — "}{t("主机接入时自动为你配好，不用填任何东西；费用从你的鲸语通点数里扣，用量可在「用量统计」查看。下面的 Key 就是这一种。")}
           </li>
         </ol>
       </Card>
