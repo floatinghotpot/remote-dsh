@@ -1227,6 +1227,10 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, runti
     await handleSelfRevoke(req, res, runtime);
     return true;
   }
+  if (path === "/api/hosts/llm-key" && method === "POST") {
+    await handleHostLlmKey(req, res, runtime);
+    return true;
+  }
   if (path === "/api/hosts/register" && method === "POST") {
     await handleRegister(req, res, runtime);
     return true;
@@ -3105,6 +3109,50 @@ async function handleRevokeJoinToken(req: IncomingMessage, res: ServerResponse, 
   await runtime.store.revokeJoinToken(id);
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({ ok: true, revoked: id }));
+}
+
+/** 52-auto-provision-router：网关以 host token 领取该 host 的 LLM key + baseURL + 模型目录。 */
+async function handleHostLlmKey(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const body = await readJsonBody(req);
+  if (body === null || typeof body.token !== "string" || body.token.length < 16) {
+    writeError(res, 401, "UNAUTHORIZED", "host token required");
+    return;
+  }
+  const host = await runtime.store.findHostByTokenHash(sha256(body.token));
+  if (host === null) {
+    writeError(res, 401, "UNAUTHORIZED", "host token not found");
+    return;
+  }
+  const owner = await runtime.store.getUserById(host.ownerId);
+  if (owner === null || owner.accountStatus !== "active") {
+    writeError(res, 403, "FORBIDDEN", "owner account inactive");
+    return;
+  }
+  // 重签：吊销旧 host key（若存在），再签新（hash-only，旧明文不可重发）。
+  await runtime.store.revokeLlmKeysByHost(host.id);
+  const token = `sk-rdsh-${randomToken()}`;
+  await runtime.store.createLlmKey({
+    id: randomUUID(),
+    userId: host.ownerId,
+    agentId: null,
+    hostId: host.id,
+    tokenHash: sha256(token),
+    name: `host-${host.name}`,
+    tokenHead4: token.slice(8, 12),
+    tokenTail4: token.slice(-4),
+  });
+  // baseURL 取活跃 Router 上报的地址（唯一活跃实例；就近/负载均衡分配见 53）。
+  const routers = await runtime.store.listLlmRouters();
+  const active = routers.find((r) => r.status === "active" && r.publicBaseUrl !== null && r.publicBaseUrl !== "");
+  const baseURL = active?.publicBaseUrl ?? "";
+  const models = (await runtime.store.listLlmModels({ enabledOnly: true })).map((m) => ({
+    id: m.id,
+    displayName: m.displayName,
+    contextWindow: m.contextWindow,
+    maxTokens: m.maxTokens,
+  }));
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ key: token, baseURL, models }));
 }
 
 /** register：gateway 持 join token 注册（未认证 + IP 限流）→ 建 host → 返回 host token。 */

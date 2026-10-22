@@ -349,6 +349,7 @@ export interface LlmKeyRow {
   id: string;
   userId: number;
   agentId: string | null; // null = user self-service key (not bound to an agent)
+  hostId: string | null; // null = user-created; non-null = auto-provisioned per-host key (read-only)
   tokenHash: string;
   name: string;
   tokenHead4: string; // first 4 chars after "sk-rdsh-", for masked display
@@ -436,6 +437,7 @@ export interface LlmRouterRow {
   tokenId: string;
   status: LlmRouterStatus;
   lastIp: string | null;
+  publicBaseUrl: string | null;
   createdAt: number;
   approvedAt: number | null;
   approvedBy: string | null;
@@ -650,6 +652,7 @@ export class HubDb {
         id TEXT PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id),
         agent_id TEXT,
+        host_id TEXT,
         token_hash TEXT UNIQUE NOT NULL,
         name TEXT NOT NULL,
         token_head4 TEXT NOT NULL DEFAULT '',
@@ -731,6 +734,7 @@ export class HubDb {
         token_id TEXT NOT NULL,
         status TEXT NOT NULL,
         last_ip TEXT,
+        public_base_url TEXT,
         created_at INTEGER NOT NULL,
         approved_at INTEGER,
         approved_by TEXT,
@@ -822,6 +826,11 @@ export class HubDb {
     );
     if (!llmKeyCols.has("token_tail4")) this.db.exec("ALTER TABLE llm_keys ADD COLUMN token_tail4 TEXT NOT NULL DEFAULT ''");
     if (!llmKeyCols.has("token_head4")) this.db.exec("ALTER TABLE llm_keys ADD COLUMN token_head4 TEXT NOT NULL DEFAULT ''");
+    if (!llmKeyCols.has("host_id")) this.db.exec("ALTER TABLE llm_keys ADD COLUMN host_id TEXT");
+    const llmRouterCols = new Set(
+      (this.db.prepare("PRAGMA table_info(llm_routers)").all() as unknown as Array<{ name: string }>).map((c) => c.name),
+    );
+    if (!llmRouterCols.has("public_base_url")) this.db.exec("ALTER TABLE llm_routers ADD COLUMN public_base_url TEXT");
     // 迁移守卫：既有库补列（SQLite ALTER ADD COLUMN 不支持 UNIQUE，邮箱唯一用独立索引）
     const userCols = new Set(
       (this.db.prepare("PRAGMA table_info(users)").all() as unknown as Array<{ name: string }>).map((c) => c.name),
@@ -2755,6 +2764,7 @@ export class HubDb {
       id: String(row.id),
       userId: Number(row.user_id),
       agentId: row.agent_id === null || row.agent_id === undefined ? null : String(row.agent_id),
+      hostId: row.host_id === null || row.host_id === undefined ? null : String(row.host_id),
       tokenHash: String(row.token_hash),
       name: String(row.name),
       tokenHead4: row.token_head4 === null || row.token_head4 === undefined ? "" : String(row.token_head4),
@@ -2770,13 +2780,13 @@ export class HubDb {
   }
 
   createLlmKey(input: {
-    id: string; userId: number; agentId: string | null; tokenHash: string; name: string; tokenHead4: string; tokenTail4: string;
+    id: string; userId: number; agentId: string | null; hostId: string | null; tokenHash: string; name: string; tokenHead4: string; tokenTail4: string;
     modelAllowlist?: string | null; budgetMicro?: number; expiresAt?: number | null; now?: number;
   }): LlmKeyRow {
     const now = input.now ?? Date.now();
     this.db
-      .prepare("INSERT INTO llm_keys (id, user_id, agent_id, token_hash, name, token_head4, token_tail4, model_allowlist, budget_micro, spent_micro, status, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'active', ?, ?)")
-      .run(input.id, input.userId, input.agentId, input.tokenHash, input.name, input.tokenHead4, input.tokenTail4, input.modelAllowlist ?? null, input.budgetMicro ?? 0, input.expiresAt ?? null, now);
+      .prepare("INSERT INTO llm_keys (id, user_id, agent_id, host_id, token_hash, name, token_head4, token_tail4, model_allowlist, budget_micro, spent_micro, status, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'active', ?, ?)")
+      .run(input.id, input.userId, input.agentId, input.hostId, input.tokenHash, input.name, input.tokenHead4, input.tokenTail4, input.modelAllowlist ?? null, input.budgetMicro ?? 0, input.expiresAt ?? null, now);
     const row = this.db.prepare("SELECT * FROM llm_keys WHERE id = ?").get(input.id);
     return this.mapLlmKey(row as unknown as Record<string, unknown>);
   }
@@ -2799,6 +2809,12 @@ export class HubDb {
   revokeLlmKey(id: string, now = Date.now()): boolean {
     const info = this.db.prepare("UPDATE llm_keys SET status = 'revoked' WHERE id = ? AND status = 'active'").run(id);
     return info.changes > 0;
+  }
+
+  /** 吊销某 host 名下所有 active 的 key（重签前调用；host key 是 hash-only，旧明文不可重发）。 */
+  revokeLlmKeysByHost(hostId: string, now = Date.now()): number {
+    const info = this.db.prepare("UPDATE llm_keys SET status = 'revoked' WHERE host_id = ? AND status = 'active'").run(hostId);
+    return Number(info.changes);
   }
 
   addLlmKeySpent(id: string, micro: number): void {
@@ -2909,6 +2925,7 @@ export class HubDb {
       tokenId: String(row.token_id),
       status: String(row.status) as LlmRouterStatus,
       lastIp: row.last_ip === null || row.last_ip === undefined ? null : String(row.last_ip),
+      publicBaseUrl: row.public_base_url === null || row.public_base_url === undefined ? null : String(row.public_base_url),
       createdAt: Number(row.created_at),
       approvedAt: row.approved_at === null || row.approved_at === undefined ? null : Number(row.approved_at),
       approvedBy: row.approved_by === null || row.approved_by === undefined ? null : String(row.approved_by),
@@ -3032,8 +3049,8 @@ export class HubDb {
     return rows.map((r) => this.mapLlmRouterJoinToken(r));
   }
 
-  createLlmRouter(id: string, name: string, tokenId: string, lastIp: string | null, now = Date.now()): LlmRouterRow {
-    this.db.prepare("INSERT INTO llm_routers (id, name, token_id, status, last_ip, created_at) VALUES (?, ?, ?, 'pending', ?, ?)").run(id, name, tokenId, lastIp, now);
+  createLlmRouter(id: string, name: string, tokenId: string, lastIp: string | null, publicBaseUrl: string | null, now = Date.now()): LlmRouterRow {
+    this.db.prepare("INSERT INTO llm_routers (id, name, token_id, status, last_ip, public_base_url, created_at) VALUES (?, ?, ?, 'pending', ?, ?, ?)").run(id, name, tokenId, lastIp, publicBaseUrl, now);
     const row = this.db.prepare("SELECT * FROM llm_routers WHERE id = ?").get(id);
     return this.mapLlmRouter(row as unknown as Record<string, unknown>);
   }

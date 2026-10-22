@@ -135,8 +135,8 @@ export function llmCatalog(
       return rows.map((r) => mapLlmRouterJoinToken(r));
     },
 
-    createLlmRouter: async (id: string, name: string, tokenId: string, lastIp: string | null, now = Date.now()): Promise<LlmRouterRow> => {
-      await q(txDb(pool), "INSERT INTO llm_routers (id, name, token_id, status, last_ip, created_at) VALUES ($1, $2, $3, 'pending', $4, $5)", [id, name, tokenId, lastIp, now]);
+    createLlmRouter: async (id: string, name: string, tokenId: string, lastIp: string | null, publicBaseUrl: string | null, now = Date.now()): Promise<LlmRouterRow> => {
+      await q(txDb(pool), "INSERT INTO llm_routers (id, name, token_id, status, last_ip, public_base_url, created_at) VALUES ($1, $2, $3, 'pending', $4, $5, $6)", [id, name, tokenId, lastIp, publicBaseUrl, now]);
       return mapLlmRouter(one(await q(txDb(pool), "SELECT * FROM llm_routers WHERE id = $1", [id]))!);
     },
 

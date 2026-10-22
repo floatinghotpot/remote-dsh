@@ -16,10 +16,11 @@ function json(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
-function keyView(k: { id: string; name: string; tokenHead4: string; tokenTail4: string; status: string; spentMicro: number; budgetMicro: number; createdAt: number; lastUsedAt: number | null }): Record<string, unknown> {
+function keyView(k: { id: string; name: string; hostId: string | null; tokenHead4: string; tokenTail4: string; status: string; spentMicro: number; budgetMicro: number; createdAt: number; lastUsedAt: number | null }): Record<string, unknown> {
   return {
     id: k.id,
     name: k.name,
+    hostId: k.hostId,
     tokenHead4: k.tokenHead4,
     tokenTail4: k.tokenTail4,
     status: k.status,
@@ -54,6 +55,7 @@ export async function handleAccountLlm(req: IncomingMessage, res: ServerResponse
       id: randomUUID(),
       userId: auth.userId,
       agentId: null,
+      hostId: null,
       tokenHash: sha256(token),
       name,
       tokenHead4: token.slice(8, 12),
@@ -68,6 +70,9 @@ export async function handleAccountLlm(req: IncomingMessage, res: ServerResponse
     const key = await runtime.store.getLlmKeyById(id);
     if (key === null || key.userId !== auth.userId) {
       return void writeError(res, 404, "NOT_FOUND", "key not found"), true;
+    }
+    if (key.hostId !== null) {
+      return void writeError(res, 403, "FORBIDDEN", "host-managed key cannot be revoked here"), true;
     }
     const ok = await runtime.store.revokeLlmKey(id);
     return void json(res, ok ? 200 : 404, { ok }), true;

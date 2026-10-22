@@ -87,6 +87,7 @@ export async function handleInternalApi(req: IncomingMessage, res: ServerRespons
       id: randomUUID(),
       userId,
       agentId,
+      hostId: null,
       tokenHash: sha256(token),
       name: typeof body.name === "string" && body.name.trim() !== "" ? body.name.trim() : agentId,
       tokenHead4: token.slice(8, 12),
@@ -217,11 +218,12 @@ export async function handleInternalApi(req: IncomingMessage, res: ServerRespons
     if (jt === null || jt.usedAt !== null || jt.expiresAt <= Date.now()) return void writeError(res, 401, "UNAUTHORIZED", "invalid, used or expired join token"), true;
     const body = await readJson(req);
     const name = body !== null && typeof body.name === "string" && body.name.trim() !== "" ? body.name.trim() : "router";
+    const publicBaseUrl = body !== null && typeof body.publicBaseURL === "string" && body.publicBaseURL.trim() !== "" ? body.publicBaseURL.trim() : null;
     if (!(await runtime.store.markLlmRouterJoinTokenUsed(jt.id))) return void writeError(res, 409, "CONFLICT", "join token already used"), true;
     const token = `rdsh-rt-${randomToken()}`;
     const tokenRow = await runtime.store.createServiceToken(randomUUID(), `llm-router:${name}`, sha256(token), "llm:config:read,llm:authorize,llm:settle,llm:release");
     const routerId = randomUUID();
-    await runtime.store.createLlmRouter(routerId, name, tokenRow.id, clientIp(req, runtime));
+    await runtime.store.createLlmRouter(routerId, name, tokenRow.id, clientIp(req, runtime), publicBaseUrl);
     return void json(res, 200, { routerId, token }), true;
   }
 
