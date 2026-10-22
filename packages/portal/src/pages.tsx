@@ -1190,7 +1190,7 @@ function LlmKeysPage(): React.JSX.Element {
     if (ms === null || ms === 0) return t("从未");
     const d = new Date(ms);
     const pad = (n: number): string => String(n).padStart(2, "0");
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   };
 
   return (
