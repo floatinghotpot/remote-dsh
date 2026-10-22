@@ -14,7 +14,8 @@ test("52：provisionLlm 把 effortLevels 写成 reasoningEfforts", async () => {
     req.on("end", () => {
       seen.push({ path: req.url, body: JSON.parse(body) as Record<string, unknown> });
       res.writeHead(200, { "content-type": "application/json" });
-      res.end("{}");
+      // settings/describe 返回 revision（mutate 必须带它才落盘）
+      res.end(req.url === "/api/settings/describe" ? JSON.stringify({ namespaces: [{ ns: "llm-pi-ai", revision: 7 }] }) : "{}");
     });
   });
   await new Promise<void>((r) => dsh.listen(0, "127.0.0.1", () => r()));
@@ -50,6 +51,7 @@ test("52：provisionLlm 把 effortLevels 写成 reasoningEfforts", async () => {
     assert.ok(modelsOp !== undefined);
     const models = modelsOp!.value as Array<{ reasoningEfforts?: Record<string, string> }>;
     assert.deepEqual(models[0]!.reasoningEfforts, { off: "", low: "low", high: "high", max: "max" });
+    assert.equal(mutate!.body.expectedRevision, 7);
     const cred = seen.find((s) => s.path === "/api/credentials/set");
     assert.ok(cred !== undefined);
   } finally {

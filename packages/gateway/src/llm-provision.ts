@@ -73,6 +73,19 @@ function dshJson(target: ProxyTarget, cookie: string | null, path: string, body:
   });
 }
 
+async function readRevision(target: ProxyTarget, cookie: string | null, ns: string): Promise<number | null> {
+  const j = await dshJson(target, cookie, "/api/settings/describe", {});
+  if (j === null) return null;
+  const namespaces = j.namespaces;
+  if (!Array.isArray(namespaces)) return null;
+  for (const n of namespaces) {
+    if (n === null || typeof n !== "object") continue;
+    const rec = n as Record<string, unknown>;
+    if (rec.ns === ns && typeof rec.revision === "number") return rec.revision;
+  }
+  return null;
+}
+
 export async function provisionLlm(opts: ProvisionOptions): Promise<void> {
   const res = await hubRequest(opts.hubUrl, "/api/hosts/llm-key", { method: "POST", insecure: opts.insecure, body: { token: opts.token } });
   if (!res.ok) {
@@ -105,8 +118,13 @@ export async function provisionLlm(opts: ProvisionOptions): Promise<void> {
     { op: "set", path: ["providers", PROVIDER_ID, "baseURL"], value: provision.baseURL },
     { op: "set", path: ["providers", PROVIDER_ID, "models"], value: models },
   ];
-  // expectedRevision 省略 = 无条件写入（网关唯一写者）。
-  const mutated = await dshJson(opts.target, opts.dshAuthCookie, "/api/settings/mutate", { ns: NS, ops });
+  // 必须带真实 expectedRevision：DSH 在 expectedRevision=undefined 时接受 200 但不落盘（实测）。
+  const revision = await readRevision(opts.target, opts.dshAuthCookie, NS);
+  if (revision === null) {
+    console.warn("rdsh: llm provision skipped (settings/describe failed)");
+    return;
+  }
+  const mutated = await dshJson(opts.target, opts.dshAuthCookie, "/api/settings/mutate", { ns: NS, ops, expectedRevision: revision });
   if (mutated === null) {
     console.warn("rdsh: llm provision skipped (settings/mutate failed)");
     return;
