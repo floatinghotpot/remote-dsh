@@ -351,7 +351,8 @@ export interface LlmKeyRow {
   agentId: string | null; // null = user self-service key (not bound to an agent)
   tokenHash: string;
   name: string;
-  tokenTail4: string; // last 4 chars of the token, for masked display (sk-rdsh-…xxxx)
+  tokenHead4: string; // first 4 chars after "sk-rdsh-", for masked display
+  tokenTail4: string; // last 4 chars of the token, for masked display (sk-rdsh-AbCd…wxyz)
   modelAllowlist: string | null; // comma-separated; null/empty = all
   budgetMicro: number; // 0 = unlimited
   spentMicro: number;
@@ -651,6 +652,7 @@ export class HubDb {
         agent_id TEXT,
         token_hash TEXT UNIQUE NOT NULL,
         name TEXT NOT NULL,
+        token_head4 TEXT NOT NULL DEFAULT '',
         token_tail4 TEXT NOT NULL DEFAULT '',
         model_allowlist TEXT,
         budget_micro INTEGER NOT NULL DEFAULT 0,
@@ -819,6 +821,7 @@ export class HubDb {
       (this.db.prepare("PRAGMA table_info(llm_keys)").all() as unknown as Array<{ name: string }>).map((c) => c.name),
     );
     if (!llmKeyCols.has("token_tail4")) this.db.exec("ALTER TABLE llm_keys ADD COLUMN token_tail4 TEXT NOT NULL DEFAULT ''");
+    if (!llmKeyCols.has("token_head4")) this.db.exec("ALTER TABLE llm_keys ADD COLUMN token_head4 TEXT NOT NULL DEFAULT ''");
     // 迁移守卫：既有库补列（SQLite ALTER ADD COLUMN 不支持 UNIQUE，邮箱唯一用独立索引）
     const userCols = new Set(
       (this.db.prepare("PRAGMA table_info(users)").all() as unknown as Array<{ name: string }>).map((c) => c.name),
@@ -2754,6 +2757,7 @@ export class HubDb {
       agentId: row.agent_id === null || row.agent_id === undefined ? null : String(row.agent_id),
       tokenHash: String(row.token_hash),
       name: String(row.name),
+      tokenHead4: row.token_head4 === null || row.token_head4 === undefined ? "" : String(row.token_head4),
       tokenTail4: row.token_tail4 === null || row.token_tail4 === undefined ? "" : String(row.token_tail4),
       modelAllowlist: row.model_allowlist === null || row.model_allowlist === undefined ? null : String(row.model_allowlist),
       budgetMicro: Number(row.budget_micro),
@@ -2766,13 +2770,13 @@ export class HubDb {
   }
 
   createLlmKey(input: {
-    id: string; userId: number; agentId: string | null; tokenHash: string; name: string; tokenTail4: string;
+    id: string; userId: number; agentId: string | null; tokenHash: string; name: string; tokenHead4: string; tokenTail4: string;
     modelAllowlist?: string | null; budgetMicro?: number; expiresAt?: number | null; now?: number;
   }): LlmKeyRow {
     const now = input.now ?? Date.now();
     this.db
-      .prepare("INSERT INTO llm_keys (id, user_id, agent_id, token_hash, name, token_tail4, model_allowlist, budget_micro, spent_micro, status, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'active', ?, ?)")
-      .run(input.id, input.userId, input.agentId, input.tokenHash, input.name, input.tokenTail4, input.modelAllowlist ?? null, input.budgetMicro ?? 0, input.expiresAt ?? null, now);
+      .prepare("INSERT INTO llm_keys (id, user_id, agent_id, token_hash, name, token_head4, token_tail4, model_allowlist, budget_micro, spent_micro, status, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'active', ?, ?)")
+      .run(input.id, input.userId, input.agentId, input.tokenHash, input.name, input.tokenHead4, input.tokenTail4, input.modelAllowlist ?? null, input.budgetMicro ?? 0, input.expiresAt ?? null, now);
     const row = this.db.prepare("SELECT * FROM llm_keys WHERE id = ?").get(input.id);
     return this.mapLlmKey(row as unknown as Record<string, unknown>);
   }

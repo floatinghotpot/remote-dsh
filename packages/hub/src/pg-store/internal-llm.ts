@@ -46,13 +46,13 @@ export function internalLlm(
     },
 
     createLlmKey: async (input: {
-      id: string; userId: number; agentId: string | null; tokenHash: string; name: string; tokenTail4: string;
+      id: string; userId: number; agentId: string | null; tokenHash: string; name: string; tokenHead4: string; tokenTail4: string;
       modelAllowlist?: string | null; budgetMicro?: number; expiresAt?: number | null; now?: number;
     }): Promise<LlmKeyRow> => {
       const now = input.now ?? Date.now();
       await q(txDb(pool),
-        "INSERT INTO llm_keys (id, user_id, agent_id, token_hash, name, token_tail4, model_allowlist, budget_micro, spent_micro, status, expires_at, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, 'active', $9, $10)",
-        [input.id, input.userId, input.agentId, input.tokenHash, input.name, input.tokenTail4, input.modelAllowlist ?? null, input.budgetMicro ?? 0, input.expiresAt ?? null, now]);
+        "INSERT INTO llm_keys (id, user_id, agent_id, token_hash, name, token_head4, token_tail4, model_allowlist, budget_micro, spent_micro, status, expires_at, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0, 'active', $10, $11)",
+        [input.id, input.userId, input.agentId, input.tokenHash, input.name, input.tokenHead4, input.tokenTail4, input.modelAllowlist ?? null, input.budgetMicro ?? 0, input.expiresAt ?? null, now]);
       return mapLlmKey(one(await q(txDb(pool), "SELECT * FROM llm_keys WHERE id = $1", [input.id]))!);
     },
 

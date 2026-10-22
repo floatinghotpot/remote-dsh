@@ -1192,7 +1192,7 @@ function LlmKeysPage(): React.JSX.Element {
             <div>
               <div style={{ fontSize: 14, display: "flex", alignItems: "center", gap: 8 }}>
                 <span>{k.name}</span>
-                <span style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", fontFamily: "monospace" }}>sk-rdsh-…{k.tokenTail4}</span>
+                <span style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", fontFamily: "monospace" }}>{k.tokenHead4 !== "" && k.tokenTail4 !== "" ? `sk-rdsh-${k.tokenHead4}…${k.tokenTail4}` : k.tokenTail4 !== "" ? `sk-rdsh-…${k.tokenTail4}` : "sk-rdsh-…"}</span>
               </div>
               <div style={{ fontSize: 12, color: "var(--rdsh-fg-muted)" }}>
                 {k.status === "revoked" ? t("已吊销") : t("已消耗 {x} 点", { params: { x: String(k.spentMicro / 10000) } })}

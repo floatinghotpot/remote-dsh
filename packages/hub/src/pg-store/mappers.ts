@@ -225,6 +225,7 @@ export function mapLlmKey(row: Record<string, unknown>): LlmKeyRow {
     agentId: row.agent_id === null || row.agent_id === undefined ? null : String(row.agent_id),
     tokenHash: String(row.token_hash),
     name: String(row.name),
+    tokenHead4: row.token_head4 === null || row.token_head4 === undefined ? "" : String(row.token_head4),
     tokenTail4: row.token_tail4 === null || row.token_tail4 === undefined ? "" : String(row.token_tail4),
     modelAllowlist: row.model_allowlist === null || row.model_allowlist === undefined ? null : String(row.model_allowlist),
     budgetMicro: Number(row.budget_micro),

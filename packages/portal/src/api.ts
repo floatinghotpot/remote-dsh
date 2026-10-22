@@ -82,6 +82,7 @@ export interface LlmCatalogModel {
 export interface LlmKeyInfo {
   id: string;
   name: string;
+  tokenHead4: string;
   tokenTail4: string;
   status: string;
   spentMicro: number;
