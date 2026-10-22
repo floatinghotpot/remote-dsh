@@ -1251,7 +1251,9 @@ function LlmKeysPage(): React.JSX.Element {
             </div>
             <div style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", marginTop: 4 }}>
               {t("创建于")} {fmtDate(k.createdAt)} · {t("最近使用")} {fmtDate(k.lastUsedAt)}
-              {k.status === "revoked" ? ` · ${t("已吊销")}` : ` · ${t("已消耗 {x} 点", { params: { x: String(k.spentMicro / 10000) } })}`}
+            </div>
+            <div style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", marginTop: 2 }}>
+              {k.status === "revoked" ? t("已吊销") : t("已消耗 {x} 点", { params: { x: String(k.spentMicro / 10000) } })}
             </div>
             <div style={{ fontSize: 11, color: "var(--rdsh-fg-muted)", marginTop: 2, fontFamily: "monospace" }}>
               {t("追踪 ID")}: {k.id}
