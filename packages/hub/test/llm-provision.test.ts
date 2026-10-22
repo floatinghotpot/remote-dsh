@@ -40,7 +40,7 @@ test("52：/api/hosts/llm-key 签发 + 重签 + 鉴权", async () => {
     // 1) 签发
     const r1 = await post(ctx.base, "/api/hosts/llm-key", { token: hostToken });
     assert.equal(r1.status, 200);
-    assert.ok(typeof r1.body.key === "string" && (r1.body.key as string).startsWith("sk-rdsh-"));
+    assert.ok(typeof r1.body.key === "string" && (r1.body.key as string).startsWith("sk-") && !(r1.body.key as string).startsWith("sk-rdsh-"));
     assert.equal(r1.body.baseURL, "https://llm.rdsh.cn");
     assert.deepEqual((r1.body.models as Array<{ id: string }>).map((m) => m.id), ["deepseek-flash", "deepseek-v4-pro"]);
 

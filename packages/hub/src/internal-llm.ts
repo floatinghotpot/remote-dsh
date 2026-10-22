@@ -12,7 +12,7 @@ import { sealConfig } from "./crypto-upstream-keys.ts";
 import { pickUpstreamKey } from "./llm-upstream-keys.ts";
 import type { ServiceTokenRow } from "./db.ts";
 
-const LLM_KEY_PREFIX = "sk-rdsh-";
+const LLM_KEY_PREFIX = "sk-";
 
 function bearerToken(req: IncomingMessage): string | null {
   const header = req.headers.authorization;
@@ -90,7 +90,7 @@ export async function handleInternalApi(req: IncomingMessage, res: ServerRespons
       hostId: null,
       tokenHash: sha256(token),
       name: typeof body.name === "string" && body.name.trim() !== "" ? body.name.trim() : agentId,
-      tokenHead4: token.slice(8, 12),
+      tokenHead4: token.slice(3, 7),
       tokenTail4: token.slice(-4),
       modelAllowlist,
       budgetMicro,

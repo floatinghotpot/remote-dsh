@@ -9,7 +9,7 @@ import { randomToken, sha256 } from "./jwt.ts";
 import { authenticate, writeError, type HubRuntime } from "./api.ts";
 import { readJson } from "./internal-llm.ts";
 
-const LLM_KEY_PREFIX = "sk-rdsh-";
+const LLM_KEY_PREFIX = "sk-";
 
 function json(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { "content-type": "application/json" });
@@ -58,7 +58,7 @@ export async function handleAccountLlm(req: IncomingMessage, res: ServerResponse
       hostId: null,
       tokenHash: sha256(token),
       name,
-      tokenHead4: token.slice(8, 12),
+      tokenHead4: token.slice(3, 7),
       tokenTail4: token.slice(-4),
     });
     return void json(res, 200, { keyId: key.id, token, name: key.name }), true;

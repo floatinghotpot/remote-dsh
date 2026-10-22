@@ -352,8 +352,8 @@ export interface LlmKeyRow {
   hostId: string | null; // null = user-created; non-null = auto-provisioned per-host key (read-only)
   tokenHash: string;
   name: string;
-  tokenHead4: string; // first 4 chars after "sk-rdsh-", for masked display
-  tokenTail4: string; // last 4 chars of the token, for masked display (sk-rdsh-AbCd…wxyz)
+  tokenHead4: string; // first 4 chars after "sk-", for masked display
+  tokenTail4: string; // last 4 chars of the token, for masked display (sk-AbCd*****wxyz)
   modelAllowlist: string | null; // comma-separated; null/empty = all
   budgetMicro: number; // 0 = unlimited
   spentMicro: number;

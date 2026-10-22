@@ -3131,7 +3131,7 @@ async function handleHostLlmKey(req: IncomingMessage, res: ServerResponse, runti
   }
   // 重签：吊销旧 host key（若存在），再签新（hash-only，旧明文不可重发）。
   await runtime.store.revokeLlmKeysByHost(host.id);
-  const token = `sk-rdsh-${randomToken()}`;
+  const token = `sk-${randomToken()}`;
   await runtime.store.createLlmKey({
     id: randomUUID(),
     userId: host.ownerId,
@@ -3139,7 +3139,7 @@ async function handleHostLlmKey(req: IncomingMessage, res: ServerResponse, runti
     hostId: host.id,
     tokenHash: sha256(token),
     name: `host-${host.name}`,
-    tokenHead4: token.slice(8, 12),
+    tokenHead4: token.slice(3, 7),
     tokenTail4: token.slice(-4),
   });
   // baseURL 取活跃 Router 上报的地址（唯一活跃实例；就近/负载均衡分配见 53）。

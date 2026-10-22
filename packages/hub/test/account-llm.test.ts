@@ -55,7 +55,8 @@ test("用户自助 key：创建一次性显示 → 列表不含 token → 吊销
     });
     assert.equal(created.status, 200);
     const cj = (await created.json()) as { keyId: string; token: string; name: string };
-    assert.match(cj.token, /^sk-rdsh-/);
+    assert.match(cj.token, /^sk-/);
+    assert.equal(cj.token.startsWith("sk-rdsh-"), false);
     assert.equal(cj.name, "my-dsh");
 
     const list = await fetch(`${ctx.base}/api/account/llm/keys`, {
