@@ -155,24 +155,16 @@ export async function handleInternalApi(req: IncomingMessage, res: ServerRespons
     if (keyId === "") return void writeError(res, 400, "BAD_REQUEST", "keyId required"), true;
     const key = await runtime.store.getLlmKeyById(keyId);
     if (key === null) return void writeError(res, 404, "NOT_FOUND", "key not found"), true;
-    const settle = await runtime.store.settleCreditHold(decodeURIComponent(settleMatch[1]!), actualMicro, { reason: "consume_llm" });
-    if (settle.status === "not_found") return void writeError(res, 404, "NOT_FOUND", "hold not found"), true;
-    if (settle.status === "released") return void writeError(res, 409, "CONFLICT", "hold already released"), true;
-    if (settle.status === "insufficient") return void writeError(res, 402, "INSUFFICIENT_CREDITS", "insufficient credits"), true;
-    if (settle.status === "already_settled") {
-      // 幂等重试：hold 已结算，不再累加 spent / 重复写 usage。
-      return void json(res, 200, { chargedMicro: settle.chargedMicro, balance: settle.balance }), true;
-    }
-    if (actualMicro > 0) await runtime.store.addLlmKeySpent(key.id, actualMicro);
     // 按天聚合（不写逐条明细）：存储量 = 用户 × key × 模型 × 天，而非请求数。
     const usage = (body.usage ?? {}) as Record<string, unknown>;
     const created = Date.now();
     const day = new Date(created);
     const date = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
-    await runtime.store.upsertLlmUsageDaily({
-      userId: key.userId,
-      agentId: key.agentId ?? "",
+    // 扣费 + 加 spent + 写用量 同一事务（失败整体回滚，Router 重试整段重做）。
+    const settle = await runtime.store.settleLlmHold(decodeURIComponent(settleMatch[1]!), actualMicro, {
       keyId: key.id,
+      agentId: key.agentId ?? "",
+      userId: key.userId,
       modelAlias: typeof body.modelAlias === "string" ? body.modelAlias : "",
       date,
       inputTokens: Number(usage.inputTokens ?? 0),
@@ -180,9 +172,14 @@ export async function handleInternalApi(req: IncomingMessage, res: ServerRespons
       cacheReadTokens: Number(usage.cacheReadTokens ?? 0),
       cacheWriteTokens: Number(usage.cacheWriteTokens ?? 0),
       reasoningTokens: Number(usage.reasoningTokens ?? 0),
-      chargedMicro: actualMicro,
-      now: created,
     });
+    if (settle.status === "not_found") return void writeError(res, 404, "NOT_FOUND", "hold not found"), true;
+    if (settle.status === "released") return void writeError(res, 409, "CONFLICT", "hold already released"), true;
+    if (settle.status === "insufficient") return void writeError(res, 402, "INSUFFICIENT_CREDITS", "insufficient credits"), true;
+    if (settle.status === "already_settled") {
+      // 幂等重试：hold 已结算，用量已随首次结算写入。
+      return void json(res, 200, { chargedMicro: settle.chargedMicro, balance: settle.balance }), true;
+    }
     return void json(res, 200, { chargedMicro: actualMicro, balance: settle.balance }), true;
   }
 

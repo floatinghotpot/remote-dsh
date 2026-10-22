@@ -17,7 +17,7 @@ import { llmCatalog } from "./llm-catalog.ts";
 
 /** 由连接池构造 PostgreSQL 版 `HubStore`（供 `startHubServer` 在 `db.driver=postgres` 时使用）。 */
 export function createPgStore(pool: Pool): HubStore {
-  return {
+  const parts = {
     ...users(pool),
     ...hosts(pool),
     ...tokens(pool),
@@ -28,6 +28,19 @@ export function createPgStore(pool: Pool): HubStore {
     ...nodes(pool),
     ...internalLlm(pool),
     ...llmCatalog(pool),
+  };
+  return {
+    ...parts,
+    /** 结算 LLM hold：扣费 + 加 spent + 写用量在同一事务（嵌套调用走 SAVEPOINT）。 */
+    settleLlmHold: async (holdId, actualMicro, u) =>
+      withTransaction(pool, async () => {
+        const settle = await parts.settleCreditHold(holdId, actualMicro, { reason: "consume_llm" });
+        if (settle.status === "settled") {
+          if (actualMicro > 0) await parts.addLlmKeySpent(u.keyId, actualMicro);
+          await parts.upsertLlmUsageDaily({ ...u, chargedMicro: actualMicro, now: Date.now() });
+        }
+        return settle;
+      }),
     withTransaction: (fn) => withTransaction(pool, async (client) => fn(client)),
     close: async () => {
       await pool.end();

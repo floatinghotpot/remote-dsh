@@ -4420,7 +4420,6 @@ function avgSeries(arr: Array<number | null>): number | null {
   return count === 0 ? null : sum / count;
 }
 
-const LLM_USAGE_COLORS = ["#3b82f6", "#8b5cf6", "#0ea5e9", "#f59e0b"];
 
 function UsagePage(): React.JSX.Element {
   const { t } = useT();
@@ -4589,11 +4588,12 @@ function UsagePage(): React.JSX.Element {
 
       {/* LLM token 消费：按模型目录渲染卡片（标题=ID，小字=显示名；无数据也显示 0）*/}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 12, marginBottom: 12 }}>
-        {llmCardModels.map((m, i) => {
+        {llmCardModels.map((m) => {
           const data = llmUsage.find((x) => x.model === m.id);
           const series = seriesFromDays(from, to, data?.byDay ?? [], (d) => d.inputTokens + d.outputTokens);
           const total = sumSeries(series);
-          const color = LLM_USAGE_COLORS[i % LLM_USAGE_COLORS.length]!;
+          // 与「中转流量」同色（橙黄）：LLM token 也是计费的。
+          const color = orange;
           return (
             <Card key={m.id} title={m.id} badge={<span style={{ fontSize: 12, color: "var(--rdsh-fg-muted)" }}>{total.toLocaleString()} tokens</span>}>
               {m.displayName !== "" && m.displayName !== m.id && (

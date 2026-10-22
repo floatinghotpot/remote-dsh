@@ -2560,6 +2560,30 @@ export class HubDb {
     }
   }
 
+  /**
+   * 结算 LLM hold：扣费 + 加 key spent + 写按天用量 在**同一事务**里。
+   * 任何一步失败整体回滚，Router 重试时整段重做——不会出现「钱扣了用量丢了」。
+   */
+  settleLlmHold(
+    holdId: string,
+    actualMicro: number,
+    usage: { keyId: string; agentId: string; userId: number; modelAlias: string; date: string; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; reasoningTokens: number },
+  ): CreditHoldSettleResult {
+    this.db.exec("BEGIN");
+    try {
+      const settle = this.settleCreditHold(holdId, actualMicro, { reason: "consume_llm" });
+      if (settle.status === "settled") {
+        if (actualMicro > 0) this.addLlmKeySpent(usage.keyId, actualMicro);
+        this.upsertLlmUsageDaily({ ...usage, chargedMicro: actualMicro, now: Date.now() });
+      }
+      this.db.exec("COMMIT");
+      return settle;
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
+  }
+
   /** 释放 hold：只解冻，不写账本；已释放幂等返回 true，已结算返回 false。 */
   releaseCreditHold(holdId: string): boolean {
     const hold = this.getCreditHoldById(holdId);
