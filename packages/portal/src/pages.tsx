@@ -1207,25 +1207,28 @@ function LlmKeysPage(): React.JSX.Element {
           const editing = editingId === k.id;
           return (
           <div key={k.id} style={{ background: "var(--rdsh-bg-subtle)", border: "1px solid var(--rdsh-border-soft)", borderRadius: 10, padding: "12px 14px", marginBottom: 8 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                {editing ? (
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <input
-                      value={editName}
-                      onChange={(e) => setEditName(e.target.value)}
-                      maxLength={64}
-                      autoFocus
-                      style={{ fontSize: 13, padding: "4px 8px", borderRadius: 6, border: "1px solid var(--rdsh-border)", background: "var(--rdsh-bg-surface)", color: "var(--rdsh-fg)", minWidth: 160 }}
-                    />
-                    <button onClick={() => saveEdit(k.id)} style={btnStyle()}>{t("保存")}</button>
-                    <button onClick={() => setEditingId(null)} style={btnStyle("ghost")}>{t("取消")}</button>
-                  </div>
-                ) : (
+            <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+              {editing ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <input
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    maxLength={64}
+                    autoFocus
+                    style={{ fontSize: 13, padding: "4px 8px", borderRadius: 6, border: "1px solid var(--rdsh-border)", background: "var(--rdsh-bg-surface)", color: "var(--rdsh-fg)", minWidth: 160 }}
+                  />
+                  <button onClick={() => saveEdit(k.id)} style={btnStyle()}>{t("保存")}</button>
+                  <button onClick={() => setEditingId(null)} style={btnStyle("ghost")}>{t("取消")}</button>
+                </div>
+              ) : (
+                <>
                   <span style={{ fontSize: 14, fontWeight: 600 }}>{k.name}</span>
-                )}
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                  <code style={{ display: "inline-block", padding: "2px 8px", borderRadius: 6, background: "var(--rdsh-bg-surface)", border: "1px solid var(--rdsh-border)", fontSize: 12, fontFamily: "monospace", color: "var(--rdsh-fg-muted)" }}>
+                    {k.tokenHead4 !== "" && k.tokenTail4 !== "" ? `sk-${k.tokenHead4}*****${k.tokenTail4}` : k.tokenTail4 !== "" ? `sk-*****${k.tokenTail4}` : "sk-*****"}
+                  </code>
+                </>
+              )}
+              <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
                 {isHost && (
                   <span style={{ fontSize: 11, padding: "1px 8px", borderRadius: 999, background: "var(--rdsh-bg-surface)", border: "1px solid var(--rdsh-border)", color: "var(--rdsh-fg-muted)" }}>{t("主机自动")}</span>
                 )}
@@ -1241,11 +1244,6 @@ function LlmKeysPage(): React.JSX.Element {
                   </>
                 )}
               </div>
-            </div>
-            <div style={{ marginTop: 8 }}>
-              <code style={{ display: "inline-block", padding: "2px 8px", borderRadius: 6, background: "var(--rdsh-bg-surface)", border: "1px solid var(--rdsh-border)", fontSize: 12, fontFamily: "monospace", color: "var(--rdsh-fg)" }}>
-                {k.tokenHead4 !== "" && k.tokenTail4 !== "" ? `sk-${k.tokenHead4}*****${k.tokenTail4}` : k.tokenTail4 !== "" ? `sk-*****${k.tokenTail4}` : "sk-*****"}
-              </code>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "3px 10px", marginTop: 10, fontSize: 12 }}>
               <span style={{ color: "var(--rdsh-fg-subtle)" }}>{t("创建于")}</span>
