@@ -219,6 +219,13 @@ const EN: Record<string, string> = {
   "绑定微信": "Bind WeChat",
   "绑定微信后，该微信可免密登录本账号": "After binding, this WeChat can sign in to this account without a password",
   "已复制": "Copied",
+  "重命名": "Rename",
+  "最近使用": "Last used",
+  "从未": "Never",
+  "已保存": "Saved",
+  "已删除": "Deleted",
+  "创建于": "Created",
+  "确定删除这个 Key？删除后无法恢复。": "Delete this key? This cannot be undone.",
   "微信登录需在服务端配置 hub.json wechatLogin": "WeChat sign-in requires hub.json wechatLogin",
 
   // ---- 验证码 ----

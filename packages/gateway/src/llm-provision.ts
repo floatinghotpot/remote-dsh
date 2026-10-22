@@ -13,7 +13,7 @@ import { hubRequest } from "./join.ts";
 import type { ProxyTarget } from "./proxy.ts";
 
 const PROVIDER_ID = "rdsh-llm-router";
-const PROVIDER_DISPLAY = "WhaleLink";
+const PROVIDER_DISPLAY = "WhaleLink Managed";
 const API_KEY_REF = "RDSH_ROUTER_API_KEY";
 const PROTOCOL = "anthropic-messages";
 const NS = "llm-pi-ai";

@@ -1138,6 +1138,8 @@ function LlmKeysPage(): React.JSX.Element {
   const { t } = useT();
   const [keys, setKeys] = useState<LlmKeyInfo[]>([]);
   const [created, setCreated] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
   const { toast, show } = useToast();
   const { err, run } = useError();
 
@@ -1154,10 +1156,27 @@ function LlmKeysPage(): React.JSX.Element {
     });
   };
 
-  const revoke = (id: string): void => {
+  const startEdit = (k: LlmKeyInfo): void => {
+    setEditingId(k.id);
+    setEditName(k.name);
+  };
+
+  const saveEdit = (id: string): void => {
+    const name = editName.trim();
+    if (name === "") return;
     void run(async () => {
-      await api.revokeLlmKey(id);
-      show("ok", t("已吊销"));
+      await api.updateLlmKeyName(id, name);
+      setEditingId(null);
+      show("ok", t("已保存"));
+      await load();
+    });
+  };
+
+  const remove = (k: LlmKeyInfo): void => {
+    if (!window.confirm(t("确定删除这个 Key？删除后无法恢复。"))) return;
+    void run(async () => {
+      await api.deleteLlmKey(k.id);
+      show("ok", t("已删除"));
       await load();
     });
   };
@@ -1167,6 +1186,13 @@ function LlmKeysPage(): React.JSX.Element {
       () => show("ok", t("已复制")),
       () => show("err", t("复制失败，请手动复制")),
     );
+  };
+
+  const fmtDate = (ms: number | null): string => {
+    if (ms === null || ms === 0) return t("从未");
+    const d = new Date(ms);
+    const pad = (n: number): string => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
   };
 
   return (
@@ -1189,21 +1215,40 @@ function LlmKeysPage(): React.JSX.Element {
         )}
         {keys.map((k) => {
           const isHost = k.hostId !== null;
+          const editing = editingId === k.id;
           return (
           <div key={k.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid var(--rdsh-border-soft)" }}>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 14, display: "flex", alignItems: "center", gap: 8 }}>
-                <span>{k.name}</span>
-                {isHost && <span style={{ fontSize: 11, padding: "1px 6px", borderRadius: 4, background: "var(--rdsh-bg-subtle)", color: "var(--rdsh-fg-muted)" }}>{t("主机自动")}</span>}
-              </div>
+              {editing ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <input
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    maxLength={64}
+                    autoFocus
+                    style={{ fontSize: 13, padding: "4px 8px", borderRadius: 6, border: "1px solid var(--rdsh-border)", background: "var(--rdsh-bg)", color: "var(--rdsh-fg)", minWidth: 160 }}
+                  />
+                  <button onClick={() => saveEdit(k.id)} style={btnStyle()}>{t("保存")}</button>
+                  <button onClick={() => setEditingId(null)} style={btnStyle("ghost")}>{t("取消")}</button>
+                </div>
+              ) : (
+                <div style={{ fontSize: 14, display: "flex", alignItems: "center", gap: 8 }}>
+                  <span>{k.name}</span>
+                  {isHost && <span style={{ fontSize: 11, padding: "1px 6px", borderRadius: 4, background: "var(--rdsh-bg-subtle)", color: "var(--rdsh-fg-muted)" }}>{t("主机自动")}</span>}
+                </div>
+              )}
               <div style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", marginTop: 2 }}>
-                {k.status === "revoked" ? t("已吊销") : t("已消耗 {x} 点", { params: { x: String(k.spentMicro / 10000) } })}
+                {t("创建于")} {fmtDate(k.createdAt)} · {t("最近使用")} {fmtDate(k.lastUsedAt)}
+                {k.status === "revoked" && ` · ${t("已吊销")}`}
               </div>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <span style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", fontFamily: "monospace" }}>{k.tokenHead4 !== "" && k.tokenTail4 !== "" ? `sk-rdsh-${k.tokenHead4}…${k.tokenTail4}` : k.tokenTail4 !== "" ? `sk-rdsh-…${k.tokenTail4}` : "sk-rdsh-…"}</span>
-              {k.status === "active" && !isHost && (
-                <button onClick={() => revoke(k.id)} style={btnStyle("ghost")}>{t("吊销")}</button>
+              {k.status === "active" && !isHost && !editing && (
+                <>
+                  <button title={t("重命名")} onClick={() => startEdit(k)} style={btnStyle("ghost")}>✎</button>
+                  <button title={t("删除")} onClick={() => remove(k)} style={btnStyle("ghost")}>🗑</button>
+                </>
               )}
             </div>
           </div>

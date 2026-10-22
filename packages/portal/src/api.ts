@@ -331,6 +331,12 @@ export const api = {
   revokeLlmKey(keyId: string): Promise<{ ok: boolean }> {
     return jsonFetch(`/api/account/llm/keys/${keyId}/revoke`, { method: "POST", body: "{}" });
   },
+  updateLlmKeyName(keyId: string, name: string): Promise<{ ok: boolean; name: string }> {
+    return jsonFetch(`/api/account/llm/keys/${encodeURIComponent(keyId)}`, { method: "PATCH", body: JSON.stringify({ name }) });
+  },
+  deleteLlmKey(keyId: string): Promise<{ ok: boolean }> {
+    return jsonFetch(`/api/account/llm/keys/${encodeURIComponent(keyId)}`, { method: "DELETE" });
+  },
   llmUsage(from: string, to: string): Promise<{ models: LlmUsageModel[] }> {
     return jsonFetch(`/api/account/llm/usage?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
   },

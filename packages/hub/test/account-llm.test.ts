@@ -170,3 +170,61 @@ test("LLM usage：按模型 + 天聚合", async () => {
     await close(ctx);
   }
 });
+
+test("用户自助 key：重命名 + 删除（host key 只读）", async () => {
+  const ctx = await boot();
+  try {
+    const u = await makeUser(ctx.db, "alice-edit");
+    const at = await login(ctx.base, "alice-edit", "pw123456");
+
+    const created = await fetch(`${ctx.base}/api/account/llm/keys`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${at}`, "content-type": "application/json" },
+      body: JSON.stringify({ name: "old-name" }),
+    });
+    assert.equal(created.status, 200);
+    const cj = (await created.json()) as { keyId: string };
+
+    // 重命名
+    const patch = await fetch(`${ctx.base}/api/account/llm/keys/${cj.keyId}`, {
+      method: "PATCH",
+      headers: { authorization: `Bearer ${at}`, "content-type": "application/json" },
+      body: JSON.stringify({ name: "new-name" }),
+    });
+    assert.equal(patch.status, 200);
+    const list1 = await fetch(`${ctx.base}/api/account/llm/keys`, { headers: { authorization: `Bearer ${at}` } });
+    const l1 = (await list1.json()) as { keys: Array<{ id: string; name: string; createdAt: number; lastUsedAt: number | null }> };
+    assert.equal(l1.keys[0]!.name, "new-name");
+    assert.ok(typeof l1.keys[0]!.createdAt === "number");
+    assert.ok("lastUsedAt" in l1.keys[0]!);
+
+    // 空名 → 400
+    const bad = await fetch(`${ctx.base}/api/account/llm/keys/${cj.keyId}`, {
+      method: "PATCH",
+      headers: { authorization: `Bearer ${at}`, "content-type": "application/json" },
+      body: JSON.stringify({ name: "   " }),
+    });
+    assert.equal(bad.status, 400);
+
+    // 删除
+    const del = await fetch(`${ctx.base}/api/account/llm/keys/${cj.keyId}`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${at}` },
+    });
+    assert.equal(del.status, 200);
+    const list2 = await fetch(`${ctx.base}/api/account/llm/keys`, { headers: { authorization: `Bearer ${at}` } });
+    const l2 = (await list2.json()) as { keys: unknown[] };
+    assert.equal(l2.keys.length, 0);
+
+    // host 自动 key → 403（只读）
+    ctx.db.createLlmKey({ id: "hk-1", userId: u.id, agentId: null, hostId: "h-1", tokenHash: sha256(randomToken()), name: "host-key", tokenHead4: "abcd", tokenTail4: "wxyz" });
+    const hostPatch = await fetch(`${ctx.base}/api/account/llm/keys/hk-1`, {
+      method: "PATCH",
+      headers: { authorization: `Bearer ${at}`, "content-type": "application/json" },
+      body: JSON.stringify({ name: "x" }),
+    });
+    assert.equal(hostPatch.status, 403);
+  } finally {
+    await close(ctx);
+  }
+});

@@ -78,6 +78,30 @@ export async function handleAccountLlm(req: IncomingMessage, res: ServerResponse
     return void json(res, ok ? 200 : 404, { ok }), true;
   }
 
+  // 重命名 / 删除（仅用户自建 key；host 自动 key 只读）。
+  const keyMatch = /^\/api\/account\/llm\/keys\/([^/]+)$/.exec(path);
+  if (keyMatch !== null && (method === "PATCH" || method === "DELETE")) {
+    const id = decodeURIComponent(keyMatch[1]!);
+    const key = await runtime.store.getLlmKeyById(id);
+    if (key === null || key.userId !== auth.userId) {
+      return void writeError(res, 404, "NOT_FOUND", "key not found"), true;
+    }
+    if (key.hostId !== null) {
+      return void writeError(res, 403, "FORBIDDEN", "host-managed key cannot be modified here"), true;
+    }
+    if (method === "PATCH") {
+      const body = await readJson(req);
+      const name = body !== null && typeof body.name === "string" ? body.name.trim() : "";
+      if (name === "" || name.length > 64) {
+        return void writeError(res, 400, "BAD_REQUEST", "name must be 1-64 chars"), true;
+      }
+      const ok = await runtime.store.updateLlmKeyName(id, name);
+      return void json(res, ok ? 200 : 404, { ok, name }), true;
+    }
+    const ok = await runtime.store.deleteLlmKey(id);
+    return void json(res, ok ? 200 : 404, { ok }), true;
+  }
+
   // 用量统计：按模型 + 天聚合当前用户的 llm_requests（仅成功请求）。
   if (path === "/api/account/llm/usage" && method === "GET") {
     const from = url.searchParams.get("from") ?? "";

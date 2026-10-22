@@ -2820,6 +2820,16 @@ export class HubDb {
     return info.changes > 0;
   }
 
+  updateLlmKeyName(id: string, name: string): boolean {
+    const info = this.db.prepare("UPDATE llm_keys SET name = ? WHERE id = ?").run(name, id);
+    return info.changes > 0;
+  }
+
+  deleteLlmKey(id: string): boolean {
+    const info = this.db.prepare("DELETE FROM llm_keys WHERE id = ?").run(id);
+    return info.changes > 0;
+  }
+
   /** 吊销某 host 名下所有 active 的 key（重签前调用；host key 是 hash-only，旧明文不可重发）。 */
   revokeLlmKeysByHost(hostId: string, now = Date.now()): number {
     const info = this.db.prepare("UPDATE llm_keys SET status = 'revoked' WHERE host_id = ? AND status = 'active'").run(hostId);
