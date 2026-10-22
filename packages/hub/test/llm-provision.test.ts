@@ -69,3 +69,28 @@ test("52：/api/hosts/llm-key 签发 + 重签 + 鉴权", async () => {
     ctx.db.close();
   }
 });
+
+test("52：provision 返回模型推理档位（effortLevels/effortDefault）", async () => {
+  const ctx = await boot();
+  try {
+    const owner = ctx.db.createUser("owner-effort", await hashPassword("pw"));
+    const hostToken = randomToken();
+    ctx.db.createHost("h-effort", owner.id, "host-effort", sha256(hostToken));
+    const rid = randomUUID();
+    ctx.db.createLlmRouter(rid, "router-effort", "dummy-token", null, "https://llm.rdsh.cn");
+    ctx.db.setLlmRouterStatus(rid, "active", "test");
+    // 模拟 upstream /models 同步：写入 effort 档位
+    ctx.db.syncLlmModelMeta("deepseek-flash", "DeepSeek-V4.1-Flash", 1048576, 393216, "low,high,max", "high", Date.now());
+    ctx.db.syncLlmModelMeta("deepseek-v4-pro", "DeepSeek-V4-Pro", 1048576, 393216, "low,high,max", "high", Date.now());
+
+    const r = await post(ctx.base, "/api/hosts/llm-key", { token: hostToken });
+    assert.equal(r.status, 200);
+    const models = r.body.models as Array<{ id: string; effortLevels: string | null; effortDefault: string | null }>;
+    const flash = models.find((m) => m.id === "deepseek-flash")!;
+    assert.equal(flash.effortLevels, "low,high,max");
+    assert.equal(flash.effortDefault, "high");
+  } finally {
+    await new Promise<void>((res) => ctx.server.server.close(() => res()));
+    ctx.db.close();
+  }
+});

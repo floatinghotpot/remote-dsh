@@ -3151,6 +3151,8 @@ async function handleHostLlmKey(req: IncomingMessage, res: ServerResponse, runti
     displayName: m.displayName,
     contextWindow: m.contextWindow,
     maxTokens: m.maxTokens,
+    effortLevels: m.effortLevels,
+    effortDefault: m.effortDefault,
   }));
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({ key: token, baseURL, models }));

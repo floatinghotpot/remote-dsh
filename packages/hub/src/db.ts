@@ -398,6 +398,8 @@ export interface LlmModelRow {
   cacheWritePriceMicro: number;
   contextWindow: number;
   maxTokens: number;
+  effortLevels: string | null; // comma-separated supported reasoning levels from upstream effort (e.g. "low,high,max"); null = no reasoning
+  effortDefault: string | null; // upstream default reasoning level
   nameSource: LlmModelNameSource;
   nameSyncedAt: number | null;
   enabled: boolean;
@@ -700,6 +702,8 @@ export class HubDb {
         cache_write_price_micro INTEGER NOT NULL DEFAULT 0,
         context_window INTEGER NOT NULL DEFAULT 0,
         max_tokens INTEGER NOT NULL DEFAULT 0,
+        effort_levels TEXT,
+        effort_default TEXT,
         name_source TEXT NOT NULL DEFAULT 'upstream',
         name_synced_at INTEGER,
         enabled INTEGER NOT NULL DEFAULT 1,
@@ -831,6 +835,11 @@ export class HubDb {
       (this.db.prepare("PRAGMA table_info(llm_routers)").all() as unknown as Array<{ name: string }>).map((c) => c.name),
     );
     if (!llmRouterCols.has("public_base_url")) this.db.exec("ALTER TABLE llm_routers ADD COLUMN public_base_url TEXT");
+    const llmModelCols = new Set(
+      (this.db.prepare("PRAGMA table_info(llm_models)").all() as unknown as Array<{ name: string }>).map((c) => c.name),
+    );
+    if (!llmModelCols.has("effort_levels")) this.db.exec("ALTER TABLE llm_models ADD COLUMN effort_levels TEXT");
+    if (!llmModelCols.has("effort_default")) this.db.exec("ALTER TABLE llm_models ADD COLUMN effort_default TEXT");
     // 迁移守卫：既有库补列（SQLite ALTER ADD COLUMN 不支持 UNIQUE，邮箱唯一用独立索引）
     const userCols = new Set(
       (this.db.prepare("PRAGMA table_info(users)").all() as unknown as Array<{ name: string }>).map((c) => c.name),
@@ -2882,6 +2891,8 @@ export class HubDb {
       cacheWritePriceMicro: Number(row.cache_write_price_micro),
       contextWindow: Number(row.context_window),
       maxTokens: Number(row.max_tokens),
+      effortLevels: row.effort_levels === null || row.effort_levels === undefined ? null : String(row.effort_levels),
+      effortDefault: row.effort_default === null || row.effort_default === undefined ? null : String(row.effort_default),
       nameSource: String(row.name_source) as LlmModelNameSource,
       nameSyncedAt: row.name_synced_at === null || row.name_synced_at === undefined ? null : Number(row.name_synced_at),
       enabled: Number(row.enabled ?? 1) === 1,
@@ -2947,12 +2958,12 @@ export class HubDb {
   createLlmModel(input: {
     id: string; displayName: string; provider: string; upstreamModel: string;
     inputPriceMicro?: number; outputPriceMicro?: number; cacheReadPriceMicro?: number; cacheWritePriceMicro?: number;
-    contextWindow?: number; maxTokens?: number; sortOrder?: number; now?: number;
+    contextWindow?: number; maxTokens?: number; effortLevels?: string | null; effortDefault?: string | null; sortOrder?: number; now?: number;
   }): LlmModelRow {
     const now = input.now ?? Date.now();
     this.db.prepare(
-      "INSERT INTO llm_models (id, display_name, provider, upstream_model, input_price_micro, output_price_micro, cache_read_price_micro, cache_write_price_micro, context_window, max_tokens, name_source, enabled, sort_order, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', 1, ?, ?)",
-    ).run(input.id, input.displayName, input.provider, input.upstreamModel, input.inputPriceMicro ?? 0, input.outputPriceMicro ?? 0, input.cacheReadPriceMicro ?? 0, input.cacheWritePriceMicro ?? 0, input.contextWindow ?? 0, input.maxTokens ?? 0, input.sortOrder ?? 0, now);
+      "INSERT INTO llm_models (id, display_name, provider, upstream_model, input_price_micro, output_price_micro, cache_read_price_micro, cache_write_price_micro, context_window, max_tokens, effort_levels, effort_default, name_source, enabled, sort_order, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', 1, ?, ?)",
+    ).run(input.id, input.displayName, input.provider, input.upstreamModel, input.inputPriceMicro ?? 0, input.outputPriceMicro ?? 0, input.cacheReadPriceMicro ?? 0, input.cacheWritePriceMicro ?? 0, input.contextWindow ?? 0, input.maxTokens ?? 0, input.effortLevels ?? null, input.effortDefault ?? null, input.sortOrder ?? 0, now);
     const row = this.db.prepare("SELECT * FROM llm_models WHERE id = ?").get(input.id);
     return this.mapLlmModel(row as unknown as Record<string, unknown>);
   }
@@ -2960,7 +2971,7 @@ export class HubDb {
   updateLlmModel(id: string, patch: {
     displayName?: string; provider?: string; upstreamModel?: string;
     inputPriceMicro?: number; outputPriceMicro?: number; cacheReadPriceMicro?: number; cacheWritePriceMicro?: number;
-    contextWindow?: number; maxTokens?: number; enabled?: boolean; sortOrder?: number; nameSource?: LlmModelNameSource; now?: number;
+    contextWindow?: number; maxTokens?: number; effortLevels?: string | null; effortDefault?: string | null; enabled?: boolean; sortOrder?: number; nameSource?: LlmModelNameSource; now?: number;
   }): LlmModelRow | null {
     const cur = this.getLlmModel(id);
     if (cur === null) return null;
@@ -2974,17 +2985,19 @@ export class HubDb {
     const cacheWritePriceMicro = patch.cacheWritePriceMicro ?? cur.cacheWritePriceMicro;
     const contextWindow = patch.contextWindow ?? cur.contextWindow;
     const maxTokens = patch.maxTokens ?? cur.maxTokens;
+    const effortLevels = patch.effortLevels === undefined ? cur.effortLevels : patch.effortLevels;
+    const effortDefault = patch.effortDefault === undefined ? cur.effortDefault : patch.effortDefault;
     const enabled = patch.enabled === undefined ? cur.enabled : patch.enabled;
     const sortOrder = patch.sortOrder ?? cur.sortOrder;
     const nameSource = patch.nameSource ?? cur.nameSource;
     this.db.prepare(
-      "UPDATE llm_models SET display_name = ?, provider = ?, upstream_model = ?, input_price_micro = ?, output_price_micro = ?, cache_read_price_micro = ?, cache_write_price_micro = ?, context_window = ?, max_tokens = ?, name_source = ?, enabled = ?, sort_order = ?, updated_at = ? WHERE id = ?",
-    ).run(displayName, provider, upstreamModel, inputPriceMicro, outputPriceMicro, cacheReadPriceMicro, cacheWritePriceMicro, contextWindow, maxTokens, nameSource, enabled ? 1 : 0, sortOrder, now, id);
+      "UPDATE llm_models SET display_name = ?, provider = ?, upstream_model = ?, input_price_micro = ?, output_price_micro = ?, cache_read_price_micro = ?, cache_write_price_micro = ?, context_window = ?, max_tokens = ?, effort_levels = ?, effort_default = ?, name_source = ?, enabled = ?, sort_order = ?, updated_at = ? WHERE id = ?",
+    ).run(displayName, provider, upstreamModel, inputPriceMicro, outputPriceMicro, cacheReadPriceMicro, cacheWritePriceMicro, contextWindow, maxTokens, effortLevels, effortDefault, nameSource, enabled ? 1 : 0, sortOrder, now, id);
     return this.getLlmModel(id);
   }
 
-  syncLlmModelMeta(id: string, displayName: string, contextWindow: number, maxTokens: number, now: number): boolean {
-    const info = this.db.prepare("UPDATE llm_models SET display_name = ?, context_window = ?, max_tokens = ?, name_synced_at = ?, updated_at = ? WHERE id = ? AND name_source = 'upstream'").run(displayName, contextWindow, maxTokens, now, now, id);
+  syncLlmModelMeta(id: string, displayName: string, contextWindow: number, maxTokens: number, effortLevels: string | null, effortDefault: string | null, now: number): boolean {
+    const info = this.db.prepare("UPDATE llm_models SET display_name = ?, context_window = ?, max_tokens = ?, effort_levels = ?, effort_default = ?, name_synced_at = ?, updated_at = ? WHERE id = ? AND name_source = 'upstream'").run(displayName, contextWindow, maxTokens, effortLevels, effortDefault, now, now, id);
     return info.changes > 0;
   }
 

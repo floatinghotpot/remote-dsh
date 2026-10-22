@@ -31,19 +31,19 @@ export function llmCatalog(
     createLlmModel: async (input: {
       id: string; displayName: string; provider: string; upstreamModel: string;
       inputPriceMicro?: number; outputPriceMicro?: number; cacheReadPriceMicro?: number; cacheWritePriceMicro?: number;
-      contextWindow?: number; maxTokens?: number; sortOrder?: number; now?: number;
+      contextWindow?: number; maxTokens?: number; effortLevels?: string | null; effortDefault?: string | null; sortOrder?: number; now?: number;
     }): Promise<LlmModelRow> => {
       const now = input.now ?? Date.now();
       await q(txDb(pool),
-        "INSERT INTO llm_models (id, display_name, provider, upstream_model, input_price_micro, output_price_micro, cache_read_price_micro, cache_write_price_micro, context_window, max_tokens, name_source, enabled, sort_order, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'manual', 1, $11, $12)",
-        [input.id, input.displayName, input.provider, input.upstreamModel, input.inputPriceMicro ?? 0, input.outputPriceMicro ?? 0, input.cacheReadPriceMicro ?? 0, input.cacheWritePriceMicro ?? 0, input.contextWindow ?? 0, input.maxTokens ?? 0, input.sortOrder ?? 0, now]);
+        "INSERT INTO llm_models (id, display_name, provider, upstream_model, input_price_micro, output_price_micro, cache_read_price_micro, cache_write_price_micro, context_window, max_tokens, effort_levels, effort_default, name_source, enabled, sort_order, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'manual', 1, $13, $14)",
+        [input.id, input.displayName, input.provider, input.upstreamModel, input.inputPriceMicro ?? 0, input.outputPriceMicro ?? 0, input.cacheReadPriceMicro ?? 0, input.cacheWritePriceMicro ?? 0, input.contextWindow ?? 0, input.maxTokens ?? 0, input.effortLevels ?? null, input.effortDefault ?? null, input.sortOrder ?? 0, now]);
       return mapLlmModel(one(await q(txDb(pool), "SELECT * FROM llm_models WHERE id = $1", [input.id]))!);
     },
 
     updateLlmModel: async (id: string, patch: {
       displayName?: string; provider?: string; upstreamModel?: string;
       inputPriceMicro?: number; outputPriceMicro?: number; cacheReadPriceMicro?: number; cacheWritePriceMicro?: number;
-      contextWindow?: number; maxTokens?: number; enabled?: boolean; sortOrder?: number; nameSource?: LlmModelNameSource; now?: number;
+      contextWindow?: number; maxTokens?: number; effortLevels?: string | null; effortDefault?: string | null; enabled?: boolean; sortOrder?: number; nameSource?: LlmModelNameSource; now?: number;
     }): Promise<LlmModelRow | null> => {
       const cur = one(await q(txDb(pool), "SELECT * FROM llm_models WHERE id = $1", [id]));
       if (cur === null) return null;
@@ -58,18 +58,20 @@ export function llmCatalog(
       const cacheWritePriceMicro = patch.cacheWritePriceMicro ?? c.cacheWritePriceMicro;
       const contextWindow = patch.contextWindow ?? c.contextWindow;
       const maxTokens = patch.maxTokens ?? c.maxTokens;
+      const effortLevels = patch.effortLevels === undefined ? c.effortLevels : patch.effortLevels;
+      const effortDefault = patch.effortDefault === undefined ? c.effortDefault : patch.effortDefault;
       const enabled = patch.enabled === undefined ? c.enabled : patch.enabled;
       const sortOrder = patch.sortOrder ?? c.sortOrder;
       const nameSource = patch.nameSource ?? c.nameSource;
       await q(txDb(pool),
-        "UPDATE llm_models SET display_name = $1, provider = $2, upstream_model = $3, input_price_micro = $4, output_price_micro = $5, cache_read_price_micro = $6, cache_write_price_micro = $7, context_window = $8, max_tokens = $9, name_source = $10, enabled = $11, sort_order = $12, updated_at = $13 WHERE id = $14",
-        [displayName, provider, upstreamModel, inputPriceMicro, outputPriceMicro, cacheReadPriceMicro, cacheWritePriceMicro, contextWindow, maxTokens, nameSource, enabled ? 1 : 0, sortOrder, now, id]);
+        "UPDATE llm_models SET display_name = $1, provider = $2, upstream_model = $3, input_price_micro = $4, output_price_micro = $5, cache_read_price_micro = $6, cache_write_price_micro = $7, context_window = $8, max_tokens = $9, effort_levels = $10, effort_default = $11, name_source = $12, enabled = $13, sort_order = $14, updated_at = $15 WHERE id = $16",
+        [displayName, provider, upstreamModel, inputPriceMicro, outputPriceMicro, cacheReadPriceMicro, cacheWritePriceMicro, contextWindow, maxTokens, effortLevels, effortDefault, nameSource, enabled ? 1 : 0, sortOrder, now, id]);
       const row = one(await q(txDb(pool), "SELECT * FROM llm_models WHERE id = $1", [id]));
       return row === null ? null : mapLlmModel(row);
     },
 
-    syncLlmModelMeta: async (id: string, displayName: string, contextWindow: number, maxTokens: number, now: number): Promise<boolean> => {
-      const r = await q(txDb(pool), "UPDATE llm_models SET display_name = $1, context_window = $2, max_tokens = $3, name_synced_at = $4, updated_at = $4 WHERE id = $5 AND name_source = 'upstream'", [displayName, contextWindow, maxTokens, now, id]);
+    syncLlmModelMeta: async (id: string, displayName: string, contextWindow: number, maxTokens: number, effortLevels: string | null, effortDefault: string | null, now: number): Promise<boolean> => {
+      const r = await q(txDb(pool), "UPDATE llm_models SET display_name = $1, context_window = $2, max_tokens = $3, effort_levels = $4, effort_default = $5, name_synced_at = $6, updated_at = $6 WHERE id = $7 AND name_source = 'upstream'", [displayName, contextWindow, maxTokens, effortLevels, effortDefault, now, id]);
       return r.rowCount > 0;
     },
 

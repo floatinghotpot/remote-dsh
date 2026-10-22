@@ -18,14 +18,17 @@ export function startLlmModelSync(runtime: HubRuntime): void {
       const apiKey = decryptKeyRow(runtime, keys[0]!);
       const res = await fetch(`${cfg.baseURL.replace(/\/+$/, "")}/models`, { headers: { authorization: `Bearer ${apiKey}` } });
       if (!res.ok) return;
-      const json = (await res.json()) as { data?: Array<{ id: string; name?: string; context_window?: number; max_output_tokens?: number }> };
+      const json = (await res.json()) as { data?: Array<{ id: string; name?: string; context_window?: number; max_output_tokens?: number; effort?: { supported_levels?: string[]; default_level?: string } }> };
       const now = Date.now();
       for (const m of json.data ?? []) {
         if (typeof m.id !== "string" || m.id === "") continue;
         const displayName = typeof m.name === "string" && m.name !== "" ? m.name : m.id;
         const contextWindow = typeof m.context_window === "number" && m.context_window > 0 ? m.context_window : 0;
         const maxTokens = typeof m.max_output_tokens === "number" && m.max_output_tokens > 0 ? m.max_output_tokens : 0;
-        await runtime.store.syncLlmModelMeta(m.id, displayName, contextWindow, maxTokens, now);
+        const levels = Array.isArray(m.effort?.supported_levels) ? m.effort!.supported_levels!.filter((l) => typeof l === "string" && l !== "") : [];
+        const effortLevels = levels.length > 0 ? levels.join(",") : null;
+        const effortDefault = typeof m.effort?.default_level === "string" && m.effort.default_level !== "" ? m.effort.default_level : null;
+        await runtime.store.syncLlmModelMeta(m.id, displayName, contextWindow, maxTokens, effortLevels, effortDefault, now);
       }
     } catch {
       // 同步失败保留上次值（记日志由调用方决定；此处静默）。

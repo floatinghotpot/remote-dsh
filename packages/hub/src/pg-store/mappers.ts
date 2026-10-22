@@ -274,6 +274,8 @@ export function mapLlmModel(row: Record<string, unknown>): LlmModelRow {
     cacheWritePriceMicro: Number(row.cache_write_price_micro),
     contextWindow: Number(row.context_window),
     maxTokens: Number(row.max_tokens),
+    effortLevels: row.effort_levels === null || row.effort_levels === undefined ? null : String(row.effort_levels),
+    effortDefault: row.effort_default === null || row.effort_default === undefined ? null : String(row.effort_default),
     nameSource: String(row.name_source) as LlmModelNameSource,
     nameSyncedAt: row.name_synced_at === null || row.name_synced_at === undefined ? null : Number(row.name_synced_at),
     enabled: Number(row.enabled ?? 1) === 1,

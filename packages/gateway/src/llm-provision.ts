@@ -21,7 +21,7 @@ const NS = "llm-pi-ai";
 interface LlmKeyResponse {
   key: string;
   baseURL: string;
-  models: Array<{ id: string; displayName: string; contextWindow: number; maxTokens: number }>;
+  models: Array<{ id: string; displayName: string; contextWindow: number; maxTokens: number; effortLevels: string | null; effortDefault: string | null }>;
 }
 
 export interface ProvisionOptions {
@@ -89,12 +89,15 @@ export async function provisionLlm(opts: ProvisionOptions): Promise<void> {
     return;
   }
 
-  const models = provision.models.map((m) => ({
-    id: m.id,
-    name: m.displayName ?? m.id,
-    contextWindow: m.contextWindow,
-    maxTokens: m.maxTokens,
-  }));
+  const models = provision.models.map((m) => {
+    const model: Record<string, unknown> = { id: m.id, name: m.displayName ?? m.id, contextWindow: m.contextWindow, maxTokens: m.maxTokens };
+    if (typeof m.effortLevels === "string" && m.effortLevels !== "") {
+      const efforts: Record<string, string> = { off: "" };
+      for (const level of m.effortLevels.split(",").map((s) => s.trim()).filter((s) => s !== "")) efforts[level] = level;
+      model.reasoningEfforts = efforts;
+    }
+    return model;
+  });
   const ops = [
     { op: "set", path: ["providers", PROVIDER_ID, "displayName"], value: PROVIDER_DISPLAY },
     { op: "set", path: ["providers", PROVIDER_ID, "apiKeyEnv"], value: API_KEY_REF },
