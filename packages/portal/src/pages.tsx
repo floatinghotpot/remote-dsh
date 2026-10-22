@@ -1189,18 +1189,18 @@ function LlmKeysPage(): React.JSX.Element {
         )}
         {keys.map((k) => (
           <div key={k.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid var(--rdsh-border-soft)" }}>
-            <div>
-              <div style={{ fontSize: 14, display: "flex", alignItems: "center", gap: 8 }}>
-                <span>{k.name}</span>
-                <span style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", fontFamily: "monospace" }}>{k.tokenHead4 !== "" && k.tokenTail4 !== "" ? `sk-rdsh-${k.tokenHead4}…${k.tokenTail4}` : k.tokenTail4 !== "" ? `sk-rdsh-…${k.tokenTail4}` : "sk-rdsh-…"}</span>
-              </div>
-              <div style={{ fontSize: 12, color: "var(--rdsh-fg-muted)" }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 14 }}>{k.name}</div>
+              <div style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", marginTop: 2 }}>
                 {k.status === "revoked" ? t("已吊销") : t("已消耗 {x} 点", { params: { x: String(k.spentMicro / 10000) } })}
               </div>
             </div>
-            {k.status === "active" && (
-              <button onClick={() => revoke(k.id)} style={btnStyle("ghost")}>{t("吊销")}</button>
-            )}
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <span style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", fontFamily: "monospace" }}>{k.tokenHead4 !== "" && k.tokenTail4 !== "" ? `sk-rdsh-${k.tokenHead4}…${k.tokenTail4}` : k.tokenTail4 !== "" ? `sk-rdsh-…${k.tokenTail4}` : "sk-rdsh-…"}</span>
+              {k.status === "active" && (
+                <button onClick={() => revoke(k.id)} style={btnStyle("ghost")}>{t("吊销")}</button>
+              )}
+            </div>
           </div>
         ))}
         <button onClick={create} style={{ ...btnStyle(), marginTop: 12 }}>{t("创建 Key")}</button>
