@@ -103,7 +103,11 @@ export async function handleInternalApi(req: IncomingMessage, res: ServerRespons
   const revokeMatch = /^\/api\/internal\/llm\/keys\/([^/]+)\/revoke$/.exec(path);
   if (revokeMatch !== null && method === "POST") {
     if ((await authenticateService(req, runtime, "llm:key:revoke")) === null) return void writeError(res, 401, "UNAUTHORIZED", "missing or invalid service token"), true;
-    const ok = await runtime.store.revokeLlmKey(decodeURIComponent(revokeMatch[1]!));
+    const id = decodeURIComponent(revokeMatch[1]!);
+    const key = await runtime.store.getLlmKeyById(id);
+    if (key === null) return void json(res, 404, { ok: false }), true;
+    if (key.hostId !== null) return void writeError(res, 403, "FORBIDDEN", "host-managed key cannot be revoked here"), true;
+    const ok = await runtime.store.revokeLlmKey(id);
     return void json(res, ok ? 200 : 404, { ok }), true;
   }
 

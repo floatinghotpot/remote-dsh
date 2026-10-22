@@ -3116,7 +3116,7 @@ async function handleRevokeJoinToken(req: IncomingMessage, res: ServerResponse, 
 async function handleHostLlmKey(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
   const body = await readJsonBody(req);
   if (body === null || typeof body.token !== "string" || body.token.length < 16) {
-    writeError(res, 401, "UNAUTHORIZED", "host token required");
+    writeError(res, 400, "BAD_REQUEST", "host token required");
     return;
   }
   const host = await runtime.store.findHostByTokenHash(sha256(body.token));
