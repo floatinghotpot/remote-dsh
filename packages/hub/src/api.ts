@@ -2891,6 +2891,7 @@ async function handleRevokeHost(req: IncomingMessage, res: ServerResponse, runti
 /** 删除 host + 断隧道 + 摘注册表 + 推送 offline（用户吊销 / host 自吊销共用）。 */
 async function revokeHost(runtime: HubRuntime, hostId: string, ownerId: number): Promise<void> {
   await runtime.store.removeHost(hostId);
+  await runtime.store.revokeLlmKeysByHost(hostId);
   const conn = runtime.tunnels.get(hostId);
   if (conn !== null) conn.terminate();
   runtime.tunnels.unregister(hostId);
