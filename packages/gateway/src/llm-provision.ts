@@ -8,6 +8,7 @@
  *   3. credentials/set 写 key（RDSH_ROUTER_API_KEY）。
  * 任何 DSH API 失败 → 记日志、返回（不阻断网关；保留手工配置路径）。模型目录随每次启动刷新。
  */
+import { randomUUID } from "node:crypto";
 import { request as httpRequest } from "node:http";
 import { hubRequest } from "./join.ts";
 import type { ProxyTarget } from "./proxy.ts";
@@ -32,7 +33,7 @@ export interface ProvisionOptions {
   dshAuthCookie: string | null;
 }
 
-function dshJson(target: ProxyTarget, cookie: string | null, path: string, body: unknown): Promise<Record<string, unknown> | null> {
+function dshJson(target: ProxyTarget, cookie: string | null, method: string, payload: unknown): Promise<Record<string, unknown> | null> {
   return new Promise((resolve) => {
     let settled = false;
     let timer: NodeJS.Timeout | undefined;
@@ -42,11 +43,12 @@ function dshJson(target: ProxyTarget, cookie: string | null, path: string, body:
       clearTimeout(timer);
       resolve(v);
     };
+    const rpcId = randomUUID();
     const req = httpRequest(
       {
         host: target.host,
         port: target.port,
-        path,
+        path: `/api/${method}`,
         method: "POST",
         headers: { "content-type": "application/json", ...(cookie !== null ? { cookie } : {}) },
       },
@@ -59,7 +61,18 @@ function dshJson(target: ProxyTarget, cookie: string | null, path: string, body:
             return;
           }
           try {
-            done(JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>);
+            const full = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
+            if (full.rpcId !== rpcId) {
+              done(null);
+              return;
+            }
+            const result = full.result;
+            if (result === null || typeof result !== "object" || (result as Record<string, unknown>).ok !== true) {
+              done(null);
+              return;
+            }
+            const value = (result as Record<string, unknown>).value;
+            done(value === null || value === undefined ? {} : (value as Record<string, unknown>));
           } catch {
             done(null);
           }
@@ -69,13 +82,12 @@ function dshJson(target: ProxyTarget, cookie: string | null, path: string, body:
     );
     req.on("error", () => done(null));
     timer = setTimeout(() => req.destroy(new Error("dsh timeout")), 10_000);
-    req.end(JSON.stringify(body ?? {}));
+    req.end(JSON.stringify({ type: "client-request", rpcId, method, payload }));
   });
 }
 
 async function readRevision(target: ProxyTarget, cookie: string | null, ns: string): Promise<number | null> {
-  const j = await dshJson(target, cookie, "/api/settings/describe", {});
-  console.log(`rdsh: [debug] describe => ${j === null ? "null" : JSON.stringify(j).slice(0, 300)}`);
+  const j = await dshJson(target, cookie, "settings/describe", {});
   if (j === null) return null;
   const namespaces = j.namespaces;
   if (!Array.isArray(namespaces)) return null;
@@ -125,12 +137,12 @@ export async function provisionLlm(opts: ProvisionOptions): Promise<void> {
     console.warn("rdsh: llm provision skipped (settings/describe failed)");
     return;
   }
-  const mutated = await dshJson(opts.target, opts.dshAuthCookie, "/api/settings/mutate", { ns: NS, ops, expectedRevision: revision });
+  const mutated = await dshJson(opts.target, opts.dshAuthCookie, "settings/mutate", { ns: NS, ops, expectedRevision: revision });
   if (mutated === null) {
     console.warn("rdsh: llm provision skipped (settings/mutate failed)");
     return;
   }
-  const cred = await dshJson(opts.target, opts.dshAuthCookie, "/api/credentials/set", { ref: API_KEY_REF, value: provision.key });
+  const cred = await dshJson(opts.target, opts.dshAuthCookie, "credentials/set", { ref: API_KEY_REF, value: provision.key });
   if (cred === null) {
     console.warn("rdsh: llm provision: provider written but credentials/set failed");
     return;
