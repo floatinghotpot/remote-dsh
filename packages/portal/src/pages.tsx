@@ -157,6 +157,7 @@ function AppShell({ children }: { children: React.ReactNode }): React.JSX.Elemen
   const tabs = [
     { p: "/settings/account", label: t("账户与安全") },
     { p: "/billing", label: t("套餐与订阅") },
+    { p: "/settings/llm-keys", label: t("API Keys") },
     { p: "/usage", label: t("用量统计") },
     { p: "/hosts", label: t("我的主机") },
     ...(me !== null && me.role !== "user" ? [{ p: "/admin", label: t("管理后台") }] : []),
@@ -1116,11 +1117,6 @@ function AccountPage(): React.JSX.Element {
         badge={<Badge ok={info?.totpEnabled === true} text={info?.totpEnabled ? t("已开启") : t("未开启")} />}
         onClick={() => navigate("/settings/2fa")}
       />
-      <SettingRow
-        label={t("LLM API Key")}
-        desc={t("创建用于 DSH 模型接入的虚拟 Key，额度由账户点数决定")}
-        onClick={() => navigate("/settings/llm-keys")}
-      />
       {wechatEnabled ? (
         <SettingRow
           label={t("绑定微信")}
@@ -1174,7 +1170,7 @@ function LlmKeysPage(): React.JSX.Element {
   };
 
   return (
-    <Shell title={t("LLM API Key")}>
+    <Shell title={t("API Keys")}>
       <BackToAccount />
       <Toast toast={toast} />
       {err !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{err}</p>}
