@@ -16,7 +16,7 @@ test("52：provisionLlm 用 RPC 信封写 provider（reasoningEfforts + expected
     req.on("data", (c: Buffer) => (body += c.toString("utf8")));
     req.on("end", () => {
       const envelope = JSON.parse(body) as { type: string; rpcId: string; method: string; payload: Record<string, unknown> };
-      seen.push({ method: envelope.method, payload: envelope.payload });
+      seen.push({ method: envelope.method, payload: (envelope.payload as { args: Record<string, unknown> }).args });
       const value = envelope.method === "settings/describe" ? { namespaces: [{ ns: "llm-pi-ai", revision: 7 }] } : {};
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ type: "server-response", rpcId: envelope.rpcId, result: { ok: true, value } }));

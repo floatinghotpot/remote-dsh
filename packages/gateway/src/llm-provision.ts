@@ -56,8 +56,6 @@ function dshJson(target: ProxyTarget, cookie: string | null, method: string, pay
         const chunks: Buffer[] = [];
         res.on("data", (c: Buffer) => chunks.push(c));
         res.on("end", () => {
-          const raw = Buffer.concat(chunks).toString("utf8");
-          if (method === "settings/describe") console.log(`rdsh: [debug] describe raw => ${raw.slice(0, 600)}`);
           if ((res.statusCode ?? 0) !== 200) {
             done(null);
             return;
@@ -84,7 +82,8 @@ function dshJson(target: ProxyTarget, cookie: string | null, method: string, pay
     );
     req.on("error", () => done(null));
     timer = setTimeout(() => req.destroy(new Error("dsh timeout")), 10_000);
-    req.end(JSON.stringify({ type: "client-request", rpcId, method, payload }));
+    // DSH Connection RPC：payload 必须是 {args: <params>}（"exactly one plain-object args field"）。
+    req.end(JSON.stringify({ type: "client-request", rpcId, method, payload: { args: payload } }));
   });
 }
 
