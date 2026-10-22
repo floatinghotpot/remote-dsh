@@ -46,7 +46,7 @@ test("pg migrations：应用 25 表 + usage_daily 分区 + 幂等", async (t) =>
     const expect = [
       "users", "hosts", "refresh_tokens", "join_tokens", "bind_sessions", "host_share",
       "audit_events", "email_codes", "sms_codes", "subscriptions", "orders", "payments",
-      "credits_ledger", "credit_holds", "service_tokens", "llm_keys", "llm_requests",
+      "credits_ledger", "credit_holds", "service_tokens", "llm_keys",
       "meta", "apple_tokens", "usage_daily", "usage_daily_default",
       "nodes", "node_metrics", "relay_join_tokens", "relay_join_events",
     ];

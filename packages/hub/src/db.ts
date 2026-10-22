@@ -363,28 +363,6 @@ export interface LlmKeyRow {
   lastUsedAt: number | null;
 }
 
-export interface LlmRequestRow {
-  id: string;
-  userId: number;
-  agentId: string | null;
-  keyId: string;
-  modelAlias: string;
-  provider: string;
-  upstreamModel: string;
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheWriteTokens: number;
-  reasoningTokens: number;
-  providerCostMicro: number;
-  chargedMicro: number;
-  status: string; // ok | error
-  errorCode: string | null;
-  latencyMs: number | null;
-  ttftMs: number | null;
-  createdAt: number;
-}
-
 export interface LlmUsageDailyRow {
   userId: number;
   agentId: string;
@@ -683,29 +661,6 @@ export class HubDb {
         last_used_at INTEGER
       );
       CREATE INDEX IF NOT EXISTS idx_llm_keys_agent ON llm_keys(agent_id);
-      CREATE TABLE IF NOT EXISTS llm_requests (
-        id TEXT PRIMARY KEY,
-        user_id INTEGER NOT NULL REFERENCES users(id),
-        agent_id TEXT,
-        key_id TEXT NOT NULL,
-        model_alias TEXT NOT NULL,
-        provider TEXT NOT NULL,
-        upstream_model TEXT NOT NULL,
-        input_tokens INTEGER NOT NULL DEFAULT 0,
-        output_tokens INTEGER NOT NULL DEFAULT 0,
-        cache_read_tokens INTEGER NOT NULL DEFAULT 0,
-        cache_write_tokens INTEGER NOT NULL DEFAULT 0,
-        reasoning_tokens INTEGER NOT NULL DEFAULT 0,
-        provider_cost_micro INTEGER NOT NULL DEFAULT 0,
-        charged_micro INTEGER NOT NULL DEFAULT 0,
-        status TEXT NOT NULL,
-        error_code TEXT,
-        latency_ms INTEGER,
-        ttft_ms INTEGER,
-        created_at INTEGER NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS idx_llm_requests_user ON llm_requests(user_id, created_at);
-      CREATE INDEX IF NOT EXISTS idx_llm_requests_agent ON llm_requests(agent_id, created_at);
       CREATE TABLE IF NOT EXISTS llm_models (
         id TEXT PRIMARY KEY,
         display_name TEXT NOT NULL,
@@ -2900,53 +2855,6 @@ export class HubDb {
 
   addLlmKeySpent(id: string, micro: number): void {
     this.db.prepare("UPDATE llm_keys SET spent_micro = spent_micro + ?, last_used_at = ? WHERE id = ?").run(micro, Date.now(), id);
-  }
-
-  // ---- LLM usage 记录 ----
-
-  private mapLlmRequest(row: Record<string, unknown>): LlmRequestRow {
-    return {
-      id: String(row.id),
-      userId: Number(row.user_id),
-      agentId: row.agent_id === null || row.agent_id === undefined ? null : String(row.agent_id),
-      keyId: String(row.key_id),
-      modelAlias: String(row.model_alias),
-      provider: String(row.provider),
-      upstreamModel: String(row.upstream_model),
-      inputTokens: Number(row.input_tokens),
-      outputTokens: Number(row.output_tokens),
-      cacheReadTokens: Number(row.cache_read_tokens),
-      cacheWriteTokens: Number(row.cache_write_tokens),
-      reasoningTokens: Number(row.reasoning_tokens),
-      providerCostMicro: Number(row.provider_cost_micro),
-      chargedMicro: Number(row.charged_micro),
-      status: String(row.status),
-      errorCode: row.error_code === null || row.error_code === undefined ? null : String(row.error_code),
-      latencyMs: row.latency_ms === null || row.latency_ms === undefined ? null : Number(row.latency_ms),
-      ttftMs: row.ttft_ms === null || row.ttft_ms === undefined ? null : Number(row.ttft_ms),
-      createdAt: Number(row.created_at),
-    };
-  }
-
-  createLlmRequest(r: LlmRequestRow): void {
-    this.db
-      .prepare(
-        "INSERT INTO llm_requests (id, user_id, agent_id, key_id, model_alias, provider, upstream_model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens, provider_cost_micro, charged_micro, status, error_code, latency_ms, ttft_ms, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      )
-      .run(r.id, r.userId, r.agentId, r.keyId, r.modelAlias, r.provider, r.upstreamModel, r.inputTokens, r.outputTokens, r.cacheReadTokens, r.cacheWriteTokens, r.reasoningTokens, r.providerCostMicro, r.chargedMicro, r.status, r.errorCode, r.latencyMs, r.ttftMs, r.createdAt);
-  }
-
-  listLlmRequests(opts: { userId?: number; agentId?: string; from?: number; to?: number; limit?: number } = {}): LlmRequestRow[] {
-    const conds: string[] = [];
-    const params: Array<number | string> = [];
-    if (opts.userId !== undefined) { conds.push("user_id = ?"); params.push(opts.userId); }
-    if (opts.agentId !== undefined) { conds.push("agent_id = ?"); params.push(opts.agentId); }
-    if (opts.from !== undefined) { conds.push("created_at >= ?"); params.push(opts.from); }
-    if (opts.to !== undefined) { conds.push("created_at <= ?"); params.push(opts.to); }
-    const where = conds.length > 0 ? `WHERE ${conds.join(" AND ")}` : "";
-    const limit = Math.min(Math.max(opts.limit ?? 1000, 1), 10000);
-    const rows = this.db.prepare(`SELECT * FROM llm_requests ${where} ORDER BY created_at DESC LIMIT ?`).all(...params, limit) as unknown as Array<Record<string, unknown>>;
-    return rows.map((r) => this.mapLlmRequest(r));
   }
 
   /** 按天聚合的 LLM 用量（llm_usage_daily）：写时 UPSERT，读用量页用。 */

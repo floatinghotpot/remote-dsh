@@ -8,7 +8,7 @@ import type { Pool, PoolClient } from "pg";
 import type {
   UserRow, HostRow, NodeRow, RefreshRow, JoinTokenRow, BindSessionRow, HostShareRow,
   AuditEventRow, EmailCodeRow, SmsCodeRow, SubscriptionRow, OrderRow, PaymentRow, CreditLedgerRow,
-  CreditHoldRow, CreditHoldStatus, ServiceTokenRow, LlmKeyRow, LlmKeyStatus, LlmRequestRow,
+  CreditHoldRow, CreditHoldStatus, ServiceTokenRow, LlmKeyRow, LlmKeyStatus,
   LlmModelRow, LlmUpstreamKeyRow, LlmRouterJoinTokenRow, LlmRouterRow, LlmRouterStatus, LlmModelNameSource,
 } from "../db.ts";
 
@@ -235,30 +235,6 @@ export function mapLlmKey(row: Record<string, unknown>): LlmKeyRow {
     expiresAt: row.expires_at === null || row.expires_at === undefined ? null : Number(row.expires_at),
     createdAt: Number(row.created_at),
     lastUsedAt: row.last_used_at === null || row.last_used_at === undefined ? null : Number(row.last_used_at),
-  };
-}
-
-export function mapLlmRequest(row: Record<string, unknown>): LlmRequestRow {
-  return {
-    id: String(row.id),
-    userId: Number(row.user_id),
-    agentId: row.agent_id === null || row.agent_id === undefined ? null : String(row.agent_id),
-    keyId: String(row.key_id),
-    modelAlias: String(row.model_alias),
-    provider: String(row.provider),
-    upstreamModel: String(row.upstream_model),
-    inputTokens: Number(row.input_tokens),
-    outputTokens: Number(row.output_tokens),
-    cacheReadTokens: Number(row.cache_read_tokens),
-    cacheWriteTokens: Number(row.cache_write_tokens),
-    reasoningTokens: Number(row.reasoning_tokens),
-    providerCostMicro: Number(row.provider_cost_micro),
-    chargedMicro: Number(row.charged_micro),
-    status: String(row.status),
-    errorCode: row.error_code === null || row.error_code === undefined ? null : String(row.error_code),
-    latencyMs: row.latency_ms === null || row.latency_ms === undefined ? null : Number(row.latency_ms),
-    ttftMs: row.ttft_ms === null || row.ttft_ms === undefined ? null : Number(row.ttft_ms),
-    createdAt: Number(row.created_at),
   };
 }
 

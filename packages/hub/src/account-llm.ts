@@ -102,7 +102,7 @@ export async function handleAccountLlm(req: IncomingMessage, res: ServerResponse
     return void json(res, ok ? 200 : 404, { ok }), true;
   }
 
-  // 用量统计：按模型 + 天聚合当前用户的 llm_requests（仅成功请求）。
+  // 用量统计：按模型 + 天聚合当前用户的 llm_usage_daily（服务端已按天预聚合）。
   if (path === "/api/account/llm/usage" && method === "GET") {
     const from = url.searchParams.get("from") ?? "";
     const to = url.searchParams.get("to") ?? "";

@@ -420,9 +420,9 @@ UI 文案必须写「**可云端中转主机数**」，**不要**写「主机配
 | POST | `/api/internal/llm/keys` | `llm:key:create` | 签发 per-agent key；返回一次性 `token`（只存 hash） |
 | POST | `/api/internal/llm/keys/{id}/revoke` | `llm:key:revoke` | 吊销 key |
 | POST | `/api/internal/llm/authorize` | `llm:authorize` | 验 key + 模型白名单 + 预算 + `reserveCreditHold` → `holdId` |
-| POST | `/api/internal/llm/holds/{id}/settle` | `llm:settle` | 按实际金额结算 + 记 `llm_requests` + 累加 key spent |
+| POST | `/api/internal/llm/holds/{id}/settle` | `llm:settle` | 按实际金额结算 + 累加 key spent + 按天聚合用量（同一事务） |
 | POST | `/api/internal/llm/holds/{id}/release` | `llm:release` | 释放 hold，不扣费 |
-| GET | `/api/internal/llm/usage?userId=&agentId=&from=&to=` | `llm:usage:read` | 查询 `llm_requests` |
+| GET | `/api/internal/llm/usage?userId=&agentId=&from=&to=` | `llm:usage:read` | 查询按天聚合用量（`llm_usage_daily`） |
 
 **authorize 请求**：`{token, model, requestId, estimateMicro, ttlMs?}`；返回 `{keyId, userId, agentId, holdId, availableMicro}`。
 错误：401 `UNAUTHORIZED`（key 无效/吊销/过期/用户不活跃）、403 `MODEL_NOT_ALLOWED`、402 `QUOTA_EXCEEDED`/`INSUFFICIENT_CREDITS`。
