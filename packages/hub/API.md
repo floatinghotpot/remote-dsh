@@ -498,3 +498,25 @@ UI 文案必须写「**可云端中转主机数**」，**不要**写「主机配
 |---|---|---|
 | GET | `/api/account/llm/models` | enabled 目录（`id`/`displayName`/`contextWindow`/`maxTokens`，不含价格） |
 | GET | `/api/account/llm/usage?from=&to=` | 按模型聚合用量，每模型带 `displayName`（关联目录） |
+
+## 18. 主机 LLM 自动配置（/api/hosts/llm-key，52-auto-provision-router，2026-10-22）
+
+> 网关以 host token 领取该 host 的 LLM key + 公网 Router 地址 + 模型目录，用于自动写 DSH provider。
+
+| 方法 | 路径 | 鉴权 | 说明 |
+|---|---|---|---|
+| POST | `/api/hosts/llm-key` | host token（`body.token`） | 重签该 host 的 `sk-rdsh-` key，返回 `{ key, baseURL, models }` |
+
+- 请求：`{ token }`（host token，明文只此一次）；
+- 校验：host 存在 + owner `accountStatus === "active"`；
+- 每次调用**吊销旧的 host key**、签发新 key（hash-only，旧明文不可重发）；
+- `baseURL` 取活跃 Router 上报的 `public_base_url`（无活跃 Router 则为 `""`）；
+- `models` 为 enabled 目录的 `[{id, displayName, contextWindow, maxTokens}]`；
+- 错误：401 `UNAUTHORIZED`（host token 无效）、403 `FORBIDDEN`（owner 失活）。
+
+### 18.1 相关契约变更
+
+- Router join（`POST /api/internal/llm/routers/join`）请求体新增可选 `publicBaseURL`；`llm_routers` 新增 `public_base_url`；
+- `GET /api/admin/llm/routers` 每行新增 `publicBaseUrl`；
+- `GET /api/account/llm/keys` 每行新增 `hostId`（`null`=用户自建；非空=主机自动，**只读**）；
+- `POST /api/account/llm/keys/{id}/revoke` 对 `hostId != null` 的 key 返回 403 `FORBIDDEN`。
