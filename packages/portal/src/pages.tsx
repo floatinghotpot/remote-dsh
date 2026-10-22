@@ -1198,6 +1198,22 @@ function LlmKeysPage(): React.JSX.Element {
       <BackToAccount />
       <Toast toast={toast} />
       {err !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{err}</p>}
+      <Card title={t("在 DSH 里用大模型，你有三种选择")}>
+        <ol style={{ margin: 0, paddingLeft: 20, fontSize: 13, lineHeight: 1.9, color: "var(--rdsh-fg-muted)" }}>
+          <li>
+            <span style={{ color: "var(--rdsh-fg)", fontWeight: 600 }}>{t("DeepSeek 官方账号")}</span>
+            {" — "}{t("登录 DeepSeek 账号，直接到 DeepSeek 充值，费用由 DeepSeek 结算。")}
+          </li>
+          <li>
+            <span style={{ color: "var(--rdsh-fg)", fontWeight: 600 }}>{t("第三方模型")}</span>
+            {" — "}{t("自己接入其他厂商的模型，需要自己填写地址和 Key。")}
+          </li>
+          <li>
+            <span style={{ color: "var(--rdsh-fg)", fontWeight: 600 }}>{t("鲸湾托管（推荐，免配置）")}</span>
+            {" — "}{t("主机接入时自动为你配好，不用填任何东西；费用从你的鲸湾点数里扣，用量可在「用量统计」查看。下面的 Key 就是这一种。")}
+          </li>
+        </ol>
+      </Card>
       <Card title={t("我的 Key")}>
         {keys.length === 0 && (
           <p style={{ fontSize: 13, color: "var(--rdsh-fg-muted)", marginTop: 0 }}>{t("还没有 Key。创建一个，填到你的 DSH 里使用。")}</p>
@@ -1257,7 +1273,7 @@ function LlmKeysPage(): React.JSX.Element {
           );
         })}
         <p style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", marginTop: 12, marginBottom: 0 }}>
-          {t("Key 由主机接入时自动创建，无需手工配置。")}
+          {t("Key 由主机接入时自动创建，无需手工配置。请勿分享给别人——拿到它的人可以消耗你的点数。")}
         </p>
       </Card>
     </Shell>
