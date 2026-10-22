@@ -187,6 +187,20 @@ function AppShell({ children }: { children: React.ReactNode }): React.JSX.Elemen
   );
 }
 
+/** 紧凑图标按钮（行内 ✎ / 🗑），避免撑高所在行。 */
+function iconBtnStyle(): React.CSSProperties {
+  return {
+    padding: "2px 6px",
+    borderRadius: 4,
+    border: "1px solid var(--rdsh-border)",
+    background: "var(--rdsh-bg-surface)",
+    color: "var(--rdsh-fg)",
+    cursor: "pointer",
+    fontSize: 12,
+    lineHeight: 1,
+  };
+}
+
 function btnStyle(variant: "primary" | "danger" | "ghost" = "primary"): React.CSSProperties {
   const base: React.CSSProperties = {
     padding: "6px 14px",
@@ -1243,9 +1257,9 @@ function LlmKeysPage(): React.JSX.Element {
               {!isHost && !editing && (
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   {k.status === "active" && (
-                    <button title={t("重命名")} onClick={() => startEdit(k)} style={btnStyle("ghost")}>✎</button>
+                    <button title={t("重命名")} onClick={() => startEdit(k)} style={iconBtnStyle()}>✎</button>
                   )}
-                  <button title={t("删除")} onClick={() => remove(k)} style={btnStyle("ghost")}>🗑</button>
+                  <button title={t("删除")} onClick={() => remove(k)} style={iconBtnStyle()}>🗑</button>
                 </div>
               )}
             </div>
