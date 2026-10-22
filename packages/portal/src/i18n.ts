@@ -225,6 +225,7 @@ const EN: Record<string, string> = {
   "已保存": "Saved",
   "已删除": "Deleted",
   "创建于": "Created",
+  "追踪 ID": "Tracking ID",
   "确定删除这个 Key？删除后无法恢复。": "Delete this key? This cannot be undone.",
   "微信登录需在服务端配置 hub.json wechatLogin": "WeChat sign-in requires hub.json wechatLogin",
 
