@@ -75,6 +75,7 @@ function dshJson(target: ProxyTarget, cookie: string | null, path: string, body:
 
 async function readRevision(target: ProxyTarget, cookie: string | null, ns: string): Promise<number | null> {
   const j = await dshJson(target, cookie, "/api/settings/describe", {});
+  console.log(`rdsh: [debug] describe => ${j === null ? "null" : JSON.stringify(j).slice(0, 300)}`);
   if (j === null) return null;
   const namespaces = j.namespaces;
   if (!Array.isArray(namespaces)) return null;
