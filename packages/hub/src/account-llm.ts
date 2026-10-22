@@ -16,10 +16,11 @@ function json(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
-function keyView(k: { id: string; name: string; status: string; spentMicro: number; budgetMicro: number; createdAt: number; lastUsedAt: number | null }): Record<string, unknown> {
+function keyView(k: { id: string; name: string; tokenTail4: string; status: string; spentMicro: number; budgetMicro: number; createdAt: number; lastUsedAt: number | null }): Record<string, unknown> {
   return {
     id: k.id,
     name: k.name,
+    tokenTail4: k.tokenTail4,
     status: k.status,
     spentMicro: k.spentMicro,
     budgetMicro: k.budgetMicro,
@@ -54,6 +55,7 @@ export async function handleAccountLlm(req: IncomingMessage, res: ServerResponse
       agentId: null,
       tokenHash: sha256(token),
       name,
+      tokenTail4: token.slice(-4),
     });
     return void json(res, 200, { keyId: key.id, token, name: key.name }), true;
   }

@@ -89,6 +89,7 @@ export async function handleInternalApi(req: IncomingMessage, res: ServerRespons
       agentId,
       tokenHash: sha256(token),
       name: typeof body.name === "string" && body.name.trim() !== "" ? body.name.trim() : agentId,
+      tokenTail4: token.slice(-4),
       modelAllowlist,
       budgetMicro,
       expiresAt,
