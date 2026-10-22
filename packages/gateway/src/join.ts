@@ -1526,7 +1526,6 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
       insecure: opts.insecure,
       target: opts.target,
       dshAuthCookie,
-      enabled: true,
     }).catch((err) => log("warn", `llm provision error: ${err instanceof Error ? err.message : String(err)}`));
   }
 

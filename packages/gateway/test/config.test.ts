@@ -91,3 +91,11 @@ test("gateway.accessCode 折叠语义 + ≥4 校验", () => {
   assert.throws(() => normalizeConfig({ gateway: { accessCode: 1234 } }), /must be a string/);
   assert.throws(() => normalizeConfig({ gateway: "x" }), /"gateway" must be an object/);
 });
+
+test("52：llm.provision 解析（缺省/显式/非法）", () => {
+  assert.equal(normalizeConfig({}).llm, undefined);
+  assert.deepEqual(normalizeConfig({ llm: { provision: false } }).llm, { provision: false });
+  assert.deepEqual(normalizeConfig({ llm: {} }).llm, {});
+  assert.throws(() => normalizeConfig({ llm: { provision: "no" } }));
+  assert.throws(() => normalizeConfig({ llm: 1 }));
+});

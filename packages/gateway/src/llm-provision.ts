@@ -1,14 +1,12 @@
 /**
  * llm-provision.ts — 52-auto-provision-router：网关自动配置 DSH 的 `rdsh-llm-router` provider + key。
  *
- * 流程（幂等 + 降级）：
- *   1. 开关关闭 → 直接返回；
- *   2. settings/describe → 找 `llm-pi-ai` 的 revision + 是否已有 `providers.rdsh-llm-router`；
- *      已有 → 返回（幂等）；
- *   3. Hub `/api/hosts/llm-key`（host token）→ { key, baseURL, models }；
- *   4. settings/mutate 写 provider（displayName/apiKeyEnv/api/baseURL/models 各一次 set）；
- *   5. credentials/set 写 key（RDSH_ROUTER_API_KEY）。
- * 任何 DSH API 失败 → 记日志、返回（不阻断网关；保留手工配置路径）。
+ * 每次网关启动执行一次（`startJoin` 顶层 fire-and-forget，重连不重跑）：
+ *   1. settings/describe 读 `llm-pi-ai` 的 revision（DSH 不可用/缺命名空间 → 降级返回）；
+ *   2. Hub `/api/hosts/llm-key`（host token）→ { key, baseURL, models }（重签，旧 key 吊销）；
+ *   3. settings/mutate 写 provider（displayName/apiKeyEnv/api/baseURL/models，5 个 set，覆盖同路径 = 幂等）；
+ *   4. credentials/set 写 key（RDSH_ROUTER_API_KEY）。
+ * 任何 DSH API 失败 → 记日志、返回（不阻断网关；保留手工配置路径）。模型目录随每次启动刷新。
  */
 import { request as httpRequest } from "node:http";
 import { hubRequest } from "./join.ts";
@@ -32,7 +30,6 @@ export interface ProvisionOptions {
   insecure: boolean;
   target: ProxyTarget;
   dshAuthCookie: string | null;
-  enabled: boolean;
 }
 
 function dshJson(target: ProxyTarget, cookie: string | null, path: string, body: unknown): Promise<Record<string, unknown> | null> {
@@ -67,37 +64,35 @@ function dshJson(target: ProxyTarget, cookie: string | null, path: string, body:
   });
 }
 
-/** 读 `llm-pi-ai` 的 revision 与是否已配置 provider；失败返回 null。 */
-async function readProviderState(target: ProxyTarget, cookie: string | null): Promise<{ revision: number; exists: boolean } | null> {
+/** 读 `llm-pi-ai` 的 revision；DSH 不可用/缺命名空间/revision 非数字 → null。 */
+async function readRevision(target: ProxyTarget, cookie: string | null): Promise<number | null> {
   const desc = await dshJson(target, cookie, "/api/settings/describe", {});
   if (desc === null) return null;
   const namespaces = desc.namespaces as Array<Record<string, unknown>> | undefined;
   if (!Array.isArray(namespaces)) return null;
   const ns = namespaces.find((n) => n.ns === NS);
-  if (ns === undefined) return null;
-  const value = (ns.value ?? {}) as Record<string, unknown>;
-  const providers = (value.providers ?? {}) as Record<string, unknown>;
-  return { revision: typeof ns.revision === "number" ? ns.revision : 0, exists: providers[PROVIDER_ID] !== undefined };
+  if (ns === undefined || typeof ns.revision !== "number") return null;
+  return ns.revision;
 }
 
 export async function provisionLlm(opts: ProvisionOptions): Promise<void> {
-  if (!opts.enabled) return;
-  const state = await readProviderState(opts.target, opts.dshAuthCookie);
-  if (state === null) {
-    // DSH API 不可用（版本差异/未启动）→ 降级，不阻断网关。
+  const revision = await readRevision(opts.target, opts.dshAuthCookie);
+  if (revision === null) {
     console.warn("rdsh: llm provision skipped (DSH settings API unavailable)");
     return;
   }
-  if (state.exists) return; // 幂等
-
   const res = await hubRequest(opts.hubUrl, "/api/hosts/llm-key", { method: "POST", insecure: opts.insecure, body: { token: opts.token } });
   if (!res.ok) {
     console.warn(`rdsh: llm provision skipped (hub llm-key ${res.status})`);
     return;
   }
   const provision = res.body as unknown as LlmKeyResponse;
-  if (typeof provision.key !== "string" || provision.key === "" || provision.baseURL === "") {
-    console.warn("rdsh: llm provision skipped (no key or baseURL from hub)");
+  if (
+    typeof provision.key !== "string" || provision.key === "" ||
+    typeof provision.baseURL !== "string" || provision.baseURL === "" ||
+    !Array.isArray(provision.models) || provision.models.length === 0
+  ) {
+    console.warn("rdsh: llm provision skipped (hub returned no key/baseURL/models)");
     return;
   }
 
@@ -114,7 +109,7 @@ export async function provisionLlm(opts: ProvisionOptions): Promise<void> {
     { op: "set", path: ["providers", PROVIDER_ID, "baseURL"], value: provision.baseURL },
     { op: "set", path: ["providers", PROVIDER_ID, "models"], value: models },
   ];
-  const mutated = await dshJson(opts.target, opts.dshAuthCookie, "/api/settings/mutate", { ns: NS, ops, expectedRevision: state.revision });
+  const mutated = await dshJson(opts.target, opts.dshAuthCookie, "/api/settings/mutate", { ns: NS, ops, expectedRevision: revision });
   if (mutated === null) {
     console.warn("rdsh: llm provision skipped (settings/mutate failed)");
     return;

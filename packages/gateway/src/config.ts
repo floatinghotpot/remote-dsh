@@ -287,6 +287,17 @@ export function normalizeConfig(raw: unknown, source = "config"): RdshConfig {
     }
     out.dshUiCompat = compatOut;
   }
+  // ---- llm（52：自动配置 DSH provider + key；缺省 provision: true）----
+  if (cfg.llm !== undefined) {
+    if (typeof cfg.llm !== "object" || cfg.llm === null) throw new Error(`${source}: "llm" must be an object`);
+    const l = cfg.llm as Record<string, unknown>;
+    const llmOut: { provision?: boolean } = {};
+    if (l.provision !== undefined) {
+      if (typeof l.provision !== "boolean") throw new Error(`${source}: "llm.provision" must be boolean`);
+      llmOut.provision = l.provision;
+    }
+    out.llm = llmOut;
+  }
   // ---- gateway（访问口令；缺省 accessCode null = gate off）----
   if (cfg.gateway !== undefined) {
     if (typeof cfg.gateway !== "object" || cfg.gateway === null) throw new Error(`${source}: "gateway" must be an object`);
