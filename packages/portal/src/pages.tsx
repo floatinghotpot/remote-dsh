@@ -1252,8 +1252,6 @@ function LlmKeysPage(): React.JSX.Element {
               <span style={{ color: "var(--rdsh-fg-muted)" }}>{fmtDate(k.lastUsedAt)}</span>
               <span style={{ color: "var(--rdsh-fg-subtle)" }}>{t("已消耗")}</span>
               <span style={{ color: "var(--rdsh-fg-muted)" }}>{`${String(k.spentMicro / 10000)} ${t("点")}`}</span>
-              <span style={{ color: "var(--rdsh-fg-subtle)" }}>{t("追踪 ID")}</span>
-              <span style={{ color: "var(--rdsh-fg-subtle)", fontFamily: "monospace", wordBreak: "break-all" }}>{k.id}</span>
             </div>
           </div>
           );
