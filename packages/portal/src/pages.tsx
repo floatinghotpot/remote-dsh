@@ -1190,9 +1190,9 @@ function LlmKeysPage(): React.JSX.Element {
         {keys.map((k) => (
           <div key={k.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid var(--rdsh-border-soft)" }}>
             <div>
-              <div style={{ fontSize: 14 }}>{k.name}</div>
-              <div style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", fontFamily: "monospace" }}>
-                sk-rdsh-…{k.tokenTail4}
+              <div style={{ fontSize: 14, display: "flex", alignItems: "center", gap: 8 }}>
+                <span>{k.name}</span>
+                <span style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", fontFamily: "monospace" }}>sk-rdsh-…{k.tokenTail4}</span>
               </div>
               <div style={{ fontSize: 12, color: "var(--rdsh-fg-muted)" }}>
                 {k.status === "revoked" ? t("已吊销") : t("已消耗 {x} 点", { params: { x: String(k.spentMicro / 10000) } })}
