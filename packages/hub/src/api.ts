@@ -3130,7 +3130,7 @@ async function handleHostLlmKey(req: IncomingMessage, res: ServerResponse, runti
     return;
   }
   // 重签：吊销旧 host key（若存在），再签新（hash-only，旧明文不可重发）。
-  await runtime.store.revokeLlmKeysByHost(host.id);
+  await runtime.store.deleteLlmKeysByHost(host.id);
   const token = `sk-${randomToken()}`;
   await runtime.store.createLlmKey({
     id: randomUUID(),

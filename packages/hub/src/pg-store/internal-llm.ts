@@ -23,6 +23,7 @@ export function internalLlm(
   | "updateLlmKeyName"
   | "deleteLlmKey"
   | "revokeLlmKeysByHost"
+  | "deleteLlmKeysByHost"
   | "addLlmKeySpent"
   | "createLlmRequest"
   | "listLlmRequests"
@@ -91,6 +92,11 @@ export function internalLlm(
 
     revokeLlmKeysByHost: async (hostId: string, _now = Date.now()): Promise<number> => {
       const r = await q(txDb(pool), "UPDATE llm_keys SET status = 'revoked' WHERE host_id = $1 AND status = 'active'", [hostId]);
+      return r.rowCount;
+    },
+
+    deleteLlmKeysByHost: async (hostId: string): Promise<number> => {
+      const r = await q(txDb(pool), "DELETE FROM llm_keys WHERE host_id = $1", [hostId]);
       return r.rowCount;
     },
 

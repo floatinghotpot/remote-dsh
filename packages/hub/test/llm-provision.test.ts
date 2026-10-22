@@ -48,12 +48,13 @@ test("52：/api/hosts/llm-key 签发 + 重签 + 鉴权", async () => {
     assert.equal(keys1.length, 1);
     assert.equal(keys1[0]!.hostId, "h1");
 
-    // 2) 重签：旧 key 吊销，只剩一把 active
+    // 2) 重签：旧 key 删除（避免堆积 revoked 垃圾），只剩一把 active
     const r2 = await post(ctx.base, "/api/hosts/llm-key", { token: hostToken });
     assert.equal(r2.status, 200);
     assert.notEqual(r2.body.key, r1.body.key);
     const keys2 = ctx.db.listLlmKeysByUser(owner.id);
-    assert.equal(keys2.filter((k) => k.status === "active").length, 1);
+    assert.equal(keys2.length, 1);
+    assert.equal(keys2[0]!.status, "active");
 
     // 3) 无效 host token → 401
     const r3 = await post(ctx.base, "/api/hosts/llm-key", { token: "wrong-token-12345678" });
