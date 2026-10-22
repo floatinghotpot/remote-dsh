@@ -55,6 +55,8 @@ export interface RdshConfig {
   dshUiCompat?: DshUiCompat;
   /** 网关访问口令（host 侧独立于 hub 的访问保护） */
   gateway?: GatewayConfig;
+  /** 52：自动配置 DSH 的 rdsh-llm-router provider + key（缺省开启；false 关闭） */
+  llm?: { provision?: boolean };
 }
 
 /** 网关访问口令：accessCode 缺失/null/"" → null（gate off）；非空 ≥4 位（gate on）。 */
