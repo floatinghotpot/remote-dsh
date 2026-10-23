@@ -329,7 +329,8 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse, runtime: Hu
     return;
   }
 
-  // 进入 host：/h/<hostId>/... → 有 cookie 直接进数据面（剥前缀，多标签隔离）；无 cookie 走首次进入（Set-Cookie + 302）
+  // 进入 host：/h/<hostId>/... → 按“该 host 路由到哪”决定数据面，而非有没有 cookie。
+  // 节点路由（node 在线）时隧道在节点上，必须 302 到节点；Hub 路由时才在本 Hub 直连。
   const h = /^\/h\/([^/]+)(\/.*)?$/.exec(pathname);
   if (h !== null) {
     const pathHostId = decodeURIComponent(h[1]!);
@@ -340,8 +341,16 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse, runtime: Hu
       res.end();
       return;
     }
+    const host = await runtime.store.getHostById(pathHostId);
+    const node = host !== null && host.nodeId !== null ? await runtime.store.getNodeById(host.nodeId) : null;
+    const nodeOnline = node !== null && node.status === "online";
+    if (nodeOnline) {
+      // 节点路由：数据面在节点，永远 302 到节点（Set-Cookie + 302；节点是不同源，无循环）。
+      await handleEnterHost(req, res, runtime, pathHostId, rest, url.search);
+      return;
+    }
+    // Hub 路由：本 Hub 做数据面。有 cookie 直接透传（剥前缀）；无 cookie 走首次进入。
     if (hostId !== undefined) {
-      // 已进入过：剥掉 /h/<hostId>/ 前缀直接透传
       await handleRelay(req, res, runtime, rest + url.search, { bufferHtml: true }, pathHostId);
       return;
     }

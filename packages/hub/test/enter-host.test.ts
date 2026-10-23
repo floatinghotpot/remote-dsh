@@ -243,3 +243,21 @@ test("无尾斜杠 /h/<id> → 301 到 /h/<id>/", async () => {
     await close(ctx);
   }
 });
+
+test("节点路由 host：带旧 rdsh_host cookie 进 /h/<id>/ → 302 到节点而非本 Hub 503", async () => {
+  const ctx = await boot();
+  try {
+    const alice = ctx.db.createUser("alice", await hashPassword("pw"));
+    ctx.db.createHost("host-abc", alice.id, "abc", sha256(randomToken()));
+    // 节点路由：分配在线节点（隧道在节点上，不在 Hub 本机）
+    ctx.db.createNode("node-1", "cn-relay-01", "https://cn-relay-01.rdsh.cn", sha256(randomToken()), "", 0, 100, true, null);
+    ctx.db.setHostNode("host-abc", "node-1");
+    // 浏览器残留的旧 cookie（哪怕有效）不应让 Hub 误判为“已进入”而在本机直连
+    const cookie = `rdsh_host=${ctx.auth.signHostCookie("host-abc", alice.id)}`;
+    const res = await fetch(`${ctx.base}/h/host-abc/`, { headers: { cookie }, redirect: "manual" });
+    assert.equal(res.status, 302, "节点路由必须 302 到节点，而不是在本 Hub 直连 503");
+    assert.equal(res.headers.get("location"), "https://cn-relay-01.rdsh.cn/h/host-abc/");
+  } finally {
+    await close(ctx);
+  }
+});
