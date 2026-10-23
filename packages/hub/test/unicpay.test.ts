@@ -644,6 +644,26 @@ test("A 类 payment.succeeded + 未知 channel → 按 1.0 不加量", async () 
   assert.equal(db.getCreditBalances(user.id).purchased, 800 * CREDITS_MICRO_PER_CREDIT);
 });
 
+test("payment.refunded：按实际入账金额冲正（含渠道加量，880 入账则冲 880）", async () => {
+  const user = db.createUser("wh-refund-channel", await hashPassword("pw123456"));
+  db.createOrder("o-refund-channel", user.id, "credits_1_usd", 8);
+  // 微信支付 → 800 × 1.1 = 880 点
+  await postWebhook({ eventType: "payment.succeeded", paymentId: "p-refund-channel", appOrderId: "o-refund-channel", amount: 800, currency: "CNY", goodsType: "consumable", channel: "wechatpay" });
+  assert.equal(db.getCreditBalances(user.id).purchased, 880 * CREDITS_MICRO_PER_CREDIT);
+  // 退款 → 冲正 880（而非基础档 800），余额归零，不残留点数
+  const r = await postWebhook({ eventType: "payment.refunded", paymentId: "p-refund-channel", appOrderId: "o-refund-channel" });
+  assert.equal(r.status, 200);
+  assert.equal(db.getCreditBalances(user.id).purchased, 0);
+});
+
+test("payment.refunded：入账未到（乱序）→ 503 退避重试", async () => {
+  const user = db.createUser("wh-refund-before", await hashPassword("pw123456"));
+  db.createOrder("o-refund-before", user.id, "credits_1_usd", 8);
+  const r = await postWebhook({ eventType: "payment.refunded", paymentId: "p-refund-before", appOrderId: "o-refund-before" });
+  assert.equal(r.status, 503);
+  assert.equal(db.getCreditBalances(user.id).purchased, 0);
+});
+
 test("A 类 payment.succeeded + goodsType 缺失 → planId 兜底入账（P1-2 回归）", async () => {
   const user = db.createUser("wh-a-fallback", await hashPassword("pw123456"));
   db.createOrder("o-fallback", user.id, "credits_1_usd", 8);

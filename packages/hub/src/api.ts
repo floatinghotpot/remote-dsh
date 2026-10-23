@@ -2585,7 +2585,8 @@ async function handleBillingOrderCheck(req: IncomingMessage, res: ServerResponse
   // 平台已支付：幂等补发（与 webhook 同一段、同一幂等键 unicpay:<paymentId>）。
   // 平台查单 amount 与 webhook body.amount 同为「分」（最小单位整数），直接与 order.amountCny*100 比对。
   const amountMinor = typeof po.amount === "number" ? po.amount : null;
-  const result = await deliverUnicpayPaidOrder(runtime, order, order.paymentId ?? "", amountMinor, "", "", ip, JSON.stringify(po));
+  const channel = typeof po.channel === "string" ? po.channel : "";
+  const result = await deliverUnicpayPaidOrder(runtime, order, order.paymentId ?? "", amountMinor, "", channel, ip, JSON.stringify(po));
   if (!result.ok && result.reason === "amount_mismatch") {
     writeError(res, 502, "AMOUNT_MISMATCH", "platform amount does not match the order");
     return;
@@ -4047,6 +4048,7 @@ async function deliverUnicpayPaidOrder(
     return { ok: false, reason: "amount_mismatch" };
   }
   // 事务：原子守卫「仅 created → paid」，并发（webhook/查单/连点）只一个成功，杜绝双发。
+  const bonusHolder: { value: { channel: string; mult: number; baseCredits: number; deliveredCredits: number } | null } = { value: null };
   const notCreated = await runtime.store.withTransaction(async () => {
     if (!(await runtime.store.markOrderPaidIfCreated(order.id, "unicpay", paymentId))) {
       return true; // 未跃迁（无写发生），正常返回即回滚等价
@@ -4060,6 +4062,7 @@ async function deliverUnicpayPaidOrder(
         // 渠道加量：微信/支付宝等第三方支付渠道费低于应用商店，按 channelBonus 放大点数。
         const mult = runtime.config.billing?.channelBonus?.[channel] ?? 1;
         const credits = Math.round(product.credits * mult);
+        bonusHolder.value = { channel, mult, baseCredits: product.credits, deliveredCredits: credits };
         await creditRecharge(runtime.store, order.userId, credits * CREDITS_MICRO_PER_CREDIT, {
           sourceType: "unicpay",
           sourceId: paymentId,
@@ -4075,6 +4078,10 @@ async function deliverUnicpayPaidOrder(
     return false;
   });
   if (notCreated) return { ok: false, reason: "not_created" };
+  if (bonusHolder.value !== null) {
+    const d = bonusHolder.value;
+    await runtime.store.recordAudit(order.userId, "billing.unicpay.channel_bonus", { paymentId, appOrderId: order.id, channel: d.channel, multiplier: d.mult, baseCredits: d.baseCredits, deliveredCredits: d.deliveredCredits }, ip);
+  }
   await runtime.store.recordAudit(order.userId, "billing.unicpay.payment", { paymentId, appOrderId: order.id }, ip);
   return { ok: true };
 }
@@ -4203,13 +4210,23 @@ async function handleUnicpayWebhook(req: IncomingMessage, res: ServerResponse, r
       const refundOrder = await runtime.store.getOrder(refundOrderId);
       if (refundOrder !== null) {
         const refundProduct = creditProductById(creditProductsOf(runtime), refundOrder.planId);
-        // 仅对「已支付」的点数订单冲正，避免对 created / amount-mismatch 未入账订单误扣成负余额。
-        if (refundProduct !== undefined && refundOrder.status === "paid") {
-          await creditRefund(runtime.store, refundOrder.userId, refundProduct.credits * CREDITS_MICRO_PER_CREDIT, {
-            platform: "unicpay",
-            transactionId: paymentId,
-          });
-          await runtime.store.markOrderRefunded(refundOrderId);
+        // 点数订单退款：反查原入账流水为「冲正金额」的唯一依据（含渠道加量，与入账严格一致）。
+        if (refundProduct !== undefined) {
+          const rechargeLedger = await runtime.store.getCreditLedgerByIdempotencyKey(`unicpay:${paymentId}`);
+          if (rechargeLedger === null) {
+            // 原入账未到（乱序：refunded 先于 succeeded，或订单尚未支付）→ 非 2xx 退避重试，等 succeeded 到达后再冲正。
+            await runtime.store.recordAudit(null, "billing.unicpay.refund_before_recharge", { paymentId, appOrderId: body.appOrderId ?? null }, ip);
+            writeError(res, 503, "RECHARGE_NOT_FOUND", "refund arrived before recharge; retry later");
+            return;
+          }
+          if (refundOrder.status === "paid") {
+            // 按**实际到账金额**冲正（而非基础档），杜绝「880 入账、800 冲正」的点数泄漏。
+            await creditRefund(runtime.store, refundOrder.userId, Math.abs(rechargeLedger.delta), {
+              platform: "unicpay",
+              transactionId: paymentId,
+            });
+            await runtime.store.markOrderRefunded(refundOrderId);
+          }
         }
       }
     }

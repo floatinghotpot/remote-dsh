@@ -231,6 +231,27 @@ const cfg = normalizeHubConfig({
 assert.deepEqual(cfg.billing?.credits.map((c) => c.id), ["from_file"]);
 });
 
+test("billing.productsFile：顶层 channelBonus 渠道加量", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "hubcfg-chanbonus-"));
+  const file = join(dir, "iap_products.json");
+  await writeFile(file, JSON.stringify({
+    channelBonus: { wechatpay: 1.1, alipay: 1.1, apple: 1.0, google: 1.0 },
+    products: {
+      consumable: [{ id: "credits_1_usd", package: { credits: 800 }, priceCNY: 8 }],
+      subscription: [],
+    },
+  }));
+  const cfg = normalizeHubConfig({ billing: { productsFile: file } });
+  assert.deepEqual(cfg.billing?.channelBonus, { wechatpay: 1.1, alipay: 1.1, apple: 1.0, google: 1.0 });
+});
+
+test("billing.channelBonus：内联兜底 + 非法值 fail-fast", () => {
+  const ok = normalizeHubConfig({ billing: { channelBonus: { wechatpay: 1.1 } } });
+  assert.deepEqual(ok.billing?.channelBonus, { wechatpay: 1.1 });
+  assert.throws(() => normalizeHubConfig({ billing: { channelBonus: { wechatpay: 0 } } }), /positive number/);
+  assert.throws(() => normalizeHubConfig({ billing: { channelBonus: { x: "1.1" } } }), /positive number/);
+});
+
 test("billing.productsFile：订阅段生成套餐（与 App/商店同一份清单）", (t) => {
   const real = process.env.RDSH_IAP_PRODUCTS_FILE;
   if (real === undefined || !existsSync(real)) {
