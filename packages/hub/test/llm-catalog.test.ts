@@ -118,3 +118,26 @@ test("51：Router join → approve → config（密文可解）", async () => {
     ctx.db.close();
   }
 });
+
+test("setLlmRouterEnabled：enable/disable 不改 approved_at；active 记审批", () => {
+  const db = new HubDb(":memory:");
+  db.createLlmRouter("r1", "router-1", "tok-1", null, null);
+
+  // approve → active + 记审批时间
+  db.setLlmRouterStatus("r1", "active", "admin", 1000);
+  assert.equal(db.getLlmRouter("r1")!.status, "active");
+  assert.equal(db.getLlmRouter("r1")!.approvedAt, 1000);
+  assert.equal(db.getLlmRouter("r1")!.approvedBy, "admin");
+
+  // disable → disabled，approved_at 不变
+  db.setLlmRouterEnabled("r1", false, 2000);
+  assert.equal(db.getLlmRouter("r1")!.status, "disabled");
+  assert.equal(db.getLlmRouter("r1")!.approvedAt, 1000);
+
+  // enable → active，approved_at 仍不变（不重新审批）
+  db.setLlmRouterEnabled("r1", true, 3000);
+  assert.equal(db.getLlmRouter("r1")!.status, "active");
+  assert.equal(db.getLlmRouter("r1")!.approvedAt, 1000);
+
+  db.close();
+});

@@ -687,8 +687,14 @@ export const adminApi = {
   approveLlmRouter(id: string): Promise<{ ok: boolean }> {
     return adminJson(`/api/admin/llm/routers/${id}/approve`, { method: "POST", body: "{}" });
   },
-  revokeLlmRouter(id: string): Promise<{ ok: boolean }> {
-    return adminJson(`/api/admin/llm/routers/${id}/revoke`, { method: "POST", body: "{}" });
+  enableLlmRouter(id: string): Promise<{ ok: boolean }> {
+    return adminJson(`/api/admin/llm/routers/${id}/enable`, { method: "POST", body: "{}" });
+  },
+  disableLlmRouter(id: string): Promise<{ ok: boolean }> {
+    return adminJson(`/api/admin/llm/routers/${id}/disable`, { method: "POST", body: "{}" });
+  },
+  deleteLlmRouter(id: string): Promise<{ ok: boolean }> {
+    return adminJson(`/api/admin/llm/routers/${id}/delete`, { method: "POST", body: "{}" });
   },
   llmRouterJoinTokens(): Promise<{ tokens: Array<{ id: string; label: string; expiresAt: number; usedAt: number | null; createdAt: number }> }> {
     return adminJson("/api/admin/llm/router-join-tokens");

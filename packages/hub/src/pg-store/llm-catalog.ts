@@ -14,7 +14,7 @@ export function llmCatalog(
   | "listLlmModels" | "getLlmModel" | "createLlmModel" | "updateLlmModel" | "syncLlmModelMeta" | "deleteLlmModel"
   | "listLlmUpstreamKeys" | "getLlmUpstreamKey" | "createLlmUpstreamKey" | "updateLlmUpstreamKey" | "revokeLlmUpstreamKey" | "touchLlmUpstreamKeyAssigned"
   | "createLlmRouterJoinToken" | "findLlmRouterJoinTokenByHash" | "markLlmRouterJoinTokenUsed" | "listLlmRouterJoinTokens"
-  | "createLlmRouter" | "getLlmRouter" | "getLlmRouterByTokenId" | "listLlmRouters" | "setLlmRouterStatus" | "touchLlmRouterSeen"
+  | "createLlmRouter" | "getLlmRouter" | "getLlmRouterByTokenId" | "listLlmRouters" | "setLlmRouterStatus" | "setLlmRouterEnabled" | "touchLlmRouterSeen"
 > {
   return {
     listLlmModels: async (opts: { enabledOnly?: boolean } = {}): Promise<LlmModelRow[]> => {
@@ -161,6 +161,12 @@ export function llmCatalog(
       const r = status === "active"
         ? await q(txDb(pool), "UPDATE llm_routers SET status = 'active', approved_at = $1, approved_by = $2 WHERE id = $3", [now, actor, id])
         : await q(txDb(pool), "UPDATE llm_routers SET status = $1 WHERE id = $2", [status, id]);
+      return r.rowCount > 0;
+    },
+
+    setLlmRouterEnabled: async (id: string, enabled: boolean, now = Date.now()): Promise<boolean> => {
+      const status = enabled ? "active" : "disabled";
+      const r = await q(txDb(pool), "UPDATE llm_routers SET status = $1 WHERE id = $2", [status, id]);
       return r.rowCount > 0;
     },
 

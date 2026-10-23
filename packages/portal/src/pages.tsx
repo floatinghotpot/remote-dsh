@@ -3205,7 +3205,9 @@ function AdminLlmRouters({ isWrite }: { isWrite: boolean }): React.JSX.Element {
     adminApi.createLlmRouterJoinToken({ label: `router-${Date.now()}`, ttlMs: 600_000 }).then((r) => { setCreated({ label: r.label, token: r.token }); reload(); }).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed"));
   };
   const approve = (id: string): void => { adminApi.approveLlmRouter(id).then(() => reload()).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed")); };
-  const revoke = (id: string): void => { adminApi.revokeLlmRouter(id).then(() => reload()).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed")); };
+  const enable = (id: string): void => { adminApi.enableLlmRouter(id).then(() => reload()).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed")); };
+  const disable = (id: string): void => { adminApi.disableLlmRouter(id).then(() => reload()).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed")); };
+  const remove = (id: string): void => { adminApi.deleteLlmRouter(id).then(() => reload()).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed")); };
   return (
     <div>
       <h3 style={{ fontSize: 16, margin: "0 0 12px" }}>{t("Router 注册 / 审批")}</h3>
@@ -3226,7 +3228,9 @@ function AdminLlmRouters({ isWrite }: { isWrite: boolean }): React.JSX.Element {
           {r.publicBaseUrl !== null && r.publicBaseUrl !== "" && <span style={{ fontSize: 12, color: "var(--rdsh-fg-subtle)", fontFamily: "monospace" }}>{r.publicBaseUrl}</span>}
           <span style={{ marginLeft: "auto" }} />
           {isWrite && r.status === "pending" && <button onClick={() => approve(r.id)} style={adminBtnStyle("primary")}>{t("启用")}</button>}
-          {isWrite && r.status === "active" && <button onClick={() => revoke(r.id)} style={adminBtnStyle("danger")}>{t("吊销")}</button>}
+          {isWrite && r.status === "disabled" && <button onClick={() => enable(r.id)} style={adminBtnStyle("primary")}>{t("启用")}</button>}
+          {isWrite && r.status === "active" && <button onClick={() => disable(r.id)} style={adminBtnStyle("ghost")}>{t("禁用")}</button>}
+          {isWrite && (r.status === "active" || r.status === "disabled") && <button onClick={() => remove(r.id)} style={adminBtnStyle("danger")}>{t("删除")}</button>}
         </div>
         );
       })}

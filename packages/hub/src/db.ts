@@ -424,7 +424,7 @@ export interface LlmRouterJoinTokenRow {
   createdAt: number;
 }
 
-export type LlmRouterStatus = "pending" | "active" | "revoked";
+export type LlmRouterStatus = "pending" | "active" | "disabled" | "revoked";
 
 export interface LlmRouterRow {
   id: string;
@@ -3101,6 +3101,11 @@ export class HubDb {
       ? this.db.prepare("UPDATE llm_routers SET status = 'active', approved_at = ?, approved_by = ? WHERE id = ?").run(now, actor, id)
       : this.db.prepare("UPDATE llm_routers SET status = ? WHERE id = ?").run(status, id);
     return info.changes > 0;
+  }
+
+  setLlmRouterEnabled(id: string, enabled: boolean, now = Date.now()): boolean {
+    const status = enabled ? "active" : "disabled";
+    return this.db.prepare("UPDATE llm_routers SET status = ? WHERE id = ?").run(status, id).changes > 0;
   }
 
   touchLlmRouterSeen(id: string, lastIp: string | null, now = Date.now()): void {

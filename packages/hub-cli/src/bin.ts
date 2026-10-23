@@ -6,7 +6,8 @@
  *   rdsh-hub serve              Start the hub server (cloud, multi-host)
  *   rdsh-hub user add|passwd|rm|ls|unlock|reset-2fa|ban|unban
  *   rdsh-hub audit ls [--user <n>] [--event <e>] [--since 24h|7d]
- *   rdsh-hub host ls|revoke
+ *   rdsh-hub host ls|revoke|invite
+ *   rdsh-hub router ls|invite|approve|enable|disable|delete
  *   rdsh-hub db migrate|verify|check
  *   rdsh-hub service install|status|start|stop|restart|uninstall
  *   rdsh-hub --version | --help
@@ -53,7 +54,8 @@ Usage:
   rdsh-hub serve              Start the hub server (cloud, multi-host)
   rdsh-hub user add|passwd|rm|ls|unlock|reset-2fa|ban|unban   Manage users (admin creates accounts)
   rdsh-hub audit ls           Audit log (login/2FA/sharing/email events)
-  rdsh-hub host ls|revoke     List / revoke hosts (revoke drops the tunnel instantly)
+  rdsh-hub host ls|revoke|invite   List / revoke / invite hosts (invite issues a one-time join token)
+  rdsh-hub router ls|invite|approve|enable|disable|delete   Manage LLM routers
   rdsh-hub db migrate|verify|check   Database: migrate SQLite->PG, verify, health check
   rdsh-hub service ...        Run hub as a systemd/launchd service
 
@@ -92,13 +94,26 @@ Actions:
 
 Query the audit log.
 `,
-  host: `Usage: rdsh-hub host ls|revoke
+  host: `Usage: rdsh-hub host ls|revoke|invite
 
-List / revoke hosts (revoke drops the tunnel instantly).
+List / revoke / invite hosts.
 
 Actions:
   ls                    List all hosts
   revoke <hostId>       Revoke a host (tunnel drops, reconnects rejected)
+  invite <name|id> [--label <s>] [--ttl <seconds>]   Issue a one-time host join token
+`,
+  router: `Usage: rdsh-hub router ls|invite|approve|enable|disable|delete
+
+Manage LLM routers.
+
+Actions:
+  ls                    List routers (id / name / status / ip / public URL)
+  invite [--label <s>] [--ttl <seconds>]   Issue a one-time router join token
+  approve <id>          Approve a pending router (pending -> active)
+  enable <id>           Re-enable a disabled router (disabled -> active)
+  disable <id>          Disable an active router (active -> disabled)
+  delete <id>           Delete a router (soft: status=revoked, token revoked)
 `,
   service: `Usage: rdsh-hub service install|status|start|stop|restart|uninstall
 
@@ -237,6 +252,10 @@ async function handleHub(args: string[], configPath?: string): Promise<void> {
       await handleHubHost(rest, configPath);
       return;
     }
+    case "router": {
+      await handleHubRouter(rest, configPath);
+      return;
+    }
     case "audit": {
       await handleHubAudit(rest, configPath);
       return;
@@ -273,7 +292,7 @@ async function handleHub(args: string[], configPath?: string): Promise<void> {
       }
     }
     default:
-      throw new Error("usage: rdsh-hub setup|serve|user|host|audit|db|service");
+      throw new Error("usage: rdsh-hub setup|serve|user|host|router|audit|db|service");
   }
 }
 
@@ -468,6 +487,70 @@ async function handleHubHost(args: string[], configPath?: string): Promise<void>
       }
       default:
         throw new Error("usage: rdsh-hub host ls|revoke <hostId>|invite <name|id>");
+    }
+  } finally {
+    await store.close();
+  }
+}
+
+/** `rdsh-hub router`：LLM Router 管理（ls/invite/approve/enable/disable/delete）。 */
+async function handleHubRouter(args: string[], configPath?: string): Promise<void> {
+  const action = args[0];
+  const store = await openHubStore(configPath);
+  try {
+    switch (action) {
+      case "ls": {
+        const routers = await store.listLlmRouters();
+        if (routers.length === 0) {
+          console.log("(no routers)");
+        } else {
+          for (const r of routers) {
+            const online = r.status === "active" && r.lastSeenAt !== null && Date.now() - r.lastSeenAt < 180_000;
+            const onlineTag = r.status === "active" ? (online ? " (online)" : " (offline)") : "";
+            console.log(`${r.id}  ${r.name}  status=${r.status}${onlineTag}  ip=${r.lastIp ?? "-"}  url=${r.publicBaseUrl ?? "-"}`);
+          }
+        }
+        return;
+      }
+      case "invite": {
+        const labelRaw = arg(args, "--label");
+        const label = labelRaw !== undefined && labelRaw !== "" ? labelRaw.slice(0, 64) : defaultInviteLabel();
+        let ttl = 600;
+        const ttlRaw = arg(args, "--ttl");
+        if (ttlRaw !== undefined) {
+          const t = Number(ttlRaw);
+          if (!Number.isInteger(t) || t <= 0 || t > 3600) throw new Error("ttl must be 1..3600 seconds");
+          ttl = t;
+        }
+        const id = randomUUID();
+        const token = `rdsh-join-${randomToken()}`;
+        const expiresAt = Date.now() + ttl * 1000;
+        await store.createLlmRouterJoinToken(id, label, sha256(token), expiresAt, null);
+        console.log(JSON.stringify({ token, expiresAt }));
+        return;
+      }
+      case "approve":
+      case "enable":
+      case "disable":
+      case "delete": {
+        const id = args[1];
+        if (id === undefined) throw new Error(`usage: rdsh-hub router ${action} <id>`);
+        const router = await store.getLlmRouter(id);
+        if (router === null) throw new Error(`router '${id}' not found`);
+        if (action === "approve") {
+          await store.setLlmRouterStatus(id, "active", null);
+        } else if (action === "enable" || action === "disable") {
+          await store.setLlmRouterEnabled(id, action === "enable");
+        } else {
+          // delete：软删（status=revoked）+ 吊销 token
+          await store.setLlmRouterStatus(id, "revoked", null);
+          await store.revokeServiceToken(router.tokenId);
+        }
+        console.log(`rdsh-hub: router '${id}' ${action}d`);
+        return;
+      }
+      default:
+        throw new Error("usage: rdsh-hub router ls|invite|approve|enable|disable|delete");
     }
   } finally {
     await store.close();

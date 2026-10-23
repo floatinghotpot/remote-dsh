@@ -475,9 +475,11 @@ UI 文案必须写「**可云端中转主机数**」，**不要**写「主机配
 | DELETE | `/api/admin/llm/upstream-keys/{id}` | 吊销（`revoked_at` + `enabled=0`） |
 | GET | `/api/admin/llm/router-join-tokens` | join token 列表 |
 | POST | `/api/admin/llm/router-join-tokens` | 生成一次性 join token，`{label?, ttlMs?}` → `{id, token, label, expiresAt}` |
-| GET | `/api/admin/llm/routers` | Router 列表（`pending`/`active`/`revoked`） |
-| POST | `/api/admin/llm/routers/{id}/approve` | 启用（`pending → active`） |
-| POST | `/api/admin/llm/routers/{id}/revoke` | 吊销（置 `status=revoked` + 吊销其 service token） |
+| GET | `/api/admin/llm/routers` | Router 列表（`pending`/`active`/`disabled`/`revoked`） |
+| POST | `/api/admin/llm/routers/{id}/approve` | 启用（`pending → active`，记审批人/时间） |
+| POST | `/api/admin/llm/routers/{id}/enable` | 再启用（`disabled → active`，不改审批记录） |
+| POST | `/api/admin/llm/routers/{id}/disable` | 禁用（`active → disabled`） |
+| POST | `/api/admin/llm/routers/{id}/delete` | 删除（软删：置 `status=revoked` + 吊销其 service token，保留行做审计） |
 
 写操作需 `operator`/`admin`（403 `FORBIDDEN`）；读操作 `readonly` 可读。
 

@@ -942,7 +942,7 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
     res.end(JSON.stringify({ routers: rows }));
     return true;
   }
-  const routerAction = /^\/api\/admin\/llm\/routers\/([^/]+)\/(approve|revoke)$/.exec(path);
+  const routerAction = /^\/api\/admin\/llm\/routers\/([^/]+)\/(approve|enable|disable|delete)$/.exec(path);
   if (routerAction !== null && method === "POST") {
     if (!isWrite) { writeError(res, 403, "FORBIDDEN", "operator or admin required"); return true; }
     const id = decodeURIComponent(routerAction[1]!);
@@ -951,7 +951,10 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
     if (router === null) { writeError(res, 404, "NOT_FOUND", "router not found"); return true; }
     if (action === "approve") {
       await store.setLlmRouterStatus(id, "active", auth.name);
+    } else if (action === "enable" || action === "disable") {
+      await store.setLlmRouterEnabled(id, action === "enable");
     } else {
+      // delete：软删（保留行做审计），token 一并吊销
       await store.setLlmRouterStatus(id, "revoked", auth.name);
       await store.revokeServiceToken(router.tokenId);
     }
