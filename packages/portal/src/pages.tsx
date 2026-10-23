@@ -1206,7 +1206,7 @@ function LlmKeysPage(): React.JSX.Element {
           </li>
           <li>
             <span style={{ color: "var(--rdsh-fg)", fontWeight: 600 }}>{t("第三方模型")}</span>
-            {" — "}{t("自己接入其他厂商的模型，需要自己填写地址和 Key。")}
+            {" — "}{t("自己接入其他厂商的模型，需要自己填写地址和 Key，费用由第三方结算。")}
           </li>
           <li>
             <span style={{ color: "var(--rdsh-fg)", fontWeight: 600 }}>{t("鲸语通托管（推荐，免配置）")}</span>

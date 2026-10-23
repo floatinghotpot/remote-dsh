@@ -229,7 +229,7 @@ const EN: Record<string, string> = {
   "DeepSeek 官方账号": "DeepSeek account",
   "登录 DeepSeek 账号，直接到 DeepSeek 充值，费用由 DeepSeek 结算。": "Sign in with your DeepSeek account and top up there; DeepSeek handles billing.",
   "第三方模型": "Third-party models",
-  "自己接入其他厂商的模型，需要自己填写地址和 Key。": "Connect another vendor's models yourself; you provide the base URL and key.",
+  "自己接入其他厂商的模型，需要自己填写地址和 Key，费用由第三方结算。": "Connect another vendor's models yourself; you provide the base URL and key, and that vendor handles billing.",
   "鲸语通托管（推荐，免配置）": "WhaleLink managed (recommended, zero-config)",
   "主机接入时自动为你配好，不用填任何东西；费用从你的鲸语通点数里扣，用量可在「用量统计」查看。下面的 Key 就是这一种。": "Configured automatically when your host connects — nothing to fill in. Costs are deducted from your WhaleLink credits; see Usage for details. The key below belongs to this option.",
   "追踪 ID": "Tracking ID",
