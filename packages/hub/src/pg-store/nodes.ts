@@ -294,7 +294,7 @@ export function nodes(pool: Pool): Pick<
     pickNode: async (): Promise<NodeRow | null> => {
       const row = one(
         await q(txDb(pool),
-          "SELECT n.* FROM nodes n WHERE n.status = 'online' AND n.enabled = 1 AND (n.capacity = 0 OR (SELECT COUNT(*) FROM hosts h WHERE h.node_id = n.id) < n.capacity) ORDER BY n.weight DESC, n.created_at ASC LIMIT 1",
+          "SELECT n.* FROM nodes n WHERE n.status = 'online' AND n.enabled = 1 AND (n.capacity = 0 OR (SELECT COUNT(*) FROM hosts h WHERE h.node_id = n.id AND h.revoked_at IS NULL) < n.capacity) ORDER BY n.weight DESC, n.created_at ASC LIMIT 1",
         ),
       );
       return row === null ? null : mapNode(row);

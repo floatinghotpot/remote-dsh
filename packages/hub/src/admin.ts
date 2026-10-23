@@ -212,7 +212,7 @@ export async function revokeHost(store: HubStore, ctx: AdminCtx, hostId: string,
   assertRole(ctx, "operator");
   const host = await store.getHostById(hostId);
   if (host === null) throw new AdminError("NOT_FOUND", "host not found");
-  await store.removeHost(hostId);
+  await store.revokeHostRecord(hostId);
   await store.revokeLlmKeysByHost(hostId);
   await audit(store, ctx, host.ownerId, "admin.revoke-host", { hostId, name: host.name }, reason);
 }

@@ -873,6 +873,8 @@ export class HubDb {
     if (!hostCols.has("e2ee_public_key")) this.db.exec(`ALTER TABLE hosts ADD COLUMN e2ee_public_key TEXT`);
     if (!hostCols.has("node_id")) this.db.exec(`ALTER TABLE hosts ADD COLUMN node_id TEXT`);
     if (!hostCols.has("online")) this.db.exec(`ALTER TABLE hosts ADD COLUMN online INTEGER NOT NULL DEFAULT 0`);
+    // 软删（leave/吊销）：保留行以保住历史流量、主机名与共享关系；读路径统一过滤 revoked_at。
+    if (!hostCols.has("revoked_at")) this.db.exec(`ALTER TABLE hosts ADD COLUMN revoked_at TEXT`);
     const nodeCols = new Set(
       (this.db.prepare("PRAGMA table_info(nodes)").all() as unknown as Array<{ name: string }>).map((c) => c.name),
     );
@@ -1334,27 +1336,27 @@ export class HubDb {
   }
 
   getHostById(id: string): HostRow | null {
-    const row = this.db.prepare("SELECT * FROM hosts WHERE id = ?").get(id);
+    const row = this.db.prepare("SELECT * FROM hosts WHERE id = ? AND revoked_at IS NULL").get(id);
     return row === undefined ? null : this.mapHost(row as unknown as Record<string, unknown>);
   }
 
   findHostByTokenHash(tokenHash: string): HostRow | null {
-    const row = this.db.prepare("SELECT * FROM hosts WHERE token_hash = ?").get(tokenHash);
+    const row = this.db.prepare("SELECT * FROM hosts WHERE token_hash = ? AND revoked_at IS NULL").get(tokenHash);
     return row === undefined ? null : this.mapHost(row as unknown as Record<string, unknown>);
   }
 
   listHostsByOwner(ownerId: number): HostRow[] {
-    return (this.db.prepare("SELECT * FROM hosts WHERE owner_id = ? ORDER BY created_at").all(ownerId) as unknown as Array<Record<string, unknown>>).map((r) => this.mapHost(r));
+    return (this.db.prepare("SELECT * FROM hosts WHERE owner_id = ? AND revoked_at IS NULL ORDER BY created_at").all(ownerId) as unknown as Array<Record<string, unknown>>).map((r) => this.mapHost(r));
   }
 
   /** 管理员视图：全部 host（rdsh-hub host ls）。 */
   listAllHosts(): HostRow[] {
-    return (this.db.prepare("SELECT * FROM hosts ORDER BY created_at").all() as unknown as Array<Record<string, unknown>>).map((r) => this.mapHost(r));
+    return (this.db.prepare("SELECT * FROM hosts WHERE revoked_at IS NULL ORDER BY created_at").all() as unknown as Array<Record<string, unknown>>).map((r) => this.mapHost(r));
   }
 
   /** 管理员视图：每个 owner 的主机数（GROUP BY owner_id，索引聚合，O(N)）。 */
   countHostsByOwner(): Array<{ ownerId: number; count: number }> {
-    return this.db.prepare("SELECT owner_id AS ownerId, COUNT(*) AS count FROM hosts GROUP BY owner_id").all() as unknown as Array<{ ownerId: number; count: number }>;
+    return this.db.prepare("SELECT owner_id AS ownerId, COUNT(*) AS count FROM hosts WHERE revoked_at IS NULL GROUP BY owner_id").all() as unknown as Array<{ ownerId: number; count: number }>;
   }
 
   /** 管理台主机分页 + 模糊搜索（主机名/归属用户名），JOIN 出 ownerName；返回 { rows, total }。 */
@@ -1366,7 +1368,7 @@ export class HubDb {
     limit?: number;
     offset?: number;
   }): { rows: Array<HostRow & { ownerName: string }>; total: number } {
-    const conds: string[] = [];
+    const conds: string[] = ["h.revoked_at IS NULL"];
     const params: Array<string | number> = [];
     const q = opts.q !== undefined && opts.q !== "" ? opts.q : null;
     if (q !== null) {
@@ -1400,6 +1402,18 @@ export class HubDb {
   removeHost(id: string): boolean {
     this.db.prepare("DELETE FROM host_share WHERE host_id = ?").run(id); // 清共享残留（FK）
     const info = this.db.prepare("DELETE FROM hosts WHERE id = ?").run(id);
+    return info.changes > 0;
+  }
+
+  /**
+   * 软删 host（leave / 管理员吊销）：保留行，保住历史流量、主机名与共享关系。
+   * token_hash 置为唯一占位值 → 旧 host token 立即失效且不阻塞 UNIQUE；node_id/online 清空。
+   * 读路径统一带 `revoked_at IS NULL`，因此软删后该 host 对所有业务查询不可见。
+   */
+  revokeHostRecord(id: string, now = new Date().toISOString()): boolean {
+    const info = this.db
+      .prepare("UPDATE hosts SET revoked_at = ?, token_hash = 'revoked:' || id, node_id = NULL, online = 0 WHERE id = ? AND revoked_at IS NULL")
+      .run(now, id);
     return info.changes > 0;
   }
 
@@ -1590,7 +1604,7 @@ export class HubDb {
   /** R35/R36：从在线、已启用、且非 draining、且未满载的节点中按优先级/权重选一个。capacity=0 表示不限。 */
   pickNode(): NodeRow | null {
     const row = this.db.prepare(
-      "SELECT n.* FROM nodes n WHERE n.status = 'online' AND n.enabled = 1 AND (n.capacity = 0 OR (SELECT COUNT(*) FROM hosts h WHERE h.node_id = n.id) < n.capacity) ORDER BY n.weight DESC, n.created_at ASC LIMIT 1",
+      "SELECT n.* FROM nodes n WHERE n.status = 'online' AND n.enabled = 1 AND (n.capacity = 0 OR (SELECT COUNT(*) FROM hosts h WHERE h.node_id = n.id AND h.revoked_at IS NULL) < n.capacity) ORDER BY n.weight DESC, n.created_at ASC LIMIT 1",
     ).get();
     return row === undefined ? null : this.mapNode(row as unknown as Record<string, unknown>);
   }
@@ -1606,7 +1620,7 @@ export class HubDb {
   }
 
   listHostsByNode(nodeId: string): HostRow[] {
-    return (this.db.prepare("SELECT * FROM hosts WHERE node_id = ? ORDER BY created_at").all(nodeId) as unknown as Array<Record<string, unknown>>).map((r) => this.mapHost(r));
+    return (this.db.prepare("SELECT * FROM hosts WHERE node_id = ? AND revoked_at IS NULL ORDER BY created_at").all(nodeId) as unknown as Array<Record<string, unknown>>).map((r) => this.mapHost(r));
   }
 
   // ---- refresh tokens ----
@@ -1867,7 +1881,7 @@ export class HubDb {
   listHostsForUser(userId: number): HostRow[] {
     return (this.db
       .prepare(
-        "SELECT DISTINCT h.* FROM hosts h LEFT JOIN host_share s ON s.host_id = h.id WHERE h.owner_id = ? OR s.user_id = ? ORDER BY h.created_at",
+        "SELECT DISTINCT h.* FROM hosts h LEFT JOIN host_share s ON s.host_id = h.id WHERE (h.owner_id = ? OR s.user_id = ?) AND h.revoked_at IS NULL ORDER BY h.created_at",
       )
       .all(userId, userId) as unknown as Array<Record<string, unknown>>).map((r) => this.mapHost(r));
   }

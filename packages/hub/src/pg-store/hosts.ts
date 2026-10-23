@@ -23,6 +23,7 @@ export function hosts(
   | "listHostsPage"
   | "renameHost"
   | "removeHost"
+  | "revokeHostRecord"
   | "setHostNode"
   | "setHostOnline"
   | "listHostsByNode"
@@ -34,7 +35,7 @@ export function hosts(
   | "isHostOwner"
 > {
   const getHostById = async (id: string): Promise<HostRow | null> => {
-    const row = one(await q(txDb(pool), "SELECT * FROM hosts WHERE id = $1", [id]));
+    const row = one(await q(txDb(pool), "SELECT * FROM hosts WHERE id = $1 AND revoked_at IS NULL", [id]));
     return row === null ? null : mapHost(row);
   };
 
@@ -57,18 +58,18 @@ export function hosts(
     getHostById,
 
     async findHostByTokenHash(tokenHash: string): Promise<HostRow | null> {
-      const row = one(await q(txDb(pool), "SELECT * FROM hosts WHERE token_hash = $1", [tokenHash]));
+      const row = one(await q(txDb(pool), "SELECT * FROM hosts WHERE token_hash = $1 AND revoked_at IS NULL", [tokenHash]));
       return row === null ? null : mapHost(row);
     },
 
     async listHostsByOwner(ownerId: number): Promise<HostRow[]> {
-      const rows = (await q(txDb(pool), "SELECT * FROM hosts WHERE owner_id = $1 ORDER BY created_at", [ownerId])).rows;
+      const rows = (await q(txDb(pool), "SELECT * FROM hosts WHERE owner_id = $1 AND revoked_at IS NULL ORDER BY created_at", [ownerId])).rows;
       return rows.map((r) => mapHost(r));
     },
 
     /** 管理员视图：全部 host（rdsh-hub host ls）。 */
     async listAllHosts(): Promise<HostRow[]> {
-      const rows = (await q(txDb(pool), "SELECT * FROM hosts ORDER BY created_at")).rows;
+      const rows = (await q(txDb(pool), "SELECT * FROM hosts WHERE revoked_at IS NULL ORDER BY created_at")).rows;
       return rows.map((r) => mapHost(r));
     },
 
@@ -76,7 +77,7 @@ export function hosts(
     async countHostsByOwner(): Promise<Array<{ ownerId: number; count: number }>> {
       const rows = (await q<{ ownerId: unknown; count: unknown }>(
         pool,
-        'SELECT owner_id AS "ownerId", COUNT(*) AS count FROM hosts GROUP BY owner_id',
+        'SELECT owner_id AS "ownerId", COUNT(*) AS count FROM hosts WHERE revoked_at IS NULL GROUP BY owner_id',
       )).rows;
       return rows.map((r) => ({ ownerId: Number(r.ownerId), count: Number(r.count) }));
     },
@@ -90,7 +91,7 @@ export function hosts(
       limit?: number;
       offset?: number;
     }): Promise<{ rows: Array<HostRow & { ownerName: string }>; total: number }> {
-      const conds: string[] = [];
+      const conds: string[] = ["h.revoked_at IS NULL"];
       const params: Array<string | number> = [];
       const qterm = opts.q !== undefined && opts.q !== "" ? opts.q : null;
       if (qterm !== null) {
@@ -139,6 +140,15 @@ export function hosts(
       return (r.rowCount ?? 0) > 0;
     },
 
+    /** 软删（leave / 管理员吊销）：保留行以保住历史流量、主机名与共享关系；旧 token 立即失效。 */
+    async revokeHostRecord(id: string, now: string = new Date().toISOString()): Promise<boolean> {
+      const r = await txDb(pool).query(
+        "UPDATE hosts SET revoked_at = $1, token_hash = 'revoked:' || id, node_id = NULL, online = 0 WHERE id = $2 AND revoked_at IS NULL",
+        [now, id],
+      );
+      return (r.rowCount ?? 0) > 0;
+    },
+
     /** R5/R40：主机 → 节点 映射（动态分配 / 迁移）。 */
     async setHostNode(hostId: string, nodeId: string | null): Promise<void> {
       await txDb(pool).query("UPDATE hosts SET node_id = $1 WHERE id = $2", [nodeId, hostId]);
@@ -150,7 +160,7 @@ export function hosts(
     },
 
     async listHostsByNode(nodeId: string): Promise<HostRow[]> {
-      const rows = (await q(txDb(pool), "SELECT * FROM hosts WHERE node_id = $1 ORDER BY created_at", [nodeId])).rows;
+      const rows = (await q(txDb(pool), "SELECT * FROM hosts WHERE node_id = $1 AND revoked_at IS NULL ORDER BY created_at", [nodeId])).rows;
       return rows.map((r) => mapHost(r));
     },
 
@@ -191,7 +201,7 @@ export function hosts(
     async listHostsForUser(userId: number): Promise<HostRow[]> {
       const rows = (
         await q(txDb(pool),
-          "SELECT DISTINCT h.* FROM hosts h LEFT JOIN host_share s ON s.host_id = h.id WHERE h.owner_id = $1 OR s.user_id = $2 ORDER BY h.created_at",
+          "SELECT DISTINCT h.* FROM hosts h LEFT JOIN host_share s ON s.host_id = h.id WHERE (h.owner_id = $1 OR s.user_id = $2) AND h.revoked_at IS NULL ORDER BY h.created_at",
           [userId, userId],
         )
       ).rows;
