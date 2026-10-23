@@ -18,7 +18,11 @@ import type { ChildProcess } from "node:child_process";
  * 就绪行不锚定行尾（LAN 提示可随行出现）；token 为 base64url（[A-Za-z0-9_-]）。
  */
 const URL_LINE_RE = /dsh web:\s*http:\/\/127\.0\.0\.1:(\d+)(?:\/\?token=([A-Za-z0-9_-]+))?/;
-const READY_TIMEOUT_MS = 30_000;
+/**
+ * dsh web 就绪超时：等 `dsh web: http://127.0.0.1:<port>` 就绪行的上限。
+ * 老/慢机器冷启动可能 >30s，统一放宽到 120s；代价仅是 dsh 真起不来时失败检测变慢。
+ */
+const READY_TIMEOUT_MS = 120_000;
 const STOP_TIMEOUT_MS = 5_000;
 const VERSION_TIMEOUT_MS = 5_000;
 const EXCHANGE_TIMEOUT_MS = 5_000;
