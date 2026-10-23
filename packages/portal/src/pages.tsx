@@ -1201,7 +1201,7 @@ function LlmKeysPage(): React.JSX.Element {
       <Card title={t("在 DSH 里用大模型，你有三种选择")}>
         <ol style={{ margin: 0, paddingLeft: 20, fontSize: 13, lineHeight: 1.9, color: "var(--rdsh-fg-muted)" }}>
           <li>
-            <span style={{ color: "var(--rdsh-fg)", fontWeight: 600 }}>{t("DeepSeek 账号（官方更划算）")}</span>
+            <span style={{ color: "var(--rdsh-fg)", fontWeight: 600 }}>{t("DeepSeek 账号（官方，更划算）")}</span>
             {" — "}{t("登录 DeepSeek 账号，直接到 DeepSeek 充值，费用由 DeepSeek 结算。")}
           </li>
           <li>
@@ -1209,8 +1209,8 @@ function LlmKeysPage(): React.JSX.Element {
             {" — "}{t("自己接入其他厂商的模型，需要自己填写地址和 Key，费用由第三方结算。")}
           </li>
           <li>
-            <span style={{ color: "var(--rdsh-fg)", fontWeight: 600 }}>{t("鲸语通托管（免配置更方便）")}</span>
-            {" — "}{t("主机接入时自动为你配好，不用填任何东西；费用从你的鲸语通点数里扣，用量可在「用量统计」查看。下面的 Key 就是这一种。")}
+            <span style={{ color: "var(--rdsh-fg)", fontWeight: 600 }}>{t("鲸语通托管（免配置，更方便）")}</span>
+            {" — "}{t("使用鲸语通计费的代理服务。主机接入时自动为你配好，不用填任何东西；费用从你的鲸语通点数里扣，用量可在「用量统计」查看。下面的 Key 就是这一种。")}
           </li>
         </ol>
       </Card>
