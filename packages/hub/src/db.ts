@@ -809,8 +809,8 @@ export class HubDb {
     const seedModel = this.db.prepare(
       "INSERT OR IGNORE INTO llm_models (id, display_name, provider, upstream_model, input_price_micro, output_price_micro, cache_read_price_micro, cache_write_price_micro, context_window, max_tokens, name_source, enabled, sort_order, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'upstream', 1, ?, 0)",
     );
-    seedModel.run("deepseek-flash", "DeepSeek-V4.1-Flash", "deepseek", "deepseek-flash", 2000000, 8000000, 40000, 0, 1048576, 393216, 0);
-    seedModel.run("deepseek-v4-pro", "DeepSeek-V4-Pro", "deepseek", "deepseek-v4-pro", 9000000, 27000000, 300000, 0, 1048576, 393216, 1);
+    seedModel.run("deepseek-flash", "DeepSeek-V4.1-Flash", "deepseek", "deepseek-flash", 3800000, 15200000, 80000, 0, 1048576, 393216, 0);
+    seedModel.run("deepseek-v4-pro", "DeepSeek-V4-Pro", "deepseek", "deepseek-v4-pro", 17100000, 51400000, 570000, 0, 1048576, 393216, 1);
     // 51：既有 llm_keys 补 token_tail4 列
     const llmKeyCols = new Set(
       (this.db.prepare("PRAGMA table_info(llm_keys)").all() as unknown as Array<{ name: string }>).map((c) => c.name),

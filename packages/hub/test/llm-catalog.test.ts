@@ -40,7 +40,7 @@ test("51：模型目录种子 + CRUD", async () => {
     assert.equal(seeded.length, 2);
     assert.deepEqual(seeded.map((m) => m.id), ["deepseek-flash", "deepseek-v4-pro"]);
     assert.equal(seeded[0]!.displayName, "DeepSeek-V4.1-Flash");
-    assert.equal(seeded[1]!.inputPriceMicro, 9000000);
+    assert.equal(seeded[1]!.inputPriceMicro, 17100000);
 
     const created = ctx.db.createLlmModel({ id: "deepseek-v4-x", displayName: "X", provider: "deepseek", upstreamModel: "deepseek-v4-x" });
     assert.equal(created.nameSource, "manual");
