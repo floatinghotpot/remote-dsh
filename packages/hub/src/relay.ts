@@ -10,7 +10,7 @@ import { WebSocketServer } from "ws";
 import type { WebSocket } from "ws";
 import { MAX_PAYLOAD_LENGTH } from "rdsh-tunnel";
 import { writeError } from "./api.ts";
-import { parseCookies, HOST_COOKIE } from "./server.ts";
+import { parseCookies, HOST_COOKIE, hostCookie, rootDomain } from "./server.ts";
 import type { HubRuntime } from "./api.ts";
 import { injectE2eeShim } from "./e2ee-shim.ts";
 
@@ -28,18 +28,20 @@ const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD_LENGTH
  * 授权 host 访问：验 HMAC 签名 host cookie（进入 host 时签发，7 天，绑定会话版本）。
  * 不依赖 rdsh_hub_session —— 进入后 DSH 持续可用；改密（ver+1）或吊销后立即失效。
  */
-async function authorizeHost(req: IncomingMessage, runtime: HubRuntime): Promise<{ hostId: string; userId: number } | null> {
+async function authorizeHost(req: IncomingMessage, runtime: HubRuntime, pathHostId?: string): Promise<{ hostId: string; userId: number } | null> {
   const cookies = parseCookies(req.headers.cookie);
   const raw = cookies[HOST_COOKIE];
   if (raw === undefined) return null;
   const v = runtime.auth.verifyHostCookie(raw);
   if (v === null) return null;
-  const host = await runtime.store.getHostById(v.hostId);
+  // hostId：优先 path（多标签隔离）；不传时回落 cookie 的 hostId（旧 cookie 兼容）
+  const hostId = pathHostId ?? v.hostId;
+  const host = await runtime.store.getHostById(hostId);
   if (host === null) return null;
   // 归属或共享成员均可访问（与 handleEnterHost 一致）；getShare 为实时查询 → 撤销共享即时生效
-  const isMember = host.ownerId === v.userId || (await runtime.store.getShare(v.hostId, v.userId)) !== null;
+  const isMember = host.ownerId === v.userId || (await runtime.store.getShare(hostId, v.userId)) !== null;
   if (!isMember) return null;
-  return { hostId: v.hostId, userId: v.userId };
+  return { hostId, userId: v.userId };
 }
 
 export interface RelayOptions {
@@ -50,8 +52,8 @@ export interface RelayOptions {
 /**
  * HTTP/SSE 透传。返回是否已处理（false = 路径不属于数据面）。
  */
-export async function handleRelay(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime, path: string, opts?: RelayOptions): Promise<boolean> {
-  const auth = await authorizeHost(req, runtime);
+export async function handleRelay(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime, path: string, opts?: RelayOptions, pathHostId?: string): Promise<boolean> {
+  const auth = await authorizeHost(req, runtime, pathHostId);
   if (auth === null) {
     writeError(res, 401, "UNAUTHORIZED", "invalid host session");
     return true;
@@ -94,6 +96,9 @@ export async function handleRelay(req: IncomingMessage, res: ServerResponse, run
         // 缓冲注入时去掉 content-length（回写时重算）
         const h: Record<string, string | string[]> = { ...respHeaders };
         delete h["content-length"];
+        // 滑动续期：导航（text/html）时重签 host cookie（7 天，无 302，前缀常驻）
+        const domain = runtime.config.hostCookieDomain ?? rootDomain(req.headers.host);
+        h["set-cookie"] = hostCookie(hostId, auth.userId, runtime.auth, domain);
         res.writeHead(status, h);
       } else {
         res.writeHead(status, respHeaders as Record<string, string | string[]>);
@@ -181,8 +186,8 @@ export function normalizeHeaders(headers: IncomingMessage["headers"]): Record<st
  * WebSocket upgrade 透传（DSH 依赖 /api/events.mux、events.host）。
  * 返回是否已处理。
  */
-export async function handleRelayUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer, runtime: HubRuntime, path: string): Promise<boolean> {
-  const auth = await authorizeHost(req, runtime);
+export async function handleRelayUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer, runtime: HubRuntime, path: string, pathHostId?: string): Promise<boolean> {
+  const auth = await authorizeHost(req, runtime, pathHostId);
   if (auth === null) {
     socket.write(`HTTP/1.1 401 Unauthorized\r\n\r\n`);
     socket.destroy();
@@ -255,13 +260,13 @@ export async function handleRelayUpgrade(req: IncomingMessage, socket: Duplex, h
  * E2EE raw 流透传：浏览器 WS ↔ 隧道 raw 流字节互转（内层 Noise 握手 + 密文，hub 不解析内容）。
  * 返回是否已处理。受 `config.e2ee.mode` 控制：off 拒绝。
  */
-export async function handleRawUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer, runtime: HubRuntime): Promise<boolean> {
+export async function handleRawUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer, runtime: HubRuntime, pathHostId?: string): Promise<boolean> {
   if ((runtime.config.e2ee?.mode ?? "optional") === "off") {
     socket.write(`HTTP/1.1 403 Forbidden\r\n\r\n`);
     socket.destroy();
     return true;
   }
-  const auth = await authorizeHost(req, runtime);
+  const auth = await authorizeHost(req, runtime, pathHostId);
   if (auth === null) {
     socket.write(`HTTP/1.1 401 Unauthorized\r\n\r\n`);
     socket.destroy();

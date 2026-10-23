@@ -132,7 +132,7 @@ const HUB_MANIFEST = {
   theme_color: "#0b0f14",
 } as const;
 
-function hostCookie(hostId: string, userId: number, auth: HubAuth, domain?: string): string {
+export function hostCookie(hostId: string, userId: number, auth: HubAuth, domain?: string): string {
   const token = auth.signHostCookie(hostId, userId);
   // 区域根域 Domain（如 .rdsh.cn）→ 节点子域能收到 cookie（跨域 cookie，见 solution §6.3）
   const domainAttr = domain !== undefined && domain !== "" ? `; Domain=${domain}` : "";
@@ -278,29 +278,25 @@ export async function startHubServer(opts: HubServerOptions): Promise<RunningHub
         handleEventsUpgrade(req, socket, head, runtime, eventsServer);
         return;
       }
-      // 有 host 上下文：根路径 WS（DSH 的 events.mux / events.host）
+      // /h/<hostId>/ 的 WS：剥前缀 + path 化 host（多标签隔离；cookie 由进入的 HTTP 请求已设）
+      const h = /^\/h\/([^/]+)(\/.*)?$/.exec(pathname);
+      if (h !== null) {
+        const pathHostId = decodeURIComponent(h[1]!);
+        const rest = h[2] ?? "/";
+        if (rest === "/e2e") {
+          await handleRawUpgrade(req, socket, head, runtime, pathHostId);
+        } else {
+          await handleRelayUpgrade(req, socket, head, runtime, rest + url.search, pathHostId);
+        }
+        return;
+      }
+      // 有 host 上下文（旧 cookie 兼容）：根路径 WS（DSH 的 events.mux / events.host）
       if (pathname === "/e2e" && hostId !== undefined) {
         await handleRawUpgrade(req, socket, head, runtime);
         return;
       }
       if (hostId !== undefined) {
         await handleRelayUpgrade(req, socket, head, runtime, pathname + url.search);
-        return;
-      }
-      // /h/<hostId>/ 的 WS：进入瞬间（罕见）——校验后转发（cookie 由进入的 HTTP 请求已设）
-      const h = /^\/h\/([^/]+)(\/.*)?$/.exec(pathname);
-      if (h !== null) {
-        const auth = authenticate(req, runtime);
-        if (auth !== null) {
-          const hid = decodeURIComponent(h[1]!);
-          const host = await runtime.store.getHostById(hid);
-          if (host !== null && host.ownerId === auth.userId) {
-            await handleRelayUpgrade(req, socket, head, runtime, `${h[2] ?? "/"}${url.search}`);
-            return;
-          }
-        }
-        socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
-        socket.destroy();
         return;
       }
       socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
@@ -333,14 +329,27 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse, runtime: Hu
     return;
   }
 
-  // 进入 host：/h/<hostId>/... → 校验归属 → Set-Cookie + 302 根路径
+  // 进入 host：/h/<hostId>/... → 有 cookie 直接进数据面（剥前缀，多标签隔离）；无 cookie 走首次进入（Set-Cookie + 302）
   const h = /^\/h\/([^/]+)(\/.*)?$/.exec(pathname);
   if (h !== null) {
-    await handleEnterHost(req, res, runtime, decodeURIComponent(h[1]!), h[2] ?? "/", url.search);
+    const pathHostId = decodeURIComponent(h[1]!);
+    const rest = h[2] ?? "/";
+    // 无尾斜杠 → 301 补斜杠（相对路径 ./assets 依赖尾斜杠）
+    if (h[2] === undefined) {
+      res.writeHead(301, { location: `/h/${pathHostId}/${url.search}` });
+      res.end();
+      return;
+    }
+    if (hostId !== undefined) {
+      // 已进入过：剥掉 /h/<hostId>/ 前缀直接透传
+      await handleRelay(req, res, runtime, rest + url.search, { bufferHtml: true }, pathHostId);
+      return;
+    }
+    await handleEnterHost(req, res, runtime, pathHostId, rest, url.search);
     return;
   }
 
-  // 有 host 上下文：根路径全部转发给该 host（DSH 无感知，绝对路径 /assets /api 原样）
+  // 有 host 上下文（旧 cookie 兼容）：根路径全部转发给该 host（DSH 无感知，绝对路径 /assets /api 原样）
   if (hostId !== undefined) {
     await handleRelay(req, res, runtime, pathname + url.search, { bufferHtml: true });
     return;
@@ -418,11 +427,12 @@ async function handleEnterHost(
     return;
   }
   await runtime.store.recordAudit(userId, "host.enter", { hostId, role: isOwner ? "owner" : "member" }, clientIp(req, runtime));
-  // Set-Cookie（Ed25519 签名 host cookie，7d，Domain=区域根域）+ 302。
+  // Set-Cookie（Ed25519 签名 host cookie，7d，Domain=区域根域）+ 302 到 /h/<hostId>/（带前缀，多标签隔离）。
   // 30-relay-node R9：在线外部节点 → 节点根路径；hub 内置 relay → defaultRelayUrl（配置了才强制，避免与站点根路径混用）；否则回退 hub 根路径。
   const node = host.nodeId !== null ? await runtime.store.getNodeById(host.nodeId) : null;
   const enterBase = node !== null && node.status === "online" ? node.advertiseUrl : (runtime.config.defaultRelayUrl ?? "");
-  const location = enterBase !== "" ? `${enterBase}${rest}${search}` : `${rest}${search}`;
+  const prefixed = `/h/${hostId}${rest}`;
+  const location = enterBase !== "" ? `${enterBase}${prefixed}${search}` : `${prefixed}${search}`;
   const cookieDomain = runtime.config.hostCookieDomain ?? rootDomain(req.headers.host);
   res.writeHead(302, { location, "set-cookie": hostCookie(hostId, userId, runtime.auth, cookieDomain) });
   res.end();

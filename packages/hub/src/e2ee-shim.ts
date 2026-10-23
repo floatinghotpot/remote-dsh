@@ -109,7 +109,7 @@ export const E2EE_SHIM_HTML = `<script>
   async function ensureChannel() {
     if (channel) return channel;
     var hs = await handshake();
-    var ws = new NativeWS((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/e2e");
+    var ws = new NativeWS((location.protocol === "https:" ? "wss://" : "ws://") + location.host + new URL("./e2e", location.href).pathname);
     ws.binaryType = "arraybuffer";
     var enc = new Aead(hs.keys.i2r), dec = new Aead(hs.keys.r2i);
     var parser = new FrameParser(); var handlers = new Map(); var nextId = 1;
