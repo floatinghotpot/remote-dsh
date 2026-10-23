@@ -85,6 +85,14 @@ export async function handleRelay(req: IncomingMessage, res: ServerResponse, run
   streamId = conn.openStream("http", path, req.method ?? "GET", headers, {
     onResponse: (status, _reason, respHeaders) => {
       responded = true;
+      // 反代前缀：上游（gate 303 回跳等）返回绝对路径 Location 时，重写回 /h/<hostId>/ 前缀，
+      // 否则浏览器会跳到 relay 根路径、丢失 path 前缀（多标签隔离失效）。
+      if (pathHostId !== undefined) {
+        const loc = respHeaders["location"];
+        if (typeof loc === "string" && loc.startsWith("/") && !loc.startsWith("//")) {
+          respHeaders["location"] = `/h/${pathHostId}${loc}`;
+        }
+      }
       const ct = typeof respHeaders["content-type"] === "string" ? (respHeaders["content-type"] as string) : "";
       const canInject =
         opts?.bufferHtml === true &&

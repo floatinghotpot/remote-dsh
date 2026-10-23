@@ -261,3 +261,30 @@ test("节点路由 host：带旧 rdsh_host cookie 进 /h/<id>/ → 302 到节点
     await close(ctx);
   }
 });
+
+test("Hub 路由 host：gate 303 回跳 Location 重写回 /h/<id>/ 前缀", async () => {
+  const ctx = await boot();
+  try {
+    const alice = ctx.db.createUser("alice", await hashPassword("pw"));
+    ctx.db.createHost("host-abc", alice.id, "abc", sha256(randomToken()));
+    // 假隧道：上游返回 303 Location: /（gate 登录成功回跳）
+    ctx.tunnels.register({
+      hostId: "host-abc",
+      openStream(_k, _p, _m, _h, handler) {
+        handler.onResponse?.(303, "", { location: "/" });
+        handler.onClose?.();
+        return 1;
+      },
+      sendData() {},
+      endRequest() {},
+      abortStream() {},
+      terminate() {},
+    } as unknown as TunnelConn);
+    const cookie = `rdsh_host=${ctx.auth.signHostCookie("host-abc", alice.id)}`;
+    const res = await fetch(`${ctx.base}/h/host-abc/`, { headers: { cookie }, redirect: "manual" });
+    assert.equal(res.status, 303);
+    assert.equal(res.headers.get("location"), "/h/host-abc/", "Location 应带上前缀，不能丢 path");
+  } finally {
+    await close(ctx);
+  }
+});
