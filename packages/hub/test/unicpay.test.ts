@@ -47,6 +47,8 @@ const rawConfig = {
       { id: "plus_monthly", name: "Plus", hosts: 5, priceCny: 30, intervalMonths: 1 },
       { id: "pro_monthly", name: "Pro", hosts: 10, priceCny: 50, intervalMonths: 1 },
     ],
+    // 渠道加量：微信支付 +10%（第三方渠道费低于应用商店）。
+    channelBonus: { wechatpay: 1.1 },
     // 点数档位改由配置提供（原先硬编码在 credits.ts）→ 测试配置里必须给全 6 档。
     credits: [
       { id: "credits_1_usd", package: { credits: 800 }, priceCny: 8, priceUsd: 0.99 },
@@ -604,6 +606,39 @@ test("A 类 payment.succeeded + goodsType=consumable → 入账", async () => {
     amount: 800,
     currency: "CNY",
     goodsType: "consumable",
+  });
+  assert.equal(r.status, 200);
+  assert.equal(db.getCreditBalances(user.id).purchased, 800 * CREDITS_MICRO_PER_CREDIT);
+});
+
+test("A 类 payment.succeeded + channel=wechatpay → 按 channelBonus 加量 10%", async () => {
+  const user = db.createUser("wh-a-channel", await hashPassword("pw123456"));
+  db.createOrder("o-channel", user.id, "credits_1_usd", 8); // 800 分
+  const r = await postWebhook({
+    eventType: "payment.succeeded",
+    paymentId: "p-channel",
+    appOrderId: "o-channel",
+    amount: 800,
+    currency: "CNY",
+    goodsType: "consumable",
+    channel: "wechatpay",
+  });
+  assert.equal(r.status, 200);
+  // 800 点 × 1.1 = 880 点
+  assert.equal(db.getCreditBalances(user.id).purchased, 880 * CREDITS_MICRO_PER_CREDIT);
+});
+
+test("A 类 payment.succeeded + 未知 channel → 按 1.0 不加量", async () => {
+  const user = db.createUser("wh-a-unknown-ch", await hashPassword("pw123456"));
+  db.createOrder("o-unknown-ch", user.id, "credits_1_usd", 8);
+  const r = await postWebhook({
+    eventType: "payment.succeeded",
+    paymentId: "p-unknown-ch",
+    appOrderId: "o-unknown-ch",
+    amount: 800,
+    currency: "CNY",
+    goodsType: "consumable",
+    channel: "unknownpay",
   });
   assert.equal(r.status, 200);
   assert.equal(db.getCreditBalances(user.id).purchased, 800 * CREDITS_MICRO_PER_CREDIT);

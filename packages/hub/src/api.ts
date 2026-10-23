@@ -2585,7 +2585,7 @@ async function handleBillingOrderCheck(req: IncomingMessage, res: ServerResponse
   // 平台已支付：幂等补发（与 webhook 同一段、同一幂等键 unicpay:<paymentId>）。
   // 平台查单 amount 与 webhook body.amount 同为「分」（最小单位整数），直接与 order.amountCny*100 比对。
   const amountMinor = typeof po.amount === "number" ? po.amount : null;
-  const result = await deliverUnicpayPaidOrder(runtime, order, order.paymentId ?? "", amountMinor, "", ip, JSON.stringify(po));
+  const result = await deliverUnicpayPaidOrder(runtime, order, order.paymentId ?? "", amountMinor, "", "", ip, JSON.stringify(po));
   if (!result.ok && result.reason === "amount_mismatch") {
     writeError(res, 502, "AMOUNT_MISMATCH", "platform amount does not match the order");
     return;
@@ -4036,6 +4036,7 @@ async function deliverUnicpayPaidOrder(
   paymentId: string,
   amountMinor: number | null,
   goodsType: string,
+  channel: string,
   ip: string,
   rawPayload: string,
 ): Promise<{ ok: true } | { ok: false; reason: "not_created" | "amount_mismatch" }> {
@@ -4056,7 +4057,10 @@ async function deliverUnicpayPaidOrder(
     const product = creditProductById(creditProductsOf(runtime), order.planId);
     if (goodsType === "consumable" || (goodsType === "" && product !== undefined)) {
       if (product !== undefined) {
-        await creditRecharge(runtime.store, order.userId, product.credits * CREDITS_MICRO_PER_CREDIT, {
+        // 渠道加量：微信/支付宝等第三方支付渠道费低于应用商店，按 channelBonus 放大点数。
+        const mult = runtime.config.billing?.channelBonus?.[channel] ?? 1;
+        const credits = Math.round(product.credits * mult);
+        await creditRecharge(runtime.store, order.userId, credits * CREDITS_MICRO_PER_CREDIT, {
           sourceType: "unicpay",
           sourceId: paymentId,
           idempotencyKey: `unicpay:${paymentId}`,
@@ -4175,7 +4179,8 @@ async function handleUnicpayWebhook(req: IncomingMessage, res: ServerResponse, r
     // H4/H5/入账 全部收敛进 deliverUnicpayPaidOrder（与主动查单补发共用同一段、同一幂等键）。
     const amountMinor = typeof body.amount === "number" ? body.amount : null;
     const goodsType = typeof body.goodsType === "string" ? body.goodsType : "";
-    const result = await deliverUnicpayPaidOrder(runtime, order, paymentId, amountMinor, goodsType, ip, rawBody);
+    const channel = typeof body.channel === "string" ? body.channel : "";
+    const result = await deliverUnicpayPaidOrder(runtime, order, paymentId, amountMinor, goodsType, channel, ip, rawBody);
     if (!result.ok) {
       if (result.reason === "amount_mismatch") {
         writeError(res, 422, "AMOUNT_MISMATCH", "amount does not match the order");

@@ -75,6 +75,13 @@ export interface BillingConfig {
    * 缺省为空数组 ⇒ **不卖点数**（`/api/credits/recharge` 与入账都会拒绝未知 goodsId）。
    */
   credits: CreditProduct[];
+  /**
+   * 渠道加量系数（渠道 key → 乘数），缺省/未列出的渠道按 1.0。
+   *
+   * 来自 `productsFile` 顶层 `channelBonus`；当前用于微信/支付宝第三方支付
+   * （渠道费低）相比应用商店内购的让利。
+   */
+  channelBonus?: Record<string, number>;
   /** 试用天数（默认 3） */
   trialDays?: number;
   /** 试用 host 配额（默认 1） */
@@ -581,7 +588,7 @@ function parseCreditEntries(raw: unknown, source: string, where: string): Credit
  *
  * **配置错误要吵**：路径写了但文件读不到 / JSON 坏 / 缺字段 ⇒ 启动失败（而不是静默不卖点数）。
  */
-function loadCatalogFromFile(path: string, source: string): { credits: CreditProduct[]; plans: PlanSpec[] } {
+function loadCatalogFromFile(path: string, source: string): { credits: CreditProduct[]; plans: PlanSpec[]; channelBonus: Record<string, number> } {
   let text: string;
   try {
     text = readFileSync(path, "utf8");
@@ -610,7 +617,23 @@ function loadCatalogFromFile(path: string, source: string): { credits: CreditPro
       throw new Error(`${source}: "billing.productsFile" uses id ${plan.id} in both products.consumable and products.subscription (${path})`);
     }
   }
-  return { credits, plans };
+  return { credits, plans, channelBonus: parseChannelBonus((doc as { channelBonus?: unknown }).channelBonus, source, "billing.productsFile: channelBonus") };
+}
+
+/** 解析渠道加量：`{ <channel>: multiplier }`；缺省返回空对象（全部按 1.0）。 */
+function parseChannelBonus(raw: unknown, source: string, where: string): Record<string, number> {
+  if (raw === undefined) return {};
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw new Error(`${source}: "${where}" must be an object`);
+  }
+  const out: Record<string, number> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (key === "" || typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+      throw new Error(`${source}: "${where}.${key}" must be a positive number`);
+    }
+    out[key] = value;
+  }
+  return out;
 }
 
 function normalizeBilling(raw: unknown, source: string): BillingConfig {
@@ -630,6 +653,11 @@ function normalizeBilling(raw: unknown, source: string): BillingConfig {
   const credits: CreditProduct[] = fromFile !== undefined ? fromFile.credits : parseCreditEntries(b.credits, source, "billing.credits");
   const resolvedPlans: PlanSpec[] = fromFile !== undefined ? fromFile.plans : parsePlanEntries(b.plans, source, "billing.plans");
   const out: BillingConfig = { plans: resolvedPlans, credits, productsFile };
+  // 渠道加量：优先取 productsFile 顶层，其次配置内联（测试/小规模部署用）。
+  const channelBonus = fromFile !== undefined && Object.keys(fromFile.channelBonus).length > 0
+    ? fromFile.channelBonus
+    : parseChannelBonus(b.channelBonus, source, "billing.channelBonus");
+  if (Object.keys(channelBonus).length > 0) out.channelBonus = channelBonus;
   for (const key of ["trialDays", "trialHosts", "graceDays", "retentionDays"] as const) {
     if (b[key] !== undefined) {
       if (!Number.isInteger(b[key]) || (b[key] as number) < 0) throw new Error(`${source}: "billing.${key}" must be a non-negative integer`);
