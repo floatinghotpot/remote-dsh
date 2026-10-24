@@ -9,6 +9,29 @@
 
 ## [未发布]
 
+## [rdsh-gateway 0.15.3 · remote-dsh 0.19.1 · dsh-web-remote 0.13.1] - 2026-10-24
+
+### 新增
+
+- **自动配置 LLM Provider**（gateway）：配置了 `llm` 时，`rdsh host serve` 每次启动都会自动配置 DSH 的 `llm-router` provider 和 API key，不再需要手动改 DSH 设置。配置的模型会带上上游 `reasoningEfforts`；key 列表支持新建/编辑/删除，并显示创建与最后使用时间。新增 `llm-provision.ts`；CLI 把 `config.llm` 透传给 gateway 的 `join()`。
+- **`llm` 开关**（gateway）：可按主机关闭自动配置。
+
+### 变更
+
+- **就绪超时**（gateway）：`dsh web` 冷启动等待从 30s 放宽到 120s，老机器不再在启动中途被杀。
+- **Provider 显示名**（gateway）：改为产品名。
+
+### 修复
+
+- **DSH 设置/凭据 RPC**（gateway）：把 RPC 载荷包进 `args` 信封并发送真实 `expectedRevision`，使 `settings/mutate` 能真正持久化；去掉可选的 `settings/describe` 调用并加固 `dshJson` 超时。
+- **残留的凭据锁**（gateway）：拉起前清理 DSH 遗留的凭据锁。
+- **`reasoningEfforts.off`**（gateway）：改发 `null`，不再发空字符串。
+
+### 说明
+
+- **`dsh-web-remote`**：本次无源码变更；重新发布是为了把 pin 的 `rdsh-gateway` 依赖从 `0.15.0` 升到 `0.15.3`。
+- **`rdsh-hub` / `rdsh-hub-cli`**：不受影响——它们走 git 部署，本批不发 npm。
+
 ## [rdsh-hub 0.19.0 · rdsh-hub-cli 0.19.0 · remote-dsh 0.19.0] - 2026-10-20
 
 ### 新增

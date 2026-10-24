@@ -1,6 +1,6 @@
 {
   "name": "dsh-web-remote",
-  "version": "0.13.0",
+  "version": "0.13.1",
   "description": "Secure remote access to your agent (no public IP required, end-to-end encrypted). Two-way voice (with the WhaleLink app).",
   "license": "MIT",
   "type": "module",

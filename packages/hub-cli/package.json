@@ -27,7 +27,7 @@
     "rdsh-hub": "workspace:*"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node -e \"require('node:fs').chmodSync('dist/bin.js', 0o755)\"",
     "prepack": "pnpm run build",
     "test": "node --test \"test/*.test.ts\""
   }

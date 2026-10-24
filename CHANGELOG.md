@@ -7,6 +7,29 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [rdsh-gateway 0.15.3 · remote-dsh 0.19.1 · dsh-web-remote 0.13.1] - 2026-10-24
+
+### Added
+
+- **Automatic LLM provider provisioning** (gateway): when `llm` is configured, `rdsh host serve` provisions the DSH `llm-router` provider and API key on every start instead of requiring a manual settings edit. The provisioned model config surfaces upstream `reasoningEfforts`, and the key list supports create / edit / delete with created and last-used timestamps. New `llm-provision.ts`; the CLI passes `config.llm` through to the gateway's `join()`.
+- **`llm` switch** (gateway): provisioning can be turned off per host via config.
+
+### Changed
+
+- **Ready timeout** (gateway): the `dsh web` cold-start wait is now 120s (was 30s), so older machines are no longer killed mid-startup.
+- **Provider display name** (gateway): renamed to the product name.
+
+### Fixed
+
+- **DSH settings/credentials RPC** (gateway): wrap the RPC payload in the `args` envelope and send the real `expectedRevision` so `settings/mutate` persists; drop the optional `settings/describe` call and harden the `dshJson` timeout.
+- **Stale credentials lock** (gateway): clear a leftover DSH credentials lock before spawning.
+- **`reasoningEfforts.off`** (gateway): emit `null` instead of an empty string.
+
+### Notes
+
+- **`dsh-web-remote`**: no source changes in this release; it is republished so its pinned `rdsh-gateway` dependency moves from `0.15.0` to `0.15.3`.
+- **`rdsh-hub` / `rdsh-hub-cli`**: unaffected — deployed from git, so no npm release in this batch.
+
 ## [rdsh-hub 0.19.0 · rdsh-hub-cli 0.19.0 · remote-dsh 0.19.0] - 2026-10-20
 
 ### Added
