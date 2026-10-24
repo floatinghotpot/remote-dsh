@@ -61,8 +61,8 @@ export async function verifyPassword(password: string, stored: string): Promise<
   }
 }
 
-export const ACCESS_TTL_MS = 60 * 60 * 1000; // 1h
-export const REFRESH_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7d
+export const ACCESS_TTL_MS = 60 * 60 * 1000; // 1h（短凭据，靠 silent refresh 无感续期）
+export const REFRESH_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30d（个人设备+锁屏：一月免登录）
 export const ADMIN_TTL_MS = 30 * 60 * 1000; // 30min（管理面独立短会话）
 export const TRUSTED_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30d（可信设备免 TOTP）
 export const RECENT_TOTP_WINDOW_MS = 30 * 60 * 1000; // 门户会话 30 分钟内验证过 2FA → 管理台免二次输入
