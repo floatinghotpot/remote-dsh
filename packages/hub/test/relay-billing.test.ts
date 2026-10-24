@@ -218,6 +218,20 @@ test("isRelayFreeUser：试用/专属（plan_status=null）判定 + 配置开关
   assert.equal(isRelayFreeUser({ planStatus: null }, off), false); // 关掉专属免费
 });
 
+test("isRelayFreeUser：试用到期防御（不依赖 sweep，读当前到期时间）", () => {
+  const on = { trialFree: true, internalFree: true };
+  const now = 1_800_000_000_000; // 固定时间
+  // 未到期 → 免费
+  assert.equal(isRelayFreeUser({ planStatus: "trial", planExpiresAt: now + 1000 }, on, now), true);
+  // 已到期 → 立即不再免费（计费），不等 sweepBilling
+  assert.equal(isRelayFreeUser({ planStatus: "trial", planExpiresAt: now - 1000 }, on, now), false);
+  // 无到期 = 管理员授的永久试用 → 免费
+  assert.equal(isRelayFreeUser({ planStatus: "trial", planExpiresAt: null }, on, now), true);
+  assert.equal(isRelayFreeUser({ planStatus: "trial" }, on, now), true); // 缺字段同样视为永久试用
+  // 关掉试用免费开关时，即使未到期也不免费
+  assert.equal(isRelayFreeUser({ planStatus: "trial", planExpiresAt: now + 1000 }, { trialFree: false, internalFree: false }, now), false);
+});
+
 test("relayFreePolicy：缺省回退默认（试用/专属均免费）", () => {
   assert.deepEqual(relayFreePolicy(undefined), { trialFree: true, internalFree: true });
   assert.deepEqual(relayFreePolicy({ relay: { trialFree: false } }), { trialFree: false, internalFree: true });
