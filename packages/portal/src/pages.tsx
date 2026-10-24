@@ -4616,9 +4616,6 @@ function UsagePage(): React.JSX.Element {
           const color = orange;
           return (
             <Card key={m.id} title={m.id} badge={<span style={{ fontSize: 12, color: "var(--rdsh-fg-muted)" }}>{total.toLocaleString()} tokens</span>}>
-              {m.displayName !== "" && m.displayName !== m.id && (
-                <div style={{ fontSize: 11, color: "var(--rdsh-fg-subtle)", marginBottom: 6 }}>{m.displayName}</div>
-              )}
               <BarChart series={[series]} colors={[color]} />
               <div style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", marginTop: 6 }}>
                 {t("输入")} {(data?.inputTokens ?? 0).toLocaleString()} · {t("输出")} {(data?.outputTokens ?? 0).toLocaleString()} · {t("请求")} {data?.requests ?? 0} {t("次")}
