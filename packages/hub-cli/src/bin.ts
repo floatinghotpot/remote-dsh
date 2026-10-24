@@ -56,6 +56,7 @@ Usage:
   rdsh-hub audit ls           Audit log (login/2FA/sharing/email events)
   rdsh-hub host ls|revoke|invite   List / revoke / invite hosts (invite issues a one-time join token)
   rdsh-hub router ls|invite|approve|enable|disable|delete   Manage LLM routers
+  rdsh-hub relay ls|invite|enable|disable|revoke|rename    Manage relay nodes (invite issues a relay join token)
   rdsh-hub db migrate|verify|check   Database: migrate SQLite->PG, verify, health check
   rdsh-hub service ...        Run hub as a systemd/launchd service
 
@@ -114,6 +115,18 @@ Actions:
   enable <id>           Re-enable a disabled router (disabled -> active)
   disable <id>          Disable an active router (active -> disabled)
   delete <id>           Delete a router (soft: status=revoked, token revoked)
+`,
+  relay: `Usage: rdsh-hub relay ls|invite|enable|disable|revoke|rename
+
+Manage relay nodes (scale-out Go relay nodes).
+
+Actions:
+  ls                    List relay nodes (id / name / status / url / ip)
+  invite [--name <s>]   Issue a relay join token (reusable until revoked)
+  enable <id>           Enable a node (approve a joined node / re-enable a disabled one)
+  disable <id>          Disable a node (draining: its hosts migrate away)
+  revoke <id>           Revoke a node (remove it and unassign its hosts)
+  rename <id> <name>    Rename a node
 `,
   service: `Usage: rdsh-hub service install|status|start|stop|restart|uninstall
 
@@ -256,6 +269,10 @@ async function handleHub(args: string[], configPath?: string): Promise<void> {
       await handleHubRouter(rest, configPath);
       return;
     }
+    case "relay": {
+      await handleHubRelay(rest, configPath);
+      return;
+    }
     case "audit": {
       await handleHubAudit(rest, configPath);
       return;
@@ -292,7 +309,7 @@ async function handleHub(args: string[], configPath?: string): Promise<void> {
       }
     }
     default:
-      throw new Error("usage: rdsh-hub setup|serve|user|host|router|audit|db|service");
+      throw new Error("usage: rdsh-hub setup|serve|user|host|router|relay|audit|db|service");
   }
 }
 
@@ -551,6 +568,73 @@ async function handleHubRouter(args: string[], configPath?: string): Promise<voi
       }
       default:
         throw new Error("usage: rdsh-hub router ls|invite|approve|enable|disable|delete");
+    }
+  } finally {
+    await store.close();
+  }
+}
+
+/** `rdsh-hub relay`：relay 节点管理（ls/invite/enable/disable/revoke/rename）。 */
+async function handleHubRelay(args: string[], configPath?: string): Promise<void> {
+  const action = args[0];
+  const store = await openHubStore(configPath);
+  try {
+    switch (action) {
+      case "ls": {
+        const nodes = await store.listNodes();
+        if (nodes.length === 0) {
+          console.log("(no relay nodes)");
+        } else {
+          for (const n of nodes) {
+            const alive = n.status === "online" && Date.now() - n.lastHeartbeat < 180_000;
+            const tags: string[] = [];
+            if (!n.enabled) tags.push("disabled");
+            if (!alive) tags.push("stale");
+            console.log(`${n.id}  ${n.name}  status=${n.status}${tags.length > 0 ? ` [${tags.join(",")}]` : ""}  url=${n.advertiseUrl}  ip=${n.lastIp ?? "-"}`);
+          }
+        }
+        return;
+      }
+      case "invite": {
+        const nameRaw = arg(args, "--name") ?? arg(args, "--label");
+        const name = nameRaw !== undefined && nameRaw !== "" ? nameRaw.slice(0, 64) : defaultInviteLabel();
+        const id = randomUUID();
+        const token = randomToken();
+        // createdBy=0：CLI 直连 store 签发（无登录用户），沿用 host/router invite 的直连模式。
+        await store.createRelayJoinToken(id, name, sha256(token), token, 0);
+        console.log(JSON.stringify({ id, name, token }));
+        return;
+      }
+      case "enable":
+      case "disable":
+      case "revoke":
+      case "rename": {
+        const id = args[1];
+        if (id === undefined) throw new Error(`usage: rdsh-hub relay ${action} <id>${action === "rename" ? " <name>" : ""}`);
+        const node = await store.getNodeById(id);
+        if (node === null) throw new Error(`relay node '${id}' not found`);
+        if (action === "enable") {
+          await store.setNodeEnabled(id, true);
+          await store.updateNodeStatus(id, "online");
+          console.log(`rdsh-hub: relay node '${id}' enabled`);
+        } else if (action === "disable") {
+          await store.setNodeEnabled(id, false);
+          await store.updateNodeStatus(id, "draining");
+          console.log(`rdsh-hub: relay node '${id}' disabled (draining)`);
+        } else if (action === "revoke") {
+          for (const h of await store.listHostsByNode(id)) await store.setHostNode(h.id, null);
+          await store.removeNode(id);
+          console.log(`rdsh-hub: relay node '${id}' revoked`);
+        } else {
+          const name = args[2];
+          if (name === undefined || name.trim() === "") throw new Error("usage: rdsh-hub relay rename <id> <name>");
+          await store.updateNodeName(id, name.trim().slice(0, 64));
+          console.log(`rdsh-hub: relay node '${id}' renamed to '${name.trim().slice(0, 64)}'`);
+        }
+        return;
+      }
+      default:
+        throw new Error("usage: rdsh-hub relay ls|invite [--name <s>]|enable <id>|disable <id>|revoke <id>|rename <id> <name>");
     }
   } finally {
     await store.close();
