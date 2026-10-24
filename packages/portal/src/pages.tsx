@@ -1231,7 +1231,7 @@ function LlmKeysPage(): React.JSX.Element {
                     onChange={(e) => setEditName(e.target.value)}
                     maxLength={64}
                     autoFocus
-                    style={{ fontSize: 13, padding: "4px 8px", borderRadius: 6, border: "1px solid var(--rdsh-border)", background: "var(--rdsh-bg-surface)", color: "var(--rdsh-fg)", minWidth: 160 }}
+                    style={{ fontSize: 16, padding: "4px 8px", borderRadius: 6, border: "1px solid var(--rdsh-border)", background: "var(--rdsh-bg-surface)", color: "var(--rdsh-fg)", minWidth: 160 }}
                   />
                   <button onClick={() => saveEdit(k.id)} style={btnStyle()}>{t("保存")}</button>
                   <button onClick={() => setEditingId(null)} style={btnStyle("ghost")}>{t("取消")}</button>
