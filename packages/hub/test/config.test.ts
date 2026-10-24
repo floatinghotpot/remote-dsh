@@ -401,3 +401,29 @@ const cfg = normalizeHubConfig({ billing: { productsFile: real } });
 assert.equal(cfg.billing?.credits.length, 6);
 assert.deepEqual(cfg.billing?.credits[0], { id: "credits_1_usd", credits: 800, priceCny: 8, priceUsd: 0.99 });
 });
+
+test("billing.relay：bytesPerCredit / overdraftFloor / trialFree / internalFree 规范化 + 非法报错（31-relay-billing）", () => {
+  // 缺省 → 无 relay 字段（消费方回退代码常量 3 MB/点、-100 点、试用/专属均免费）
+  assert.equal(normalizeHubConfig({ billing: { plans: [] } }).billing?.relay, undefined);
+
+  // 合法：正整数字节 + 任意整数点数 + 两个布尔开关
+  const cfg = normalizeHubConfig({ billing: { relay: { bytesPerCredit: 4194304, overdraftFloor: -50, trialFree: false, internalFree: true } } });
+  assert.equal(cfg.billing?.relay?.bytesPerCredit, 4194304);
+  assert.equal(cfg.billing?.relay?.overdraftFloor, -50);
+  assert.equal(cfg.billing?.relay?.trialFree, false);
+  assert.equal(cfg.billing?.relay?.internalFree, true);
+
+  // 非法报错
+  assert.throws(() => normalizeHubConfig({ billing: { relay: { bytesPerCredit: 0 } } }), /"billing.relay.bytesPerCredit" must be a positive integer/);
+  assert.throws(() => normalizeHubConfig({ billing: { relay: { bytesPerCredit: 1.5 } } }), /"billing.relay.bytesPerCredit" must be a positive integer/);
+  assert.throws(() => normalizeHubConfig({ billing: { relay: { overdraftFloor: 1.5 } } }), /"billing.relay.overdraftFloor" must be an integer/);
+  assert.throws(() => normalizeHubConfig({ billing: { relay: { trialFree: "yes" } } }), /"billing.relay.trialFree" must be a boolean/);
+  assert.throws(() => normalizeHubConfig({ billing: { relay: { internalFree: 1 } } }), /"billing.relay.internalFree" must be a boolean/);
+});
+
+test("relayNodeTokenEnabled：布尔校验（31-relay-billing 共享 token 开关）", () => {
+  // 缺省 → undefined（消费方 `!== false` 即视为接受共享 token）
+  assert.equal(normalizeHubConfig({}).relayNodeTokenEnabled, undefined);
+  assert.equal(normalizeHubConfig({ relayNodeTokenEnabled: false }).relayNodeTokenEnabled, false);
+  assert.throws(() => normalizeHubConfig({ relayNodeTokenEnabled: "no" }), /"relayNodeTokenEnabled" must be a boolean/);
+});

@@ -39,7 +39,7 @@ function bearerToken(req: IncomingMessage): string | null {
 }
 
 /** 节点鉴权：token → 目录节点（未认证 → null）。 */
-async function authenticateNode(req: IncomingMessage, runtime: HubRuntime): Promise<NodeRow | null> {
+export async function authenticateNode(req: IncomingMessage, runtime: HubRuntime): Promise<NodeRow | null> {
   const token = bearerToken(req);
   if (token === null || token.length < 16) return null;
   return runtime.store.findNodeByTokenHash(sha256(token));

@@ -334,6 +334,38 @@ export interface CreditSpendResult {
   balance: CreditBalances;
 }
 
+/** 1 点数 = 3 MB 中转流量（上行 + 下行合计）—— 消耗唯一标准（31 req R4）。 */
+export const RELAY_BYTES_PER_CREDIT = 3 * 1024 * 1024;
+
+/** 欠费下限（透支到底）：总余额 ≤ 此值即断流，单位点数（默认 -100；可被 config.billing.relay.overdraftFloor 覆盖）。 */
+export const RELAY_OVERDRAFT_FLOOR_POINTS = -100;
+
+/** 中转字节 → 微单位（向下取整；1 点数 = 10000 微单位）。`bytesPerCredit` 默认 3 MB，可被 `config.billing.relay.bytesPerCredit` 覆盖。 */
+export function relayBytesToMicro(bytes: number, bytesPerCredit: number = RELAY_BYTES_PER_CREDIT): number {
+  return Math.floor((bytes * 10000) / bytesPerCredit);
+}
+
+/** relay 免计费策略（试用期免费 / 专属账号免费，均可配置）。 */
+export interface RelayFreePolicy {
+  trialFree: boolean;
+  internalFree: boolean;
+}
+
+/** 从 `billing.relay` 配置解析免计费策略；缺省回退默认（试用免费、专属免费）。 */
+export function relayFreePolicy(billing: { relay?: { trialFree?: boolean; internalFree?: boolean } } | undefined): RelayFreePolicy {
+  return {
+    trialFree: billing?.relay?.trialFree ?? true,
+    internalFree: billing?.relay?.internalFree ?? true,
+  };
+}
+
+/** 31-relay-billing：判定用户 relay 是否免计费（试用 `trial` / 专属账号 `plan_status=NULL`）。 */
+export function isRelayFreeUser(user: { planStatus: string | null }, policy: RelayFreePolicy): boolean {
+  if (user.planStatus === "trial") return policy.trialFree;
+  if (user.planStatus === null) return policy.internalFree;
+  return false;
+}
+
 export interface ServiceTokenRow {
   id: string;
   name: string;
@@ -635,6 +667,16 @@ export class HubDb {
       );
       CREATE INDEX IF NOT EXISTS idx_credit_holds_user_status ON credit_holds(user_id, status);
       CREATE INDEX IF NOT EXISTS idx_credit_holds_expires ON credit_holds(status, expires_at);
+      CREATE TABLE IF NOT EXISTS relay_charge (
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        host_id TEXT NOT NULL,
+        date TEXT NOT NULL,
+        instance_id TEXT NOT NULL,
+        last_up INTEGER NOT NULL DEFAULT 0,
+        last_down INTEGER NOT NULL DEFAULT 0,
+        charged_micro INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (user_id, host_id, date, instance_id)
+      );
       CREATE TABLE IF NOT EXISTS service_tokens (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -2633,6 +2675,73 @@ export class HubDb {
   sweepExpiredCreditHolds(now = Date.now()): number {
     const info = this.db.prepare("UPDATE credit_holds SET status = 'expired' WHERE status = 'held' AND expires_at <= ?").run(now);
     return Number(info.changes);
+  }
+
+  // ---- relay 计费（31-relay-billing）：节点累计计量 → 增量扣减 ----
+
+  /**
+   * 按中转流量增量扣减点数。节点上报「当日累计值」（MAX 合并、幂等），此处扣「字节增量」再换微单位：
+   * delta = max(0, up-lastUp) + max(0, down-lastDown)，micro = floor(delta*10000/bytesPerCredit)。
+   * 水位存**字节**（lastUp/lastDown），与费率解耦 —— 改 bytesPerCredit 不会追溯重算历史用量。
+   * 重复/重放/乱序上报自然幂等（delta ≤ 0 即跳过）；字节水位用 MAX 只进不退。
+   * allowOverdraft=true 允许透支，欠费下限由闸门层强制（原语不拦）。
+   */
+  chargeRelayBytes(userId: number, hostId: string, instanceId: string, date: string, bytesUp: number, bytesDown: number, bytesPerCredit: number = RELAY_BYTES_PER_CREDIT, isFree: boolean = false, overdraftFloorPoints: number = RELAY_OVERDRAFT_FLOOR_POINTS): { chargedMicro: number } {
+    this.db.exec("SAVEPOINT relay_charge");
+    try {
+      const wm = this.getRelayCharge(userId, hostId, date, instanceId);
+      const deltaBytes = Math.max(0, bytesUp - wm.lastUp) + Math.max(0, bytesDown - wm.lastDown);
+      const micro = relayBytesToMicro(deltaBytes, bytesPerCredit);
+      let charged = 0;
+      // 免计费（试用/专属）：不扣点。否则扣点，但钳制到欠费下限：余额最多透支到 floor，不再往下
+      //（兜底闸门之外的第二道防线——长流越过下限也不会无限透支）。
+      if (micro > 0 && !isFree) {
+        const balance = this.getCreditBalances(userId).total;
+        const floorMicro = overdraftFloorPoints * 10000; // 点数 → 微单位
+        charged = Math.min(micro, Math.max(0, balance - floorMicro));
+        if (charged > 0) {
+          this.spendCredits(userId, charged, {
+            reason: "consume_relay",
+            sourceType: "relay",
+            sourceId: `${date}:${instanceId}`,
+            idempotencyKey: `relay:${instanceId}:${userId}:${hostId}:${date}:${bytesUp}:${bytesDown}`,
+            allowOverdraft: true,
+          });
+        }
+      }
+      this.bumpRelayCharge(userId, hostId, date, instanceId, bytesUp, bytesDown, charged);
+      this.db.exec("RELEASE relay_charge");
+      return { chargedMicro: charged };
+    } catch (e) {
+      this.db.exec("ROLLBACK TO relay_charge");
+      this.db.exec("RELEASE relay_charge");
+      throw e;
+    }
+  }
+
+  private getRelayCharge(userId: number, hostId: string, date: string, instanceId: string): { lastUp: number; lastDown: number } {
+    const row = this.db
+      .prepare("SELECT last_up, last_down FROM relay_charge WHERE user_id = ? AND host_id = ? AND date = ? AND instance_id = ?")
+      .get(userId, hostId, date, instanceId) as { last_up: number; last_down: number } | undefined;
+    return row === undefined ? { lastUp: 0, lastDown: 0 } : { lastUp: Number(row.last_up), lastDown: Number(row.last_down) };
+  }
+
+  /** 字节水位只前进不后退（MAX，防乱序回退重复扣）；charged_micro 累加本批实际扣减。 */
+  private bumpRelayCharge(userId: number, hostId: string, date: string, instanceId: string, bytesUp: number, bytesDown: number, chargedMicro: number): void {
+    this.db
+      .prepare(
+        "INSERT INTO relay_charge (user_id, host_id, date, instance_id, last_up, last_down, charged_micro) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id, host_id, date, instance_id) DO UPDATE SET last_up = MAX(last_up, excluded.last_up), last_down = MAX(last_down, excluded.last_down), charged_micro = relay_charge.charged_micro + excluded.charged_micro",
+      )
+      .run(userId, hostId, date, instanceId, bytesUp, bytesDown, chargedMicro);
+  }
+
+  /** relay 消耗查询（31 R5）：累计已扣微单位 + 按日序列（节点区域日，同 B5）。 */
+  listRelayConsumption(userId: number, from: string, to: string): { totalMicro: number; days: Array<{ date: string; micro: number }> } {
+    const total = this.db.prepare("SELECT COALESCE(SUM(charged_micro), 0) AS s FROM relay_charge WHERE user_id = ?").get(userId) as { s: number };
+    const rows = this.db
+      .prepare("SELECT date, SUM(charged_micro) AS micro FROM relay_charge WHERE user_id = ? AND date >= ? AND date <= ? GROUP BY date ORDER BY date")
+      .all(userId, from, to) as unknown as Array<{ date: string; micro: number }>;
+    return { totalMicro: Number(total.s), days: rows.map((r) => ({ date: r.date, micro: Number(r.micro) })) };
   }
 
   private assertMicroAmount(amountMicro: number, positive: boolean): void {

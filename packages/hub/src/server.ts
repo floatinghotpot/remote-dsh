@@ -19,7 +19,7 @@ import type { Duplex } from "node:stream";
 import { WebSocketServer } from "ws";
 import type { WebSocket } from "ws";
 import { sha256 } from "./jwt.ts";
-import { HubDb } from "./db.ts";
+import { HubDb, RELAY_BYTES_PER_CREDIT, RELAY_OVERDRAFT_FLOOR_POINTS, relayFreePolicy } from "./db.ts";
 import { HubAuth } from "./auth.ts";
 import { authenticate, clientIp, handleApi, writeError, sweepBilling } from "./api.ts";
 import { sweepCredits } from "./credits.ts";
@@ -200,7 +200,7 @@ export async function startHubServer(opts: HubServerOptions): Promise<RunningHub
     db: opts.db,
     store: opts.store ?? (opts.db !== undefined ? createSqliteStore(opts.db) : (() => { throw new Error("hub server requires db or store"); })()),
     dbSize: opts.dbSize,
-    usage: new UsageAccumulator(opts.store ?? (opts.db !== undefined ? createSqliteStore(opts.db) : (() => { throw new Error("hub server requires db or store"); })())),
+    usage: new UsageAccumulator(opts.store ?? (opts.db !== undefined ? createSqliteStore(opts.db) : (() => { throw new Error("hub server requires db or store"); })()), opts.billing?.relay?.bytesPerCredit ?? RELAY_BYTES_PER_CREDIT, relayFreePolicy(opts.billing), opts.billing?.relay?.overdraftFloor ?? RELAY_OVERDRAFT_FLOOR_POINTS),
     auth: opts.auth,
     tunnels: opts.tunnels,
     events: opts.events,

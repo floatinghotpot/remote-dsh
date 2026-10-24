@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { HubStore } from "./store.ts";
-import type { UsageBatchRow, UsageDayValues, UsageValues } from "./db.ts";
+import { RELAY_BYTES_PER_CREDIT, RELAY_OVERDRAFT_FLOOR_POINTS, isRelayFreeUser, type RelayFreePolicy, type UsageBatchRow, type UsageDayValues, type UsageValues } from "./db.ts";
 
 /** 本地时区日界 'YYYY-MM-DD'（与 req R13 区域时区切日一致）。 */
 export function localDate(d: Date = new Date()): string {
@@ -72,9 +72,15 @@ export class UsageAccumulator {
   private lastError: string | null = null;
 
   private readonly store: HubStore;
+  private readonly bytesPerCredit: number;
+  private readonly freePolicy: RelayFreePolicy;
+  private readonly overdraftFloorPoints: number;
 
-  constructor(store: HubStore) {
+  constructor(store: HubStore, bytesPerCredit: number = RELAY_BYTES_PER_CREDIT, freePolicy: RelayFreePolicy = { trialFree: true, internalFree: true }, overdraftFloorPoints: number = RELAY_OVERDRAFT_FLOOR_POINTS) {
     this.store = store;
+    this.bytesPerCredit = bytesPerCredit;
+    this.freePolicy = freePolicy;
+    this.overdraftFloorPoints = overdraftFloorPoints;
   }
 
   /** 数据面热路径：只做内存累计，绝不落库、绝不 await。 */
@@ -135,6 +141,18 @@ export class UsageAccumulator {
     }
     const started = Date.now();
     try {
+      // 31-relay-billing：relay 行先按增量扣减（幂等），再落展示计量（hub 内置 relay 兜底）；免计费用户跳过扣点。
+      const freeCache = new Map<number, boolean>();
+      for (const r of rows) {
+        if (r.meta.source !== "relay") continue;
+        let free = freeCache.get(r.userId);
+        if (free === undefined) {
+          const user = await this.store.getUserById(r.userId);
+          free = user !== null && isRelayFreeUser(user, this.freePolicy);
+          freeCache.set(r.userId, free);
+        }
+        await this.store.chargeRelayBytes(r.userId, r.meta.hostId ?? "", r.meta.instanceId ?? "", r.day.date, r.day.relayBytesUp, r.day.relayBytesDown, this.bytesPerCredit, free, this.overdraftFloorPoints);
+      }
       const written = await this.store.upsertUsageDailyBatch(rows, this.chunkSize);
       this.lastFlushRows = written;
       this.lastFlushMs = Date.now() - started;

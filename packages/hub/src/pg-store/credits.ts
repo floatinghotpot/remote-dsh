@@ -8,9 +8,12 @@ import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { mapCreditHold, mapCreditLedger, one, q, type Db } from "./mappers.ts";
 import { withTransaction, txDb } from "../pg.ts";
-import type {
-  CreditBalances, CreditHoldReserveResult, CreditHoldRow, CreditHoldSettleResult,
-  CreditLedgerRow, CreditSpendResult,
+import {
+  RELAY_BYTES_PER_CREDIT,
+  RELAY_OVERDRAFT_FLOOR_POINTS,
+  relayBytesToMicro,
+  type CreditBalances, type CreditHoldReserveResult, type CreditHoldRow, type CreditHoldSettleResult,
+  type CreditLedgerRow, type CreditSpendResult,
 } from "../db.ts";
 import type { HubStore } from "../store.ts";
 
@@ -26,6 +29,8 @@ export function credits(
   | "settleCreditHold"
   | "releaseCreditHold"
   | "spendCredits"
+  | "chargeRelayBytes"
+  | "listRelayConsumption"
   | "sweepExpiredCreditHolds"
   | "listCreditLedger"
   | "listUsersWithBonusCredits"
@@ -123,6 +128,55 @@ export function credits(
       );
     }
     return { ok: true, chargedMicro: amountMicro, balance: await getBalancesTx(c, userId) };
+  };
+
+  /** spendCredits 的事务体（spendCredits 与 chargeRelayBytes 共用，避免重复）。 */
+  const spendCreditsTx = async (
+    c: PoolClient,
+    userId: number,
+    amountMicro: number,
+    opts: { reason: string; sourceType?: string | null; sourceId?: string | null; idempotencyKey: string; allowOverdraft?: boolean; now?: number },
+  ): Promise<CreditSpendResult> => {
+    const now = opts.now ?? Date.now();
+    const existing = await getHoldByRequestIdTx(c, opts.idempotencyKey);
+    if (existing !== null) {
+      if (existing.userId !== userId) throw new Error("credit spend requestId belongs to another user");
+      return { status: "already_spent", chargedMicro: existing.settledMicro, balance: await getBalancesTx(c, userId) };
+    }
+    const user = one(await q(c, "SELECT purchased_credits, bonus_carried, bonus_current FROM users WHERE id = $1 FOR UPDATE", [userId]));
+    const balance = balancesOf(user);
+    const available = balance.total - (await heldTx(c, userId, now));
+    if (amountMicro > available && opts.allowOverdraft !== true) return { status: "insufficient", chargedMicro: 0, balance };
+    const hold: CreditHoldRow = {
+      id: randomUUID(),
+      userId,
+      scopeType: "spend",
+      scopeId: null,
+      requestId: opts.idempotencyKey,
+      amountMicro,
+      settledMicro: amountMicro,
+      status: "settled",
+      expiresAt: now,
+      createdAt: now,
+    };
+    await c.query(
+      "INSERT INTO credit_holds (id, user_id, scope_type, scope_id, request_id, amount_micro, settled_micro, status, expires_at, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+      [hold.id, hold.userId, hold.scopeType, hold.scopeId, hold.requestId, hold.amountMicro, hold.settledMicro, hold.status, hold.expiresAt, hold.createdAt],
+    );
+    const debit = await debitBucketsTx(c, userId, amountMicro, {
+      reason: opts.reason,
+      sourceType: opts.sourceType ?? null,
+      sourceId: opts.sourceId ?? null,
+      idempotencyPrefix: opts.idempotencyKey,
+      allowOverdraft: opts.allowOverdraft === true,
+      now,
+    });
+    if (!debit.ok) {
+      // 预检 + 行锁下不应发生；若发生，删除刚插入的 settled hold 再返回，避免脏幂等记录。
+      await c.query("DELETE FROM credit_holds WHERE id = $1", [hold.id]);
+      return { status: "insufficient", chargedMicro: 0, balance };
+    }
+    return { status: "spent", chargedMicro: amountMicro, balance: debit.balance };
   };
 
   return {
@@ -276,55 +330,53 @@ export function credits(
       }),
 
     /** 无 hold 的批量扣减（relay 等已知金额场景）。 */
-    spendCredits: async (
-      userId: number,
-      amountMicro: number,
-      opts: { reason: string; sourceType?: string | null; sourceId?: string | null; idempotencyKey: string; allowOverdraft?: boolean; now?: number },
-    ): Promise<CreditSpendResult> => {
+    spendCredits: async (userId: number, amountMicro: number, opts: { reason: string; sourceType?: string | null; sourceId?: string | null; idempotencyKey: string; allowOverdraft?: boolean; now?: number }): Promise<CreditSpendResult> => {
       assertMicroAmount(amountMicro, true);
       if (opts.idempotencyKey.trim() === "") throw new Error("credit spend idempotencyKey required");
-      const now = opts.now ?? Date.now();
-      return withTransaction(pool, async (c) => {
-        const existing = await getHoldByRequestIdTx(c, opts.idempotencyKey);
-        if (existing !== null) {
-          if (existing.userId !== userId) throw new Error("credit spend requestId belongs to another user");
-          return { status: "already_spent", chargedMicro: existing.settledMicro, balance: await getBalancesTx(c, userId) };
-        }
-        const user = one(await q(c, "SELECT purchased_credits, bonus_carried, bonus_current FROM users WHERE id = $1 FOR UPDATE", [userId]));
-        const balance = balancesOf(user);
-        const available = balance.total - (await heldTx(c, userId, now));
-        if (amountMicro > available && opts.allowOverdraft !== true) return { status: "insufficient", chargedMicro: 0, balance };
-        const hold: CreditHoldRow = {
-          id: randomUUID(),
-          userId,
-          scopeType: "spend",
-          scopeId: null,
-          requestId: opts.idempotencyKey,
-          amountMicro,
-          settledMicro: amountMicro,
-          status: "settled",
-          expiresAt: now,
-          createdAt: now,
-        };
+      return withTransaction(pool, (c) => spendCreditsTx(c, userId, amountMicro, opts));
+    },
+
+    /** relay 计费（31-relay-billing）：节点累计计量 → 字节增量扣减（水位存字节，与费率解耦）。 */
+    chargeRelayBytes: async (userId: number, hostId: string, instanceId: string, date: string, bytesUp: number, bytesDown: number, bytesPerCredit: number = RELAY_BYTES_PER_CREDIT, isFree: boolean = false, overdraftFloorPoints: number = RELAY_OVERDRAFT_FLOOR_POINTS): Promise<{ chargedMicro: number }> =>
+      withTransaction(pool, async (c) => {
+        // 先物化水位行再 FOR UPDATE：并发首报（行尚不存在）时，幻读会让两个事务都从 0 起算、重复扣费。
         await c.query(
-          "INSERT INTO credit_holds (id, user_id, scope_type, scope_id, request_id, amount_micro, settled_micro, status, expires_at, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
-          [hold.id, hold.userId, hold.scopeType, hold.scopeId, hold.requestId, hold.amountMicro, hold.settledMicro, hold.status, hold.expiresAt, hold.createdAt],
+          "INSERT INTO relay_charge (user_id, host_id, date, instance_id, last_up, last_down, charged_micro) VALUES ($1, $2, $3, $4, 0, 0, 0) ON CONFLICT (user_id, host_id, date, instance_id) DO NOTHING",
+          [userId, hostId, date, instanceId],
         );
-        const debit = await debitBucketsTx(c, userId, amountMicro, {
-          reason: opts.reason,
-          sourceType: opts.sourceType ?? null,
-          sourceId: opts.sourceId ?? null,
-          idempotencyPrefix: opts.idempotencyKey,
-          allowOverdraft: opts.allowOverdraft === true,
-          now,
-        });
-        if (!debit.ok) {
-          // 预检+行锁下不应发生；若发生，删除刚插入的 settled hold 再返回，避免脏幂等记录。
-          await c.query("DELETE FROM credit_holds WHERE id = $1", [hold.id]);
-          return { status: "insufficient", chargedMicro: 0, balance };
+        const row = one(await q(c, "SELECT last_up, last_down FROM relay_charge WHERE user_id = $1 AND host_id = $2 AND date = $3 AND instance_id = $4 FOR UPDATE", [userId, hostId, date, instanceId]));
+        const lastUp = row === null ? 0 : Number(row.last_up);
+        const lastDown = row === null ? 0 : Number(row.last_down);
+        const deltaBytes = Math.max(0, bytesUp - lastUp) + Math.max(0, bytesDown - lastDown);
+        const micro = relayBytesToMicro(deltaBytes, bytesPerCredit);
+        let charged = 0;
+        // 免计费（试用/专属）：不扣点。否则扣点，但钳制到欠费下限：余额最多透支到 floor，不再往下。
+        if (micro > 0 && !isFree) {
+          const balance = (await getBalancesTx(c, userId)).total;
+          const floorMicro = overdraftFloorPoints * 10000; // 点数 → 微单位
+          charged = Math.min(micro, Math.max(0, balance - floorMicro));
+          if (charged > 0) {
+            await spendCreditsTx(c, userId, charged, {
+              reason: "consume_relay",
+              sourceType: "relay",
+              sourceId: `${date}:${instanceId}`,
+              idempotencyKey: `relay:${instanceId}:${userId}:${hostId}:${date}:${bytesUp}:${bytesDown}`,
+              allowOverdraft: true,
+            });
+          }
         }
-        return { status: "spent", chargedMicro: amountMicro, balance: debit.balance };
-      });
+        await c.query(
+          "INSERT INTO relay_charge (user_id, host_id, date, instance_id, last_up, last_down, charged_micro) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (user_id, host_id, date, instance_id) DO UPDATE SET last_up = GREATEST(relay_charge.last_up, EXCLUDED.last_up), last_down = GREATEST(relay_charge.last_down, EXCLUDED.last_down), charged_micro = relay_charge.charged_micro + EXCLUDED.charged_micro",
+          [userId, hostId, date, instanceId, bytesUp, bytesDown, charged],
+        );
+        return { chargedMicro: charged };
+      }),
+
+    /** relay 消耗查询（31 R5）：累计已扣微单位 + 按日序列。 */
+    listRelayConsumption: async (userId: number, from: string, to: string): Promise<{ totalMicro: number; days: Array<{ date: string; micro: number }> }> => {
+      const total = one(await q(txDb(pool), "SELECT COALESCE(SUM(charged_micro), 0) AS s FROM relay_charge WHERE user_id = $1", [userId]));
+      const rows = (await q(txDb(pool), "SELECT date, SUM(charged_micro) AS micro FROM relay_charge WHERE user_id = $1 AND date >= $2 AND date <= $3 GROUP BY date ORDER BY date", [userId, from, to])).rows;
+      return { totalMicro: total === null ? 0 : Number(total.s), days: rows.map((r) => ({ date: String(r.date), micro: Number(r.micro) })) };
     },
 
     /** 把过期未结算的 hold 标记 expired；返回处理数量。 */

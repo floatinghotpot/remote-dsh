@@ -531,9 +531,9 @@ test("relay meter：flush 报累计值（F9 回归）", async () => {
   const meter = new UsageAccumulator(db);
   const today = localDate();
   meter.addRelayBytes(user.id, "h1", 100, 0);
-  meter.flush();                    // 报累计 100
+  await meter.flush();                    // 报累计 100
   meter.addRelayBytes(user.id, "h1", 50, 0);
-  meter.flush();                    // 报累计 150（不清空，MAX 取 150）
+  await meter.flush();                    // 报累计 150（不清空，MAX 取 150）
   const rows = db.listUsageDaily(user.id, today, today);
   assert.equal(rows.length, 1);
   assert.equal(rows[0]!.relayBytesUp, 150, "flush 报累计值，不是窗口增量");

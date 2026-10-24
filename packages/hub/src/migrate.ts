@@ -16,7 +16,7 @@ import { createPgPool, migratePg } from "./pg.ts";
 const TABLES = [
   "users", "hosts", "refresh_tokens", "join_tokens", "bind_sessions", "host_share",
   "audit_events", "email_codes", "sms_codes", "subscriptions", "orders", "payments",
-  "credits_ledger", "meta", "apple_tokens", "usage_daily", "nodes", "node_metrics",
+  "credits_ledger", "relay_charge", "meta", "apple_tokens", "usage_daily", "nodes", "node_metrics",
   "relay_join_tokens", "relay_join_events",
 ] as const;
 
@@ -147,6 +147,7 @@ export async function verify(source: string, dsn: string): Promise<MigrateReport
       ["payments", "order_id", "orders", "id"],
       ["payments", "user_id", "users", "id"],
       ["credits_ledger", "user_id", "users", "id"],
+      ["relay_charge", "user_id", "users", "id"],
       ["subscriptions", "user_id", "users", "id"],
       ["host_share", "host_id", "hosts", "id"],
       ["host_share", "user_id", "users", "id"],

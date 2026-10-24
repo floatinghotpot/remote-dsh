@@ -94,6 +94,25 @@ export interface BillingConfig {
   wechatOauth?: WechatOauthConfig;
   /** unicpay 平台（feature 121 订阅/内购接入）；缺省 → 不使用 unicpay */
   unicpay?: UnicPayConfig;
+  /**
+   * relay 中转流量计费（31-relay-billing）—— 全部可配置、缺省回退代码常量：
+   *
+   * ```jsonc
+   * // ~/.rdsh/hub.json
+   * { "billing": { "relay": {
+   *     "bytesPerCredit": 3145728,   // 1 点数 = 多少字节（默认 3 MB = 3145728）
+   *     "overdraftFloor": -100,      // 欠费下限点数（≤0 表示允许透支到该深度；余额 ≤ 此值断流）
+   *     "trialFree": true,           // 试用期（plan_status=trial）免计费（默认 true）
+   *     "internalFree": true         // 专属账号（plan_status=NULL，管理员创建）免计费（默认 true）
+   * } } }
+   * ```
+   *
+   * - `bytesPerCredit` = 1 点数可换多少字节（默认 3 MB）；
+   * - `overdraftFloor` = 欠费下限点数（默认 -100）；
+   * - `trialFree` = 试用期免计费（默认 true）；
+   * - `internalFree` = 专属账号免计费（默认 true）。
+   */
+  relay?: { bytesPerCredit?: number; overdraftFloor?: number; trialFree?: boolean; internalFree?: boolean };
 }
 
 /** 计费默认值（config.billing 未提供时消费方取此）。 */
@@ -200,8 +219,10 @@ export interface HubConfig {
   e2ee?: E2eeConfig;
   /** 每日快照备份；缺省 → 启用（<hub.json 同目录>/backups，保留 7 天） */
   backup?: BackupConfig;
-  /** 转发点（relay node）上报用量的共享令牌；缺省 → 端点禁用（404） */
+  /** 转发点（relay node）上报用量的共享令牌（旧机制，双 token 兼容保留）；缺省 → 仅每节点 token 可用 */
   relayNodeToken?: string;
+  /** 是否接受共享 `relayNodeToken` 上报（31-relay-billing 双 token 兼容）。设为 false → 仅接受每节点 token（更安全，节点迁移到 per-node token 后建议关闭）。缺省 true。 */
+  relayNodeTokenEnabled?: boolean;
   /** host cookie 的 Ed25519 公钥（hex，64 字符）；节点经 N5 同步持公钥验签（R17）。缺省 → 节点目录功能禁用 */
   hostCookiePubKey?: string;
   /** host cookie 的 Domain（区域根域，如 .rdsh.cn）；缺省 → host-only（节点子域收不到） */
@@ -314,6 +335,10 @@ export function normalizeHubConfig(raw: unknown, source = "config"): HubConfig {
   if (cfg.relayNodeToken !== undefined) {
     if (typeof cfg.relayNodeToken !== "string" || cfg.relayNodeToken.length < 16) throw new Error(`${source}: "relayNodeToken" must be a string of >= 16 chars`);
     out.relayNodeToken = cfg.relayNodeToken;
+  }
+  if (cfg.relayNodeTokenEnabled !== undefined) {
+    if (typeof cfg.relayNodeTokenEnabled !== "boolean") throw new Error(`${source}: "relayNodeTokenEnabled" must be a boolean`);
+    out.relayNodeTokenEnabled = cfg.relayNodeTokenEnabled;
   }
   if (cfg.hostCookiePubKey !== undefined) {
     if (typeof cfg.hostCookiePubKey !== "string" || !/^[0-9a-f]{64}$/i.test(cfg.hostCookiePubKey)) throw new Error(`${source}: "hostCookiePubKey" must be a 64-char hex Ed25519 public key`);
@@ -677,6 +702,29 @@ function normalizeBilling(raw: unknown, source: string): BillingConfig {
       if (typeof u[key] !== "string" || u[key] === "") throw new Error(`${source}: "billing.unicpay.${key}" must be a non-empty string`);
     }
     out.unicpay = b.unicpay as UnicPayConfig;
+  }
+  if (b.relay !== undefined && b.relay !== null) {
+    const r = b.relay as Record<string, unknown>;
+    const relayOut: { bytesPerCredit?: number; overdraftFloor?: number; trialFree?: boolean; internalFree?: boolean } = {};
+    if (r.bytesPerCredit !== undefined) {
+      if (!Number.isInteger(r.bytesPerCredit) || (r.bytesPerCredit as number) <= 0) {
+        throw new Error(`${source}: "billing.relay.bytesPerCredit" must be a positive integer`);
+      }
+      relayOut.bytesPerCredit = r.bytesPerCredit as number;
+    }
+    if (r.overdraftFloor !== undefined) {
+      if (!Number.isInteger(r.overdraftFloor)) {
+        throw new Error(`${source}: "billing.relay.overdraftFloor" must be an integer (points)`);
+      }
+      relayOut.overdraftFloor = r.overdraftFloor as number;
+    }
+    for (const key of ["trialFree", "internalFree"] as const) {
+      if (r[key] !== undefined) {
+        if (typeof r[key] !== "boolean") throw new Error(`${source}: "billing.relay.${key}" must be a boolean`);
+        relayOut[key] = r[key] as boolean;
+      }
+    }
+    if (Object.keys(relayOut).length > 0) out.relay = relayOut;
   }
   return out;
 }

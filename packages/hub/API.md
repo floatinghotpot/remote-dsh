@@ -52,7 +52,17 @@
 认证：需要。标记 `subscriptions.status=canceled`；当前周期仍有效至到期。
 
 ### GET /api/credits/balance —— 点数余额
-认证：需要。响应 `{ "purchased", "bonusCarried", "bonusCurrent", "total" }`（**点数**，非微单位；分桶语义见 §3 点数段）。
+认证：需要。响应 `{ "purchased", "bonusCarried", "bonusCurrent", "total" }`（**微单位**，客户端 ÷10000 转点数；分桶语义见 §3 点数段）。
+
+### GET /api/credits/usage?from=YYYY-MM-DD&to=YYYY-MM-DD —— 中转消耗查询（31-relay-billing）
+认证：需要。`from`/`to` **必填**（`YYYY-MM-DD`），`from ≤ to` 且 `to - from ≤ 366` 天。响应：
+
+```json
+{ "totalMicro": 1234567, "days": [{ "date": "YYYY-MM-DD", "micro": 12345 }] }
+```
+
+- `totalMicro` = 累计消耗（**微单位**，全部 relay 中转消耗，含历史）；`days` = 按日序列（**微单位**），按节点区域日切日，`date` 升序只含有消耗的日。
+- 数据口径 = 中转流量扣减（`reason=consume_relay`）的水位聚合；与 `GET /api/credits/balance`（实时余额）职责分开。
 
 ### GET /api/credits/tiers —— 点数充值档位（公开）
 响应 `{ "tiers": [{ "id", "credits", "priceCny", "priceUsd"? }] }` —— 档位即 `config.billing.credits`（商品清单的 `products.consumable[]`）。
@@ -242,7 +252,7 @@ JSAPI 支付需用户 openid（公众号 OAuth2）。门户在微信内浏览器
 { "date": "YYYY-MM-DD", "relaySeconds": 0, "relayBytesUp": 0, "relayBytesDown": 0, "directBytesUp": 0, "directBytesDown": 0, "cloudAsrSeconds": 0, "localAsrSeconds": 0, "sessions": 0, "cloudTtsChars": 0, "localTtsChars": 0 }
 ```
 
-语义：**当天累计值**；UPSERT 按字段 `MAX` 合并（网关字节与 App 语音/朗读各源只影响自己的字段，重复上报结果一致）。响应 `200 {"ok":true}`；`400 BAD_REQUEST`（字段非法）；`401 UNAUTHORIZED`。
+语义：**当天累计值**；UPSERT 按字段 `MAX` 合并（网关字节与 App 语音/朗读各源只影响自己的字段，重复上报结果一致）。响应 `200 {"ok":true, "creditsBalance": <微单位>}`（`creditsBalance` 为 **31-relay-billing 新增**的总余额，微单位，客户端 ÷10000 转点数）；`400 BAD_REQUEST`（字段非法）；`401 UNAUTHORIZED`。
 
 ### GET /api/usage?from=YYYY-MM-DD&to=YYYY-MM-DD —— 查询日序列（用户会话认证）
 
@@ -287,7 +297,8 @@ JSAPI 支付需用户 openid（公众号 OAuth2）。门户在微信内浏览器
 
 - `userId` = **访问者**（不是 host owner）；`hostId` = 被访问主机；`relaySeconds` 本阶段转发侧为 0（不测会话时长）。
 - `sessions` 语义：**每实例每 `(user, host)` 最多计 1**（本阶段转发侧不跟踪会话数，只记录“该日是否访问过”），跨实例由查询侧 `SUM` 求和。
-- 认证：`nodeToken`（`Authorization: Bearer` 或 body `nodeToken`；由 30-relay-node 的节点凭据决定，hub 内进程直调不经过此端点）。
+- 认证：**双 token 兼容（31-relay-billing）**——旧共享 `reportToken`（body `nodeToken`）或每节点 token（`Authorization: Bearer`，30 协议 B 目录）；两者皆无则 `401`。
+- **计费副作用（31-relay-billing）**：hub 收到上报时**同时按累计值增量扣减点数**（`reason=consume_relay`），幂等（重复/重放不重复扣）；展示计量 `usage_daily` 与计费扣减 `credits_ledger` 两条链路并行。
 - 响应：`200 { "ok": true, "applied": <行数> }`；`400 BAD_REQUEST`（行字段非法）；`401 UNAUTHORIZED`（节点凭据无效）。
 
 ### 直连归 owner 是兜底（F7）

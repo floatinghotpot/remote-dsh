@@ -9,7 +9,7 @@ import { readFileSync, statSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { HubConfig, PlanSpec, WechatLoginConfig, AppleLoginConfig } from "./config.ts";
 import { BILLING_DEFAULTS } from "./config.ts";
-import type { HubDb, UserRow, UsageDayRow, HostRow, OrderRow } from "./db.ts";
+import { RELAY_BYTES_PER_CREDIT, RELAY_OVERDRAFT_FLOOR_POINTS, isRelayFreeUser, relayFreePolicy, type HubDb, type UserRow, type UsageDayRow, type HostRow, type OrderRow } from "./db.ts";
 import type { HubAuth } from "./auth.ts";
 import { createLoginLimiter, hashPassword, verifyPassword, ADMIN_TTL_MS, RECENT_TOTP_WINDOW_MS, ACCESS_TTL_MS, REFRESH_TTL_MS } from "./auth.ts";
 import type { TunnelRegistry, TunnelTimings } from "./tunnel.ts";
@@ -34,7 +34,7 @@ import { verifyCaptchaParam } from "./captcha/aliyun.ts";
 import { DailyWindowLimiter } from "./ratelimit.ts";
 import { clearHostCookie, rootDomain } from "./server.ts";
 import { AdminError } from "./admin.ts";
-import { handleNodeRegister, handleNodeHeartbeat, handleNodeHosts, handleNodeSync, handleNodeLeave, handleNodeAssign } from "./nodes.ts";
+import { handleNodeRegister, handleNodeHeartbeat, handleNodeHosts, handleNodeSync, handleNodeLeave, handleNodeAssign, authenticateNode } from "./nodes.ts";
 import { handleInternalApi } from "./internal-llm.ts";
 import { handleInternalHosts } from "./internal-hosts.ts";
 import { handleAccountLlm } from "./account-llm.ts";
@@ -1178,6 +1178,10 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, runti
   }
   if (path === "/api/credits/balance" && method === "GET") {
     await handleCreditsBalance(req, res, runtime);
+    return true;
+  }
+  if (path === "/api/credits/usage" && method === "GET") {
+    await handleCreditsUsage(req, res, runtime);
     return true;
   }
   if (path === "/api/credits/recharge" && method === "POST") {
@@ -2516,6 +2520,29 @@ async function handleCreditsBalance(req: IncomingMessage, res: ServerResponse, r
   }));
 }
 
+/** 31-relay-billing：中转消耗查询（累计 + 按日序列，微单位）。 */
+async function handleCreditsUsage(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const auth = authenticate(req, runtime);
+  if (auth === null) {
+    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
+    return;
+  }
+  const url = new URL(req.url ?? "/", "http://rdsh.local");
+  const from = url.searchParams.get("from");
+  const to = url.searchParams.get("to");
+  if (typeof from !== "string" || typeof to !== "string" || !isDateString(from) || !isDateString(to) || from > to) {
+    writeError(res, 400, "BAD_REQUEST", "invalid from/to (YYYY-MM-DD)");
+    return;
+  }
+  if (Date.parse(to) - Date.parse(from) > 366 * 86400_000) {
+    writeError(res, 400, "BAD_REQUEST", "range too large (max 366 days)");
+    return;
+  }
+  const c = await runtime.store.listRelayConsumption(auth.userId, from, to);
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ totalMicro: c.totalMicro, days: c.days.map((d) => ({ date: d.date, micro: d.micro })) }));
+}
+
 /** 点数充值档位（公开，与 `/api/billing/plans` 同理 —— 档位与价格属公开营销信息）。 */
 async function handleCreditsTiers(_req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
   res.writeHead(200, { "content-type": "application/json" });
@@ -2685,8 +2712,10 @@ async function handleReportUsage(req: IncomingMessage, res: ServerResponse, runt
     return;
   }
   await runtime.store.upsertUsageDaily(auth.userId, day);
+  // 31-relay-billing：响应顺带返回总余额（微单位，与 GET /api/credits/balance 的 total 一致）。
+  const balances = await runtime.store.getCreditBalances(auth.userId);
   res.writeHead(200, { "content-type": "application/json" });
-  res.end(JSON.stringify({ ok: true }));
+  res.end(JSON.stringify({ ok: true, creditsBalance: balances.total }));
 }
 
 async function handleGetUsage(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
@@ -2745,16 +2774,18 @@ async function handleGetHostUsage(req: IncomingMessage, res: ServerResponse, run
 }
 
 async function handleRelayUsageReport(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
-  const nodeToken = runtime.config.relayNodeToken;
-  if (nodeToken === undefined || nodeToken.length === 0) {
-    writeError(res, 404, "DISABLED", "relay usage report disabled");
-    return;
-  }
   const body = await readJsonBody(req);
-  const provided = typeof body?.nodeToken === "string" ? body.nodeToken : "";
-  const a = Buffer.from(provided);
-  const b = Buffer.from(nodeToken);
-  if (a.length !== b.length || !timingSafeEqual(a, b)) {
+  // 鉴权（双 token 兼容，31-relay-billing）：① 旧共享 reportToken（body.nodeToken）② 每节点 token（Bearer，30 协议 B）。
+  const legacy = runtime.config.relayNodeToken;
+  const legacyOk =
+    runtime.config.relayNodeTokenEnabled !== false &&
+    legacy !== undefined &&
+    legacy.length > 0 &&
+    typeof body?.nodeToken === "string" &&
+    body.nodeToken.length === legacy.length &&
+    timingSafeEqual(Buffer.from(body.nodeToken), Buffer.from(legacy));
+  const ok = legacyOk || (await authenticateNode(req, runtime)) !== null;
+  if (!ok) {
     writeError(res, 401, "UNAUTHORIZED", "invalid node token");
     return;
   }
@@ -2763,7 +2794,20 @@ async function handleRelayUsageReport(req: IncomingMessage, res: ServerResponse,
     writeError(res, 400, "BAD_REQUEST", "invalid relay usage report");
     return;
   }
+  const bytesPerCredit = runtime.config.billing?.relay?.bytesPerCredit ?? RELAY_BYTES_PER_CREDIT;
+  const overdraftFloor = runtime.config.billing?.relay?.overdraftFloor ?? RELAY_OVERDRAFT_FLOOR_POINTS;
+  const policy = relayFreePolicy(runtime.config.billing);
+  const freeCache = new Map<number, boolean>();
   for (const r of rows) {
+    // 31-relay-billing：先扣减（按累计值增量、幂等），再写展示计量；两条链路并行互不影响。
+    // 免计费（试用/专属）用户跳过扣点，但用量照常统计；水位仍推进避免追溯扣费。
+    let free = freeCache.get(r.userId);
+    if (free === undefined) {
+      const user = await runtime.store.getUserById(r.userId);
+      free = user !== null && isRelayFreeUser(user, policy);
+      freeCache.set(r.userId, free);
+    }
+    await runtime.store.chargeRelayBytes(r.userId, r.hostId, r.instanceId, r.date, r.relayBytesUp, r.relayBytesDown, bytesPerCredit, free, overdraftFloor);
     await runtime.store.upsertUsageDaily(
       r.userId,
       { date: r.date, relaySeconds: r.relaySeconds, relayBytesUp: r.relayBytesUp, relayBytesDown: r.relayBytesDown, directBytesUp: 0, directBytesDown: 0, cloudAsrSeconds: 0, localAsrSeconds: 0, cloudTtsChars: 0, localTtsChars: 0, sessions: r.sessions },

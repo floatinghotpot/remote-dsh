@@ -13,6 +13,8 @@ import { writeError } from "./api.ts";
 import { parseCookies, HOST_COOKIE, hostCookie, rootDomain } from "./server.ts";
 import type { HubRuntime } from "./api.ts";
 import { injectE2eeShim } from "./e2ee-shim.ts";
+import { RELAY_OVERDRAFT_FLOOR_POINTS, isRelayFreeUser, relayFreePolicy } from "./db.ts";
+import { CREDITS_MICRO_PER_CREDIT } from "./credits.ts";
 
 /**
  * 中继上的浏览器 WS。`maxPayload` 必须等于隧道协议单帧上限：
@@ -49,6 +51,16 @@ export interface RelayOptions {
   bufferHtml?: boolean;
 }
 
+/** 31-relay-billing：余额越过欠费下限（≤ 下限点数）→ 应拦截中转（hub 内置 relay 兜底闸门）；免计费用户永不拦截。 */
+async function shouldBlockRelay(runtime: HubRuntime, userId: number): Promise<boolean> {
+  const policy = relayFreePolicy(runtime.config.billing);
+  const user = await runtime.store.getUserById(userId);
+  if (user !== null && isRelayFreeUser(user, policy)) return false;
+  const balances = await runtime.store.getCreditBalances(userId);
+  const floorPoints = runtime.config.billing?.relay?.overdraftFloor ?? RELAY_OVERDRAFT_FLOOR_POINTS;
+  return balances.total <= floorPoints * CREDITS_MICRO_PER_CREDIT;
+}
+
 /**
  * HTTP/SSE 透传。返回是否已处理（false = 路径不属于数据面）。
  */
@@ -56,6 +68,10 @@ export async function handleRelay(req: IncomingMessage, res: ServerResponse, run
   const auth = await authorizeHost(req, runtime, pathHostId);
   if (auth === null) {
     writeError(res, 401, "UNAUTHORIZED", "invalid host session");
+    return true;
+  }
+  if (await shouldBlockRelay(runtime, auth.userId)) {
+    writeError(res, 402, "INSUFFICIENT_CREDITS", "余额不足");
     return true;
   }
   const hostId = auth.hostId;
@@ -200,6 +216,11 @@ export async function handleRelayUpgrade(req: IncomingMessage, socket: Duplex, h
     socket.destroy();
     return true;
   }
+  if (await shouldBlockRelay(runtime, auth.userId)) {
+    socket.write(`HTTP/1.1 402 Payment Required\r\n\r\n`);
+    socket.destroy();
+    return true;
+  }
   const hostId = auth.hostId;
   const conn = runtime.tunnels.get(hostId);
   if (conn === null) {
@@ -276,6 +297,11 @@ export async function handleRawUpgrade(req: IncomingMessage, socket: Duplex, hea
   const auth = await authorizeHost(req, runtime, pathHostId);
   if (auth === null) {
     socket.write(`HTTP/1.1 401 Unauthorized\r\n\r\n`);
+    socket.destroy();
+    return true;
+  }
+  if (await shouldBlockRelay(runtime, auth.userId)) {
+    socket.write(`HTTP/1.1 402 Payment Required\r\n\r\n`);
     socket.destroy();
     return true;
   }
