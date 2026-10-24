@@ -297,7 +297,7 @@ JSAPI 支付需用户 openid（公众号 OAuth2）。门户在微信内浏览器
 
 - `userId` = **访问者**（不是 host owner）；`hostId` = 被访问主机；`relaySeconds` 本阶段转发侧为 0（不测会话时长）。
 - `sessions` 语义：**每实例每 `(user, host)` 最多计 1**（本阶段转发侧不跟踪会话数，只记录“该日是否访问过”），跨实例由查询侧 `SUM` 求和。
-- 认证：**双 token 兼容（31-relay-billing）**——旧共享 `reportToken`（body `nodeToken`）或每节点 token（`Authorization: Bearer`，30 协议 B 目录）；两者皆无则 `401`。
+- 认证：**每节点 token**（`Authorization: Bearer`，30 协议 B 目录）；无效则 `401`。共享 `reportToken` 已移除（31-relay-billing 收敛为单一 per-node token）。
 - **计费副作用（31-relay-billing）**：hub 收到上报时**同时按累计值增量扣减点数**（`reason=consume_relay`），幂等（重复/重放不重复扣）；展示计量 `usage_daily` 与计费扣减 `credits_ledger` 两条链路并行。
 - 响应：`200 { "ok": true, "applied": <行数> }`；`400 BAD_REQUEST`（行字段非法）；`401 UNAUTHORIZED`（节点凭据无效）。
 

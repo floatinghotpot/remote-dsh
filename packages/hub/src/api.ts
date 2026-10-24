@@ -4,7 +4,7 @@
  * 认证：`Authorization: Bearer <access>` 或 Cookie `rdsh_hub_session`（HttpOnly）。
  * 无开放注册端点（账号由 `rdsh-hub user add` 创建，防 bot/垃圾注入）。
  */
-import { randomInt, randomUUID, timingSafeEqual } from "node:crypto";
+import { randomInt, randomUUID } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { HubConfig, PlanSpec, WechatLoginConfig, AppleLoginConfig } from "./config.ts";
@@ -2774,21 +2774,12 @@ async function handleGetHostUsage(req: IncomingMessage, res: ServerResponse, run
 }
 
 async function handleRelayUsageReport(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
-  const body = await readJsonBody(req);
-  // 鉴权（双 token 兼容，31-relay-billing）：① 旧共享 reportToken（body.nodeToken）② 每节点 token（Bearer，30 协议 B）。
-  const legacy = runtime.config.relayNodeToken;
-  const legacyOk =
-    runtime.config.relayNodeTokenEnabled !== false &&
-    legacy !== undefined &&
-    legacy.length > 0 &&
-    typeof body?.nodeToken === "string" &&
-    body.nodeToken.length === legacy.length &&
-    timingSafeEqual(Buffer.from(body.nodeToken), Buffer.from(legacy));
-  const ok = legacyOk || (await authenticateNode(req, runtime)) !== null;
-  if (!ok) {
+  // 鉴权：每节点 token（Bearer，30 协议 B）。共享 reportToken 已移除（31-relay-billing 收敛为单一 per-node token）。
+  if ((await authenticateNode(req, runtime)) === null) {
     writeError(res, 401, "UNAUTHORIZED", "invalid node token");
     return;
   }
+  const body = await readJsonBody(req);
   const rows = parseRelayUsageRows(body);
   if (rows === null) {
     writeError(res, 400, "BAD_REQUEST", "invalid relay usage report");

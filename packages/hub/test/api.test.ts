@@ -30,7 +30,6 @@ async function start(): Promise<void> {
     tunnels: new TunnelRegistry(),
     events: new EventHub(),
     portalDir: "/nonexistent-portal", // 测试不依赖 portal
-    relayNodeToken: "test-relay-token-0123456789",
   });
   base = `http://127.0.0.1:${server.actualPort}`;
 }
@@ -60,7 +59,7 @@ async function get(path: string, cookie?: string): Promise<{ status: number; jso
 test.before(start);
 test.after(stop);
 
-test("nodes/register：nodeToken 重注册返回 reportToken（F8 改 R16）", async () => {
+test("nodes/register：nodeToken 重注册返回 nodeId（不再下发 reportToken，31 收敛）", async () => {
   db.createNode("relay-n1", "relay-n1", "https://relay-n1.example", sha256("relay-node-token-0123456789"), "cn", 100, 1, true, null);
   const res = await fetch(base + "/api/nodes/register", {
     method: "POST",
@@ -68,12 +67,13 @@ test("nodes/register：nodeToken 重注册返回 reportToken（F8 改 R16）", a
     body: JSON.stringify({ advertiseUrl: "https://relay-n1.example" }),
   });
   assert.equal(res.status, 200);
-  const json = (await res.json()) as { nodeId: string; reportToken: string };
+  const json = (await res.json()) as { nodeId: string; nodeToken: string; reportToken?: string };
   assert.equal(json.nodeId, "relay-n1");
-  assert.equal(json.reportToken, "test-relay-token-0123456789");
+  assert.equal(json.nodeToken, "");
+  assert.equal(json.reportToken, undefined);
 });
 
-test("nodes/register：joinToken 入网建 disabled 节点 + 返回三样身份（R3/R7/R23）", async () => {
+test("nodes/register：joinToken 入网建 disabled 节点 + 返回身份（R3/R7/R23）", async () => {
   db.createRelayJoinToken("jt1", "test-join", sha256("relay-join-token-0123456789"), "relay-join-token-0123456789", 1);
   const res = await fetch(base + "/api/nodes/register", {
     method: "POST",
@@ -81,40 +81,14 @@ test("nodes/register：joinToken 入网建 disabled 节点 + 返回三样身份�
     body: JSON.stringify({ name: "joined-node", advertiseUrl: "https://joined.example" }),
   });
   assert.equal(res.status, 200);
-  const json = (await res.json()) as { nodeId: string; nodeToken: string; reportToken: string };
+  const json = (await res.json()) as { nodeId: string; nodeToken: string; reportToken?: string };
   assert.equal(typeof json.nodeId, "string");
   assert.ok(json.nodeToken.length >= 16, "nodeToken 应下发");
-  assert.equal(json.reportToken, "test-relay-token-0123456789");
+  assert.equal(json.reportToken, undefined);
   const node = db.getNodeById(json.nodeId);
   assert.ok(node !== null);
   assert.equal(node!.enabled, false, "入网默认 disabled");
   assert.equal(db.listRelayJoinEvents("jt1").length, 1, "应记录入网审计");
-});
-
-test("nodes/register：reportToken 未配置时返回空字符串（向后兼容）", async () => {
-  const db2 = new HubDb(":memory:");
-  const auth2 = new HubAuth(createSqliteStore(db2), (id) => db2.getUserById(id), new Jwt(Buffer.from("test-key-0123456789abcdef")));
-  const srv2 = await startHubServer({
-    host: "127.0.0.1",
-    port: 0,
-    db: db2,
-    auth: auth2,
-    tunnels: new TunnelRegistry(),
-    events: new EventHub(),
-    portalDir: "/nonexistent-portal",
-  });
-  db2.createNode("relay-n2", "relay-n2", "https://relay-n2.example", sha256("relay-node-token-2222222222"), "cn", 100, 1, true, null);
-  const res = await fetch(`http://127.0.0.1:${srv2.actualPort}/api/nodes/register`, {
-    method: "POST",
-    headers: { "content-type": "application/json", authorization: "Bearer relay-node-token-2222222222" },
-    body: JSON.stringify({ advertiseUrl: "https://relay-n2.example" }),
-  });
-  assert.equal(res.status, 200);
-  const json = (await res.json()) as { nodeId: string; reportToken: string };
-  assert.equal(json.nodeId, "relay-n2");
-  assert.equal(json.reportToken, "");
-  await new Promise<void>((r) => srv2.server.close(() => r()));
-  db2.close();
 });
 
 test("register 端点：注册关闭（默认）返回 REGISTRATION_DISABLED 404，防 bot", async () => {

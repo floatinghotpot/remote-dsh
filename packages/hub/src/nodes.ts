@@ -11,7 +11,7 @@ import { randomUUID } from "node:crypto";
 import { sha256, randomToken } from "./jwt.ts";
 import { clientIp, writeError } from "./api.ts";
 import type { HubRuntime } from "./api.ts";
-import type { NodeRow } from "./db.ts";
+import { RELAY_OVERDRAFT_FLOOR_POINTS, isRelayFreeUser, relayFreePolicy, type NodeRow } from "./db.ts";
 
 /** 读 JSON 请求体（非 JSON / 超大 → null）。 */
 async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown> | null> {
@@ -70,7 +70,6 @@ export async function handleNodeRegister(req: IncomingMessage, res: ServerRespon
     return;
   }
   const srcIp = clientIp(req, runtime);
-  const reportToken = runtime.config.relayNodeToken ?? "";
 
   // ① joinToken：新节点自助入网（默认 disabled，等管理员 enable）。
   const joinTok = await runtime.store.findRelayJoinTokenByHash(sha256(token));
@@ -85,7 +84,7 @@ export async function handleNodeRegister(req: IncomingMessage, res: ServerRespon
     await runtime.store.createNode(nodeId, name, body.advertiseUrl, sha256(nodeToken), "", 0, 100, false, srcIp);
     await runtime.store.recordRelayJoinEvent(randomUUID(), joinTok.id, nodeId, srcIp);
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ nodeId, nodeToken, reportToken }));
+    res.end(JSON.stringify({ nodeId, nodeToken }));
     return;
   }
 
@@ -102,7 +101,7 @@ export async function handleNodeRegister(req: IncomingMessage, res: ServerRespon
   await runtime.store.markNodeAlive(node.id); // 只 offline→online，不覆写 draining（R39）
   await runtime.store.updateNodeLastIp(node.id, srcIp);
   res.writeHead(200, { "content-type": "application/json" });
-  res.end(JSON.stringify({ nodeId: node.id, nodeToken: "", reportToken }));
+  res.end(JSON.stringify({ nodeId: node.id, nodeToken: "" }));
 }
 
 /** N2：心跳 + 负载（P1 只记心跳时间；负载字段留待 P2 调度）。 */
@@ -207,11 +206,32 @@ export async function handleNodeSync(req: IncomingMessage, res: ServerResponse, 
     }));
     hosts.push(...entries);
   }
+
+  // 31-relay-billing：下发「越下限且非免费」的 userId 集合，供节点闸门（准入 + 掐断）。
+  const userIdSet = new Set<number>();
+  for (const entry of hosts) {
+    const uvs = (entry as { userVers: Record<string, number> }).userVers;
+    for (const k of Object.keys(uvs)) {
+      const uid = Number(k);
+      if (Number.isInteger(uid) && uid > 0) userIdSet.add(uid);
+    }
+  }
+  const policy = relayFreePolicy(runtime.config.billing);
+  const floorMicro = (runtime.config.billing?.relay?.overdraftFloor ?? RELAY_OVERDRAFT_FLOOR_POINTS) * 10000;
+  const blockedUserIds: number[] = [];
+  for (const uid of userIdSet) {
+    const user = await runtime.store.getUserById(uid);
+    if (user === null || isRelayFreeUser(user, policy)) continue; // 免费用户不拦
+    const balance = await runtime.store.getCreditBalances(uid);
+    if (balance.total <= floorMicro) blockedUserIds.push(uid);
+  }
+
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({
     hosts,
     hostCookiePubKey: runtime.config.hostCookiePubKey ?? "",
     draining,
+    blockedUserIds,
   }));
 }
 

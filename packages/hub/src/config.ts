@@ -219,10 +219,6 @@ export interface HubConfig {
   e2ee?: E2eeConfig;
   /** 每日快照备份；缺省 → 启用（<hub.json 同目录>/backups，保留 7 天） */
   backup?: BackupConfig;
-  /** 转发点（relay node）上报用量的共享令牌（旧机制，双 token 兼容保留）；缺省 → 仅每节点 token 可用 */
-  relayNodeToken?: string;
-  /** 是否接受共享 `relayNodeToken` 上报（31-relay-billing 双 token 兼容）。设为 false → 仅接受每节点 token（更安全，节点迁移到 per-node token 后建议关闭）。缺省 true。 */
-  relayNodeTokenEnabled?: boolean;
   /** host cookie 的 Ed25519 公钥（hex，64 字符）；节点经 N5 同步持公钥验签（R17）。缺省 → 节点目录功能禁用 */
   hostCookiePubKey?: string;
   /** host cookie 的 Domain（区域根域，如 .rdsh.cn）；缺省 → host-only（节点子域收不到） */
@@ -332,14 +328,6 @@ export function normalizeHubConfig(raw: unknown, source = "config"): HubConfig {
   }
   if (cfg.billing !== undefined) out.billing = normalizeBilling(cfg.billing, source);
   if (cfg.e2ee !== undefined) out.e2ee = normalizeE2ee(cfg.e2ee, source);
-  if (cfg.relayNodeToken !== undefined) {
-    if (typeof cfg.relayNodeToken !== "string" || cfg.relayNodeToken.length < 16) throw new Error(`${source}: "relayNodeToken" must be a string of >= 16 chars`);
-    out.relayNodeToken = cfg.relayNodeToken;
-  }
-  if (cfg.relayNodeTokenEnabled !== undefined) {
-    if (typeof cfg.relayNodeTokenEnabled !== "boolean") throw new Error(`${source}: "relayNodeTokenEnabled" must be a boolean`);
-    out.relayNodeTokenEnabled = cfg.relayNodeTokenEnabled;
-  }
   if (cfg.hostCookiePubKey !== undefined) {
     if (typeof cfg.hostCookiePubKey !== "string" || !/^[0-9a-f]{64}$/i.test(cfg.hostCookiePubKey)) throw new Error(`${source}: "hostCookiePubKey" must be a 64-char hex Ed25519 public key`);
     out.hostCookiePubKey = cfg.hostCookiePubKey;

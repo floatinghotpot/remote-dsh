@@ -80,8 +80,6 @@ export interface HubServerOptions {
   e2ee?: E2eeConfig;
   /** 每日快照备份（dir 已解析；serve.ts 从 hub.json 传入）。 */
   backup?: BackupConfig;
-  /** 转发点（relay node）上报用量的共享令牌（serve.ts 从 hub.json 传入）。 */
-  relayNodeToken?: string;
   /** host cookie 的 Ed25519 公钥（hex，R17；serve.ts 派生自私钥文件） */
   hostCookiePubKey?: string;
   /** host cookie 的 Domain（区域根域，如 .rdsh.cn；节点子域需接收该 cookie） */
@@ -191,7 +189,6 @@ export async function startHubServer(opts: HubServerOptions): Promise<RunningHub
       appleLogin: opts.appleLogin,
       e2ee: opts.e2ee,
       backup: opts.backup,
-      relayNodeToken: opts.relayNodeToken,
       hostCookiePubKey: opts.hostCookiePubKey,
       hostCookieDomain: opts.hostCookieDomain,
       defaultRelayUrl: opts.defaultRelayUrl,

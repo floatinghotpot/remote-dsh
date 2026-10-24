@@ -420,10 +420,3 @@ test("billing.relay：bytesPerCredit / overdraftFloor / trialFree / internalFree
   assert.throws(() => normalizeHubConfig({ billing: { relay: { trialFree: "yes" } } }), /"billing.relay.trialFree" must be a boolean/);
   assert.throws(() => normalizeHubConfig({ billing: { relay: { internalFree: 1 } } }), /"billing.relay.internalFree" must be a boolean/);
 });
-
-test("relayNodeTokenEnabled：布尔校验（31-relay-billing 共享 token 开关）", () => {
-  // 缺省 → undefined（消费方 `!== false` 即视为接受共享 token）
-  assert.equal(normalizeHubConfig({}).relayNodeTokenEnabled, undefined);
-  assert.equal(normalizeHubConfig({ relayNodeTokenEnabled: false }).relayNodeTokenEnabled, false);
-  assert.throws(() => normalizeHubConfig({ relayNodeTokenEnabled: "no" }), /"relayNodeTokenEnabled" must be a boolean/);
-});
