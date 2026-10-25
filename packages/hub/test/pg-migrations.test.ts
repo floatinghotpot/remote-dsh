@@ -5,10 +5,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createPgPool, migratePg } from "../src/pg.ts";
+import { assertTestDb, isTestDb, testDbName } from "./pg-test-db.ts";
 
 const DSN = process.env.RDSH_TEST_PG_DSN ?? "postgres://rdsh:rdsh_dev_password@127.0.0.1:5432/rdsh_test";
 
 test("pg migrations：应用 25 表 + usage_daily 分区 + 幂等", async (t) => {
+  if (!isTestDb(DSN)) {
+    t.skip(`not a test database (expected test_* or *_test): ${testDbName(DSN)}`);
+    return;
+  }
   const pool = createPgPool(DSN, { max: 2, min: 0 });
   try {
     await pool.query("SELECT 1");
@@ -18,6 +23,7 @@ test("pg migrations：应用 25 表 + usage_daily 分区 + 幂等", async (t) =>
     return;
   }
   try {
+    assertTestDb(DSN);
     await pool.query("DROP SCHEMA public CASCADE");
     await pool.query("CREATE SCHEMA public");
     const applied = await migratePg(pool);

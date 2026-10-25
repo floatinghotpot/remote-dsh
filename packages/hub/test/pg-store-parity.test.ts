@@ -5,11 +5,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createPgPool, migratePg } from "../src/pg.ts";
+import { assertTestDb, isTestDb, testDbName } from "./pg-test-db.ts";
 import { createPgStore } from "../src/pg-store/index.ts";
 
-const DSN = process.env.RDSH_TEST_PG_DSN ?? "postgres://rdsh:rdsh_dev_password@127.0.0.1:5432/rdsh_parity";
+const DSN = process.env.RDSH_TEST_PG_DSN ?? "postgres://rdsh:rdsh_dev_password@127.0.0.1:5432/rdsh_parity_test";
 
 test("PgStore 对拍：users/hosts/ledger/order/usage/audit/meta", async (t) => {
+  if (!isTestDb(DSN)) {
+    t.skip(`not a test database (expected test_* or *_test): ${testDbName(DSN)}`);
+    return;
+  }
   const pool = createPgPool(DSN, { max: 3, min: 0 });
   try {
     await pool.query("SELECT 1");
@@ -20,6 +25,7 @@ test("PgStore 对拍：users/hosts/ledger/order/usage/audit/meta", async (t) => 
   }
   let store: ReturnType<typeof createPgStore> | null = null;
   try {
+    assertTestDb(DSN);
     await pool.query("DROP SCHEMA public CASCADE");
     await pool.query("CREATE SCHEMA public");
     await migratePg(pool);

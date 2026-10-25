@@ -12,8 +12,8 @@ import { fileURLToPath } from "node:url";
 import { createPgPool } from "rdsh-hub";
 
 const bin = join(dirname(fileURLToPath(import.meta.url)), "..", "dist", "bin.js");
-// 独立库 rdsh_admin：避免与 hub 包测试（rdsh_test/rdsh_parity/rdsh_boot/rdsh_migrate）并行 DROP SCHEMA 竞争。
-const DSN = process.env.RDSH_TEST_PG_DSN ?? "postgres://rdsh:rdsh_dev_password@127.0.0.1:5432/rdsh_admin";
+// 独立库 rdsh_admin_test：避免与 hub 包测试（rdsh_test/rdsh_parity_test/rdsh_boot_test/rdsh_migrate_test）并行 DROP SCHEMA 竞争。
+const DSN = process.env.RDSH_TEST_PG_DSN ?? "postgres://rdsh:rdsh_dev_password@127.0.0.1:5432/rdsh_admin_test";
 
 function run(args: string[], input?: string): { status: number | null; stdout: string; stderr: string } {
   const r = spawnSync(process.execPath, [bin, ...args], { encoding: "utf8", timeout: 20_000, input });
@@ -53,6 +53,11 @@ test("rdsh-hub db check (sqlite) reports backend", () => {
 });
 
 test("rdsh-hub user add (postgres) lands in PG", async (t) => {
+  const db = new URL(DSN).pathname.replace(/^\//, "");
+  if (!(db.startsWith("test_") || db.endsWith("_test"))) {
+    t.skip(`not a test database (expected test_* or *_test): ${db}`);
+    return;
+  }
   const probe = createPgPool(DSN, { max: 2, min: 0 });
   try {
     await probe.query("SELECT 1");

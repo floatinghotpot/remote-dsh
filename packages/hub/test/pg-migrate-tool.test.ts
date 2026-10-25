@@ -9,12 +9,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HubDb } from "../src/db.ts";
 import { createPgPool } from "../src/pg.ts";
+import { assertTestDb, isTestDb, testDbName } from "./pg-test-db.ts";
 import { createPgStore } from "../src/pg-store/index.ts";
 import { migrateSqliteToPg, verify } from "../src/migrate.ts";
 
-const DSN = process.env.RDSH_TEST_PG_DSN ?? "postgres://rdsh:rdsh_dev_password@127.0.0.1:5432/rdsh_migrate";
+const DSN = process.env.RDSH_TEST_PG_DSN ?? "postgres://rdsh:rdsh_dev_password@127.0.0.1:5432/rdsh_migrate_test";
 
 test("migration tool：SQLite → PG copy + verify 一致", async (t) => {
+  if (!isTestDb(DSN)) {
+    t.skip(`not a test database (expected test_* or *_test): ${testDbName(DSN)}`);
+    return;
+  }
   // 1) 造 SQLite 数据
   const dir = mkdtempSync(join(tmpdir(), "rdsh-migrate-"));
   const src = join(dir, "hub.db");
@@ -41,6 +46,7 @@ test("migration tool：SQLite → PG copy + verify 一致", async (t) => {
     return;
   }
   try {
+    assertTestDb(DSN);
     await pool.query("DROP SCHEMA public CASCADE");
     await pool.query("CREATE SCHEMA public");
     // 刻意不预建 schema：migrateSqliteToPg 应自己 migratePg 建表（覆盖空库路径）

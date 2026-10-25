@@ -5,6 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createPgPool, migratePg } from "../src/pg.ts";
+import { assertTestDb, isTestDb, testDbName } from "./pg-test-db.ts";
 import { createPgStore } from "../src/pg-store/index.ts";
 import { HubAuth } from "../src/auth.ts";
 import { Jwt } from "../src/jwt.ts";
@@ -13,9 +14,13 @@ import { EventHub } from "../src/events.ts";
 import { startHubServer } from "../src/server.ts";
 import type { UserRow } from "../src/db.ts";
 
-const DSN = process.env.RDSH_TEST_PG_DSN ?? "postgres://rdsh:rdsh_dev_password@127.0.0.1:5432/rdsh_boot";
+const DSN = process.env.RDSH_TEST_PG_DSN ?? "postgres://rdsh:rdsh_dev_password@127.0.0.1:5432/rdsh_boot_test";
 
 test("Hub boots on PostgreSQL (no SQLite)", async (t) => {
+  if (!isTestDb(DSN)) {
+    t.skip(`not a test database (expected test_* or *_test): ${testDbName(DSN)}`);
+    return;
+  }
   const pool = createPgPool(DSN, { max: 3, min: 0 });
   try {
     await pool.query("SELECT 1");
@@ -25,6 +30,7 @@ test("Hub boots on PostgreSQL (no SQLite)", async (t) => {
     return;
   }
   try {
+    assertTestDb(DSN);
     await pool.query("DROP SCHEMA public CASCADE");
     await pool.query("CREATE SCHEMA public");
     await migratePg(pool);
