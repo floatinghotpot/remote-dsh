@@ -132,6 +132,7 @@ plan.md 的强制格式见 **附录 E**。
 - **Runtime**: Node.js ≥ 22（`.nvmrc` 固定 22），pnpm ≥ 9（workspace 根 `pnpm-workspace.yaml`）。
 - **语言与编译**: TypeScript（`tsc` strict，`tsconfig.base.json`，`outDir: dist`）。
 - **构建**: `pnpm build`（先构建 `packages/portal`，再构建其余包）、`pnpm test`（`node --test`）。
+- **portal 产物入库**: 改 `packages/portal/src` 后须 `pnpm build` 并提交 `packages/hub/portal/`（index.html + assets/*）；生产只 pull + 部署 + 验证，不构建、不提交产物。
 - **测试**: 内置 `node:test` + `node:assert`（零依赖）；测试文件放各包 `test/`。
 - **npm 发布**: npm 包名 **`remote-dsh`**（CLI 命令仍是 `rdsh`）；`rdsh` 裸名被 npm 的 typo-squatting 防护拒绝，不能作为包名。子包名：`rdsh-tunnel` / `rdsh-hub` / `rdsh-portal` / `rdsh-hub-cli`（服务端 CLI）。**发布即对外**，必须先得到用户显式确认；版本号与发布记录写入 `CHANGELOG`，不写进本文件。
 - **MVP 节奏**: 实现严格按私有仓的 MVP plan 推进；未列入 plan 的功能不得顺手实现。**本仓不复制该 plan，也不引用其路径。**
