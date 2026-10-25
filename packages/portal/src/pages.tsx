@@ -1214,9 +1214,9 @@ function LlmKeysPage(): React.JSX.Element {
           </li>
         </ol>
       </Card>
-      <Card title={t("我的 Key")}>
+      <>
         {keys.length === 0 && (
-          <p style={{ fontSize: 13, color: "var(--rdsh-fg-muted)", marginTop: 0 }}>{t("还没有 Key。创建一个，填到你的 DSH 里使用。")}</p>
+          <p style={{ fontSize: 13, color: "var(--rdsh-fg-muted)", marginTop: 0 }}>{t("还没有 Key。")}</p>
         )}
         {keys.map((k) => {
           const isHost = k.hostId !== null;
@@ -1275,7 +1275,7 @@ function LlmKeysPage(): React.JSX.Element {
         <p style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", marginTop: 12, marginBottom: 0 }}>
           {t("Key 由主机接入时自动创建，无需手工配置。")}
         </p>
-      </Card>
+      </>
     </Shell>
   );
 }
