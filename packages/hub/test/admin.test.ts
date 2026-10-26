@@ -123,14 +123,14 @@ test("unbanUser：解封 + 审计", async () => {
   assert.equal((await listAudit(createSqliteStore(db), { source: "admin" }))[0]!.event, "admin.unban");
 });
 
-test("createUser：name 标识建号 → active/user/plan null/mustChange=1 + 审计（feature 16）", async () => {
+test("createUser：name 标识建号 → active/user/plan internal/mustChange=1 + 审计（feature 16）", async () => {
   const db = makeDb();
   const boss = makeUser(db, "boss", "admin");
   const u = await createUser(createSqliteStore(db), ctx(boss, "admin"), { identifier: "zhangsan", password: "pw12345678", role: "user", mustChange: true, expiresAtMs: null }, "开内部号");
   assert.equal(u.name, "zhangsan");
   assert.equal(u.accountStatus, "active");
   assert.equal(u.role, "user");
-  assert.equal(u.planStatus, null); // D4：无期限
+  assert.equal(u.planStatus, "internal"); // D4：无期限 = 专属账号（显式 internal）
   assert.equal(u.mustChange, 1); // D2：强制首登改密
   assert.equal(db.getUserByEmail("zhangsan"), null); // 非邮箱不绑 email
   const ev = (await listAudit(createSqliteStore(db), { source: "admin" }))[0]!;
@@ -188,7 +188,7 @@ test("createUser：带到期 → 试用（trial + 到期，不再写 null+到期
   assert.equal(db.getUserById(u.id)!.lastLoginAt, null); // 建号不算登录
 });
 
-test("adjustPlan 收紧：subscribed 无订阅 → BAD_REQUEST；null 带到期 → BAD_REQUEST", async () => {
+test("adjustPlan 收紧：subscribed 无订阅 → BAD_REQUEST；null 拒绝 → BAD_REQUEST", async () => {
   const db = makeDb();
   const boss = makeUser(db, "boss", "admin");
   const target = makeUser(db, "alice");
@@ -197,14 +197,18 @@ test("adjustPlan 收紧：subscribed 无订阅 → BAD_REQUEST；null 带到期 
     (e: unknown) => e instanceof AdminError && e.code === "BAD_REQUEST",
   );
   await assert.rejects(
-    adjustPlan(createSqliteStore(db), ctx(boss, "admin"), target, null, Date.now() + 86_400_000, "x"),
+    adjustPlan(createSqliteStore(db), ctx(boss, "admin"), target, null, null, "x"),
     (e: unknown) => e instanceof AdminError && e.code === "BAD_REQUEST",
   );
-  // 合法：subscribed 有订阅；null 无到期
+  await assert.rejects(
+    adjustPlan(createSqliteStore(db), ctx(boss, "admin"), target, "internal", Date.now() + 86_400_000, "x"),
+    (e: unknown) => e instanceof AdminError && e.code === "BAD_REQUEST", // internal 永久，不得带到期
+  );
+  // 合法：subscribed 有订阅；internal 无到期
   db.createSubscription(target, "pro", Date.now(), Date.now() + 86_400_000);
   await adjustPlan(createSqliteStore(db), ctx(boss, "admin"), target, "subscribed", Date.now() + 86_400_000, "x");
-  await adjustPlan(createSqliteStore(db), ctx(boss, "admin"), target, null, null, "x");
-  assert.equal(db.getUserById(target)!.planStatus, null);
+  await adjustPlan(createSqliteStore(db), ctx(boss, "admin"), target, "internal", null, "x");
+  assert.equal(db.getUserById(target)!.planStatus, "internal");
 });
 
 test("grantTrial：顺延 + 审计；已订阅 → CONFLICT", async () => {

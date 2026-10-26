@@ -88,7 +88,7 @@ const EN: Record<string, string> = {
   "试用天数须为 1–3650 的整数，或留空表示永久": "Trial days must be an integer 1–3650, or leave empty for forever",
   "删除": "Delete",
   "新密码（≥8 位）": "New password (≥8 chars)",
-  "planStatus（subscribed/grace/free/null）": "planStatus (subscribed/grace/free/null)",
+  "planStatus（internal/subscribed/grace/free/trial）": "planStatus (internal/subscribed/grace/free/trial)",
   "主机名": "Host name",
   "归属": "Owner",
   "E2EE": "E2EE",

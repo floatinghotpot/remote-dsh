@@ -82,7 +82,8 @@ export interface TierInput {
 export function tierOf(input: TierInput): PlanTier | null {
   if (!input.hasEntitlement) return null;
   const s = input.planStatus;
-  if (s === null || s === undefined) return "internal";
+  if (s === "internal") return "internal";
+  if (s === null || s === undefined) return "free"; // NULL = 无权限（fail-closed）
   switch (s) {
     case "trial":
       return "trial";

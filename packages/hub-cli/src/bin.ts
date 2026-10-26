@@ -369,6 +369,8 @@ async function handleHubUser(args: string[], configPath?: string): Promise<void>
         // 建号即设初始密码（安全修复 F1：不再提供 --no-password 公开首密码激活路径，防账号抢占）
         const user = await store.createUser(name, await hashPassword(await promptPasswordTwice(`password for ${name}: `)));
         if (role !== "user") await store.setRole(user.id, role);
+        // R10：admin/operator = 专属账号（显式 internal），否则建行默认 NULL 会被 fail-closed 成无权限。
+        if (role === "admin" || role === "operator") await store.setPlan(user.id, "internal", null);
         console.log(`rdsh-hub: user '${name}' created (role: ${role})`);
         return;
       }

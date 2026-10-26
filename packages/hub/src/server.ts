@@ -22,7 +22,6 @@ import { sha256 } from "./jwt.ts";
 import { HubDb, RELAY_BYTES_PER_CREDIT, RELAY_OVERDRAFT_FLOOR_POINTS, relayFreePolicy } from "./db.ts";
 import { HubAuth } from "./auth.ts";
 import { authenticate, clientIp, handleApi, writeError, sweepBilling } from "./api.ts";
-import { sweepCredits } from "./credits.ts";
 import type { HubRuntime } from "./api.ts";
 import type { EmailConfig } from "./email/types.ts";
 import type { SmsConfig } from "./sms/types.ts";
@@ -229,19 +228,8 @@ export async function startHubServer(opts: HubServerOptions): Promise<RunningHub
   // 51：LLM 模型目录上游元数据同步（配置了 llm.upstream 才启用）
   if (opts.llm?.upstream !== undefined) startLlmModelSync(runtime);
 
-  // 点数账本月度结算（每分钟检查，跨月才执行一次）：结转 + 订阅赠点
-  let lastCreditSweepMonth = "";
-  setInterval(async () => {
-    const now = new Date();
-    const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-    if (monthKey === lastCreditSweepMonth) return;
-    lastCreditSweepMonth = monthKey;
-    try {
-      await sweepCredits(runtime.store, runtime.config.billing?.plans ?? []);
-    } catch (err) {
-      console.error("[credits] monthly sweep failed:", err instanceof Error ? err.message : err);
-    }
-  }, 60 * 1000).unref();
+  // 赠点已改为「订阅生命周期事件」驱动（订阅发 / 续订发+结转 / 到期清，见 credits.ts），
+  // 不再需要自然月定时结算（R12）。到期降级仍由 sweepBilling 的 60s 定时器负责（见下）。
 
   const requestHandler = (req: IncomingMessage, res: ServerResponse): void => {
     void handleHttp(req, res, runtime, opts.portalDir).catch((err) => {

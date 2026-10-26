@@ -207,15 +207,16 @@ test("chargeRelayBytes：免计费（isFree）不扣点但水位推进，到期�
   assert.equal((await store.getCreditBalances(uid)).purchased, 99 * CREDITS_MICRO_PER_CREDIT);
 });
 
-test("isRelayFreeUser：试用/专属（plan_status=null）判定 + 配置开关", () => {
+test("isRelayFreeUser：试用/专属（plan_status=internal）判定 + 配置开关", () => {
   const on = { trialFree: true, internalFree: true };
   const off = { trialFree: false, internalFree: false };
   assert.equal(isRelayFreeUser({ planStatus: "trial" }, on), true);
-  assert.equal(isRelayFreeUser({ planStatus: null }, on), true); // 专属账号
+  assert.equal(isRelayFreeUser({ planStatus: "internal" }, on), true); // 专属账号
+  assert.equal(isRelayFreeUser({ planStatus: null }, on), false); // NULL 无权限（fail-closed）
   assert.equal(isRelayFreeUser({ planStatus: "subscribed" }, on), false);
   assert.equal(isRelayFreeUser({ planStatus: "free" }, on), false);
   assert.equal(isRelayFreeUser({ planStatus: "trial" }, off), false); // 关掉试用免费
-  assert.equal(isRelayFreeUser({ planStatus: null }, off), false); // 关掉专属免费
+  assert.equal(isRelayFreeUser({ planStatus: "internal" }, off), false); // 关掉专属免费
 });
 
 test("isRelayFreeUser：试用到期防御（不依赖 sweep，读当前到期时间）", () => {

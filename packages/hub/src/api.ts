@@ -25,7 +25,7 @@ import { createSmsSender } from "./sms/index.ts";
 import type { SmsSender } from "./sms/index.ts";
 import { getWechatOpenid } from "./billing/wechat-oauth.ts";
 import { UnicPayClient, verifyWebhookSignature } from "./billing/unicpay.ts";
-import { creditRecharge, creditRefund, creditProductById, CREDITS_MICRO_PER_CREDIT } from "./credits.ts";
+import { creditRecharge, creditRefund, creditProductById, grantSubscriptionBonus, carryOverUserBonus, clearUserBonus, CREDITS_MICRO_PER_CREDIT } from "./credits.ts";
 import type { CreditProduct } from "./credits.ts";
 import { exchangeWechatLoginCode, wechatLoginUrl } from "./wechat-login.ts";
 import { verifyAppleIdToken, exchangeAppleCode, revokeAppleToken, makeAppleClientSecret, loadApplePrivateKey, encryptToken, decryptToken } from "./apple-login.ts";
@@ -528,17 +528,17 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
         }
         await admin.resetUserPassword(store, ctx, id, body.password, requireReason(body) ?? "no reason");
       } else if (action === "plan") {
-        // "null"/null → 真正 NULL（无期限）；否则限 planStatus 枚举（修复此前「null 字符串错存字面量」）
+        // 专属账号用显式 internal；null 不再作为可设置值（要清空计费就显式传 free）。
         const raw = body === null ? undefined : body.planStatus;
-        if (raw !== null && raw !== undefined && typeof raw !== "string") {
-          writeError(res, 400, "BAD_REQUEST", "planStatus required");
+        if (typeof raw !== "string" || raw === "null" || raw === "") {
+          writeError(res, 400, "BAD_REQUEST", "planStatus must be internal|trial|subscribed|grace|free");
           return true;
         }
-        if (typeof raw === "string" && raw !== "null" && !["trial", "subscribed", "grace", "free"].includes(raw)) {
+        if (!["internal", "trial", "subscribed", "grace", "free"].includes(raw)) {
           writeError(res, 400, "BAD_REQUEST", `invalid planStatus '${raw}'`);
           return true;
         }
-        const planStatus = raw === null || raw === undefined || raw === "null" ? null : raw;
+        const planStatus = raw;
         const expiresAtMs = body === null ? null : typeof body.expiresAtMs === "number" ? body.expiresAtMs : null;
         await admin.adjustPlan(store, ctx, id, planStatus, expiresAtMs, requireReason(body) ?? "no reason");
       } else if (action === "grant-trial") {
@@ -557,6 +557,7 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
           writeError(res, 400, "BAD_REQUEST", `unknown planId '${body.planId}'`);
           return true;
         }
+        const grantPlan = (runtime.config.billing?.plans ?? []).find((p) => p.id === body.planId);
         if (body.days !== undefined && typeof body.days !== "number") {
           writeError(res, 400, "BAD_REQUEST", "days must be an integer");
           return true;
@@ -578,6 +579,7 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
             ...(typeof body.days === "number" ? { days: body.days } : {}),
             ...(typeof body.expiresAtMs === "number" ? { expiresAtMs: body.expiresAtMs } : {}),
             ...(typeof body.amountCny === "number" ? { amountCny: body.amountCny } : {}),
+            ...(grantPlan?.bonusCredits !== undefined && grantPlan.bonusCredits > 0 ? { bonusCredits: grantPlan.bonusCredits } : {}),
           },
           requireReason(body) ?? "no reason",
         );
@@ -773,6 +775,7 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
         writeError(res, 400, "BAD_REQUEST", `unknown planId '${body.planId}'`);
         return true;
       }
+      const creditPlan = (runtime.config.billing?.plans ?? []).find((p) => p.id === body.planId);
       if (body.days !== undefined && typeof body.days !== "number") {
         writeError(res, 400, "BAD_REQUEST", "days must be an integer");
         return true;
@@ -786,7 +789,7 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
         return true;
       }
       const expiresAtMs = typeof body.days === "number" ? Date.now() + body.days * 24 * 3600 * 1000 : body.expiresAtMs!;
-      const orderId = await admin.creditOrder(store, ctx, { userId: body.userId, planId: body.planId, amountCny: body.amountCny, expiresAtMs }, requireReason(body) ?? "no reason");
+      const orderId = await admin.creditOrder(store, ctx, { userId: body.userId, planId: body.planId, amountCny: body.amountCny, expiresAtMs, ...(creditPlan?.bonusCredits !== undefined && creditPlan.bonusCredits > 0 ? { bonusCredits: creditPlan.bonusCredits } : {}) }, requireReason(body) ?? "no reason");
       res.end(JSON.stringify({ ok: true, orderId }));
     } catch (err) {
       writeAdminError(res, err);
@@ -3513,13 +3516,13 @@ async function resolveLoginName(store: HubStore, identifier: string): Promise<st
   return identifier;
 }
 
-/** 当前账号 host 配额：null = 不限；否则为上限（trial/subscribed/grace/free）。 */
+/** 当前账号 host 配额：null = 不限；否则为上限（internal/trial/subscribed/grace/free）。 */
 export async function hostQuota(runtime: HubRuntime, user: UserRow): Promise<number | null> {
   const plan = user.planStatus;
-  if (plan === null) return null;
+  if (plan === "internal") return null; // 专属账号：不限
   const billing = runtime.config.billing;
   if (plan === "trial") return billing?.trialHosts ?? BILLING_DEFAULTS.trialHosts;
-  if (plan === "free") return 0;
+  if (plan === "free" || plan === null) return 0; // NULL = 无权限（fail-closed）
   // subscribed / grace：取**最近一条**订阅（不按 status 过滤）。
   // 取消订阅（到期不续）或进入宽限期时 status 已翻成 canceled/expired，
   // 但 plan_status 仍是 subscribed/grace（当前周期仍有效），配额应保留。
@@ -3896,12 +3899,19 @@ export function addMonths(ts: number, months: number): number {
   return d.getTime();
 }
 
-/** 激活订阅：建订阅行 + plan_status=subscribed + 到期时间。 */
+/** 激活订阅：建订阅行 + plan_status=subscribed + 到期时间；并发放首月赠点（R12）。
+ * 到期顺延：已有有效订阅时从「当前到期时间」起算，避免重复购买同档被重置（review P2-2）。 */
 async function activateSubscription(runtime: HubRuntime, userId: number, plan: PlanSpec): Promise<void> {
   const now = Date.now();
-  const expiresAt = addMonths(now, plan.intervalMonths);
-  await runtime.store.createSubscription(userId, plan.id, now, expiresAt);
+  const user = await runtime.store.getUserById(userId);
+  const base = Math.max(now, user?.planExpiresAt ?? 0);
+  const expiresAt = addMonths(base, plan.intervalMonths);
+  const sub = await runtime.store.createSubscription(userId, plan.id, now, expiresAt);
   await runtime.store.setPlan(userId, "subscribed", expiresAt);
+  // R12：订阅成功即发首月赠点（幂等键含订阅行 id，一次性/手工订阅各发一次）。
+  if ((plan.bonusCredits ?? 0) > 0) {
+    await grantSubscriptionBonus(runtime.store, userId, plan.bonusCredits ?? 0, `sub:${sub.id}`);
+  }
 }
 
 /** 取 unicpay 客户端；未配置时返回 null。 */
@@ -4237,10 +4247,28 @@ async function handleUnicpayWebhook(req: IncomingMessage, res: ServerResponse, r
         // 同一订阅实体：续订/宽限/到期/换档复用同一行，更新档位、状态与渠道权威到期。
         await runtime.store.updateSubscriptionBySubscriptionId(subscriptionId, plan?.id ?? goodsId, nextStatus, nextExpiresAt, willRenew);
       }
+      // R12 赠点事件化：订阅成功发首月；自动续订先结转再发下月；升级换档补发差额（幂等键含 subscriptionId+expiresAt）。
+      if (!staleRevival && plan !== undefined && (plan.bonusCredits ?? 0) > 0) {
+        if (eventType === "subscription.started" && existing === null) {
+          await grantSubscriptionBonus(runtime.store, userId, plan.bonusCredits ?? 0, `sub:${subscriptionId}:${nextExpiresAt}`);
+        } else if (eventType === "subscription.renewed") {
+          await carryOverUserBonus(runtime.store, userId, `sub:${subscriptionId}:${nextExpiresAt}`);
+          await grantSubscriptionBonus(runtime.store, userId, plan.bonusCredits ?? 0, `sub:${subscriptionId}:${nextExpiresAt}`);
+        } else if (eventType === "subscription.changed") {
+          // 换档补差额（B）：升级正差额整额补发；降档不扣回。旧档取自订阅行 plan_id。
+          const oldPlan = existing !== null ? (runtime.config.billing?.plans ?? []).find((p) => p.id === existing.planId) : undefined;
+          const diff = (plan.bonusCredits ?? 0) - (oldPlan?.bonusCredits ?? 0);
+          if (diff > 0) {
+            await grantSubscriptionBonus(runtime.store, userId, diff, `sub:${subscriptionId}:${nextExpiresAt}:change`);
+          }
+        }
+      }
       if (nextStatus === "active" || nextStatus === "grace") {
         await runtime.store.setPlan(userId, "subscribed", nextExpiresAt);
       } else if (nextStatus === "expired") {
-        await runtime.store.setPlan(userId, null, null);
+        // R4：到期不再写 NULL（会提权）；交状态机——置 grace（+graceDays），sweepBilling 在宽限期结束降到 free。
+        const graceDays = runtime.config.billing?.graceDays ?? BILLING_DEFAULTS.graceDays;
+        await runtime.store.setPlan(userId, "grace", now + graceDays * 24 * 3600 * 1000);
       }
       // revoked / refunded / staleRevival：只记录，不撤权益
     });
@@ -4572,7 +4600,8 @@ async function handleDeleteAccount(req: IncomingMessage, res: ServerResponse, ru
 }
 
 /** 计费状态机定时扫描：trial/subscribed 到期 → grace → free（0 台离线）；
- * 管理台手工给 plan-null 账号设的到期（feature 16 E1）→ 到期硬降 free（无 grace）。 */
+ * 管理台手工给 plan-null 账号设的到期（feature 16 E1）→ 到期硬降 free（无 grace）；
+ * internal（专属）无到期，天然跳过；降 free 时清赠点（R12）。 */
 export async function sweepBilling(runtime: HubRuntime, now = Date.now()): Promise<void> {
   const billing = runtime.config.billing;
   const graceDays = billing?.graceDays ?? BILLING_DEFAULTS.graceDays;
@@ -4591,6 +4620,7 @@ export async function sweepBilling(runtime: HubRuntime, now = Date.now()): Promi
     if (user.planStatus === null && user.planExpiresAt !== null && user.planExpiresAt <= now) {
       await runtime.store.setPlan(user.id, "free", null);
       await runtime.store.setFreeSince(user.id, now);
+      await clearUserBonus(runtime.store, user.id);
       dropHosts(user.id);
       await runtime.store.recordAudit(user.id, "billing.expired", { from: "manual-expiry" }, "");
       continue;
@@ -4606,6 +4636,7 @@ export async function sweepBilling(runtime: HubRuntime, now = Date.now()): Promi
       await runtime.store.setFreeSince(user.id, now);
       const sub = await runtime.store.getActiveSubscription(user.id);
       if (sub !== null) await runtime.store.setSubscriptionStatus(sub.id, "expired");
+      await clearUserBonus(runtime.store, user.id);
       dropHosts(user.id);
       await runtime.store.recordAudit(user.id, "billing.downgraded", { to: "free" }, "");
     }

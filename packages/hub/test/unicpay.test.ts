@@ -44,8 +44,8 @@ const rawConfig = {
   registration: "open",
   billing: {
     plans: [
-      { id: "plus_monthly", name: "Plus", hosts: 5, priceCny: 30, intervalMonths: 1 },
-      { id: "pro_monthly", name: "Pro", hosts: 10, priceCny: 50, intervalMonths: 1 },
+      { id: "plus_monthly", name: "Plus", hosts: 5, priceCny: 30, intervalMonths: 1, bonusCredits: 1900 },
+      { id: "pro_monthly", name: "Pro", hosts: 10, priceCny: 50, intervalMonths: 1, bonusCredits: 3400 },
     ],
     // 渠道加量：微信支付 +10%（第三方渠道费低于应用商店）。
     channelBonus: { wechatpay: 1.1 },
@@ -438,6 +438,47 @@ test("H6b: revoked 后迟到的 expired 也不撤权（plan_status 保持 subscr
   assert.equal(db.getUserById(user.id).planStatus, "subscribed");
 });
 
+test("R4: subscription.expired → grace（不再写 null/internal）", async () => {
+  const user = db.createUser("wh-expire", await hashPassword("pw123456"));
+  const uid = String(user.id);
+  await postWebhook(subEvent({ eventType: "subscription.started", userId: uid, subscriptionId: "sub-expire-1", status: "active", expiresAt: new Date(Date.now() + 30 * 86_400_000).toISOString() }));
+  assert.equal(db.getUserById(user.id).planStatus, "subscribed");
+  await postWebhook(subEvent({ eventType: "subscription.expired", userId: uid, subscriptionId: "sub-expire-1", status: "expired", expiresAt: new Date(Date.now() - 86_400_000).toISOString() }));
+  const after = db.getUserById(user.id)!;
+  assert.equal(after.planStatus, "grace");
+  assert.notEqual(after.planStatus, "internal");
+});
+
+test("R12: subscription.started → 发首月赠点入 bonus_current", async () => {
+  const user = db.createUser("wh-bonus-start", await hashPassword("pw123456"));
+  const uid = String(user.id);
+  await postWebhook(subEvent({ eventType: "subscription.started", userId: uid, subscriptionId: "sub-bonus-1", status: "active", expiresAt: new Date(Date.now() + 30 * 86_400_000).toISOString() }));
+  assert.equal(db.getUserById(user.id).planStatus, "subscribed");
+  const b = db.getCreditBalances(user.id);
+  assert.equal(b.bonusCurrent, 1900 * CREDITS_MICRO_PER_CREDIT);
+});
+
+test("R12: subscription.renewed → 结转 + 发下月赠点", async () => {
+  const user = db.createUser("wh-bonus-renew", await hashPassword("pw123456"));
+  const uid = String(user.id);
+  await postWebhook(subEvent({ eventType: "subscription.started", userId: uid, subscriptionId: "sub-bonus-2", status: "active", expiresAt: new Date(Date.now() + 30 * 86_400_000).toISOString() }));
+  await postWebhook(subEvent({ eventType: "subscription.renewed", userId: uid, subscriptionId: "sub-bonus-2", status: "active", expiresAt: new Date(Date.now() + 60 * 86_400_000).toISOString() }));
+  const b = db.getCreditBalances(user.id);
+  assert.equal(b.bonusCarried, 1900 * CREDITS_MICRO_PER_CREDIT); // 第一期结转
+  assert.equal(b.bonusCurrent, 1900 * CREDITS_MICRO_PER_CREDIT); // 第二期新发
+});
+
+test("R12/P2-2: subscription.changed 升级 → 补发差额（整额）", async () => {
+  const user = db.createUser("wh-upgrade", await hashPassword("pw123456"));
+  const uid = String(user.id);
+  await postWebhook(subEvent({ eventType: "subscription.started", userId: uid, subscriptionId: "sub-up-1", status: "active", expiresAt: new Date(Date.now() + 30 * 86_400_000).toISOString() }));
+  assert.equal(db.getCreditBalances(user.id).bonusCurrent, 1900 * CREDITS_MICRO_PER_CREDIT);
+  // Plus → Pro 升级（换档，expiresAt 顺延）
+  await postWebhook(subEvent({ eventType: "subscription.changed", userId: uid, subscriptionId: "sub-up-1", goodsId: "pro_monthly", status: "active", expiresAt: new Date(Date.now() + 60 * 86_400_000).toISOString() }));
+  // 差额 3400 − 1900 = 1500 → bonus_current 累积到 3400
+  assert.equal(db.getCreditBalances(user.id).bonusCurrent, 3400 * CREDITS_MICRO_PER_CREDIT);
+});
+
 test("H3: 陈旧时间戳 → 401", async () => {
   const stale = Math.floor(Date.now() / 1000) - 600;
   const r = await postWebhook(subEvent({}), { tsSeconds: stale });
@@ -468,6 +509,21 @@ test("H4: 金额不符 → 422 且不发货；金额一致 → 200 并激活订�
   assert.equal(ok.status, 200);
   assert.ok(db.getPaymentByChannelOrderId("unicpay", "p1") !== null);
   assert.equal(db.getUserById(user.id).planStatus, "subscribed");
+});
+
+test("P2-2: A 类订阅重复购买 → 到期顺延（不重置）", async () => {
+  const user = db.createUser("wh-restack", await hashPassword("pw123456"));
+  const pay = (orderId: string, paymentId: string) => postWebhook({
+    eventType: "payment.succeeded", paymentId, appOrderId: orderId, amount: 3000, currency: "CNY",
+  });
+  db.createOrder("o-r1", user.id, "plus_monthly", 30);
+  await pay("o-r1", "pr1");
+  const exp1 = db.getUserById(user.id)!.planExpiresAt!;
+  assert.ok(exp1 > Date.now());
+  db.createOrder("o-r2", user.id, "plus_monthly", 30);
+  await pay("o-r2", "pr2");
+  const after2 = db.getUserById(user.id)!;
+  assert.ok(after2.planExpiresAt! > exp1, "重复购买应从原到期顺延而非从 now 重置");
 });
 
 test("H5: 未知订单 → 200 ack", async () => {

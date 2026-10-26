@@ -152,12 +152,12 @@ portal 后台充值页据此渲染档位（不再前端写死；与 `/api/billin
 
 ## 5. 配额钩子（S1，/api/hosts/register 内）
 
-`/api/hosts/register` 建 host 前按 `plan_status` 检查 **可接入云端中转的主机数**（⚠️ 语义与术语见 §13.3 —— **不是**「用户拥有几台主机」）：`NULL` 不限；`trial`=1；`subscribed`=plan.hosts；`free`/`grace`（grace 保留原配额，按原 plan.hosts）。超限 → `403 QUOTA_EXCEEDED`。
+`/api/hosts/register` 建 host 前按 `plan_status` 检查 **可接入云端中转的主机数**（⚠️ 语义与术语见 §13.3 —— **不是**「用户拥有几台主机」）：`internal` 不限；`NULL`=0（无权限）；`trial`=1；`subscribed`=plan.hosts；`free`/`grace`（grace 保留原配额，按原 plan.hosts）。超限 → `403 QUOTA_EXCEEDED`。
 
 ## 6. 状态机语义（req §2.5，非端点）
 
 `account_status`: pending → active → banned | deleted（封禁/删除）。
-`plan_status`: NULL → trial → subscribed | grace → free；grace 3 天；free 离线 host 数据保留 30 天。
+`plan_status`: NULL（pending/deleted，无权限）→ trial → subscribed | grace → free；grace 3 天；free 离线 host 数据保留 30 天；`internal` 为永久专属档（不参与状态机）。
 
 ## 7. 客户端能力（公开，未认证）
 
@@ -212,14 +212,14 @@ JSAPI 支付需用户 openid（公众号 OAuth2）。门户在微信内浏览器
 - 均需 `reason`。
 - `grant-trial`：`{ days: number(1..3650), reason }` → 写 `trial`，到期 = `max(now, 当前到期) + days`；若账号已有有效订阅 → `409 CONFLICT`。RBAC：`operator`。
 - `grant-subscription`：`{ planId: string, days?: number, expiresAtMs?: number, amountCny?: number(默认 0), reason }`（`days` 与 `expiresAtMs` 二选一）→ 建订单(paid/manual) + **停用旧有效订阅** + 建新订阅 + `subscribed`。`planId` 必须在 `billing.plans`。RBAC：`admin`。
-- `plan`（收紧）：`planStatus` ∈ subscribed/grace/free/null + 可选 `expiresAtMs`；`subscribed` 必须已有有效订阅（否则 `400`）；`null` 不得携带 `expiresAtMs`（否则 `400`）。
+- `plan`（收紧）：`planStatus` ∈ internal/subscribed/grace/free/trial + 可选 `expiresAtMs`；`subscribed` 必须已有有效订阅（否则 `400`）；`internal` 不得携带 `expiresAtMs`（否则 `400`，永久）；`null` **拒绝**（要清空计费用 `free`）。
 - 其余：`reset-password` 另需 `password`（≥8 位）；`set-role` 另需 `role`（user/readonly/operator/admin）。
 - RBAC：`operator` 可 ban/unban/reset-password/unlock/reset-2fa/plan/grant-trial；`admin` 可 set-role/delete/grant-subscription。
 - **自我保护**：不能删除自己 / 修改自己角色 / 移除自己（`403 FORBIDDEN`）。
 
 ### POST /api/admin/users —— 管理台建号
 `{ identifier: string, password: string(≥8), role?: user|readonly|operator|admin(默认 user), mustChange?: bool(默认 true), trialDays?: number(1..3650) | expiresAtMs?: number(遗留), reason }`
-- `trialDays` 与 `expiresAtMs` 二选一（同给 → 400）；都不给 → **永久无限**（`plan=null`、无到期）。
+- `trialDays` 与 `expiresAtMs` 二选一（同给 → 400）；都不给 → **永久无限**（`plan=internal`、无到期，专属账号）。
 - 带试用时写 `plan=trial` + 到期时间（**不再写 `null`+到期**）；`expiresAtMs` 为遗留字段，等价"试用到该时刻"。
 
 ### GET /api/admin/hosts?q=&limit=&offset=
@@ -328,25 +328,28 @@ JSAPI 支付需用户 openid（公众号 OAuth2）。门户在微信内浏览器
 
 | 维度 | 字段 | 取值 | 作用 |
 |---|---|---|---|
-| **计费档** | `plan_status`（可空）| `NULL` / `trial` / `subscribed` / `grace` / `free` | **决定身份显示与配额** |
+| **计费档** | `plan_status`（可空）| `internal` / `trial` / `subscribed` / `grace` / `free` | **决定身份显示与配额** |
 | 后台权限 | `role` | `user` / `readonly` / `operator` / `admin` | 管理面权限（§10）|
 | 账号状态 | `account_status` | `active` / `pending` / `banned` / `deleted` | 账号是否可用 |
 
-**`plan_status = NULL` 的对外显示名 = 「专属账号」（Exclusive account）。**
+**`plan_status = internal` 的对外显示名 = 「专属账号」（Exclusive account）。**
 - **不要**叫「自托管」—— 自托管是**部署形态**（开源自建 hub vs 我方托管 hub），不是用户档次；
 - **不要**叫「VIP」—— 会与付费档混淆。
 
+**`plan_status = NULL` 表示「无计费档」**，一律**无权限**（配额 0、中转计费、客户端按 free 兜底），只出现在：
+- `pending`：注册未验证（验证成功即 `startTrial` → `trial`）；
+- `deleted`：删除账号的墓碑。
+
 **⚠️ 客户端必须区分「无数据」与「`plan_status` 为空」**：
 - 未登录 / `GET /api/billing/subscription` 失败 → **不得**显示为「专属账号」，应显示中性状态（"订阅状态暂不可用"）；
-- 只有**成功取得响应且 `planStatus === null`** 才是专属账号。
-
-（二者曾混为一谈：订阅接口抖动时，订阅用户会被显示成"自托管模式 · 开源免费"。）
+- 只有**成功取得响应且 `planStatus === "internal"`** 才是专属账号；
+- `planStatus === null` → **无权限**（按 free 兜底，不得当作专属）。
 
 ### 13.2 档位 × 权益矩阵（**冻结**）
 
-`✅` = 该档位可用。对比表**只列稳定的可选择档位**；`trial` / `grace` 是**访问者自身的临时状态**，只出现在"我的身份"卡；`NULL`（专属）**永不进入对外对比表**。
+`✅` = 该档位可用。对比表**只列稳定的可选择档位**；`trial` / `grace` 是**访问者自身的临时状态**，只出现在"我的身份"卡；`internal`（专属）**永不进入对外对比表**。
 
-| 权益 | NULL（专属）| free | trial | grace | 标准版 | 专业版 | 旗舰版 |
+| 权益 | internal（专属）| free | trial | grace | 标准版 | 专业版 | 旗舰版 |
 |---|---|---|---|---|---|---|---|
 | 可云端中转的主机数（见 13.3）| **不限** | 0 | 1 | 保留原配额 | `plans[].hosts` | `plans[].hosts` | `plans[].hosts` |
 | 直连（局域网 IP / 公网域名）| ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -381,7 +384,7 @@ UI 文案必须写「**可云端中转主机数**」，**不要**写「主机配
 
 ### 13.4 时长与状态机
 
-`plan_status`：`NULL` → `trial` → `subscribed` / `grace` → `free`（见 §6）。
+`plan_status`：`NULL`（pending/deleted）→ `trial` → `subscribed` / `grace` → `free`（见 §6）；`internal` 为永久专属档。
 `grace → free` 时 `dropHosts`（终止隧道）；`free` 后离线主机数据保留 `retentionDays`。
 
 | 配置 | 代码默认（`BILLING_DEFAULTS`）| 产品政策 |

@@ -377,14 +377,14 @@ export function relayFreePolicy(billing: { relay?: { trialFree?: boolean; intern
   };
 }
 
-/** 31-relay-billing：判定用户 relay 是否免计费（试用 `trial` / 专属账号 `plan_status=NULL`）。 */
+/** 31-relay-billing：判定用户 relay 是否免计费（试用 `trial` / 专属账号 `plan_status=internal`；`NULL` 一律计费 = fail-closed）。 */
 export function isRelayFreeUser(user: { planStatus: string | null; planExpiresAt?: number | null }, policy: RelayFreePolicy, now = Date.now()): boolean {
   if (user.planStatus === "trial") {
     // 到期即不再免费（不等 sweepBilling 的 60s 周期）；planExpiresAt 为空 = 管理员授的永久试用。
     const exp = user.planExpiresAt ?? null;
     return policy.trialFree && (exp === null || exp > now);
   }
-  if (user.planStatus === null) return policy.internalFree;
+  if (user.planStatus === "internal") return policy.internalFree;
   return false;
 }
 
@@ -3013,13 +3013,7 @@ export class HubDb {
     return rows.map((r) => this.mapCreditLedger(r));
   }
 
-  /** 结转用：返回所有 bonus 桶非零的用户 id。 */
-  listUsersWithBonusCredits(): number[] {
-    const rows = this.db.prepare("SELECT id FROM users WHERE bonus_carried != 0 OR bonus_current != 0").all() as unknown as Array<Record<string, unknown>>;
-    return rows.map((r) => Number(r.id));
-  }
-
-  /** 读 meta 键值（点数月度结算等持久化状态）。 */
+  /** 读 meta 键值（点数结转标记等持久化状态）。 */
   getMeta(key: string): string | null {
     const row = this.db.prepare("SELECT value FROM meta WHERE key = ?").get(key) as { value: string } | undefined;
     return row === undefined ? null : String(row.value);

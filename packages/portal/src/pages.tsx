@@ -2926,7 +2926,7 @@ function AdminUserDetail({ userId }: { userId: number }): React.JSX.Element {
           </tr>
           <tr>
             {adminTd(t("状态"), u.locked ? `${u.accountStatus} · ${t("锁定至 {time}", { params: { time: new Date((u.lockedUntil as number)).toLocaleString() } })}` : u.accountStatus)}
-            {adminTd(t("套餐"), `${u.planStatus ?? "—"}${u.planExpiresAt !== null ? ` · ${t("到期 {date}", { params: { date: ts(u.planExpiresAt) } })}` : ""}`)}
+            {adminTd(t("套餐"), `${u.planStatus === "internal" ? t("专属账号") : (u.planStatus ?? "—")}${u.planExpiresAt !== null ? ` · ${t("到期 {date}", { params: { date: ts(u.planExpiresAt) } })}` : ""}`)}
           </tr>
           <tr>
             {adminTd(t("主机"), d.quota !== null ? `${d.hostCount} / ${d.quota}` : String(d.hostCount))}
@@ -3560,7 +3560,7 @@ function AdminUsers({ isWrite, isAdmin }: { isWrite: boolean; isAdmin: boolean }
           .catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed")),
     });
   };
-  /** 设为永久无限：plan=null（后端校验：null 不得带到期）。 */
+  /** 设为永久无限（专属账号）：plan=internal（后端拒绝 null）。 */
   const grantUnlimited = (u: AdminUserRow): void => {
     setDialog({
       title: `${t("设为永久无限")} · ${u.name}`,
@@ -3569,7 +3569,7 @@ function AdminUsers({ isWrite, isAdmin }: { isWrite: boolean; isAdmin: boolean }
       confirmText: u.name,
       submit: (reason) =>
         adminApi
-          .userAction(u.id, "plan", { reason, planStatus: null })
+          .userAction(u.id, "plan", { reason, planStatus: "internal" })
           .then(() => { setMsg("ok"); setDialog(null); reload(); })
           .catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed")),
     });
@@ -3629,7 +3629,7 @@ function AdminUsers({ isWrite, isAdmin }: { isWrite: boolean; isAdmin: boolean }
               {adminTd(t("角色"), <span style={{ color: "var(--rdsh-fg-muted)" }}>{adminRoleLabel(t, u.role)}</span>)}
               {adminTd(t("状态"), statusCell(u))}
               {adminTd(t("主机"), u.hostCount)}
-              {adminTd(t("套餐"), u.planStatus ?? "—")}
+              {adminTd(t("套餐"), u.planStatus === "internal" ? t("专属账号") : (u.planStatus ?? "—"))}
               {adminTd(t("最后登录"), fmtLogin(u.lastLoginAt))}
               {adminTd(null, (isWrite || isAdmin) && (
                 <div style={{ position: "relative" }} onClick={(e) => e.stopPropagation()}>

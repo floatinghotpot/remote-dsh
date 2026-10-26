@@ -282,21 +282,26 @@ test("grant-trial：HTTP 成功 + trial 顺延；缺 days → 400", async () => 
   assert.equal(bad.status, 400);
 });
 
-test("plan 收紧：subscribed 无订阅 → 400；null 带到期 → 400", async () => {
+test("plan 收紧：subscribed 无订阅 → 400；null 拒绝 → 400；internal 带到期 → 400", async () => {
   const u = db.createUser("plan-ee", "hash");
   const a = await post(`/api/admin/users/${u.id}/plan`, { planStatus: "subscribed", expiresAtMs: Date.now() + 86_400_000, reason: "x" }, adminSession);
   assert.equal(a.status, 400);
-  const b = await post(`/api/admin/users/${u.id}/plan`, { planStatus: "null", expiresAtMs: Date.now() + 86_400_000, reason: "x" }, adminSession);
-  assert.equal(b.status, 400);
+  const b = await post(`/api/admin/users/${u.id}/plan`, { planStatus: "null", reason: "x" }, adminSession);
+  assert.equal(b.status, 400); // null 不再作为可设置值
+  const c = await post(`/api/admin/users/${u.id}/plan`, { planStatus: "internal", expiresAtMs: Date.now() + 86_400_000, reason: "x" }, adminSession);
+  assert.equal(c.status, 400); // internal 永久，不得带到期
+  const d = await post(`/api/admin/users/${u.id}/plan`, { planStatus: "internal", reason: "x" }, adminSession);
+  assert.equal(d.status, 200); // 合法：设为专属账号
+  assert.equal(db.getUserById(u.id)!.planStatus, "internal");
 });
 
-test("建号：trialDays → trial；都不给 → 永久无限；两者同给 → 400", async () => {
+test("建号：trialDays → trial；都不给 → 专属账号（internal）；两者同给 → 400", async () => {
   const a = await post("/api/admin/users", { identifier: "trial-new@test.com", password: "pw12345678", trialDays: 7, reason: "x" }, adminSession);
   assert.equal(a.status, 200);
   assert.equal(db.getUserByEmail("trial-new@test.com")!.planStatus, "trial");
   const b = await post("/api/admin/users", { identifier: "perm-new@test.com", password: "pw12345678", reason: "x" }, adminSession);
   assert.equal(b.status, 200);
-  assert.equal(db.getUserByEmail("perm-new@test.com")!.planStatus, null);
+  assert.equal(db.getUserByEmail("perm-new@test.com")!.planStatus, "internal");
   const c = await post("/api/admin/users", { identifier: "both@test.com", password: "pw12345678", trialDays: 7, expiresAtMs: Date.now() + 86_400_000, reason: "x" }, adminSession);
   assert.equal(c.status, 400);
 });

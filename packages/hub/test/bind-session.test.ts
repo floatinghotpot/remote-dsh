@@ -60,7 +60,8 @@ async function get(path: string, cookie?: string): Promise<{ status: number; jso
 
 /** 建一个已登录用户，返回会话 cookie。 */
 async function loginAs(name: string): Promise<string> {
-  db.createUser(name, await hashPassword("pw123456"));
+  const u = db.createUser(name, await hashPassword("pw123456"));
+  db.setPlan(u.id, "internal", null); // 专属账号，可绑主机（NULL 已 fail-closed）
   const login = await post("/api/auth/login", { name, password: "pw123456" });
   assert.equal(login.status, 200);
   return `rdsh_hub_session=${login.json.accessToken}`;

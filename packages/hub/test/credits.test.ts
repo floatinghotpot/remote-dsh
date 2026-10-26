@@ -9,8 +9,9 @@ import {
   creditRecharge,
   creditBonusMonthly,
   creditRefund,
-  carryOverCredits,
-  sweepCredits,
+  grantSubscriptionBonus,
+  carryOverUserBonus,
+  clearUserBonus,
   CREDITS_MICRO_PER_CREDIT,
 } from "../src/credits.ts";
 
@@ -73,8 +74,8 @@ test("结转：bonus_current 剩余 → bonus_carried，旧 carried 清零", asy
   // 上月结转来的 carried（300 点）
   db.appendCreditLedger(uid, 300 * CREDITS_MICRO_PER_CREDIT, "bonus_carried", "carry_over", { now: 1 });
   // 本月新发 current（500 点）
-  await creditBonusMonthly(createSqliteStore(db), uid, 500 * CREDITS_MICRO_PER_CREDIT, { period: "2026-10" });
-  await carryOverCredits(createSqliteStore(db), 2);
+  await creditBonusMonthly(createSqliteStore(db), uid, 500 * CREDITS_MICRO_PER_CREDIT, { period: "sub:1:exp1" });
+  await carryOverUserBonus(createSqliteStore(db), uid, "sub:1:exp2");
   const b = db.getCreditBalances(uid);
   // 旧 carried 清零；current 剩余（500）→ 新的 carried
   assert.equal(b.bonusCarried, 500 * CREDITS_MICRO_PER_CREDIT);
@@ -95,19 +96,45 @@ test("嵌套事务：外层 BEGIN 内 appendCreditLedger 不抛异常（SAVEPOIN
   assert.equal(db.getCreditBalances(uid).purchased, 100 * CREDITS_MICRO_PER_CREDIT);
 });
 
-test("sweepCredits 月度幂等：同月二次调用不重复结转", async () => {
+test("carryOverUserBonus 幂等：同 periodKey 二次结转不重复（旧 carried 不被二次清零）", async () => {
   const db = makeDb();
   const uid = makeUser(db, "alice");
-  await creditBonusMonthly(createSqliteStore(db), uid, 500 * CREDITS_MICRO_PER_CREDIT, { period: "2026-10" });
-  await sweepCredits(createSqliteStore(db), [], new Date("2026-10-15T00:00:00").getTime());
+  await creditBonusMonthly(createSqliteStore(db), uid, 500 * CREDITS_MICRO_PER_CREDIT, { period: "sub:1:exp1" });
+  await carryOverUserBonus(createSqliteStore(db), uid, "sub:1:exp2");
   const after1 = db.getCreditBalances(uid);
   assert.equal(after1.bonusCarried, 500 * CREDITS_MICRO_PER_CREDIT);
   assert.equal(after1.bonusCurrent, 0);
-  // 同月二次调用：meta 幂等，不重复结转（否则会把 carried 当作旧 carried 清零）
-  await sweepCredits(createSqliteStore(db), [], new Date("2026-10-20T00:00:00").getTime());
+  // 同 periodKey 二次调用：幂等键跳过，不把 carried 当作旧 carried 清零
+  await carryOverUserBonus(createSqliteStore(db), uid, "sub:1:exp2");
   const after2 = db.getCreditBalances(uid);
   assert.equal(after2.bonusCarried, 500 * CREDITS_MICRO_PER_CREDIT);
   assert.equal(after2.bonusCurrent, 0);
+});
+
+test("grantSubscriptionBonus：按档位发赠点入 bonus_current，幂等去重", async () => {
+  const db = makeDb();
+  const uid = makeUser(db, "alice");
+  const ok1 = await grantSubscriptionBonus(createSqliteStore(db), uid, 1900, "sub:1:exp1");
+  assert.equal(ok1, true);
+  const ok2 = await grantSubscriptionBonus(createSqliteStore(db), uid, 1900, "sub:1:exp1");
+  assert.equal(ok2, false); // 幂等键重复
+  const b = db.getCreditBalances(uid);
+  assert.equal(b.bonusCurrent, 1900 * CREDITS_MICRO_PER_CREDIT);
+});
+
+test("clearUserBonus：赠点清零，purchased 保留", async () => {
+  const db = makeDb();
+  const uid = makeUser(db, "alice");
+  await creditRecharge(createSqliteStore(db), uid, 800 * CREDITS_MICRO_PER_CREDIT, {
+    sourceType: "unicpay", sourceId: "p1", idempotencyKey: "unicpay:p1",
+  });
+  await grantSubscriptionBonus(createSqliteStore(db), uid, 1900, "sub:1:exp1");
+  await carryOverUserBonus(createSqliteStore(db), uid, "sub:1:exp2");
+  await clearUserBonus(createSqliteStore(db), uid);
+  const b = db.getCreditBalances(uid);
+  assert.equal(b.bonusCurrent, 0);
+  assert.equal(b.bonusCarried, 0);
+  assert.equal(b.purchased, 800 * CREDITS_MICRO_PER_CREDIT);
 });
 
 test("非法 bucket：appendCreditLedger 抛错，不静默落到 bonus_current", async () => {

@@ -7,6 +7,7 @@
  */
 import type { AuditEventRow, HostRow, RelayJoinEventRow, NodeRow, OrderRow, PaymentRow, SubscriptionRow, UserRow } from "./db.ts";
 import type { HubStore } from "./store.ts";
+import { grantSubscriptionBonus } from "./credits.ts";
 import { hashPassword } from "./auth.ts";
 import { randomToken, sha256 } from "./jwt.ts";
 import { randomUUID } from "node:crypto";
@@ -153,7 +154,11 @@ export async function createUser(store: HubStore, ctx: AdminCtx, input: AdminCre
   const user = await store.createUser(name, hash, new Date().toISOString(), input.mustChange);
   if (email !== null) await store.setEmail(user.id, email);
   if (phone !== null) await store.setPhone(user.id, phone);
-  if (input.expiresAtMs !== null) await store.setPlan(user.id, "trial", input.expiresAtMs); // 建号带到期 = 试用（不再写 null+到期）
+  if (input.expiresAtMs !== null) {
+    await store.setPlan(user.id, "trial", input.expiresAtMs); // 建号带到期 = 试用
+  } else {
+    await store.setPlan(user.id, "internal", null); // 建号不带到期 = 专属账号（显式 internal，不再是 NULL）
+  }
   await audit(store, ctx, user.id, "admin.user.create", { name, role, email, phone, expiresAtMs: input.expiresAtMs }, reason);
   const created = await store.getUserById(user.id);
   if (created === null) throw new AdminError("BAD_REQUEST", "create failed");
@@ -178,8 +183,8 @@ export async function resetUser2fa(store: HubStore, ctx: AdminCtx, userId: numbe
   await audit(store, ctx, userId, "admin.reset-2fa", { name: user.name }, reason);
 }
 
-/** 手动调整套餐（订阅/降级）。planStatus: subscribed|grace|free|null；expiresAtMs 为 null 时立即生效无到期。
- * 收紧校验（feature 23）：`subscribed` 必须已有有效订阅；`null` 不得带到期时间。 */
+/** 手动调整套餐（订阅/降级）。planStatus: internal|subscribed|grace|free|trial；expiresAtMs 为 null 时立即生效无到期。
+ * 收紧校验：`subscribed` 必须已有有效订阅；`internal` 不得带到期（永久）；`null` 不再作为可设置值。 */
 export async function adjustPlan(store: HubStore, ctx: AdminCtx, userId: number, planStatus: string | null, expiresAtMs: number | null, reason: string): Promise<void> {
   assertRole(ctx, "operator");
   const user = await store.getUserById(userId);
@@ -187,8 +192,11 @@ export async function adjustPlan(store: HubStore, ctx: AdminCtx, userId: number,
   if (planStatus === "subscribed" && await store.getActiveSubscription(userId) === null) {
     throw new AdminError("BAD_REQUEST", "subscribed requires an active subscription; use grant-subscription instead");
   }
-  if (planStatus === null && expiresAtMs !== null) {
-    throw new AdminError("BAD_REQUEST", "a null (unlimited) plan cannot carry expiresAtMs; clear the expiry or use grant-trial / grant-subscription");
+  if (planStatus === "internal" && expiresAtMs !== null) {
+    throw new AdminError("BAD_REQUEST", "internal (专属) is permanent and cannot carry expiresAtMs; use trial for time-limited access");
+  }
+  if (planStatus === null) {
+    throw new AdminError("BAD_REQUEST", "planStatus must be internal|trial|subscribed|grace|free; use 'free' to clear billing");
   }
   await store.setPlan(userId, planStatus, expiresAtMs);
   if (planStatus === "free") await store.setFreeSince(userId, Date.now());
@@ -381,6 +389,8 @@ export interface GrantSubscriptionInput {
   expiresAtMs?: number;
   /** 入账金额，默认 0（manual 渠道，营收口径按 provider 区分）。 */
   amountCny?: number;
+  /** 首月赠点数（来自该档 `package.credits`；由调用方从 config.plans 解析后传入）。 */
+  bonusCredits?: number;
 }
 
 /** 赠送订阅（admin only）：校验后复用 creditOrder（订单 + 停用旧订阅 + 新订阅 + subscribed）。 */
@@ -399,14 +409,14 @@ export async function grantSubscription(store: HubStore, ctx: AdminCtx, input: G
   if (user === null) throw new AdminError("NOT_FOUND", "user not found");
   const base = Math.max(Date.now(), user.planExpiresAt ?? 0);
   const expiresAtMs = input.days !== undefined ? base + input.days * 24 * 3600 * 1000 : input.expiresAtMs!;
-  return await creditOrder(store, ctx, { userId: input.userId, planId: input.planId, amountCny: input.amountCny ?? 0, expiresAtMs }, reason);
+  return await creditOrder(store, ctx, { userId: input.userId, planId: input.planId, amountCny: input.amountCny ?? 0, expiresAtMs, bonusCredits: input.bonusCredits }, reason);
 }
 
 /** 补单（人工入账）：建订单 → 标 paid（channel=manual）→ 停用旧订阅 → 激活新订阅。admin only。 */
 export async function creditOrder(
   store: HubStore,
   ctx: AdminCtx,
-  params: { userId: number; planId: string; amountCny: number; expiresAtMs: number },
+  params: { userId: number; planId: string; amountCny: number; expiresAtMs: number; bonusCredits?: number },
   reason: string,
 ): Promise<string> {
   assertRole(ctx, "admin");
@@ -419,7 +429,11 @@ export async function creditOrder(
   await store.createOrder(orderId, params.userId, params.planId, params.amountCny);
   await store.markOrderPaid(orderId, "manual", null);
   await store.setPlan(params.userId, "subscribed", params.expiresAtMs);
-  await store.createSubscription(params.userId, params.planId, Date.now(), params.expiresAtMs);
+  const sub = await store.createSubscription(params.userId, params.planId, Date.now(), params.expiresAtMs);
+  // R12：订阅即有赠点（幂等键含订阅行 id）。
+  if ((params.bonusCredits ?? 0) > 0) {
+    await grantSubscriptionBonus(store, params.userId, params.bonusCredits ?? 0, `sub:${sub.id}`);
+  }
   await audit(store, ctx, params.userId, "admin.credit-order", { orderId, planId: params.planId, amountCny: params.amountCny }, reason);
   return orderId;
 }

@@ -82,18 +82,21 @@ test("hostQuota：试用源宽限期（无任何订阅行）→ trialHosts", asy
   }
 });
 
-test("hostQuota：trial / free / plan=null", async () => {
+test("hostQuota：trial / free / internal / plan=null", async () => {
   const db = new HubDb(":memory:");
   try {
     const a = db.createUser("a", "h");
     db.setPlan(a.id, "trial", now + 7 * DAY);
     const b = db.createUser("b", "h");
     db.setPlan(b.id, "free", null);
-    const c = db.createUser("c", "h"); // plan=null（专属账号）
+    const c = db.createUser("c", "h"); // plan=null（无计费档 → 0，fail-closed）
+    const d = db.createUser("d", "h");
+    db.setPlan(d.id, "internal", null); // 专属账号
     const r = rt(db, { trialHosts: 1, plans: PLANS });
     assert.equal(await hostQuota(r, db.getUserById(a.id)!), 1);
     assert.equal(await hostQuota(r, db.getUserById(b.id)!), 0);
-    assert.equal(await hostQuota(r, db.getUserById(c.id)!), null, "plan=null = 不限");
+    assert.equal(await hostQuota(r, db.getUserById(c.id)!), 0, "plan=null = 无权限（fail-closed）");
+    assert.equal(await hostQuota(r, db.getUserById(d.id)!), null, "internal = 不限");
   } finally {
     db.close();
   }

@@ -98,7 +98,8 @@ test("register 端点：注册关闭（默认）返回 REGISTRATION_DISABLED 404
 });
 
 test("登录：成功 200 + Cookie + token；错误密码 401", async () => {
-  db.createUser("alice", await hashPassword("pw123456"));
+  const alice = db.createUser("alice", await hashPassword("pw123456"));
+  db.setPlan(alice.id, "internal", null); // 专属账号，可绑主机（NULL 已 fail-closed）
   const ok = await post("/api/auth/login", { name: "alice", password: "pw123456" });
   assert.equal(ok.status, 200);
   assert.equal(typeof ok.json.accessToken, "string");
@@ -128,7 +129,7 @@ test("GET /api/account：绑定状态回显（未认证 401 / 登录 200 含字�
   assert.equal(r.json.phoneVerified, false);
   assert.equal(r.json.totpEnabled, false);
   assert.equal(r.json.smsEnabled, false);
-  assert.equal(r.json.planStatus, null);
+  assert.equal(r.json.planStatus, "internal");
 });
 
 

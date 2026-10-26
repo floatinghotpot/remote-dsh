@@ -33,7 +33,6 @@ export function credits(
   | "listRelayConsumption"
   | "sweepExpiredCreditHolds"
   | "listCreditLedger"
-  | "listUsersWithBonusCredits"
   | "getMeta"
   | "setMeta"
 > {
@@ -391,13 +390,7 @@ export function credits(
       return rows.map((r) => mapCreditLedger(r));
     },
 
-    /** 结转用：返回所有 bonus 桶非零的用户 id。 */
-    listUsersWithBonusCredits: async (): Promise<number[]> => {
-      const rows = (await q(txDb(pool), "SELECT id FROM users WHERE bonus_carried != 0 OR bonus_current != 0")).rows;
-      return rows.map((r) => Number(r.id));
-    },
-
-    /** 读 meta 键值（点数月度结算等持久化状态）。 */
+    /** 读 meta 键值（点数结转标记等持久化状态）。 */
     getMeta: async (key: string): Promise<string | null> => {
       const row = one(await q(txDb(pool), "SELECT value FROM meta WHERE key = $1", [key]));
       return row === null ? null : String(row.value);
