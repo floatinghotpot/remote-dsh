@@ -1,3 +1,5 @@
+-- 仅空库执行：依赖 migratePg 的 advisory lock 串行化 + schema_migrations 标记保证只应用一次；
+-- 本文件含 PARTITION BY / PARTITION OF，未做逐条 IF NOT EXISTS（不可幂等重跑）。
 -- 43-hub-postgres 43b: PostgreSQL schema (mirrors SQLite schema in packages/hub/src/db.ts).
 -- Types: SQLite INTEGER (ms epoch ids/timestamps) -> bigint; TEXT -> text; REAL -> double precision;
 --        0/1 booleans -> smallint.  usage_daily is range-partitioned on date (monthly managed in 43d),

@@ -26,7 +26,11 @@ test("pg migrations：应用 25 表 + usage_daily 分区 + 幂等", async (t) =>
     assertTestDb(DSN);
     await pool.query("DROP SCHEMA public CASCADE");
     await pool.query("CREATE SCHEMA public");
-    const applied = await migratePg(pool);
+    const applied = await migratePg(pool, "test");
+    const auditRows = (await pool.query("SELECT DISTINCT source, pid FROM schema_migrations")).rows;
+    assert.equal(auditRows.length, 1, "single (source, pid) recorded for the run");
+    assert.equal(auditRows[0].source, "test", "source recorded");
+    assert.equal(auditRows[0].pid, process.pid, "pid recorded");
     assert.ok(applied.includes("0001_init.sql"), "0001_init.sql applied");
     assert.ok(applied.includes("0002_node_bytes_bigint.sql"), "0002_node_bytes_bigint.sql applied");
     assert.ok(applied.includes("0003_credit_spend.sql"), "0003_credit_spend.sql applied");
@@ -61,9 +65,47 @@ test("pg migrations：应用 25 表 + usage_daily 分区 + 幂等", async (t) =>
     const relkind = (await pool.query(`SELECT relkind FROM pg_class WHERE relname='usage_daily'`)).rows[0]!.relkind;
     assert.equal(relkind, "p", "usage_daily is partitioned");
 
-    const again = await migratePg(pool);
+    const again = await migratePg(pool, "test");
     assert.equal(again.length, 0, "migration is idempotent");
   } finally {
     await pool.end();
+  }
+});
+
+test("pg migrations：并发迁移串行化（advisory lock）", async (t) => {
+  if (!isTestDb(DSN)) {
+    t.skip(`not a test database (expected test_* or *_test): ${testDbName(DSN)}`);
+    return;
+  }
+  const p1 = createPgPool(DSN, { max: 1, min: 0 });
+  const p2 = createPgPool(DSN, { max: 1, min: 0 });
+  try {
+    await p1.query("SELECT 1");
+    await p2.query("SELECT 1");
+  } catch {
+    await p1.end();
+    await p2.end();
+    t.skip("PostgreSQL unreachable");
+    return;
+  }
+  try {
+    assertTestDb(DSN);
+    await p1.query("DROP SCHEMA public CASCADE");
+    await p1.query("CREATE SCHEMA public");
+    const [r1, r2] = await Promise.all([
+      migratePg(p1, "concurrent-a"),
+      migratePg(p2, "concurrent-b"),
+    ]);
+    assert.ok(
+      (r1.length > 0) !== (r2.length > 0),
+      "exactly one side applied migrations, the other waited (serialized)",
+    );
+    const dups = (await p1.query(
+      "SELECT version FROM schema_migrations GROUP BY version HAVING COUNT(*) > 1",
+    )).rows;
+    assert.equal(dups.length, 0, "no duplicate migration versions");
+  } finally {
+    await p1.end();
+    await p2.end();
   }
 });

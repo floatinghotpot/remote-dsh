@@ -1,3 +1,4 @@
+-- 可重入：ALTER COLUMN TYPE 为同类型时是 no-op，重复应用无副作用。
 -- 0013: widen llm_usage_daily numeric columns to BIGINT.
 -- 0012 initially used INTEGER; ms timestamps (updated_at) and token/micro counts
 -- overflow PostgreSQL's 32-bit INTEGER, causing settle to fail with

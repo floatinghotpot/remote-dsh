@@ -192,7 +192,7 @@ async function openHubStore(configPath?: string): Promise<HubStore> {
   if (driver === "postgres") {
     const pool = createPgPool(config.db?.dsn ?? "");
     try {
-      await migratePg(pool); // 幂等：未 serve 时也能保证 schema 就绪
+      await migratePg(pool, "cli"); // 幂等：未 serve 时也能保证 schema 就绪
     } catch (err) {
       await pool.end();
       throw err;
@@ -710,7 +710,7 @@ async function handleSetup(args: string[], configPath?: string): Promise<void> {
       throw new Error(`postgres unreachable: ${(err as Error).message}\n  create it first, e.g.: CREATE ROLE rdsh LOGIN PASSWORD '...'; CREATE DATABASE rdsh OWNER rdsh;`);
     }
     try {
-      await migratePg(pool);
+      await migratePg(pool, "setup");
     } finally {
       await pool.end();
     }

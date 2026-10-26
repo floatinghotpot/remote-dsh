@@ -92,7 +92,7 @@ export async function serveHub(opts: HubServeOptions): Promise<void> {
   let dbSize: (() => Promise<number>) | undefined;
   if (driver === "postgres") {
     const pool = createPgPool(config.db?.dsn ?? "");
-    await migratePg(pool);
+    await migratePg(pool, "serve");
     dbSize = async () => Number((await pool.query("SELECT pg_database_size(current_database()) AS s")).rows[0]!.s);
     // Q9：用户缓存（预加载 + 5s 刷新 + 写路径同步失效）。
     cache = new Map<number, UserRow>();

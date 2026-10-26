@@ -185,7 +185,7 @@ export async function migrateSqliteToPg(opts: MigrateOptions): Promise<MigrateRe
     // 目标 schema 幂等就绪，空库也能直接迁移（dry-run 不写 PG）
     const pool = createPgPool(dsn, { max: 1 });
     try {
-      await migratePg(pool);
+      await migratePg(pool, "db-migrate");
     } finally {
       await pool.end();
     }
