@@ -21,6 +21,7 @@ export function billing(
   | "getSubscriptionBySubscriptionId"
   | "updateSubscriptionBySubscriptionId"
   | "listSubscriptionsByUser"
+  | "listSubscriptions"
   | "createOrder"
   | "getOrder"
   | "setOrderUnicpayRefs"
@@ -32,6 +33,7 @@ export function billing(
   | "listOrdersByUser"
   | "listPaymentsByUser"
   | "listPayments"
+  | "aggregateSubscriptionPaid"
   | "createPayment"
   | "getPaymentByChannelOrderId"
 > {
@@ -104,6 +106,36 @@ export function billing(
     async listSubscriptionsByUser(userId: number): Promise<SubscriptionRow[]> {
       const rows = (await q(txDb(pool), "SELECT * FROM subscriptions WHERE user_id = $1 ORDER BY created_at DESC", [userId])).rows;
       return rows.map((r) => mapSubscription(r));
+    },
+
+    /** 全部订阅（产品分析用，一次查询避免 N+1）。 */
+    async listSubscriptions(): Promise<SubscriptionRow[]> {
+      const rows = (await q(txDb(pool), "SELECT * FROM subscriptions ORDER BY started_at ASC")).rows;
+      return rows.map((r) => mapSubscription(r));
+    },
+
+    /** 订阅档位已支付订单的收入聚合（一次 SQL 聚合，避免分页 N 次往返）。 */
+    async aggregateSubscriptionPaid(planIds: string[]): Promise<{
+      payingUsers: number;
+      totalAmount: number;
+      byChannel: Array<{ channel: string; count: number; amount: number }>;
+      byPlan: Array<{ planId: string; count: number; amount: number }>;
+      renewedUsers: number;
+    }> {
+      const empty = { payingUsers: 0, totalAmount: 0, byChannel: [], byPlan: [], renewedUsers: 0 };
+      if (planIds.length === 0) return empty;
+      const ph = planIds.map((_, i) => `$${i + 1}`).join(",");
+      const byChannel = (await q(txDb(pool), `SELECT COALESCE(channel, 'unknown') AS channel, COUNT(*) AS count, SUM(amount_cny) AS amount FROM orders WHERE status = 'paid' AND plan_id IN (${ph}) GROUP BY channel`, planIds)).rows as Array<Record<string, unknown>>;
+      const byPlan = (await q(txDb(pool), `SELECT plan_id AS "planId", COUNT(*) AS count, SUM(amount_cny) AS amount FROM orders WHERE status = 'paid' AND plan_id IN (${ph}) GROUP BY plan_id`, planIds)).rows as Array<Record<string, unknown>>;
+      const totals = (await q(txDb(pool), `SELECT COUNT(DISTINCT user_id) AS paying, SUM(amount_cny) AS total FROM orders WHERE status = 'paid' AND plan_id IN (${ph})`, planIds)).rows[0] as { paying: string; total: string } | undefined;
+      const renewed = (await q(txDb(pool), `SELECT COUNT(*) AS c FROM (SELECT user_id FROM orders WHERE status = 'paid' AND plan_id IN (${ph}) GROUP BY user_id HAVING COUNT(*) >= 2) t`, planIds)).rows[0] as { c: string } | undefined;
+      return {
+        payingUsers: Number(totals?.paying ?? 0),
+        totalAmount: Number(totals?.total ?? 0),
+        byChannel: byChannel.map((r) => ({ channel: String(r.channel), count: Number(r.count), amount: Number(r.amount) })),
+        byPlan: byPlan.map((r) => ({ planId: String(r.planId), count: Number(r.count), amount: Number(r.amount) })),
+        renewedUsers: Number(renewed?.c ?? 0),
+      };
     },
 
     async createOrder(id: string, userId: number, planId: string, amountCny: number, now = Date.now()): Promise<OrderRow> {

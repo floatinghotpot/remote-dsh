@@ -5,7 +5,7 @@
  * 每个写操作内部做角色断言 + 写审计（source='admin'、actorUserId、reason）。
  * 只做数据层变更；隧道终止等 runtime 副作用由调用方（api.ts）负责。
  */
-import type { AuditEventRow, HostRow, RelayJoinEventRow, NodeRow, OrderRow, PaymentRow, UserRow } from "./db.ts";
+import type { AuditEventRow, HostRow, RelayJoinEventRow, NodeRow, OrderRow, PaymentRow, SubscriptionRow, UserRow } from "./db.ts";
 import type { HubStore } from "./store.ts";
 import { hashPassword } from "./auth.ts";
 import { randomToken, sha256 } from "./jwt.ts";
@@ -422,4 +422,269 @@ export async function creditOrder(
   await store.createSubscription(params.userId, params.planId, Date.now(), params.expiresAtMs);
   await audit(store, ctx, params.userId, "admin.credit-order", { orderId, planId: params.planId, amountCny: params.amountCny }, reason);
   return orderId;
+}
+
+// ---- 产品分析（57-retention-analytics，Phase 1：纯服务端，零埋点） ----
+
+export interface AnalyticsFunnel {
+  registered: number;
+  subscribed: number;
+  renewed: number;
+}
+
+export interface AnalyticsRetentionRow {
+  month: string;
+  users: number;
+  m1: number | null;
+  m3: number | null;
+  m6: number | null;
+}
+
+export interface AnalyticsChannelRow {
+  channel: string;
+  count: number;
+  amount: number;
+}
+
+export interface AnalyticsPlanRow {
+  planId: string;
+  count: number;
+  amount: number;
+}
+
+export interface AnalyticsSnapshot {
+  /** 今日注册用户数（users.created_at，UTC+8 日界）。 */
+  newUsersToday: number;
+  funnel: AnalyticsFunnel;
+  retention: AnalyticsRetentionRow[];
+  revenue: {
+    payingUsers: number;
+    totalAmount: number;
+    arpu: number;
+    byChannel: AnalyticsChannelRow[];
+    byPlan: AnalyticsPlanRow[];
+  };
+  churn: {
+    monthlyChurnRate: number | null;
+    avgLifetimeMonths: number | null;
+  };
+}
+
+// 时区：Asia/Shanghai（UTC+8，同计费账期 R13）。
+const TZ_OFFSET_MS = 8 * 3600_000;
+
+function monthKey(ms: number): string {
+  const d = new Date(ms + TZ_OFFSET_MS);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function parseMonth(key: string): [number, number] {
+  const [y, m] = key.split("-").map(Number);
+  return [y!, m!];
+}
+
+function monthStartMs(key: string): number {
+  const [y, m] = parseMonth(key);
+  return Date.UTC(y, m - 1, 1) - TZ_OFFSET_MS;
+}
+
+function monthEndMs(key: string): number {
+  const [y, m] = parseMonth(key);
+  return Date.UTC(y, m, 1) - TZ_OFFSET_MS - 1;
+}
+
+function addMonths(key: string, n: number): string {
+  const [y, m] = parseMonth(key);
+  const idx = y * 12 + (m - 1) + n;
+  return `${Math.floor(idx / 12)}-${String((idx % 12) + 1).padStart(2, "0")}`;
+}
+
+/** 该用户是否有订阅区间覆盖某自然月（在保）。 */
+function inCoverageAt(subs: SubscriptionRow[], key: string): boolean {
+  const start = monthStartMs(key);
+  const end = monthEndMs(key);
+  return subs.some((s) => s.startedAt <= end && s.expiresAt > start);
+}
+
+/** 计算 Phase 1 产品分析快照（付费留存 / 漏斗 / 收入 / 流失）。 */
+export async function computeAnalytics(store: HubStore, subscriptionPlanIds: ReadonlySet<string>): Promise<AnalyticsSnapshot> {
+  const subscriptions = await store.listSubscriptions();
+
+  // 一次查询拿到全部订阅，按 user_id 分组（避免逐用户 N+1）。
+  const subsByUser = new Map<number, SubscriptionRow[]>();
+  for (const s of subscriptions) {
+    const list = subsByUser.get(s.userId) ?? [];
+    list.push(s);
+    subsByUser.set(s.userId, list);
+  }
+
+  let subscribed = 0;
+  const cohorts = new Map<string, { users: number; m1: number | null; m3: number | null; m6: number | null }>();
+
+  const now = Date.now();
+  const thisMonth = monthKey(now);
+  const lastMonth = addMonths(thisMonth, -1);
+  let atRisk = 0;
+  let churned = 0;
+
+  // 注册总量（有效注册，排除 deleted/banned）+ 今日注册：SQL COUNT，不加载全量用户（O(1) 而非 O(users)）。
+  const registered = await store.countUsersActive();
+  const newUsersToday = await store.countUsersCreatedSince(dayStartMs(dayKey(now)));
+
+  // 订阅 cohort / 流失：直接遍历订阅分组，不遍历全量用户。
+  for (const subs of subsByUser.values()) {
+    subscribed += 1;
+
+    const first = subs.reduce((a, b) => (b.startedAt < a.startedAt ? b : a));
+    const cohortKey = monthKey(first.startedAt);
+    const c = cohorts.get(cohortKey) ?? { users: 0, m1: 0, m3: 0, m6: 0 };
+    c.users += 1;
+    // 未来月份 → null（不可测，前端显示「—」而非误导性的 0%）。
+    const [cy, cm] = parseMonth(thisMonth);
+    const [fy, fm] = parseMonth(cohortKey);
+    const elapsed = (cy - fy) * 12 + (cm - fm);
+    c.m1 = elapsed >= 1 ? (c.m1 ?? 0) + (inCoverageAt(subs, addMonths(cohortKey, 1)) ? 1 : 0) : null;
+    c.m3 = elapsed >= 3 ? (c.m3 ?? 0) + (inCoverageAt(subs, addMonths(cohortKey, 3)) ? 1 : 0) : null;
+    c.m6 = elapsed >= 6 ? (c.m6 ?? 0) + (inCoverageAt(subs, addMonths(cohortKey, 6)) ? 1 : 0) : null;
+    cohorts.set(cohortKey, c);
+
+    // 月流失（近似）：上月月初在保、本月月初已不在保。
+    if (inCoverageAt(subs, lastMonth)) {
+      atRisk += 1;
+      if (!inCoverageAt(subs, thisMonth)) churned += 1;
+    }
+  }
+
+  // 收入：一次 SQL 聚合（替代分页 N 次往返；只统计订阅档位订单，排除点数充值）。
+  const agg = await store.aggregateSubscriptionPaid([...subscriptionPlanIds]);
+  const arpu = agg.payingUsers > 0 ? agg.totalAmount / agg.payingUsers : 0;
+
+  return {
+    newUsersToday,
+    funnel: { registered, subscribed, renewed: agg.renewedUsers },
+    retention: [...cohorts.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([month, c]) => ({ month, users: c.users, m1: c.m1, m3: c.m3, m6: c.m6 })),
+    revenue: {
+      payingUsers: agg.payingUsers,
+      totalAmount: Number(agg.totalAmount.toFixed(2)),
+      arpu: Number(arpu.toFixed(2)),
+      byChannel: agg.byChannel
+        .map((c) => ({ channel: c.channel, count: c.count, amount: Number(c.amount.toFixed(2)) }))
+        .sort((a, b) => b.amount - a.amount),
+      byPlan: agg.byPlan
+        .map((p) => ({ planId: p.planId, count: p.count, amount: Number(p.amount.toFixed(2)) }))
+        .sort((a, b) => b.amount - a.amount),
+    },
+    churn: {
+      monthlyChurnRate: atRisk > 0 ? Number((churned / atRisk).toFixed(4)) : null,
+      avgLifetimeMonths: atRisk > 0 && churned > 0 ? Number((atRisk / churned).toFixed(2)) : null,
+    },
+  };
+}
+
+export interface AnalyticsEventsBlock {
+  dau: number;
+  mau: number;
+  newUsersToday: number;
+  retention: Array<{ date: string; users: number; d1: number | null; d7: number | null; d30: number | null }>;
+  purchaseAttempts: { subscription: number; credit: number };
+}
+
+function dayKey(ms: number): string {
+  const d = new Date(ms + TZ_OFFSET_MS);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+}
+
+/** 某日（Asia/Shanghai）的 00:00 对应 epoch ms。 */
+function dayStartMs(key: string): number {
+  const [y, m, d] = key.split("-").map(Number);
+  return Date.UTC(y!, m! - 1, d!) - TZ_OFFSET_MS;
+}
+
+/** 解析事件 props（JSON 字符串）里的 kind：subscription / credit / unknown。 */
+function eventKind(propsJson: string): "subscription" | "credit" | "unknown" {
+  try {
+    const p = JSON.parse(propsJson) as Record<string, unknown>;
+    return p.kind === "subscription" ? "subscription" : p.kind === "credit" ? "credit" : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+/** 计算 Phase 2 事件分析（DAU / MAU / 留存 cohort / 付费尝试）。读日聚合表，O(聚合行) 而非 O(明细)。 */
+export async function computeEventAnalytics(store: HubStore): Promise<AnalyticsEventsBlock> {
+  const now = Date.now();
+  const dayMs = 86400_000;
+  const today = dayKey(now);
+  const fromDay = dayKey(now - 90 * dayMs); // 90 天窗口覆盖 D30 留存
+
+  const daily = await store.listAnalyticsDaily(fromDay, today);
+  const firstSeenRows = await store.listAnalyticsFirstSeen();
+
+  // 活跃日集合（按聚合行累加）。
+  const activeDays = new Map<number, Set<string>>();
+  for (const d of daily) {
+    let days = activeDays.get(d.userId);
+    if (!days) {
+      days = new Set();
+      activeDays.set(d.userId, days);
+    }
+    days.add(d.day);
+  }
+
+  const firstSeen = new Map<number, string>();
+  for (const f of firstSeenRows) firstSeen.set(f.userId, f.firstDay);
+
+  const dau = [...activeDays.values()].filter((d) => d.has(today)).length;
+
+  const thirtyDaysAgo = dayKey(now - 30 * dayMs);
+  const mau = new Set<number>();
+  for (const [uid, days] of activeDays) {
+    for (const d of days) {
+      if (d >= thirtyDaysAgo) {
+        mau.add(uid);
+        break;
+      }
+    }
+  }
+
+  const newUsersToday = [...firstSeen.values()].filter((d) => d === today).length;
+
+  // 付费尝试（purchase_start）按 kind 细分：订阅 vs 点数充值（低频事件，读明细）。
+  const purchaseAttempts = { subscription: 0, credit: 0 };
+  const purchaseEvents = await store.listAnalyticsEvents(now - 30 * dayMs, now, "purchase_start");
+  for (const e of purchaseEvents) {
+    const kind = eventKind(e.props);
+    if (kind === "subscription") purchaseAttempts.subscription += 1;
+    else if (kind === "credit") purchaseAttempts.credit += 1;
+  }
+
+  const addDays = (key: string, n: number): string => dayKey(dayStartMs(key) + n * dayMs);
+  const cohorts = new Map<string, { users: number; d1: number | null; d7: number | null; d30: number | null }>();
+  for (const [uid, fDay] of firstSeen) {
+    const days = activeDays.get(uid);
+    if (days === undefined) continue; // 老用户（90 天窗口内无活跃）不进 cohort
+    const c = cohorts.get(fDay) ?? { users: 0, d1: 0, d7: 0, d30: 0 };
+    c.users += 1;
+    // 目标日须落在 [fromDay, today] 内才可测：未来 → null，早于窗口（activeDays 只载 90 天）→ null，对称避免误导性 0%。
+    const d1Day = addDays(fDay, 1);
+    const d7Day = addDays(fDay, 7);
+    const d30Day = addDays(fDay, 30);
+    c.d1 = d1Day >= fromDay && d1Day <= today ? (c.d1 ?? 0) + (days.has(d1Day) ? 1 : 0) : null;
+    c.d7 = d7Day >= fromDay && d7Day <= today ? (c.d7 ?? 0) + (days.has(d7Day) ? 1 : 0) : null;
+    c.d30 = d30Day >= fromDay && d30Day <= today ? (c.d30 ?? 0) + (days.has(d30Day) ? 1 : 0) : null;
+    cohorts.set(fDay, c);
+  }
+
+  return {
+    dau,
+    mau: mau.size,
+    newUsersToday,
+    purchaseAttempts,
+    retention: [...cohorts.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .slice(-30)
+      .map(([date, c]) => ({ date, users: c.users, d1: c.d1, d7: c.d7, d30: c.d30 })),
+  };
 }

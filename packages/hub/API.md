@@ -533,3 +533,29 @@ UI 文案必须写「**可云端中转主机数**」，**不要**写「主机配
 - `GET /api/admin/llm/routers` 每行新增 `publicBaseUrl`；
 - `GET /api/account/llm/keys` 每行新增 `hostId`（`null`=用户自建；非空=主机自动，**只读**）；
 - `POST /api/account/llm/keys/{id}/revoke` 对 `hostId != null` 的 key 返回 403 `FORBIDDEN`。
+
+## 19. 产品分析事件上报（/api/analytics/event，57-retention-analytics，2026-10-25）
+
+> App 端埋点上报产品分析事件（DAU / 留存 / 付费漏斗）。**仅登录用户**（用户会话认证）；匿名设备事件不走本端点。注册/订阅/收入/用量/绑定等其余指标均由服务端数据表聚合，客户端不埋。
+
+### POST /api/analytics/event —— 上报一批事件（用户会话认证）
+
+请求：单个事件对象，或事件对象数组（批量）：
+
+```json
+{ "event": "app_open | purchase_start", "deviceId": "<匿名设备ID>", "ts": 1750000000000, "props": { "kind": "subscription" }, "eventId": "<客户端 UUID>" }
+```
+
+- `event`：仅允许 `app_open` / `purchase_start`，其余忽略；
+- `deviceId` / `eventId` **必填**；`ts` 为 epoch ms；
+- `app_open`：`props.entry` 可选（`launch` / `resume` 等入口来源）；
+- `purchase_start`：`props.kind` **必填**，取值 `subscription`（订阅尝试）或 `credit`（点数充值尝试），二者分别进入付费漏斗不同口径；
+- **幂等语义**：`eventId` 全局唯一；重试同 `eventId` **只记一次**（明细表 `ON CONFLICT(event_id) DO NOTHING`，日聚合仅当明细真正插入才累加——不重复计数）；
+- **日聚合副作用**：成功写入时同时累进 `analytics_daily`（按 `day/user_id/event` 计数），供管理面产品分析读侧使用（读 O(聚合行) 而非 O(明细)）；明细与聚合**同一事务**；
+- **日界**：`ts` 按 **Asia/Shanghai（UTC+8）** 切日，与计费账期 R13 一致。
+
+响应：`200 { "ok": true, "count": <真正插入数>, "skipped": <跳过非法事件数> }`；`401 UNAUTHORIZED`（未登录）。
+
+### GET /api/admin/analytics —— 管理面产品分析快照（管理面认证）
+
+返回 Phase 1（今日注册/付费留存/漏斗/收入/流失）+ Phase 2（DAU/MAU/留存 cohort/付费尝试）聚合结果，供 admin 门户「产品分析」页使用。详见 admin 页面实现。

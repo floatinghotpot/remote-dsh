@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
 import { api, ApiError, subscribeEvents, adminApi } from "./api.ts";
-import type { HostInfo, JoinTokenInfo, CaptchaPayload, AccountInfo, Capabilities, UsageDay, WechatPayInfo, AdminMe, AdminUserRow, AdminHostRow, AdminNodeRow, AdminOrderRow, AdminPaymentRow, AdminAuditRow, AdminSubscriptionRow, AdminUserDetail, AdminDashboard, AdminConfig, LlmKeyInfo, LlmUsageModel, LlmCatalogModel } from "./api.ts";
+import type { HostInfo, JoinTokenInfo, CaptchaPayload, AccountInfo, Capabilities, UsageDay, WechatPayInfo, AdminMe, AdminUserRow, AdminHostRow, AdminNodeRow, AdminOrderRow, AdminPaymentRow, AdminAuditRow, AdminSubscriptionRow, AdminUserDetail, AdminDashboard, AdminAnalytics, AdminConfig, LlmKeyInfo, LlmUsageModel, LlmCatalogModel } from "./api.ts";
 import { fingerprint } from "./e2ee.ts";
 import { useT, getLang } from "./i18n.ts";
 import type { T } from "./i18n.ts";
@@ -3006,6 +3006,7 @@ function AdminApp({ path }: { path: string }): React.JSX.Element {  const { t } 
 
   const nav: Array<{ p: string; label: string; adminOnly?: boolean }> = [
     { p: "/", label: t("总览") },
+    { p: "/analytics", label: t("产品分析", { en: "Analytics" }) },
     { p: "/users", label: t("用户") },
     { p: "/hosts", label: t("主机") },
     { p: "/nodes", label: t("中继节点", { en: "Relay Nodes" }) },
@@ -3036,6 +3037,8 @@ function AdminApp({ path }: { path: string }): React.JSX.Element {  const { t } 
       </div>
       {path === "/" || path === "" ? (
         <AdminDashboard />
+      ) : path === "/analytics" ? (
+        <AdminAnalytics />
       ) : path.startsWith("/users/") ? (
         <AdminUserDetail userId={Number(path.slice("/users/".length))} />
       ) : path === "/users" ? (
@@ -3345,6 +3348,120 @@ function AdminDashboard(): React.JSX.Element {
           <div style={{ fontSize: 22, fontWeight: 700 }}>{v}</div>
         </div>
       ))}
+    </div>
+  );
+}
+
+function AdminAnalytics(): React.JSX.Element {
+  const { t } = useT();
+  const [d, setD] = useState<AdminAnalytics | null>(null);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    adminApi.analytics().then(setD).catch((e: unknown) => setErr(e instanceof Error ? e.message : "load failed"));
+  }, []);
+  if (err !== "") return <p style={{ color: "var(--rdsh-danger)" }}>{err}</p>;
+  if (d === null) return <p>{t("加载中…")}</p>;
+
+  const pct = (n: number, denom: number): string => (denom > 0 ? `${((n / denom) * 100).toFixed(1)}%` : "—");
+  const rpct = (n: number | null, denom: number): string => (n === null ? "—" : denom < 30 ? t("样本不足") : pct(n, denom));
+
+  const cards: Array<[string, string | number]> = [
+    [t("MAU(登录)"), d.events.mau],
+    [t("DAU(登录)"), d.events.dau],
+    [t("今日注册"), d.newUsersToday],
+    [t("今日首注"), d.events.newUsersToday],
+    [t("注册用户"), d.funnel.registered],
+    [t("订阅用户"), d.funnel.subscribed],
+    [t("续订用户"), d.funnel.renewed],
+    [t("付费用户"), d.revenue.payingUsers],
+    [t("ARPU"), `¥${d.revenue.arpu}`],
+    [t("总流水"), `¥${d.revenue.totalAmount}`],
+    [t("月流失率"), d.churn.monthlyChurnRate === null ? "—" : `${(d.churn.monthlyChurnRate * 100).toFixed(1)}%`],
+    [t("平均在网月数"), d.churn.avgLifetimeMonths === null ? "—" : d.churn.avgLifetimeMonths],
+  ];
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
+        {cards.map(([k, v]) => (
+          <div key={k} style={{ border: "1px solid var(--rdsh-border)", borderRadius: 10, padding: "14px 16px" }}>
+            <div style={{ fontSize: 12, color: "var(--rdsh-fg-muted)" }}>{k}</div>
+            <div style={{ fontSize: 22, fontWeight: 700 }}>{v}</div>
+          </div>
+        ))}
+      </div>
+
+      <Card title={t("付费留存（首付月 cohort）")}>
+        <table className="admintbl" style={adminTableStyle()}>
+          <thead><tr style={{ borderBottom: "1px solid var(--rdsh-border)" }}>{[t("首付月"), t("人数"), t("第1月"), t("第3月"), t("第6月")].map(adminTh)}</tr></thead>
+          <tbody>
+            {d.retention.length === 0 ? (
+              <tr><td colSpan={5} style={{ padding: "8px", color: "var(--rdsh-fg-muted)" }}>{t("暂无订阅数据")}</td></tr>
+            ) : (
+              d.retention.map((r) => (
+                <tr key={r.month} style={{ borderBottom: "1px solid var(--rdsh-border-soft)" }}>
+                  {adminTd(t("首付月"), r.month)}
+                  {adminTd(t("人数"), String(r.users))}
+                  {adminTd(t("第1月"), rpct(r.m1, r.users))}
+                  {adminTd(t("第3月"), rpct(r.m3, r.users))}
+                  {adminTd(t("第6月"), rpct(r.m6, r.users))}
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </Card>
+
+      <Card title={t("留存 cohort（D1 / D7 / D30）")}>
+        <table className="admintbl" style={adminTableStyle()}>
+          <thead><tr style={{ borderBottom: "1px solid var(--rdsh-border)" }}>{[t("注册日"), t("人数"), t("D1"), t("D7"), t("D30")].map(adminTh)}</tr></thead>
+          <tbody>
+            {d.events.retention.length === 0 ? (
+              <tr><td colSpan={5} style={{ padding: "8px", color: "var(--rdsh-fg-muted)" }}>{t("暂无事件数据")}</td></tr>
+            ) : (
+              d.events.retention.map((r) => (
+                <tr key={r.date} style={{ borderBottom: "1px solid var(--rdsh-border-soft)" }}>
+                  {adminTd(t("注册日"), r.date)}
+                  {adminTd(t("人数"), String(r.users))}
+                  {adminTd(t("D1"), rpct(r.d1, r.users))}
+                  {adminTd(t("D7"), rpct(r.d7, r.users))}
+                  {adminTd(t("D30"), rpct(r.d30, r.users))}
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </Card>
+
+      <Card title={t("转化漏斗")}>
+        <div style={{ fontSize: 14 }}>
+          {t("注册")} <b>{d.funnel.registered}</b> ──▶ {t("订阅")} <b>{d.funnel.subscribed}</b> ({pct(d.funnel.subscribed, d.funnel.registered)}) ──▶ {t("续订")} <b>{d.funnel.renewed}</b> ({pct(d.funnel.renewed, d.funnel.subscribed)})
+          <div style={{ marginTop: 8, fontSize: 13, color: "var(--rdsh-muted)" }}>
+            {t("付费尝试(30天)")}：{t("订阅")} <b>{d.events.purchaseAttempts.subscription}</b> · {t("充值")} <b>{d.events.purchaseAttempts.credit}</b>
+          </div>
+        </div>
+      </Card>
+
+      <Card title={t("收入结构")}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 16 }}>
+          <table className="admintbl" style={adminTableStyle()}>
+            <thead><tr style={{ borderBottom: "1px solid var(--rdsh-border)" }}>{[t("渠道"), t("笔数"), t("金额")].map(adminTh)}</tr></thead>
+            <tbody>{d.revenue.byChannel.map((c) => (
+              <tr key={c.channel} style={{ borderBottom: "1px solid var(--rdsh-border-soft)" }}>
+                {adminTd(t("渠道"), c.channel)}{adminTd(t("笔数"), String(c.count))}{adminTd(t("金额"), `¥${c.amount}`)}
+              </tr>
+            ))}</tbody>
+          </table>
+          <table className="admintbl" style={adminTableStyle()}>
+            <thead><tr style={{ borderBottom: "1px solid var(--rdsh-border)" }}>{[t("档位"), t("笔数"), t("金额")].map(adminTh)}</tr></thead>
+            <tbody>{d.revenue.byPlan.map((p) => (
+              <tr key={p.planId} style={{ borderBottom: "1px solid var(--rdsh-border-soft)" }}>
+                {adminTd(t("档位"), p.planId)}{adminTd(t("笔数"), String(p.count))}{adminTd(t("金额"), `¥${p.amount}`)}
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      </Card>
     </div>
   );
 }

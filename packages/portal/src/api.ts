@@ -490,6 +490,26 @@ export interface AdminDashboard {
   uptimeSeconds: number;
   version: string;
 }
+export interface AdminAnalytics {
+  newUsersToday: number;
+  funnel: { registered: number; subscribed: number; renewed: number };
+  retention: Array<{ month: string; users: number; m1: number | null; m3: number | null; m6: number | null }>;
+  revenue: {
+    payingUsers: number;
+    totalAmount: number;
+    arpu: number;
+    byChannel: Array<{ channel: string; count: number; amount: number }>;
+    byPlan: Array<{ planId: string; count: number; amount: number }>;
+  };
+  churn: { monthlyChurnRate: number | null; avgLifetimeMonths: number | null };
+  events: {
+    dau: number;
+    mau: number;
+    newUsersToday: number;
+    purchaseAttempts: { subscription: number; credit: number };
+    retention: Array<{ date: string; users: number; d1: number | null; d7: number | null; d30: number | null }>;
+  };
+}
 export interface AdminConfig {
   registration: string;
   emailEnabled: boolean;
@@ -533,6 +553,9 @@ export const adminApi = {
   },
   dashboard(): Promise<AdminDashboard> {
     return adminJson("/api/admin/dashboard");
+  },
+  analytics(): Promise<AdminAnalytics> {
+    return adminJson("/api/admin/analytics");
   },
   users(params?: { q?: string; role?: string; status?: string; lastLoginFrom?: number; lastLoginTo?: number; limit?: number; offset?: number }): Promise<{ users: AdminUserRow[]; total: number }> {
     const sp = new URLSearchParams();

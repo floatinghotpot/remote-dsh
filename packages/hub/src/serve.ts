@@ -117,6 +117,11 @@ export async function serveHub(opts: HubServeOptions): Promise<void> {
   const pruneAudit = async (): Promise<void> => { await store.pruneAudit(Date.now() - auditRetentionMs); };
   void pruneAudit();
   setInterval(() => void pruneAudit(), 24 * 3600 * 1000).unref();
+  // 产品分析事件明细保留 90 天（57-retention-analytics R8；日聚合长期不清理）
+  const analyticsRetentionMs = 90 * 24 * 3600 * 1000;
+  const pruneAnalytics = async (): Promise<void> => { await store.pruneAnalyticsEvents(Date.now() - analyticsRetentionMs); };
+  void pruneAnalytics();
+  setInterval(() => void pruneAnalytics(), 24 * 3600 * 1000).unref();
   const markNodesOffline = async (): Promise<void> => { await store.markNodesOffline(Date.now() - 90_000); };
   setInterval(() => void markNodesOffline(), 30_000).unref();
   const pruneBindSessions = async (): Promise<void> => { await store.pruneExpiredBindSessions(); };

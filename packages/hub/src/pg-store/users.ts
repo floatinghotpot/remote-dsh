@@ -24,6 +24,7 @@ export function users(pool: Pool): Pick<
   | "getUserById"
   | "listUsers"
   | "countUsers"
+  | "countUsersActive"
   | "countUsersCreatedSince"
   | "listUsersPage"
   | "removeUser"
@@ -126,6 +127,12 @@ export function users(pool: Pool): Pick<
     /** 全库用户总数（含 pending；注册总量上限用）。 */
     countUsers: async (): Promise<number> => {
       const row = one(await q<{ c: string | number }>(pool, "SELECT COUNT(*) AS c FROM users"));
+      return Number(row?.c ?? 0);
+    },
+
+    /** 有效注册用户数（漏斗「注册」口径：排除 deleted/banned）。 */
+    countUsersActive: async (): Promise<number> => {
+      const row = one(await q<{ c: string | number }>(pool, "SELECT COUNT(*) AS c FROM users WHERE account_status != 'deleted' AND account_status != 'banned'"));
       return Number(row?.c ?? 0);
     },
 

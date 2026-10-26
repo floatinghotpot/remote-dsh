@@ -239,6 +239,24 @@ export interface PaymentRow {
   raw: string;
 }
 
+export interface AnalyticsEventRow {
+  id: number;
+  event: string;
+  userId: number | null;
+  deviceId: string;
+  ts: number;
+  props: string;
+  eventId: string;
+  createdAt: number;
+}
+
+export interface AnalyticsDailyRow {
+  day: string;
+  userId: number;
+  event: string;
+  count: number;
+}
+
 export interface UsageDayRow {
   id: number;
   userId: number;
@@ -589,6 +607,31 @@ export class HubDb {
         source TEXT NOT NULL DEFAULT 'user',
         actor_user_id INTEGER,
         created_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS analytics_events (
+        id INTEGER PRIMARY KEY,
+        event TEXT NOT NULL,
+        user_id INTEGER,
+        device_id TEXT NOT NULL,
+        ts INTEGER NOT NULL,
+        props TEXT NOT NULL DEFAULT '{}',
+        event_id TEXT UNIQUE NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_analytics_events_ts ON analytics_events(ts);
+      CREATE INDEX IF NOT EXISTS idx_analytics_events_user ON analytics_events(user_id);
+      CREATE INDEX IF NOT EXISTS idx_analytics_events_event ON analytics_events(event, ts);
+      CREATE TABLE IF NOT EXISTS analytics_daily (
+        day TEXT NOT NULL,
+        user_id INTEGER NOT NULL,
+        event TEXT NOT NULL,
+        count INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (day, user_id, event)
+      );
+      CREATE INDEX IF NOT EXISTS idx_analytics_daily_event_day ON analytics_daily(event, day);
+      CREATE TABLE IF NOT EXISTS analytics_first_seen (
+        user_id INTEGER PRIMARY KEY,
+        first_day TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS email_codes (
         id INTEGER PRIMARY KEY,
@@ -1278,6 +1321,11 @@ export class HubDb {
   /** 全库用户总数（含 pending；注册总量上限用）。 */
   countUsers(): number {
     return Number((this.db.prepare("SELECT COUNT(*) AS c FROM users").get() as { c: number }).c);
+  }
+
+  /** 有效注册用户数（漏斗「注册」口径：排除 deleted/banned）。 */
+  countUsersActive(): number {
+    return Number((this.db.prepare("SELECT COUNT(*) AS c FROM users WHERE account_status != 'deleted' AND account_status != 'banned'").get() as { c: number }).c);
   }
 
   /** 自指定时间点（ms）以来创建的用户数（created_at 为 ISO 字符串，字典序 = 时间序）。 */
@@ -2137,6 +2185,80 @@ export class HubDb {
     this.db.prepare("DELETE FROM audit_events WHERE created_at < ?").run(beforeMs);
   }
 
+  // ---- 产品分析事件（57-retention-analytics，Phase 2）----
+
+  private mapAnalyticsEvent(row: Record<string, unknown>): AnalyticsEventRow {
+    return {
+      id: Number(row.id),
+      event: String(row.event),
+      userId: row.user_id === null || row.user_id === undefined ? null : Number(row.user_id),
+      deviceId: String(row.device_id),
+      ts: Number(row.ts),
+      props: String(row.props),
+      eventId: String(row.event_id),
+      createdAt: Number(row.created_at),
+    };
+  }
+
+  private mapAnalyticsDaily(row: Record<string, unknown>): AnalyticsDailyRow {
+    return {
+      day: String(row.day),
+      userId: Number(row.user_id),
+      event: String(row.event),
+      count: Number(row.count),
+    };
+  }
+
+  /** 幂等写入：明细 INSERT OR IGNORE 后，仅当真正插入（非重试）且已登录才聚合，保证明细与日聚合一致。返回是否真正插入（false=重试被去重）。 */
+  recordAnalyticsEvent(input: { event: string; userId: number | null; deviceId: string; ts: number; props?: unknown; eventId: string }): boolean {
+    const day = new Date(input.ts + 8 * 3600_000).toISOString().slice(0, 10); // UTC+8 日界
+    this.db.exec("BEGIN");
+    try {
+      const info = this.db
+        .prepare("INSERT OR IGNORE INTO analytics_events (event, user_id, device_id, ts, props, event_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+        .run(input.event, input.userId, input.deviceId, input.ts, JSON.stringify(input.props ?? {}), input.eventId, Date.now());
+      if (Number(info.changes) > 0 && input.userId !== null) {
+        this.db
+          .prepare("INSERT INTO analytics_daily (day, user_id, event, count) VALUES (?, ?, ?, 1) ON CONFLICT(day, user_id, event) DO UPDATE SET count = count + 1")
+          .run(day, input.userId, input.event);
+        // 首注台账：只在用户首次出现时落一行（幂等），读侧 O(用户数) 而非全表扫。
+        this.db
+          .prepare("INSERT OR IGNORE INTO analytics_first_seen (user_id, first_day) VALUES (?, ?)")
+          .run(input.userId, day);
+      }
+      this.db.exec("COMMIT");
+      return Number(info.changes) > 0;
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
+  }
+
+  /** 读事件明细；`event` 可选（缺省 = 全部事件）。付费尝试等低频事件按 kind 细分时用 `event='purchase_start'` 过滤。 */
+  listAnalyticsEvents(fromMs: number, toMs: number, event?: string): AnalyticsEventRow[] {
+    const rows = event === undefined
+      ? this.db.prepare("SELECT * FROM analytics_events WHERE ts >= ? AND ts <= ? ORDER BY ts ASC").all(fromMs, toMs)
+      : this.db.prepare("SELECT * FROM analytics_events WHERE event = ? AND ts >= ? AND ts <= ? ORDER BY ts ASC").all(event, fromMs, toMs);
+    return (rows as unknown as Array<Record<string, unknown>>).map((r) => this.mapAnalyticsEvent(r));
+  }
+
+  /** 日聚合（产品分析读侧，O(聚合行) 而非 O(明细)）。 */
+  listAnalyticsDaily(fromDay: string, toDay: string): AnalyticsDailyRow[] {
+    const rows = this.db.prepare("SELECT * FROM analytics_daily WHERE day >= ? AND day <= ? ORDER BY day ASC").all(fromDay, toDay) as unknown as Array<Record<string, unknown>>;
+    return rows.map((r) => this.mapAnalyticsDaily(r));
+  }
+
+  /** 用户首次活跃日（留存 cohort 分母）：analytics_daily 按 user_id 取 MIN(day)。 */
+  listAnalyticsFirstSeen(): Array<{ userId: number; firstDay: string }> {
+    const rows = this.db.prepare("SELECT user_id, first_day FROM analytics_first_seen").all() as unknown as Array<Record<string, unknown>>;
+    return rows.map((r) => ({ userId: Number(r.user_id), firstDay: String(r.first_day) }));
+  }
+
+  /** 清理过期事件明细（R8：明细保留 90 天；日聚合长期，不清理）。 */
+  pruneAnalyticsEvents(beforeMs: number): void {
+    this.db.prepare("DELETE FROM analytics_events WHERE ts < ?").run(beforeMs);
+  }
+
   /** 在线一致快照：VACUUM INTO 导出当前库到目标文件（运行中安全，不中断服务）。 */
   backupTo(targetPath: string): void {
     const escaped = targetPath.replace(/'/g, "''");
@@ -2373,6 +2495,44 @@ export class HubDb {
   listSubscriptionsByUser(userId: number): SubscriptionRow[] {
     const rows = this.db.prepare("SELECT * FROM subscriptions WHERE user_id = ? ORDER BY created_at DESC").all(userId) as unknown as Array<Record<string, unknown>>;
     return rows.map((r) => this.mapSubscription(r));
+  }
+
+  /** 全部订阅（产品分析用，一次查询避免 N+1）。 */
+  listSubscriptions(): SubscriptionRow[] {
+    const rows = this.db.prepare("SELECT * FROM subscriptions ORDER BY started_at ASC").all() as unknown as Array<Record<string, unknown>>;
+    return rows.map((r) => this.mapSubscription(r));
+  }
+
+  /** 订阅档位已支付订单的收入聚合（一次 SQL 聚合，避免分页 N 次往返）。 */
+  aggregateSubscriptionPaid(planIds: string[]): {
+    payingUsers: number;
+    totalAmount: number;
+    byChannel: Array<{ channel: string; count: number; amount: number }>;
+    byPlan: Array<{ planId: string; count: number; amount: number }>;
+    renewedUsers: number;
+  } {
+    const empty = { payingUsers: 0, totalAmount: 0, byChannel: [], byPlan: [], renewedUsers: 0 };
+    if (planIds.length === 0) return empty;
+    const ph = planIds.map(() => "?").join(",");
+    const byChannel = (this.db.prepare(
+      `SELECT COALESCE(channel, 'unknown') AS channel, COUNT(*) AS count, SUM(amount_cny) AS amount FROM orders WHERE status = 'paid' AND plan_id IN (${ph}) GROUP BY channel`,
+    ).all(...planIds) as unknown as Array<Record<string, unknown>>).map((r) => ({ channel: String(r.channel), count: Number(r.count), amount: Number(r.amount) }));
+    const byPlan = (this.db.prepare(
+      `SELECT plan_id AS planId, COUNT(*) AS count, SUM(amount_cny) AS amount FROM orders WHERE status = 'paid' AND plan_id IN (${ph}) GROUP BY plan_id`,
+    ).all(...planIds) as unknown as Array<Record<string, unknown>>).map((r) => ({ planId: String(r.planId), count: Number(r.count), amount: Number(r.amount) }));
+    const totals = this.db.prepare(
+      `SELECT COUNT(DISTINCT user_id) AS paying, SUM(amount_cny) AS total FROM orders WHERE status = 'paid' AND plan_id IN (${ph})`,
+    ).get(...planIds) as { paying: number; total: number };
+    const renewed = this.db.prepare(
+      `SELECT COUNT(*) AS c FROM (SELECT user_id FROM orders WHERE status = 'paid' AND plan_id IN (${ph}) GROUP BY user_id HAVING COUNT(*) >= 2)`,
+    ).get(...planIds) as { c: number };
+    return {
+      payingUsers: Number(totals.paying),
+      totalAmount: Number(totals.total),
+      byChannel,
+      byPlan,
+      renewedUsers: Number(renewed.c),
+    };
   }
 
   /** 全部支付流水（admin 账单运营，按支付时间倒序）。 */

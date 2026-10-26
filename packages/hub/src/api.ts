@@ -241,6 +241,14 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
     res.end(JSON.stringify(runtime.metrics.snapshot(runtime.usage.stats(), runtime.presence)));
     return true;
   }
+  // 产品分析（57-retention-analytics，Phase 1 + Phase 2）
+  if (path === "/api/admin/analytics" && method === "GET") {
+    res.writeHead(200, { "content-type": "application/json" });
+    const subscriptionPlanIds = new Set((runtime.config.billing?.plans ?? []).map((p) => p.id));
+    const [phase1, events] = await Promise.all([admin.computeAnalytics(store, subscriptionPlanIds), admin.computeEventAnalytics(store)]);
+    res.end(JSON.stringify({ ...phase1, events }));
+    return true;
+  }
   if (path === "/api/admin/me" && method === "GET") {
     res.end(JSON.stringify({ userId: auth.userId, name: auth.name, role: auth.role }));
     return true;
@@ -1312,6 +1320,42 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, runti
   }
   if (path === "/api/host/usage/report" && method === "POST") {
     await handleHostReportUsage(req, res, runtime);
+    return true;
+  }
+  // 产品分析事件上报（57-retention-analytics，Phase 2）：用户会话鉴权 + 幂等（event_id 去重）
+  if (path === "/api/analytics/event" && method === "POST") {
+    const auth = authenticate(req, runtime);
+    if (auth === null) {
+      writeError(res, 401, "UNAUTHORIZED", "sign in required");
+      return true;
+    }
+    const body = await readJsonBodyAny(req);
+    if (body === null) {
+      writeError(res, 400, "BAD_REQUEST", "invalid body");
+      return true;
+    }
+    const list = Array.isArray(body) ? body : [body];
+    const allowed = new Set(["app_open", "purchase_start"]);
+    let count = 0;
+    let skipped = 0;
+    for (const e of list as Array<Record<string, unknown>>) {
+      const event = typeof e?.event === "string" ? e.event : "";
+      const deviceId = typeof e?.deviceId === "string" ? e.deviceId : "";
+      const tsRaw = e?.ts;
+      const ts = typeof tsRaw === "number" && tsRaw > 0 && tsRaw <= Date.now() + 24 * 3600_000 ? tsRaw : Date.now();
+      const eventId = typeof e?.eventId === "string" ? e.eventId : "";
+      const props = (typeof e?.props === "object" && e.props !== null ? e.props : {}) as Record<string, unknown>;
+      // purchase_start 必须带合法 kind（订阅/点数充值）；非法事件一律跳过并计入 skipped（不静默）。
+      const kindOk = event !== "purchase_start" || props.kind === "subscription" || props.kind === "credit";
+      if (!allowed.has(event) || deviceId === "" || eventId === "" || !kindOk) {
+        skipped += 1;
+        continue;
+      }
+      const inserted = await runtime.store.recordAnalyticsEvent({ event, userId: auth.userId, deviceId, ts, props, eventId });
+      if (inserted) count += 1;
+    }
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ ok: true, count, skipped }));
     return true;
   }
   const joinTokenMatch = /^\/api\/hosts\/join-tokens\/([^/]+)$/.exec(path);
@@ -4688,6 +4732,22 @@ async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknow
     const parsed = JSON.parse(body) as unknown;
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
     return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+/** 读 JSON body，允许**对象或数组**（批量上报用）；非 object/array（原始类型）返回 null。 */
+async function readJsonBodyAny(req: IncomingMessage): Promise<unknown | null> {
+  let body = "";
+  for await (const chunk of req) {
+    body += chunk;
+    if (body.length > 64 * 1024) return null;
+  }
+  try {
+    const parsed = JSON.parse(body) as unknown;
+    if (typeof parsed !== "object" || parsed === null) return null;
+    return parsed;
   } catch {
     return null;
   }
