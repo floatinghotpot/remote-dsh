@@ -158,8 +158,8 @@ function AppShell({ children }: { children: React.ReactNode }): React.JSX.Elemen
     { p: "/hosts", label: t("我的主机") },
     { p: "/settings/account", label: t("账户与安全") },
     { p: "/billing", label: t("套餐与订阅") },
-    { p: "/settings/llm-keys", label: t("API Keys") },
     { p: "/usage", label: t("用量统计") },
+    { p: "/settings/llm-keys", label: t("API Keys") },
     ...(me !== null && me.role !== "user" ? [{ p: "/admin", label: t("管理后台") }] : []),
   ];
   const active = tabs.find((x) => rel === x.p || rel.startsWith(x.p + "/"))?.p;
@@ -2486,14 +2486,14 @@ function BillingPage(): React.JSX.Element {
 
   const hasPlans = plans.length > 0;
   const currentPlanId = sub?.planId ?? null;
-  // 档位（唯一口径见 entitlements.ts）。专属账号无需订阅 ⟹ 不渲染购买与对比（API.md §13.2）。
+  // 档位（唯一口径见 entitlements.ts）。专属账号也展示套餐与对比（与 App 一致），但禁用订阅。
   const vipTier = sub?.planId != null ? plans.find((p) => p.id === sub.planId)?.vipTier ?? null : null;
   const myTier = tierOf({ hasEntitlement: sub !== null, planStatus: sub?.planStatus ?? null, vipTier });
   const isInternal = myTier === "internal";
 
   return (
     <>
-      <Shell title={t(isInternal ? "我的权益" : "套餐与订阅")}>
+      <Shell title={t("套餐与订阅")}>
         <Toast toast={toast} />
         {err !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{err}</p>}
         {/* 完整版：身份 + 时间 +「我的权益」清单 */}
@@ -2501,7 +2501,7 @@ function BillingPage(): React.JSX.Element {
         {isInternal && (
           <p style={{ fontSize: 12, color: "var(--rdsh-fg-muted)" }}>{t("如需变更有效期或额度，请联系管理员。")}</p>
         )}
-        {isInternal ? null : hasPlans ? (
+        {hasPlans ? (
           <Card title={t("选择套餐")}>
             {plans.map((p) => {
               const current = p.id === currentPlanId;
@@ -2514,7 +2514,7 @@ function BillingPage(): React.JSX.Element {
                     </div>
                     <div style={{ fontSize: 13, color: "var(--rdsh-fg-muted)", marginTop: 2 }}>{lang === "en" ? t("{hosts} hosts · ${price}/{interval} months", { params: { hosts: p.hosts, price: p.priceUsd ?? p.priceCny, interval: p.intervalMonths } }) : t("{hosts} 台 host · ¥{price}/{interval} 月", { params: { hosts: p.hosts, price: p.priceCny, interval: p.intervalMonths } })}</div>
                   </div>
-                  <button disabled={current} onClick={() => subscribe(p.id)} style={btnStyle()}>
+                  <button disabled={current || isInternal} onClick={() => subscribe(p.id)} style={btnStyle()}>
                     {current ? t("当前套餐") : t("订阅")}
                   </button>
                 </div>
@@ -2533,7 +2533,7 @@ function BillingPage(): React.JSX.Element {
             </p>
           </Card>
         )}
-        {!isInternal && hasPlans && <TierMatrix myTier={myTier} plans={plans} />}
+        {hasPlans && <TierMatrix myTier={myTier} plans={plans} />}
         {!isInternal && <Card title={t("计费说明")}>
           <p style={{ fontSize: 13, color: "var(--rdsh-fg-muted)", margin: 0 }}>
             {t("订阅/试用到期后进入 3 天宽限期（隧道保留），之后降级免费档（0 台在线，host 数据保留 30 天）。")}
