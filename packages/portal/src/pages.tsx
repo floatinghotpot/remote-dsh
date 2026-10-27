@@ -201,14 +201,15 @@ function iconBtnStyle(): React.CSSProperties {
   };
 }
 
-function btnStyle(variant: "primary" | "danger" | "ghost" = "primary"): React.CSSProperties {
+function btnStyle(variant: "primary" | "danger" | "ghost" = "primary", disabled = false): React.CSSProperties {
   const base: React.CSSProperties = {
     padding: "6px 14px",
     borderRadius: 6,
     border: "1px solid var(--rdsh-border)",
-    cursor: "pointer",
+    cursor: disabled ? "not-allowed" : "pointer",
     fontSize: 14,
   };
+  if (disabled) return { ...base, background: "var(--rdsh-bg-surface)", color: "var(--rdsh-fg-muted)", opacity: 0.6 };
   if (variant === "primary") return { ...base, background: "var(--rdsh-primary)", color: "var(--rdsh-fg-on-fill)", borderColor: "var(--rdsh-primary)" };
   if (variant === "danger") return { ...base, background: "var(--rdsh-danger-fill)", color: "var(--rdsh-fg-on-fill)", borderColor: "var(--rdsh-danger-fill)" };
   return { ...base, background: "var(--rdsh-bg-surface)" };
@@ -1010,7 +1011,8 @@ function fromTierHint(e: Entitlement): string {
     case "offlineSpeech":
       return "试用起";
     case "cloudSpeech":
-      return "旗舰版起";
+    case "cloudSpeechProxy":
+      return "专业版起";
     case "support":
       return "标准版起";
     case "directConnect":
@@ -1025,7 +1027,7 @@ function TierMatrix({
   plans,
 }: {
   myTier: PlanTier | null;
-  plans: ReadonlyArray<{ id: string; vipTier?: number; hosts?: number }>;
+  plans: ReadonlyArray<{ id: string; vipTier?: number; hosts?: number; bonusCredits?: number; isPopular?: boolean; isBestValue?: boolean }>;
 }): React.JSX.Element {
   const { t } = useT();
   const cell: React.CSSProperties = { padding: "8px 6px", fontSize: 12, textAlign: "center" };
@@ -1045,7 +1047,7 @@ function TierMatrix({
             </tr>
           </thead>
           <tbody>
-            {DISPLAY_ORDER.map((e) => (
+            {DISPLAY_ORDER.filter((e) => e !== "support").map((e) => (
               <tr key={e} style={{ borderTop: "1px solid var(--rdsh-border)" }}>
                 <td style={label}>
                   {e === "cloudRelay" ? t("可云端中转主机数") : t(entitlementLabel(e))}
@@ -1068,6 +1070,29 @@ function TierMatrix({
                 })}
               </tr>
             ))}
+            <tr style={{ borderTop: "1px solid var(--rdsh-border)" }}>
+              <td style={label}>{t("赠送点数", { en: "Bonus points" })}</td>
+              {COMPARABLE_TIERS.map((x) => {
+                const want = x === "plus" ? 1 : x === "pro" ? 2 : x === "ultra" ? 3 : 0;
+                const credits = want === 0 ? 0 : plans.find((p) => p.vipTier === want)?.bonusCredits ?? 0;
+                return (
+                  <td key={x} style={{ ...cell, ...hl(x), fontWeight: 600, color: credits > 0 ? "var(--rdsh-success-strong)" : "var(--rdsh-fg-muted)" }}>
+                    {x === "free" ? "0" : credits > 0 ? String(credits) : "—"}
+                  </td>
+                );
+              })}
+            </tr>
+            <tr style={{ borderTop: "1px solid var(--rdsh-border)" }}>
+              <td style={label}>{t(entitlementLabel("support"))}</td>
+              {COMPARABLE_TIERS.map((x) => {
+                const owned = has(x, "support");
+                return (
+                  <td key={x} style={{ ...cell, ...hl(x), color: owned ? "var(--rdsh-success-strong)" : "var(--rdsh-fg-muted)", fontWeight: owned ? 600 : 400 }}>
+                    {owned ? "✓" : "✗"}
+                  </td>
+                );
+              })}
+            </tr>
           </tbody>
         </table>
       </div>
@@ -1082,7 +1107,7 @@ function AccountPage(): React.JSX.Element {
   const { t } = useT();
   const [info, setInfo] = useState<AccountInfo | null>(null);
   const [sub, setSub] = useState<SubInfo | null>(null);
-  const [plans, setPlans] = useState<Array<{ id: string; vipTier?: number; hosts?: number }>>([]);
+  const [plans, setPlans] = useState<Array<{ id: string; vipTier?: number; hosts?: number; bonusCredits?: number; isPopular?: boolean; isBestValue?: boolean }>>([]);
   const [customerServiceUrl, setCustomerServiceUrl] = useState<string | undefined>(undefined);
   const [wechatEnabled, setWechatEnabled] = useState(false);
   const { err, run } = useError();
@@ -2271,6 +2296,12 @@ interface PlanInfo {
   intervalMonths: number;
   /** 档位 1=标准版 / 2=专业版 / 3=旗舰版；缺省按最低付费档（见 API.md §13）。 */
   vipTier?: number;
+  /** 每月赠点数（点数；0 = 不赠）。 */
+  bonusCredits?: number;
+  /** 促销徽标：推荐。 */
+  isPopular?: boolean;
+  /** 促销徽标：最划算。 */
+  isBestValue?: boolean;
 }
 
 /** 是否微信内置浏览器。 */
@@ -2508,13 +2539,15 @@ function BillingPage(): React.JSX.Element {
               return (
                 <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", border: "1px solid var(--rdsh-border)", borderRadius: 10, marginBottom: 8 }}>
                   <div style={{ flex: 1 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                       <span style={{ fontWeight: 600, fontSize: 14 }}>{p.name}</span>
+                      {p.isPopular === true && <span style={{ fontSize: 11, padding: "1px 8px", borderRadius: 999, background: "#FFF3E0", color: "#FF9800" }}>{t("推荐", { en: "Popular" })}</span>}
+                      {p.isBestValue === true && <span style={{ fontSize: 11, padding: "1px 8px", borderRadius: 999, background: "var(--rdsh-success-soft)", color: "#07C160" }}>{t("最划算", { en: "Best value" })}</span>}
                       {current && <span style={{ fontSize: 11, padding: "1px 8px", borderRadius: 999, background: "var(--rdsh-success-soft)", color: "var(--rdsh-success-strong)" }}>{t("当前套餐")}</span>}
                     </div>
-                    <div style={{ fontSize: 13, color: "var(--rdsh-fg-muted)", marginTop: 2 }}>{lang === "en" ? t("{hosts} hosts · ${price}/{interval} months", { params: { hosts: p.hosts, price: p.priceUsd ?? p.priceCny, interval: p.intervalMonths } }) : t("{hosts} 台 host · ¥{price}/{interval} 月", { params: { hosts: p.hosts, price: p.priceCny, interval: p.intervalMonths } })}</div>
+                    <div style={{ fontSize: 13, color: "var(--rdsh-fg-muted)", marginTop: 2 }}>{lang === "en" ? t("${price}/{interval} months", { params: { price: p.priceUsd ?? p.priceCny, interval: p.intervalMonths } }) : t("¥{price}/{interval} 月", { params: { price: p.priceCny, interval: p.intervalMonths } })}</div>
                   </div>
-                  <button disabled={current || isInternal} onClick={() => subscribe(p.id)} style={btnStyle()}>
+                  <button disabled={current || isInternal} onClick={() => subscribe(p.id)} style={btnStyle("primary", current || isInternal)}>
                     {current ? t("当前套餐") : t("订阅")}
                   </button>
                 </div>

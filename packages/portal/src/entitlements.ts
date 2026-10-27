@@ -7,7 +7,7 @@
  * 判据（同 §13.2）：
  * - **消耗服务端成本**的能力（离线语音包走我方 CDN、云端中转走我方带宽与中继节点）→ 免费档不给；
  * - **端侧零成本**能力（直连、系统语音识别/合成）→ 全档开放；
- * - **云端语音识别/合成**是 BYO（用户自备 API Key、自费），零成本但按策略只给**旗舰 + 专属**。
+ * - **云端语音识别/合成**分 BYO（自备 Key）与代理（走语音路由扣点），按策略给**专业版及以上**。
  */
 
 export type PlanTier =
@@ -32,6 +32,8 @@ export type Entitlement =
   | "offlineSpeech"
   /** 云端语音识别 / 合成（BYO：用户自备 API Key，费用自付） */
   | "cloudSpeech"
+  /** 云端语音识别 / 合成（代理：走语音路由中转，按用量扣点数） */
+  | "cloudSpeechProxy"
   /** 专属人工客服 */
   | "support";
 
@@ -42,11 +44,11 @@ export type Entitlement =
 export const DISPLAY_ORDER: readonly Entitlement[] = [
   "directConnect",
   "systemSpeech",
-  "offlinePackages",
   "offlineSpeech",
-  "support",
   "cloudSpeech",
+  "cloudSpeechProxy",
   "cloudRelay",
+  "support",
 ];
 
 /**
@@ -119,7 +121,8 @@ export function has(tier: PlanTier, e: Entitlement): boolean {
     case "offlineSpeech":
       return tier !== "free"; // 走我方 CDN（trial 必须给：无 GMS/墨水屏设备唯一语音通路）
     case "cloudSpeech":
-      return tier === "ultra" || tier === "internal"; // 与标准/专业拉开价差
+    case "cloudSpeechProxy":
+      return tier === "pro" || tier === "ultra" || tier === "internal"; // 专业版及以上
     case "support":
       return tier !== "free" && tier !== "trial"; // 付费档 + 宽限期（挽留）+ 专属
   }
@@ -177,6 +180,8 @@ export function entitlementLabel(e: Entitlement): string {
       return "离线语音识别 / 合成";
     case "cloudSpeech":
       return "云端语音（自费 API Key）";
+    case "cloudSpeechProxy":
+      return "云端语音（代理）";
     case "support":
       return "专属人工客服";
   }

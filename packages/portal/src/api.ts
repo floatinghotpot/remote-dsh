@@ -303,7 +303,7 @@ export const api = {
   unbindPhone(): Promise<{ ok: boolean }> {
     return jsonFetch("/api/account/phone/unbind", { method: "POST", body: "{}" });
   },
-  listPlans(): Promise<{ plans: Array<{ id: string; name: string; hosts: number; priceCny: number; intervalMonths: number; vipTier?: number }> }> {
+  listPlans(): Promise<{ plans: Array<{ id: string; name: string; hosts: number; priceCny: number; intervalMonths: number; vipTier?: number; bonusCredits?: number; isPopular?: boolean; isBestValue?: boolean }> }> {
     return jsonFetch("/api/billing/plans");
   },
   /** 经 hub 代理向 unicpay 下单（feature 121/36）。返回 { appOrderId, ticket, payParams }，payParams 形如 { kind, nativeUrl?, h5Url?, prepay? }。 */

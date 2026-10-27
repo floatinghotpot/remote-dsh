@@ -57,6 +57,10 @@ export interface PlanSpec {
    * 数值待成本模型回填，缺省 0（本期不发赠点，仅保留结转逻辑）。
    */
   bonusCredits?: number;
+  /** 促销徽标：推荐（与 App 商店商品清单同源）。 */
+  isPopular?: boolean;
+  /** 促销徽标：最划算（与 App 商店商品清单同源）。 */
+  isBestValue?: boolean;
 }
 
 export interface BillingConfig {
@@ -560,7 +564,7 @@ function parsePlanEntries(raw: unknown, source: string, where: string): PlanSpec
       if (out.some((x) => x.vipTier === vipTier)) {
         throw new Error(`${source}: "${where}[].vipTier" must be unique (duplicate ${vipTier})`);
       }
-      out.push({ id: plan.id, name: plan.name, hosts: plan.hosts as number, priceCny: plan.priceCny, priceUsd: typeof plan.priceUsd === "number" ? plan.priceUsd : undefined, intervalMonths: plan.intervalMonths as number, vipTier, bonusCredits: typeof plan.bonusCredits === "number" && plan.bonusCredits >= 0 ? plan.bonusCredits : 0 });
+      out.push({ id: plan.id, name: plan.name, hosts: plan.hosts as number, priceCny: plan.priceCny, priceUsd: typeof plan.priceUsd === "number" ? plan.priceUsd : undefined, intervalMonths: plan.intervalMonths as number, vipTier, bonusCredits: typeof plan.bonusCredits === "number" && plan.bonusCredits >= 0 ? plan.bonusCredits : 0, isPopular: plan.isPopular === true, isBestValue: plan.isBestValue === true });
   }
   return out;
 }
@@ -606,7 +610,7 @@ function parseSubscriptionEntries(raw: unknown, source: string, where: string): 
     const bonusRaw = pkg.credits;
     if (bonusRaw !== undefined && (!Number.isInteger(bonusRaw) || (bonusRaw as number) < 0)) throw new Error(`${source}: "${where}[].package.credits" must be a non-negative integer`);
     if (out.some((x) => x.id === g.id)) throw new Error(`${source}: "${where}[].id" must be unique (duplicate ${g.id})`);
-    out.push({ id: g.id, name, hosts: hosts as number, priceCny, priceUsd: typeof priceUsd === "number" ? priceUsd : undefined, intervalMonths, vipTier, bonusCredits: typeof bonusRaw === "number" ? bonusRaw : 0 });
+    out.push({ id: g.id, name, hosts: hosts as number, priceCny, priceUsd: typeof priceUsd === "number" ? priceUsd : undefined, intervalMonths, vipTier, bonusCredits: typeof bonusRaw === "number" ? bonusRaw : 0, isPopular: g.isPopular === true, isBestValue: g.isBestValue === true });
   }
   return out;
 }

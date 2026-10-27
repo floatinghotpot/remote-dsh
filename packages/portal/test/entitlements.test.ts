@@ -60,6 +60,7 @@ describe("冻结矩阵（API.md §13.2）", () => {
       offlinePackages: true,
       offlineSpeech: true,
       cloudSpeech: true,
+      cloudSpeechProxy: true,
       support: true,
     },
     free: {
@@ -69,6 +70,7 @@ describe("冻结矩阵（API.md §13.2）", () => {
       offlinePackages: false,
       offlineSpeech: false,
       cloudSpeech: false,
+      cloudSpeechProxy: false,
       support: false,
     },
     trial: {
@@ -78,6 +80,7 @@ describe("冻结矩阵（API.md §13.2）", () => {
       offlinePackages: true,
       offlineSpeech: true,
       cloudSpeech: false,
+      cloudSpeechProxy: false,
       support: false,
     },
     grace: {
@@ -87,6 +90,7 @@ describe("冻结矩阵（API.md §13.2）", () => {
       offlinePackages: true,
       offlineSpeech: true,
       cloudSpeech: false,
+      cloudSpeechProxy: false,
       support: true,
     },
     plus: {
@@ -96,6 +100,7 @@ describe("冻结矩阵（API.md §13.2）", () => {
       offlinePackages: true,
       offlineSpeech: true,
       cloudSpeech: false,
+      cloudSpeechProxy: false,
       support: true,
     },
     pro: {
@@ -104,7 +109,8 @@ describe("冻结矩阵（API.md §13.2）", () => {
       systemSpeech: true,
       offlinePackages: true,
       offlineSpeech: true,
-      cloudSpeech: false,
+      cloudSpeech: true,
+      cloudSpeechProxy: true,
       support: true,
     },
     ultra: {
@@ -114,6 +120,7 @@ describe("冻结矩阵（API.md §13.2）", () => {
       offlinePackages: true,
       offlineSpeech: true,
       cloudSpeech: true,
+      cloudSpeechProxy: true,
       support: true,
     },
   };
@@ -162,9 +169,9 @@ describe("展示约束", () => {
       "cloudRelay",
       "directConnect",
       "systemSpeech",
-      "offlinePackages",
       "offlineSpeech",
       "cloudSpeech",
+      "cloudSpeechProxy",
       "support",
     ]);
     expect(new Set(DISPLAY_ORDER).size).toBe(DISPLAY_ORDER.length);
@@ -172,8 +179,8 @@ describe("展示约束", () => {
     for (const e of all) expect(DISPLAY_ORDER).toContain(e);
   });
 
-  it("云端中转排在最后（产品 2026-10-11）", () => {
-    expect(DISPLAY_ORDER[DISPLAY_ORDER.length - 1]).toBe("cloudRelay");
+  it("专属人工客服排在最后（产品 2026-10-28 调整）", () => {
+    expect(DISPLAY_ORDER[DISPLAY_ORDER.length - 1]).toBe("support");
   });
 });
 
