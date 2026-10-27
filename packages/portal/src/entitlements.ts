@@ -11,7 +11,7 @@
  */
 
 export type PlanTier =
-  | "internal" // plan_status === null → 对外显示「专属账号」
+  | "internal" // plan_status === "internal" → 对外显示「专属账号」
   | "free"
   | "trial"
   | "grace"

@@ -355,6 +355,9 @@ export const api = {
   creditsBalance(): Promise<{ purchased: number; bonusCarried: number; bonusCurrent: number; total: number }> {
     return jsonFetch("/api/credits/balance");
   },
+  creditsSpendDaily(from: string, to: string): Promise<{ totalMicro: number; days: Array<{ date: string; micro: number }> }> {
+    return jsonFetch(`/api/credits/spend-daily?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
+  },
   creditsRecharge(goodsId: string, scene: "app" | "native" | "miniapp" | "alipay"): Promise<{ appOrderId: string; payParams?: { kind?: string; nativeUrl?: string } }> {
     return jsonFetch("/api/credits/recharge", { method: "POST", body: JSON.stringify({ goodsId, scene }) });
   },

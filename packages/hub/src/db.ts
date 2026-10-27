@@ -2729,7 +2729,7 @@ export class HubDb {
   settleCreditHold(
     holdId: string,
     actualMicro: number,
-    opts: { reason?: string; allowOverdraft?: boolean; now?: number } = {},
+    opts: { allowOverdraft?: boolean; now?: number } = {},
   ): CreditHoldSettleResult {
     this.assertMicroAmount(actualMicro, false);
     const now = opts.now ?? Date.now();
@@ -2756,12 +2756,7 @@ export class HubDb {
         return { status: "insufficient", chargedMicro: 0, balance, hold };
       }
       const debit = this.debitBuckets(hold.userId, actualMicro, {
-        reason: opts.reason ?? "consume",
-        sourceType: "credit_hold",
-        sourceId: holdId,
-        idempotencyPrefix: holdId,
         allowOverdraft: opts.allowOverdraft === true,
-        now,
       });
       if (!debit.ok) {
         this.db.exec("ROLLBACK TO credit_settle");
@@ -2790,7 +2785,7 @@ export class HubDb {
   ): CreditHoldSettleResult {
     this.db.exec("BEGIN");
     try {
-      const settle = this.settleCreditHold(holdId, actualMicro, { reason: "consume_llm" });
+      const settle = this.settleCreditHold(holdId, actualMicro);
       if (settle.status === "settled") {
         if (actualMicro > 0) this.addLlmKeySpent(usage.keyId, actualMicro);
         this.upsertLlmUsageDaily({ ...usage, chargedMicro: actualMicro, now: Date.now() });
@@ -2821,7 +2816,7 @@ export class HubDb {
   spendCredits(
     userId: number,
     amountMicro: number,
-    opts: { reason: string; sourceType?: string | null; sourceId?: string | null; idempotencyKey: string; allowOverdraft?: boolean; now?: number },
+    opts: { idempotencyKey: string; allowOverdraft?: boolean; now?: number },
   ): CreditSpendResult {
     this.assertMicroAmount(amountMicro, true);
     if (opts.idempotencyKey.trim() === "") throw new Error("credit spend idempotencyKey required");
@@ -2858,12 +2853,7 @@ export class HubDb {
         )
         .run(hold.id, hold.userId, hold.scopeType, hold.scopeId, hold.requestId, hold.amountMicro, hold.settledMicro, hold.status, hold.expiresAt, hold.createdAt);
       const debit = this.debitBuckets(userId, amountMicro, {
-        reason: opts.reason,
-        sourceType: opts.sourceType ?? null,
-        sourceId: opts.sourceId ?? null,
-        idempotencyPrefix: opts.idempotencyKey,
         allowOverdraft: opts.allowOverdraft === true,
-        now,
       });
       if (!debit.ok) {
         this.db.exec("ROLLBACK TO credit_spend");
@@ -2909,9 +2899,6 @@ export class HubDb {
         charged = Math.min(micro, Math.max(0, balance - floorMicro));
         if (charged > 0) {
           this.spendCredits(userId, charged, {
-            reason: "consume_relay",
-            sourceType: "relay",
-            sourceId: `${date}:${instanceId}`,
             idempotencyKey: `relay:${instanceId}:${userId}:${hostId}:${date}:${bytesUp}:${bytesDown}`,
             allowOverdraft: true,
           });
@@ -2945,11 +2932,26 @@ export class HubDb {
 
   /** relay 消耗查询（31 R5）：累计已扣微单位 + 按日序列（节点区域日，同 B5）。 */
   listRelayConsumption(userId: number, from: string, to: string): { totalMicro: number; days: Array<{ date: string; micro: number }> } {
-    const total = this.db.prepare("SELECT COALESCE(SUM(charged_micro), 0) AS s FROM relay_charge WHERE user_id = ?").get(userId) as { s: number };
     const rows = this.db
       .prepare("SELECT date, SUM(charged_micro) AS micro FROM relay_charge WHERE user_id = ? AND date >= ? AND date <= ? GROUP BY date ORDER BY date")
       .all(userId, from, to) as unknown as Array<{ date: string; micro: number }>;
-    return { totalMicro: Number(total.s), days: rows.map((r) => ({ date: r.date, micro: Number(r.micro) })) };
+    const days = rows.map((r) => ({ date: String(r.date), micro: Number(r.micro) }));
+    return { totalMicro: days.reduce((a, d) => a + d.micro, 0), days };
+  }
+
+  /** 每日总点数消耗（relay + LLM + voice 三表按天聚合，微单位）。 */
+  listDailySpend(userId: number, from: string, to: string): { totalMicro: number; days: Array<{ date: string; micro: number }> } {
+    const rows = this.db
+      .prepare(`SELECT date, SUM(micro) AS micro FROM (
+        SELECT date, SUM(charged_micro) AS micro FROM relay_charge WHERE user_id = ? AND date >= ? AND date <= ? GROUP BY date
+        UNION ALL
+        SELECT date, SUM(charged_micro) AS micro FROM llm_usage_daily WHERE user_id = ? AND date >= ? AND date <= ? GROUP BY date
+        UNION ALL
+        SELECT date, SUM(charged_micro) AS micro FROM voice_usage_daily WHERE user_id = ? AND date >= ? AND date <= ? GROUP BY date
+      ) t GROUP BY date ORDER BY date`)
+      .all(userId, from, to, userId, from, to, userId, from, to) as unknown as Array<{ date: string; micro: number }>;
+    const days = rows.map((r) => ({ date: String(r.date), micro: Number(r.micro) }));
+    return { totalMicro: days.reduce((a, d) => a + d.micro, 0), days };
   }
 
   /**
@@ -3078,12 +3080,7 @@ export class HubDb {
     userId: number,
     amountMicro: number,
     opts: {
-      reason: string;
-      sourceType: string | null;
-      sourceId: string | null;
-      idempotencyPrefix: string;
       allowOverdraft: boolean;
-      now: number;
     },
   ): { ok: boolean; chargedMicro: number; balance: CreditBalances } {
     const balances = this.getCreditBalances(userId);
@@ -3094,12 +3091,12 @@ export class HubDb {
       { bucket: "purchased", balance: balances.purchased },
     ];
     let remaining = amountMicro;
-    const parts: Array<{ bucket: string; amount: number; balanceAfter: number }> = [];
+    const parts: Array<{ bucket: string; amount: number }> = [];
     for (const entry of order) {
       if (remaining <= 0) break;
       const take = Math.min(Math.max(0, entry.balance), remaining);
       if (take > 0) {
-        parts.push({ bucket: entry.bucket, amount: take, balanceAfter: entry.balance - take });
+        parts.push({ bucket: entry.bucket, amount: take });
         remaining -= take;
       }
     }
@@ -3108,9 +3105,8 @@ export class HubDb {
       const purchasedPart = parts.find((p) => p.bucket === "purchased");
       if (purchasedPart !== undefined) {
         purchasedPart.amount += remaining;
-        purchasedPart.balanceAfter -= remaining;
       } else {
-        parts.push({ bucket: "purchased", amount: remaining, balanceAfter: balances.purchased - remaining });
+        parts.push({ bucket: "purchased", amount: remaining });
       }
       remaining = 0;
     }
@@ -3123,9 +3119,6 @@ export class HubDb {
       const col = columns[part.bucket];
       if (col === undefined) throw new Error(`invalid credit bucket: ${part.bucket}`);
       this.db.prepare(`UPDATE users SET ${col} = ${col} - ? WHERE id = ?`).run(part.amount, userId);
-      this.db
-        .prepare("INSERT INTO credits_ledger (user_id, delta, bucket, reason, source_type, source_id, idempotency_key, balance_after, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
-        .run(userId, -part.amount, part.bucket, opts.reason, opts.sourceType, opts.sourceId, `${opts.idempotencyPrefix}:${part.bucket}`, part.balanceAfter, opts.now);
     }
     return { ok: true, chargedMicro: amountMicro, balance: this.getCreditBalances(userId) };
   }

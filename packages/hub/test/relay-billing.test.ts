@@ -98,7 +98,7 @@ test("chargeRelayBytes：allowOverdraft 允许透支到负余额（下限由闸�
   assert.equal((await store.getCreditBalances(uid)).purchased, -2 * CREDITS_MICRO_PER_CREDIT);
 });
 
-test("chargeRelayBytes：consume_relay 流水可追溯（sourceType/sourceId）", async () => {
+test("chargeRelayBytes：扣点不写逐笔 credits_ledger，只落 relay_charge 日累计", async () => {
   const db = makeDb();
   const uid = makeUser(db, "alice");
   credit(db, uid, "purchased", 100);
@@ -106,10 +106,9 @@ test("chargeRelayBytes：consume_relay 流水可追溯（sourceType/sourceId）"
 
   await store.chargeRelayBytes(uid, "h1", "inst1", "2026-10-24", RELAY_BYTES_PER_CREDIT, 0);
   const consume = (await store.listCreditLedger(uid)).filter((l) => l.reason === "consume_relay");
-  assert.equal(consume.length, 1);
-  assert.equal(consume[0]!.sourceType, "relay");
-  assert.equal(consume[0]!.sourceId, "2026-10-24:inst1");
-  assert.equal(consume[0]!.delta, -CREDITS_MICRO_PER_CREDIT);
+  assert.equal(consume.length, 0); // 扣点不再写逐笔流水，避免高基数
+  const c = await store.listRelayConsumption(uid, "2026-10-24", "2026-10-24");
+  assert.equal(c.days[0]!.micro, CREDITS_MICRO_PER_CREDIT); // 账在日累计表
 });
 
 test("listRelayConsumption：累计 + 按日序列", async () => {
@@ -121,10 +120,35 @@ test("listRelayConsumption：累计 + 按日序列", async () => {
   await store.chargeRelayBytes(uid, "h1", "inst1", "2026-10-24", RELAY_BYTES_PER_CREDIT, 0);
   await store.chargeRelayBytes(uid, "h1", "inst1", "2026-10-25", RELAY_BYTES_PER_CREDIT * 2, 0);
 
+  // 区间外再计一笔，totalMicro 不应把它算进来（只统计 [from, to]）。
+  await store.chargeRelayBytes(uid, "h1", "inst1", "2026-10-26", RELAY_BYTES_PER_CREDIT * 4, 0);
+
   const c = await store.listRelayConsumption(uid, "2026-10-24", "2026-10-25");
   assert.equal(c.totalMicro, 3 * CREDITS_MICRO_PER_CREDIT);
   assert.deepEqual(c.days.map((d) => d.date), ["2026-10-24", "2026-10-25"]);
   assert.deepEqual(c.days.map((d) => d.micro), [CREDITS_MICRO_PER_CREDIT, 2 * CREDITS_MICRO_PER_CREDIT]);
+});
+
+test("listDailySpend：relay + LLM + voice 三表按天聚合", async () => {
+  const db = makeDb();
+  const uid = makeUser(db, "alice");
+  credit(db, uid, "purchased", 100);
+  const store = createSqliteStore(db);
+
+  // relay：1 点（CREDITS_MICRO_PER_CREDIT micro）
+  await store.chargeRelayBytes(uid, "h1", "inst1", "2026-10-24", RELAY_BYTES_PER_CREDIT, 0);
+  // LLM：直接落日累计 20000 micro
+  db.db.prepare(
+    "INSERT INTO llm_usage_daily (user_id, agent_id, key_id, model_alias, date, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens, requests, charged_micro, updated_at) VALUES (?, ?, ?, ?, ?, 0, 0, 0, 0, 0, 1, ?, ?)",
+  ).run(uid, "a", "k", "m", "2026-10-24", 20000, Date.now());
+  // voice：直接落日累计 3000 micro
+  db.db.prepare(
+    "INSERT INTO voice_usage_daily (user_id, date, kind, provider, cumulative, charged_micro, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  ).run(uid, "2026-10-24", "tts", "volcengine", 100, 3000, Date.now());
+
+  const c = await store.listDailySpend(uid, "2026-10-24", "2026-10-24");
+  assert.equal(c.totalMicro, CREDITS_MICRO_PER_CREDIT + 20000 + 3000);
+  assert.deepEqual(c.days, [{ date: "2026-10-24", micro: CREDITS_MICRO_PER_CREDIT + 23000 }]);
 });
 
 test("UsageAccumulator.flush：hub 内置 relay 兜底按增量扣减，不重复扣", async () => {

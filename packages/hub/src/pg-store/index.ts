@@ -36,7 +36,7 @@ export function createPgStore(pool: Pool): HubStore {
     /** 结算 LLM hold：扣费 + 加 spent + 写用量在同一事务（嵌套调用走 SAVEPOINT）。 */
     settleLlmHold: async (holdId, actualMicro, u) =>
       withTransaction(pool, async () => {
-        const settle = await parts.settleCreditHold(holdId, actualMicro, { reason: "consume_llm" });
+        const settle = await parts.settleCreditHold(holdId, actualMicro);
         if (settle.status === "settled") {
           if (actualMicro > 0) await parts.addLlmKeySpent(u.keyId, actualMicro);
           await parts.upsertLlmUsageDaily({ ...u, chargedMicro: actualMicro, now: Date.now() });

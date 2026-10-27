@@ -64,6 +64,16 @@
 - `totalMicro` = 累计消耗（**微单位**，全部 relay 中转消耗，含历史）；`days` = 按日序列（**微单位**），按节点区域日切日，`date` 升序只含有消耗的日。
 - 数据口径 = 中转流量扣减（`reason=consume_relay`）的水位聚合；与 `GET /api/credits/balance`（实时余额）职责分开。
 
+### GET /api/credits/spend-daily?from=YYYY-MM-DD&to=YYYY-MM-DD —— 每日总点数消耗（relay + LLM + voice）
+认证：需要。`from`/`to` **必填**（`YYYY-MM-DD`），`from ≤ to` 且 `to - from ≤ 366` 天。响应：
+
+```json
+{ "totalMicro": 1234567, "days": [{ "date": "YYYY-MM-DD", "micro": 12345 }] }
+```
+
+- `totalMicro` = 所选区间内三来源（中转 relay + LLM token + 语音 ASR/TTS）**扣点之和**（**微单位**，客户端 ÷10000 转点数）；`days` = 按日序列，`date` 升序只含有消耗的日。
+- 数据口径 = `relay_charge` / `llm_usage_daily` / `voice_usage_daily` 三张日累计表的 `charged_micro` 按天 UNION 聚合（不含逐笔 credits_ledger）。
+
 ### GET /api/credits/tiers —— 点数充值档位（公开）
 响应 `{ "tiers": [{ "id", "credits", "priceCny", "priceUsd"? }] }` —— 档位即 `config.billing.credits`（商品清单的 `products.consumable[]`）。
 portal 后台充值页据此渲染档位（不再前端写死；与 `/api/billing/plans` 同为公开营销信息）。

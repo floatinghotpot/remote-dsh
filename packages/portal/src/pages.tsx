@@ -4683,6 +4683,10 @@ function formatChars(chars: number, t: T): string {
   return `${chars.toLocaleString()} ${t("字符")}`;
 }
 
+function formatPoints(micro: number): string {
+  return (micro / CREDITS_MICRO).toLocaleString(undefined, { maximumFractionDigits: 1 });
+}
+
 /** 每根柱 = 一天；series 支持多序列（对照图并排）。null = 无数据日（不画柱）。 */
 function BarChart({ series, colors, height = 96, maxOverride }: { series: Array<Array<number | null>>; colors: string[]; height?: number; maxOverride?: number }): React.JSX.Element {
   const n = series.reduce((m, arr) => Math.max(m, arr.length), 0);
@@ -4744,6 +4748,7 @@ function UsagePage(): React.JSX.Element {
   // 赠送 = bonus_carried（上月结转，本月底到期）+ bonus_current（本月新发，下月底到期）；
   // 取值失败保持 null，只影响余额区，不影响图表。
   const [creditBal, setCreditBal] = useState<{ purchased: number; bonus: number } | null>(null);
+  const [dailySpend, setDailySpend] = useState<{ totalMicro: number; days: Array<{ date: string; micro: number }> } | null>(null);
   const [llmUsage, setLlmUsage] = useState<LlmUsageModel[]>([]);
   const [llmCatalog, setLlmCatalog] = useState<LlmCatalogModel[]>([]);
   const { err, run } = useError();
@@ -4754,6 +4759,12 @@ function UsagePage(): React.JSX.Element {
       .then((b) => setCreditBal({ purchased: b.purchased / CREDITS_MICRO, bonus: (b.bonusCarried + b.bonusCurrent) / CREDITS_MICRO }))
       .catch(() => setCreditBal(null));
   }, []);
+
+  useEffect(() => {
+    const { from, to } = rangeFor(range);
+    void api.creditsSpendDaily(from, to).then((r) => setDailySpend(r)).catch(() => setDailySpend(null));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [range]);
 
   useEffect(() => {
     const { from, to } = rangeFor(range);
@@ -4828,6 +4839,7 @@ function UsagePage(): React.JSX.Element {
   const ttsMax = Math.max(peakOf(cloudTtsSeries), peakOf(localTtsSeries));
   // 主机总流量条：以流量最大的主机为 100% 基准，其余按各自流量等比缩短。
   const hostMaxTotal = hostUsage.reduce((m, h) => Math.max(m, h.relayBytes + h.directBytes), 0);
+  const dailySpendSeries = dailySpend === null ? [] : seriesFromDays(from, to, dailySpend.days, (d) => d.micro / CREDITS_MICRO);
 
   const hasData = days.length > 0;
   const green = "#07c160";
@@ -4898,6 +4910,20 @@ function UsagePage(): React.JSX.Element {
           </button>
         ))}
       </div>
+
+      {/* 每日总点数消耗（relay + LLM + voice）：整宽长卡片 */}
+      {dailySpend !== null && dailySpend.days.length > 0 && (
+        <Card title={t("每日点数消耗", { en: "Daily points used" })} badge={<span style={{ fontSize: 12, color: orange }}>{t("计费")}</span>}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 8 }}>
+            <span style={{ fontSize: 20, fontWeight: 700 }}>{formatPoints(dailySpend.totalMicro)}</span>
+            <span style={{ fontSize: 13 }}>{t("点数", { en: "credits" })}</span>
+          </div>
+          <BarChart series={[dailySpendSeries]} colors={[orange]} />
+          <div style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", marginTop: 6 }}>
+            {t("合计")} {formatPoints(dailySpend.totalMicro)} · {t("日均")} {formatPoints(dailySpend.totalMicro / Math.max(1, dailySpend.days.length))}
+          </div>
+        </Card>
+      )}
 
       {/* LLM token 消费：按模型目录渲染卡片（标题=ID，小字=显示名；无数据也显示 0）*/}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 12, marginBottom: 12 }}>

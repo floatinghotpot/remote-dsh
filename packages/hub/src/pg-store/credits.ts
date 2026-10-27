@@ -34,6 +34,7 @@ export function credits(
   | "chargeVoiceUsage"
   | "getVoiceUsageDaily"
   | "listRelayConsumption"
+  | "listDailySpend"
   | "sweepExpiredCreditHolds"
   | "listCreditLedger"
   | "getMeta"
@@ -80,12 +81,7 @@ export function credits(
     userId: number,
     amountMicro: number,
     opts: {
-      reason: string;
-      sourceType: string | null;
-      sourceId: string | null;
-      idempotencyPrefix: string;
       allowOverdraft: boolean;
-      now: number;
     },
   ): Promise<{ ok: boolean; chargedMicro: number; balance: CreditBalances }> => {
     const balances = await getBalancesTx(c, userId);
@@ -96,12 +92,12 @@ export function credits(
       { bucket: "purchased", balance: balances.purchased },
     ];
     let remaining = amountMicro;
-    const parts: Array<{ bucket: string; amount: number; balanceAfter: number }> = [];
+    const parts: Array<{ bucket: string; amount: number }> = [];
     for (const entry of order) {
       if (remaining <= 0) break;
       const take = Math.min(Math.max(0, entry.balance), remaining);
       if (take > 0) {
-        parts.push({ bucket: entry.bucket, amount: take, balanceAfter: entry.balance - take });
+        parts.push({ bucket: entry.bucket, amount: take });
         remaining -= take;
       }
     }
@@ -110,9 +106,8 @@ export function credits(
       const purchasedPart = parts.find((p) => p.bucket === "purchased");
       if (purchasedPart !== undefined) {
         purchasedPart.amount += remaining;
-        purchasedPart.balanceAfter -= remaining;
       } else {
-        parts.push({ bucket: "purchased", amount: remaining, balanceAfter: balances.purchased - remaining });
+        parts.push({ bucket: "purchased", amount: remaining });
       }
     }
     const columns: Record<string, string> = {
@@ -124,10 +119,6 @@ export function credits(
       const col = columns[part.bucket];
       if (col === undefined) throw new Error(`invalid credit bucket: ${part.bucket}`);
       await c.query(`UPDATE users SET ${col} = ${col} - $1 WHERE id = $2`, [part.amount, userId]);
-      await c.query(
-        "INSERT INTO credits_ledger (user_id, delta, bucket, reason, source_type, source_id, idempotency_key, balance_after, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
-        [userId, -part.amount, part.bucket, opts.reason, opts.sourceType, opts.sourceId, `${opts.idempotencyPrefix}:${part.bucket}`, part.balanceAfter, opts.now],
-      );
     }
     return { ok: true, chargedMicro: amountMicro, balance: await getBalancesTx(c, userId) };
   };
@@ -159,7 +150,7 @@ export function credits(
     c: PoolClient,
     userId: number,
     amountMicro: number,
-    opts: { reason: string; sourceType?: string | null; sourceId?: string | null; idempotencyKey: string; allowOverdraft?: boolean; now?: number },
+    opts: { idempotencyKey: string; allowOverdraft?: boolean; now?: number },
   ): Promise<CreditSpendResult> => {
     const now = opts.now ?? Date.now();
     const existing = await getHoldByRequestIdTx(c, opts.idempotencyKey);
@@ -188,12 +179,7 @@ export function credits(
       [hold.id, hold.userId, hold.scopeType, hold.scopeId, hold.requestId, hold.amountMicro, hold.settledMicro, hold.status, hold.expiresAt, hold.createdAt],
     );
     const debit = await debitBucketsTx(c, userId, amountMicro, {
-      reason: opts.reason,
-      sourceType: opts.sourceType ?? null,
-      sourceId: opts.sourceId ?? null,
-      idempotencyPrefix: opts.idempotencyKey,
       allowOverdraft: opts.allowOverdraft === true,
-      now,
     });
     if (!debit.ok) {
       // 预检 + 行锁下不应发生；若发生，删除刚插入的 settled hold 再返回，避免脏幂等记录。
@@ -308,7 +294,7 @@ export function credits(
     settleCreditHold: async (
       holdId: string,
       actualMicro: number,
-      opts: { reason?: string; allowOverdraft?: boolean; now?: number } = {},
+      opts: { allowOverdraft?: boolean; now?: number } = {},
     ): Promise<CreditHoldSettleResult> => {
       assertMicroAmount(actualMicro, false);
       const now = opts.now ?? Date.now();
@@ -327,12 +313,7 @@ export function credits(
           return { status: "insufficient", chargedMicro: 0, balance, hold };
         }
         const debit = await debitBucketsTx(c, hold.userId, actualMicro, {
-          reason: opts.reason ?? "consume",
-          sourceType: "credit_hold",
-          sourceId: holdId,
-          idempotencyPrefix: holdId,
           allowOverdraft: opts.allowOverdraft === true,
-          now,
         });
         if (!debit.ok) return { status: "insufficient", chargedMicro: 0, balance, hold };
         await c.query("UPDATE credit_holds SET status = 'settled', settled_micro = $1 WHERE id = $2", [actualMicro, holdId]);
@@ -354,7 +335,7 @@ export function credits(
       }),
 
     /** 无 hold 的批量扣减（relay 等已知金额场景）。 */
-    spendCredits: async (userId: number, amountMicro: number, opts: { reason: string; sourceType?: string | null; sourceId?: string | null; idempotencyKey: string; allowOverdraft?: boolean; now?: number }): Promise<CreditSpendResult> => {
+    spendCredits: async (userId: number, amountMicro: number, opts: { idempotencyKey: string; allowOverdraft?: boolean; now?: number }): Promise<CreditSpendResult> => {
       assertMicroAmount(amountMicro, true);
       if (opts.idempotencyKey.trim() === "") throw new Error("credit spend idempotencyKey required");
       return withTransaction(pool, (c) => spendCreditsTx(c, userId, amountMicro, opts));
@@ -381,9 +362,6 @@ export function credits(
           charged = Math.min(micro, Math.max(0, balance - floorMicro));
           if (charged > 0) {
             await spendCreditsTx(c, userId, charged, {
-              reason: "consume_relay",
-              sourceType: "relay",
-              sourceId: `${date}:${instanceId}`,
               idempotencyKey: `relay:${instanceId}:${userId}:${hostId}:${date}:${bytesUp}:${bytesDown}`,
               allowOverdraft: true,
             });
@@ -433,9 +411,22 @@ export function credits(
 
     /** relay 消耗查询（31 R5）：累计已扣微单位 + 按日序列。 */
     listRelayConsumption: async (userId: number, from: string, to: string): Promise<{ totalMicro: number; days: Array<{ date: string; micro: number }> }> => {
-      const total = one(await q(txDb(pool), "SELECT COALESCE(SUM(charged_micro), 0) AS s FROM relay_charge WHERE user_id = $1", [userId]));
       const rows = (await q(txDb(pool), "SELECT date, SUM(charged_micro) AS micro FROM relay_charge WHERE user_id = $1 AND date >= $2 AND date <= $3 GROUP BY date ORDER BY date", [userId, from, to])).rows;
-      return { totalMicro: total === null ? 0 : Number(total.s), days: rows.map((r) => ({ date: String(r.date), micro: Number(r.micro) })) };
+      const days = rows.map((r) => ({ date: String(r.date), micro: Number(r.micro) }));
+      return { totalMicro: days.reduce((a, d) => a + d.micro, 0), days };
+    },
+
+    /** 每日总点数消耗（relay + LLM + voice 三表按天聚合，微单位）。 */
+    listDailySpend: async (userId: number, from: string, to: string): Promise<{ totalMicro: number; days: Array<{ date: string; micro: number }> }> => {
+      const rows = (await q(txDb(pool), `SELECT date, SUM(micro) AS micro FROM (
+        SELECT date, SUM(charged_micro) AS micro FROM relay_charge WHERE user_id = $1 AND date >= $2 AND date <= $3 GROUP BY date
+        UNION ALL
+        SELECT date, SUM(charged_micro) AS micro FROM llm_usage_daily WHERE user_id = $1 AND date >= $2 AND date <= $3 GROUP BY date
+        UNION ALL
+        SELECT date, SUM(charged_micro) AS micro FROM voice_usage_daily WHERE user_id = $1 AND date >= $2 AND date <= $3 GROUP BY date
+      ) t GROUP BY date ORDER BY date`, [userId, from, to])).rows;
+      const days = rows.map((r) => ({ date: String(r.date), micro: Number(r.micro) }));
+      return { totalMicro: days.reduce((a, d) => a + d.micro, 0), days };
     },
 
     /** 把过期未结算的 hold 标记 expired；返回处理数量。 */

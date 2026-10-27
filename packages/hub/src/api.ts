@@ -1292,6 +1292,10 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, runti
     await handleCreditsUsage(req, res, runtime);
     return true;
   }
+  if (path === "/api/credits/spend-daily" && method === "GET") {
+    await handleCreditsDailySpend(req, res, runtime);
+    return true;
+  }
   if (path === "/api/credits/recharge" && method === "POST") {
     await handleCreditsRecharge(req, res, runtime);
     return true;
@@ -2685,6 +2689,29 @@ async function handleCreditsUsage(req: IncomingMessage, res: ServerResponse, run
   const c = await runtime.store.listRelayConsumption(auth.userId, from, to);
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({ totalMicro: c.totalMicro, days: c.days.map((d) => ({ date: d.date, micro: d.micro })) }));
+}
+
+/** 每日总点数消耗（relay + LLM + voice 三表按天聚合，微单位）。 */
+async function handleCreditsDailySpend(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const auth = authenticate(req, runtime);
+  if (auth === null) {
+    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
+    return;
+  }
+  const url = new URL(req.url ?? "/", "http://rdsh.local");
+  const from = url.searchParams.get("from");
+  const to = url.searchParams.get("to");
+  if (typeof from !== "string" || typeof to !== "string" || !isDateString(from) || !isDateString(to) || from > to) {
+    writeError(res, 400, "BAD_REQUEST", "invalid from/to (YYYY-MM-DD)");
+    return;
+  }
+  if (Date.parse(to) - Date.parse(from) > 366 * 86400_000) {
+    writeError(res, 400, "BAD_REQUEST", "range too large (max 366 days)");
+    return;
+  }
+  const c = await runtime.store.listDailySpend(auth.userId, from, to);
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ totalMicro: c.totalMicro, days: c.days }));
 }
 
 /** 点数充值档位（公开，与 `/api/billing/plans` 同理 —— 档位与价格属公开营销信息）。 */

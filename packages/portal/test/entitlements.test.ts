@@ -23,8 +23,8 @@ describe("档位解析 tierOf", () => {
     expect(tierOf({ hasEntitlement: false, planStatus: "subscribed" })).toBeNull();
   });
 
-  it("planStatus 为空 → 专属账号（internal）", () => {
-    expect(tierOf({ hasEntitlement: true, planStatus: null })).toBe("internal");
+  it("planStatus 为空（注册未完成）→ 免费档", () => {
+    expect(tierOf({ hasEntitlement: true, planStatus: null })).toBe("free");
   });
 
   it("trial / grace / free", () => {
