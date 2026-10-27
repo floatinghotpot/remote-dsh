@@ -36,10 +36,13 @@ import { clearHostCookie, rootDomain } from "./server.ts";
 import { AdminError } from "./admin.ts";
 import { handleNodeRegister, handleNodeHeartbeat, handleNodeHosts, handleNodeSync, handleNodeLeave, handleNodeAssign, authenticateNode } from "./nodes.ts";
 import { handleInternalApi } from "./internal-llm.ts";
+import { handleInternalVoice } from "./internal-voice.ts";
+import { handleVoiceSession } from "./voice-session.ts";
 import { handleInternalHosts } from "./internal-hosts.ts";
 import { handleAccountLlm } from "./account-llm.ts";
 import { encryptUpstreamKey, loadKek } from "./crypto-upstream-keys.ts";
 import { currentKekVersion, kekDir } from "./llm-upstream-keys.ts";
+import { providerSpec, UPSTREAM_PROVIDERS } from "./upstream-providers.ts";
 import type { HostCookieSigner } from "./hostcookie.ts";
 import type { AdminCtx, AdminCreateUserInput } from "./admin.ts";
 import * as admin from "./admin.ts";
@@ -881,27 +884,58 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
     return true;
   }
 
+  if (path === "/api/admin/llm/upstream-providers" && method === "GET") {
+    res.end(JSON.stringify({ providers: UPSTREAM_PROVIDERS }));
+    return true;
+  }
   if (path === "/api/admin/llm/upstream-keys" && method === "GET") {
     const rows = await store.listLlmUpstreamKeys();
-    res.end(JSON.stringify({ keys: rows.map((k) => ({ id: k.id, provider: k.provider, label: k.label, weight: k.weight, enabled: k.enabled, kekVersion: k.kekVersion, createdAt: k.createdAt, lastAssignedAt: k.lastAssignedAt, revokedAt: k.revokedAt })) }));
+    res.end(JSON.stringify({ keys: rows.map((k) => ({ id: k.id, provider: k.provider, service: k.service, credentialType: k.credentialType, params: k.params, label: k.label, weight: k.weight, enabled: k.enabled, kekVersion: k.kekVersion, createdAt: k.createdAt, lastAssignedAt: k.lastAssignedAt, revokedAt: k.revokedAt })) }));
     return true;
   }
   if (path === "/api/admin/llm/upstream-keys" && method === "POST") {
     if (!isWrite) { writeError(res, 403, "FORBIDDEN", "operator or admin required"); return true; }
     const body = await readJsonBody(req);
-    const apiKey = typeof body?.apiKey === "string" ? body.apiKey.trim() : "";
     const label = typeof body?.label === "string" && body.label.trim() !== "" ? body.label.trim() : "key";
     const provider = typeof body?.provider === "string" && body.provider.trim() !== "" ? body.provider.trim() : "deepseek";
-    if (apiKey === "") { writeError(res, 400, "BAD_REQUEST", "apiKey required"); return true; }
+    const spec = providerSpec(provider);
+    if (spec === undefined) { writeError(res, 400, "BAD_REQUEST", "unknown provider"); return true; }
+    const service = typeof body?.service === "string" && (body.service === "llm" || body.service === "voice") ? body.service : spec.service;
+    if (service !== spec.service) { writeError(res, 400, "BAD_REQUEST", "service/provider mismatch"); return true; }
     const weight = typeof body?.weight === "number" && Number.isInteger(body.weight) && body.weight > 0 ? body.weight : 1;
+    const params = typeof body?.params === "string" && body.params.trim() !== "" ? body.params.trim() : null;
+    if (params !== null) {
+      try {
+        JSON.parse(params);
+      } catch {
+        writeError(res, 400, "BAD_REQUEST", "params must be valid JSON"); return true;
+      }
+    }
+    // secret：LLM 为 apiKey 字符串；语音为按 schema 校验的字段对象（组装成 JSON 加密）。
+    let secretPlain: string;
+    if (spec.service === "llm") {
+      const apiKey = typeof body?.secret === "string" ? body.secret.trim() : (typeof body?.apiKey === "string" ? body.apiKey.trim() : "");
+      if (apiKey === "") { writeError(res, 400, "BAD_REQUEST", "apiKey required"); return true; }
+      secretPlain = apiKey;
+    } else {
+      const obj = body?.secret;
+      if (typeof obj !== "object" || obj === null || Array.isArray(obj)) { writeError(res, 400, "BAD_REQUEST", "secret object required for voice"); return true; }
+      const secrets: Record<string, string> = {};
+      for (const f of spec.fields) {
+        const val = (obj as Record<string, unknown>)[f];
+        if (typeof val !== "string" || val.trim() === "") { writeError(res, 400, "BAD_REQUEST", `secret field "${f}" required`); return true; }
+        secrets[f] = val.trim();
+      }
+      secretPlain = JSON.stringify(secrets);
+    }
     const id = randomUUID();
     try {
       const kekVersion = currentKekVersion(runtime);
       const kek = loadKek(kekDir(runtime), kekVersion);
-      const { keyCipher, dekWrapped } = encryptUpstreamKey(apiKey, kek, kekVersion, id, provider);
-      const row = await store.createLlmUpstreamKey({ id, provider, label, keyCipher, dekWrapped, kekVersion, weight });
-      await auditAdmin("llm.upstream-key.create", { id, label });
-      res.end(JSON.stringify({ key: { id: row.id, provider: row.provider, label: row.label, weight: row.weight, enabled: row.enabled, kekVersion: row.kekVersion, createdAt: row.createdAt } }));
+      const { keyCipher, dekWrapped } = encryptUpstreamKey(secretPlain, kek, kekVersion, id, provider);
+      const row = await store.createLlmUpstreamKey({ id, provider, service, credentialType: spec.credentialType, params, label, keyCipher, dekWrapped, kekVersion, weight });
+      await auditAdmin("llm.upstream-key.create", { id, label, service, provider });
+      res.end(JSON.stringify({ key: { id: row.id, provider: row.provider, service: row.service, credentialType: row.credentialType, params: row.params, label: row.label, weight: row.weight, enabled: row.enabled, kekVersion: row.kekVersion, createdAt: row.createdAt } }));
     } catch (err) {
       writeAdminError(res, err);
     }
@@ -918,7 +952,7 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
     });
     if (row === null) { writeError(res, 404, "NOT_FOUND", "key not found"); return true; }
     await auditAdmin("llm.upstream-key.update", { id });
-    res.end(JSON.stringify({ key: { id: row.id, provider: row.provider, label: row.label, weight: row.weight, enabled: row.enabled, kekVersion: row.kekVersion, createdAt: row.createdAt, revokedAt: row.revokedAt } }));
+    res.end(JSON.stringify({ key: { id: row.id, provider: row.provider, service: row.service, credentialType: row.credentialType, params: row.params, label: row.label, weight: row.weight, enabled: row.enabled, kekVersion: row.kekVersion, createdAt: row.createdAt, revokedAt: row.revokedAt } }));
     return true;
   }
   if (keyEdit !== null && method === "DELETE") {
@@ -932,18 +966,19 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
 
   if (path === "/api/admin/llm/router-join-tokens" && method === "GET") {
     const rows = await store.listLlmRouterJoinTokens();
-    res.end(JSON.stringify({ tokens: rows.map((t) => ({ id: t.id, label: t.label, expiresAt: t.expiresAt, usedAt: t.usedAt, createdAt: t.createdAt })) }));
+    res.end(JSON.stringify({ tokens: rows.map((t) => ({ id: t.id, service: t.service, label: t.label, expiresAt: t.expiresAt, usedAt: t.usedAt, createdAt: t.createdAt })) }));
     return true;
   }
   if (path === "/api/admin/llm/router-join-tokens" && method === "POST") {
     if (!isWrite) { writeError(res, 403, "FORBIDDEN", "operator or admin required"); return true; }
     const body = await readJsonBody(req);
     const label = typeof body?.label === "string" && body.label.trim() !== "" ? body.label.trim() : `router-${Date.now()}`;
+    const service = typeof body?.service === "string" && (body.service === "llm" || body.service === "voice") ? body.service : "llm";
     const ttlMs = typeof body?.ttlMs === "number" && body.ttlMs >= 60_000 && body.ttlMs <= 24 * 3600 * 1000 ? body.ttlMs : 600_000;
     const token = `rdsh-join-${randomToken()}`;
     const id = randomUUID();
-    await store.createLlmRouterJoinToken(id, label, sha256(token), Date.now() + ttlMs, auth.name);
-    await auditAdmin("llm.router.join-token.create", { id, label });
+    await store.createLlmRouterJoinToken(id, label, sha256(token), Date.now() + ttlMs, auth.name, service);
+    await auditAdmin("llm.router.join-token.create", { id, label, service });
     res.end(JSON.stringify({ id, token, label, expiresAt: Date.now() + ttlMs }));
     return true;
   }
@@ -995,6 +1030,7 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, runti
   // ---- 内部服务 API（/api/internal/*，服务令牌鉴权） ----
   if (path.startsWith("/api/internal/")) {
     if (await handleInternalApi(req, res, runtime)) return true;
+    if (await handleInternalVoice(req, res, runtime)) return true;
     if (await handleInternalHosts(req, res, runtime)) return true;
   }
 
@@ -1127,6 +1163,7 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, runti
     const handled = await handleAccountLlm(req, res, runtime);
     if (handled) return true;
   }
+  if (await handleVoiceSession(req, res, runtime)) return true;
   if (path === "/api/account/email" && method === "POST") {
     await handleBindEmail(req, res, runtime);
     return true;

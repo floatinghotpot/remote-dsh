@@ -358,6 +358,9 @@ export const RELAY_BYTES_PER_CREDIT = 3 * 1024 * 1024;
 /** 欠费下限（透支到底）：总余额 ≤ 此值即断流，单位点数（默认 -100；可被 config.billing.relay.overdraftFloor 覆盖）。 */
 export const RELAY_OVERDRAFT_FLOOR_POINTS = -100;
 
+/** 语音计费欠费下限（点数，默认 -100；可被 config.billing.voice.overdraftFloor 覆盖）。 */
+export const VOICE_OVERDRAFT_FLOOR_POINTS = -100;
+
 /** 中转字节 → 微单位（向下取整；1 点数 = 10000 微单位）。`bytesPerCredit` 默认 3 MB，可被 `config.billing.relay.bytesPerCredit` 覆盖。 */
 export function relayBytesToMicro(bytes: number, bytesPerCredit: number = RELAY_BYTES_PER_CREDIT): number {
   return Math.floor((bytes * 10000) / bytesPerCredit);
@@ -457,6 +460,9 @@ export interface LlmModelRow {
 export interface LlmUpstreamKeyRow {
   id: string;
   provider: string;
+  service: string; // 'llm' | 'voice'（谁消费这把 key）
+  credentialType: string | null; // voice: api_key / ak_sk / api_key_workspace / ...
+  params: string | null; // voice: 非机密参数 JSON
   label: string;
   keyCipher: string; // base64: version(1) || nonce(12) || ciphertext || tag(16)
   dekWrapped: string; // base64: nonce(12) || wrapped DEK || tag(16)
@@ -470,6 +476,7 @@ export interface LlmUpstreamKeyRow {
 
 export interface LlmRouterJoinTokenRow {
   id: string;
+  service: string; // 'llm' | 'voice'
   label: string;
   tokenHash: string;
   expiresAt: number;
@@ -482,6 +489,7 @@ export type LlmRouterStatus = "pending" | "active" | "disabled" | "revoked";
 
 export interface LlmRouterRow {
   id: string;
+  service: string; // 'llm' | 'voice'
   name: string;
   tokenId: string;
   status: LlmRouterStatus;
@@ -772,6 +780,9 @@ export class HubDb {
       CREATE TABLE IF NOT EXISTS llm_upstream_keys (
         id TEXT PRIMARY KEY,
         provider TEXT NOT NULL DEFAULT 'deepseek',
+        service TEXT NOT NULL DEFAULT 'llm',
+        credential_type TEXT,
+        params TEXT,
         label TEXT NOT NULL,
         key_cipher TEXT NOT NULL,
         dek_wrapped TEXT NOT NULL,
@@ -784,6 +795,7 @@ export class HubDb {
       );
       CREATE TABLE IF NOT EXISTS llm_router_join_tokens (
         id TEXT PRIMARY KEY,
+        service TEXT NOT NULL DEFAULT 'llm',
         label TEXT NOT NULL,
         token_hash TEXT UNIQUE NOT NULL,
         expires_at INTEGER NOT NULL,
@@ -793,6 +805,7 @@ export class HubDb {
       );
       CREATE TABLE IF NOT EXISTS llm_routers (
         id TEXT PRIMARY KEY,
+        service TEXT NOT NULL DEFAULT 'llm',
         name TEXT NOT NULL,
         token_id TEXT NOT NULL,
         status TEXT NOT NULL,
@@ -828,6 +841,16 @@ export class HubDb {
         charged_micro INTEGER NOT NULL DEFAULT 0,
         updated_at INTEGER NOT NULL,
         PRIMARY KEY (user_id, agent_id, key_id, model_alias, date)
+      );
+      CREATE TABLE IF NOT EXISTS voice_usage_daily (
+        user_id INTEGER NOT NULL,
+        date TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        provider TEXT NOT NULL DEFAULT 'volcengine',
+        cumulative BIGINT NOT NULL DEFAULT 0,
+        charged_micro BIGINT NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (user_id, date, kind)
       );
 
       CREATE TABLE IF NOT EXISTS usage_daily (
@@ -911,11 +934,23 @@ export class HubDb {
       (this.db.prepare("PRAGMA table_info(llm_routers)").all() as unknown as Array<{ name: string }>).map((c) => c.name),
     );
     if (!llmRouterCols.has("public_base_url")) this.db.exec("ALTER TABLE llm_routers ADD COLUMN public_base_url TEXT");
+    if (!llmRouterCols.has("service")) this.db.exec("ALTER TABLE llm_routers ADD COLUMN service TEXT NOT NULL DEFAULT 'llm'");
+    const llmRouterJoinTokenCols = new Set(
+      (this.db.prepare("PRAGMA table_info(llm_router_join_tokens)").all() as unknown as Array<{ name: string }>).map((c) => c.name),
+    );
+    if (!llmRouterJoinTokenCols.has("service")) this.db.exec("ALTER TABLE llm_router_join_tokens ADD COLUMN service TEXT NOT NULL DEFAULT 'llm'");
     const llmModelCols = new Set(
       (this.db.prepare("PRAGMA table_info(llm_models)").all() as unknown as Array<{ name: string }>).map((c) => c.name),
     );
     if (!llmModelCols.has("effort_levels")) this.db.exec("ALTER TABLE llm_models ADD COLUMN effort_levels TEXT");
     if (!llmModelCols.has("effort_default")) this.db.exec("ALTER TABLE llm_models ADD COLUMN effort_default TEXT");
+    // 55：既有 llm_upstream_keys 补 service / credential_type / params 列
+    const llmUpstreamKeyCols = new Set(
+      (this.db.prepare("PRAGMA table_info(llm_upstream_keys)").all() as unknown as Array<{ name: string }>).map((c) => c.name),
+    );
+    if (!llmUpstreamKeyCols.has("service")) this.db.exec("ALTER TABLE llm_upstream_keys ADD COLUMN service TEXT NOT NULL DEFAULT 'llm'");
+    if (!llmUpstreamKeyCols.has("credential_type")) this.db.exec("ALTER TABLE llm_upstream_keys ADD COLUMN credential_type TEXT");
+    if (!llmUpstreamKeyCols.has("params")) this.db.exec("ALTER TABLE llm_upstream_keys ADD COLUMN params TEXT");
     // 迁移守卫：既有库补列（SQLite ALTER ADD COLUMN 不支持 UNIQUE，邮箱唯一用独立索引）
     const userCols = new Set(
       (this.db.prepare("PRAGMA table_info(users)").all() as unknown as Array<{ name: string }>).map((c) => c.name),
@@ -2908,6 +2943,85 @@ export class HubDb {
     return { totalMicro: Number(total.s), days: rows.map((r) => ({ date: r.date, micro: Number(r.micro) })) };
   }
 
+  /**
+   * 语音按天累计计费（55）：`cumulative` 是单调水位（识别=秒 / 朗读=字符），
+   * 只对增量扣费，重试/乱序/重复天然幂等（MAX 只进不退）。
+   * 扣费不写逐笔 credits_ledger（语音的账在 voice_usage_daily.charged_micro），
+   * 三桶按 bonus_carried → bonus_current → purchased 顺序扣，允许 purchased 透支，
+   * 但钳制到欠费下限（余额最多透支到 floor，不再往下）。
+   */
+  chargeVoiceUsage(
+    userId: number,
+    date: string,
+    kind: string,
+    provider: string,
+    cumulative: number,
+    priceMicroPerUnit: number,
+    overdraftFloorPoints: number = VOICE_OVERDRAFT_FLOOR_POINTS,
+  ): { chargedMicro: number; balance: CreditBalances; storedCumulative: number } {
+    if (!Number.isSafeInteger(cumulative) || cumulative < 0) throw new Error("voice cumulative must be a non-negative integer");
+    if (!Number.isSafeInteger(priceMicroPerUnit) || priceMicroPerUnit < 0) throw new Error("voice priceMicroPerUnit must be a non-negative integer");
+    this.db.exec("SAVEPOINT voice_charge");
+    try {
+      const row = this.db
+        .prepare("SELECT cumulative, charged_micro FROM voice_usage_daily WHERE user_id = ? AND date = ? AND kind = ?")
+        .get(userId, date, kind) as { cumulative: number; charged_micro: number } | undefined;
+      const stored = row === undefined ? 0 : Number(row.cumulative);
+      const deltaUnits = Math.max(0, cumulative - stored);
+      const micro = deltaUnits * priceMicroPerUnit;
+      let charged = 0;
+      if (micro > 0) {
+        const balance = this.getCreditBalances(userId).total;
+        const floorMicro = overdraftFloorPoints * 10000; // 点数 → 微单位
+        charged = Math.min(micro, Math.max(0, balance - floorMicro));
+        if (charged > 0) this.debitVoiceBuckets(userId, charged);
+      }
+      const newCumulative = Math.max(stored, cumulative);
+      this.db
+        .prepare(
+          "INSERT INTO voice_usage_daily (user_id, date, kind, provider, cumulative, charged_micro, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id, date, kind) DO UPDATE SET cumulative = MAX(cumulative, excluded.cumulative), charged_micro = voice_usage_daily.charged_micro + excluded.charged_micro, provider = excluded.provider, updated_at = excluded.updated_at",
+        )
+        .run(userId, date, kind, provider, newCumulative, charged, Date.now());
+      this.db.exec("RELEASE voice_charge");
+      return { chargedMicro: charged, balance: this.getCreditBalances(userId), storedCumulative: newCumulative };
+    } catch (e) {
+      this.db.exec("ROLLBACK TO voice_charge");
+      this.db.exec("RELEASE voice_charge");
+      throw e;
+    }
+  }
+
+  /** 语音日累计查询（用量页 / 对账用；不含任何逐笔明细）。 */
+  getVoiceUsageDaily(userId: number, from: string, to: string): Array<{ date: string; kind: string; provider: string; cumulative: number; chargedMicro: number }> {
+    const rows = this.db
+      .prepare("SELECT date, kind, provider, cumulative, charged_micro FROM voice_usage_daily WHERE user_id = ? AND date >= ? AND date <= ? ORDER BY date, kind")
+      .all(userId, from, to) as unknown as Array<{ date: string; kind: string; provider: string; cumulative: number; charged_micro: number }>;
+    return rows.map((r) => ({ date: String(r.date), kind: String(r.kind), provider: String(r.provider), cumulative: Number(r.cumulative), chargedMicro: Number(r.charged_micro) }));
+  }
+
+  /** 三桶扣减但不写 credits_ledger（语音的日累计行本身就是账）。顺序与 debitBuckets 一致。 */
+  private debitVoiceBuckets(userId: number, amountMicro: number): void {
+    const balances = this.getCreditBalances(userId);
+    const order: Array<{ col: string; bal: number }> = [
+      { col: "bonus_carried", bal: balances.bonusCarried },
+      { col: "bonus_current", bal: balances.bonusCurrent },
+      { col: "purchased_credits", bal: balances.purchased },
+    ];
+    let remaining = amountMicro;
+    for (const e of order) {
+      if (remaining <= 0) break;
+      const take = Math.min(Math.max(0, e.bal), remaining);
+      if (take > 0) {
+        this.db.prepare(`UPDATE users SET ${e.col} = ${e.col} - ? WHERE id = ?`).run(take, userId);
+        remaining -= take;
+      }
+    }
+    // 三桶耗尽仍有余量 → purchased 透支（负）；深度由调用方按欠费下限钳制。
+    if (remaining > 0) {
+      this.db.prepare("UPDATE users SET purchased_credits = purchased_credits - ? WHERE id = ?").run(remaining, userId);
+    }
+  }
+
   private assertMicroAmount(amountMicro: number, positive: boolean): void {
     if (!Number.isSafeInteger(amountMicro) || (positive ? amountMicro <= 0 : amountMicro < 0)) {
       throw new Error(`invalid credit micro amount: ${amountMicro}`);
@@ -3199,6 +3313,9 @@ export class HubDb {
     return {
       id: String(row.id),
       provider: String(row.provider),
+      service: row.service === null || row.service === undefined || row.service === "" ? "llm" : String(row.service),
+      credentialType: row.credential_type === null || row.credential_type === undefined || row.credential_type === "" ? null : String(row.credential_type),
+      params: row.params === null || row.params === undefined || row.params === "" ? null : String(row.params),
       label: String(row.label),
       keyCipher: String(row.key_cipher),
       dekWrapped: String(row.dek_wrapped),
@@ -3214,6 +3331,7 @@ export class HubDb {
   private mapLlmRouterJoinToken(row: Record<string, unknown>): LlmRouterJoinTokenRow {
     return {
       id: String(row.id),
+      service: row.service === null || row.service === undefined || row.service === "" ? "llm" : String(row.service),
       label: String(row.label),
       tokenHash: String(row.token_hash),
       expiresAt: Number(row.expires_at),
@@ -3226,6 +3344,7 @@ export class HubDb {
   private mapLlmRouter(row: Record<string, unknown>): LlmRouterRow {
     return {
       id: String(row.id),
+      service: row.service === null || row.service === undefined || row.service === "" ? "llm" : String(row.service),
       name: String(row.name),
       tokenId: String(row.token_id),
       status: String(row.status) as LlmRouterStatus,
@@ -3310,9 +3429,9 @@ export class HubDb {
     return row === undefined ? null : this.mapLlmUpstreamKey(row as unknown as Record<string, unknown>);
   }
 
-  createLlmUpstreamKey(input: { id: string; provider: string; label: string; keyCipher: string; dekWrapped: string; kekVersion: number; weight?: number; now?: number }): LlmUpstreamKeyRow {
+  createLlmUpstreamKey(input: { id: string; provider: string; label: string; keyCipher: string; dekWrapped: string; kekVersion: number; service?: string; credentialType?: string | null; params?: string | null; weight?: number; now?: number }): LlmUpstreamKeyRow {
     const now = input.now ?? Date.now();
-    this.db.prepare("INSERT INTO llm_upstream_keys (id, provider, label, key_cipher, dek_wrapped, kek_version, weight, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)").run(input.id, input.provider, input.label, input.keyCipher, input.dekWrapped, input.kekVersion, input.weight ?? 1, now);
+    this.db.prepare("INSERT INTO llm_upstream_keys (id, provider, service, credential_type, params, label, key_cipher, dek_wrapped, kek_version, weight, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)").run(input.id, input.provider, input.service ?? "llm", input.credentialType ?? null, input.params ?? null, input.label, input.keyCipher, input.dekWrapped, input.kekVersion, input.weight ?? 1, now);
     const row = this.db.prepare("SELECT * FROM llm_upstream_keys WHERE id = ?").get(input.id);
     return this.mapLlmUpstreamKey(row as unknown as Record<string, unknown>);
   }
@@ -3335,8 +3454,8 @@ export class HubDb {
     this.db.prepare("UPDATE llm_upstream_keys SET last_assigned_at = ? WHERE id = ?").run(now, id);
   }
 
-  createLlmRouterJoinToken(id: string, label: string, tokenHash: string, expiresAt: number, createdBy: string | null, now = Date.now()): LlmRouterJoinTokenRow {
-    this.db.prepare("INSERT INTO llm_router_join_tokens (id, label, token_hash, expires_at, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)").run(id, label, tokenHash, expiresAt, createdBy, now);
+  createLlmRouterJoinToken(id: string, label: string, tokenHash: string, expiresAt: number, createdBy: string | null, service = "llm", now = Date.now()): LlmRouterJoinTokenRow {
+    this.db.prepare("INSERT INTO llm_router_join_tokens (id, service, label, token_hash, expires_at, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(id, service, label, tokenHash, expiresAt, createdBy, now);
     const row = this.db.prepare("SELECT * FROM llm_router_join_tokens WHERE id = ?").get(id);
     return this.mapLlmRouterJoinToken(row as unknown as Record<string, unknown>);
   }
@@ -3356,8 +3475,8 @@ export class HubDb {
     return rows.map((r) => this.mapLlmRouterJoinToken(r));
   }
 
-  createLlmRouter(id: string, name: string, tokenId: string, lastIp: string | null, publicBaseUrl: string | null, now = Date.now()): LlmRouterRow {
-    this.db.prepare("INSERT INTO llm_routers (id, name, token_id, status, last_ip, public_base_url, created_at) VALUES (?, ?, ?, 'pending', ?, ?, ?)").run(id, name, tokenId, lastIp, publicBaseUrl, now);
+  createLlmRouter(id: string, name: string, tokenId: string, lastIp: string | null, publicBaseUrl: string | null, service = "llm", now = Date.now()): LlmRouterRow {
+    this.db.prepare("INSERT INTO llm_routers (id, service, name, token_id, status, last_ip, public_base_url, created_at) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)").run(id, service, name, tokenId, lastIp, publicBaseUrl, now);
     const row = this.db.prepare("SELECT * FROM llm_routers WHERE id = ?").get(id);
     return this.mapLlmRouter(row as unknown as Record<string, unknown>);
   }

@@ -30,14 +30,14 @@ export function decryptKeyRow(runtime: HubRuntime, row: LlmUpstreamKeyRow): stri
   return decryptUpstreamKey(row.keyCipher, row.dekWrapped, kek, row.kekVersion, row.id, row.provider);
 }
 
-export async function listEnabledKeys(runtime: HubRuntime): Promise<LlmUpstreamKeyRow[]> {
+export async function listEnabledKeys(runtime: HubRuntime, service: string): Promise<LlmUpstreamKeyRow[]> {
   const rows = await runtime.store.listLlmUpstreamKeys();
-  return rows.filter((k) => k.enabled && k.revokedAt === null);
+  return rows.filter((k) => k.enabled && k.revokedAt === null && k.service === service);
 }
 
 /** 加权轮询 + 粘性：返回选中的 key（已解密）。池空 → null。 */
-export async function pickUpstreamKey(runtime: HubRuntime, routerTokenId: string): Promise<{ keyId: string; apiKey: string; provider: string } | null> {
-  const keys = await listEnabledKeys(runtime);
+export async function pickUpstreamKey(runtime: HubRuntime, routerTokenId: string, service = "llm"): Promise<{ keyId: string; apiKey: string; provider: string } | null> {
+  const keys = await listEnabledKeys(runtime, service);
   if (keys.length === 0) return null;
   const now = Date.now();
   for (const [k, v] of sticky) {

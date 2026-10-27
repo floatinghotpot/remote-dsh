@@ -113,10 +113,55 @@ export interface BillingConfig {
    * - `internalFree` = 专属账号免计费（默认 true）。
    */
   relay?: { bytesPerCredit?: number; overdraftFloor?: number; trialFree?: boolean; internalFree?: boolean };
+  /**
+   * 语音计费（55-voice-router）—— 全部可配置、缺省回退 VOICE_DEFAULTS：
+   *
+   * ```jsonc
+   * { "billing": { "voice": {
+   *     "asrPriceMicroPerSecond": 2000,  // 识别单价（微元/秒；2000 = 12 点/分钟）
+   *     "ttsPriceMicroPerChar": 600,      // 朗读单价（微元/字符；600 = 6 点/百字）
+   *     "overdraftFloor": -100,           // 欠费下限点数
+   *     "reportIntervalSeconds": 60,      // 路由上报周期
+   *     "sessionMaxSeconds": 300,         // 单会话上限
+   *     "idleTimeoutSeconds": 30,         // 空闲超时
+   *     "maxPerUser": 1,                  // 单用户并发会话
+   *     "globalConcurrency": 1000,        // 全局并发池
+   *     "bufferMaxSeconds": 900,          // Hub 挂时本地缓冲上限
+   *     "ticketSecret": "..."             // 票据 HS256 密钥（Hub 签发 / 路由验签共用）
+   * } } }
+   * ```
+   */
+  voice?: {
+    asrPriceMicroPerSecond?: number;
+    ttsPriceMicroPerChar?: number;
+    overdraftFloor?: number;
+    reportIntervalSeconds?: number;
+    sessionMaxSeconds?: number;
+    idleTimeoutSeconds?: number;
+    maxPerUser?: number;
+    globalConcurrency?: number;
+    bufferMaxSeconds?: number;
+    ticketSecret?: string;
+    /** 语音路由对外 WebSocket 地址（票据签发时下发给 App） */
+    wsUrl?: string;
+  };
 }
 
 /** 计费默认值（config.billing 未提供时消费方取此）。 */
 export const BILLING_DEFAULTS = { trialDays: 3, trialHosts: 1, graceDays: 3, retentionDays: 30 } as const;
+
+/** 语音计费默认值（config.billing.voice 未提供时消费方取此）。 */
+export const VOICE_DEFAULTS = {
+  asrPriceMicroPerSecond: 2000, // 12 点/分钟
+  ttsPriceMicroPerChar: 600, // 6 点/百字
+  overdraftFloor: -100,
+  reportIntervalSeconds: 60,
+  sessionMaxSeconds: 300,
+  idleTimeoutSeconds: 30,
+  maxPerUser: 1,
+  globalConcurrency: 1000,
+  bufferMaxSeconds: 900,
+} as const;
 
 /** 备案信息（portal 页脚展示；国内经营性网站合规必需，全部可选）。 */
 /** 端到端加密策略（hub 侧）。mode: off 禁用 / optional 按 host 能力协商 / required 强制。 */
@@ -713,6 +758,29 @@ function normalizeBilling(raw: unknown, source: string): BillingConfig {
       }
     }
     if (Object.keys(relayOut).length > 0) out.relay = relayOut;
+  }
+  if (b.voice !== undefined && b.voice !== null) {
+    const v = b.voice as Record<string, unknown>;
+    const voiceOut: Record<string, unknown> = {};
+    for (const key of ["asrPriceMicroPerSecond", "ttsPriceMicroPerChar", "sessionMaxSeconds", "idleTimeoutSeconds", "maxPerUser", "globalConcurrency", "bufferMaxSeconds", "reportIntervalSeconds"] as const) {
+      if (v[key] !== undefined) {
+        if (!Number.isSafeInteger(v[key]) || (v[key] as number) <= 0) throw new Error(`${source}: "billing.voice.${key}" must be a positive integer`);
+        voiceOut[key] = v[key] as number;
+      }
+    }
+    if (v.overdraftFloor !== undefined) {
+      if (!Number.isSafeInteger(v.overdraftFloor)) throw new Error(`${source}: "billing.voice.overdraftFloor" must be an integer (points)`);
+      voiceOut.overdraftFloor = v.overdraftFloor as number;
+    }
+    if (v.ticketSecret !== undefined) {
+      if (typeof v.ticketSecret !== "string" || v.ticketSecret.length < 16) throw new Error(`${source}: "billing.voice.ticketSecret" must be a string of >= 16 chars`);
+      voiceOut.ticketSecret = v.ticketSecret as string;
+    }
+    if (v.wsUrl !== undefined) {
+      if (typeof v.wsUrl !== "string" || v.wsUrl === "") throw new Error(`${source}: "billing.voice.wsUrl" must be a non-empty string`);
+      voiceOut.wsUrl = v.wsUrl as string;
+    }
+    if (Object.keys(voiceOut).length > 0) out.voice = voiceOut as NonNullable<BillingConfig["voice"]>;
   }
   return out;
 }

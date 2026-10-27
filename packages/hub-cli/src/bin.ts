@@ -106,15 +106,19 @@ Actions:
 `,
   router: `Usage: rdsh-hub router ls|invite|approve|enable|disable|delete
 
-Manage LLM routers.
+Manage LLM/voice routers.
 
 Actions:
-  ls                    List routers (id / name / status / ip / public URL)
-  invite [--label <s>] [--ttl <seconds>]   Issue a one-time router join token
+  ls [--service <llm|voice>]        List routers (filter by service)
+  invite [--label <s>] [--ttl <seconds>] [--service <llm|voice>]   Issue a one-time join token
   approve <id>          Approve a pending router (pending -> active)
   enable <id>           Re-enable a disabled router (disabled -> active)
   disable <id>          Disable an active router (active -> disabled)
   delete <id>           Delete a router (soft: status=revoked, token revoked)
+
+Aliases:
+  rdsh-hub llm invite|ls    == rdsh-hub router invite|ls --service llm
+  rdsh-hub voice invite|ls  == rdsh-hub router invite|ls --service voice
 `,
   relay: `Usage: rdsh-hub relay ls|invite|enable|disable|revoke|rename
 
@@ -269,6 +273,20 @@ async function handleHub(args: string[], configPath?: string): Promise<void> {
       await handleHubRouter(rest, configPath);
       return;
     }
+    case "llm":
+    case "voice": {
+      const service = sub === "llm" ? "llm" : "voice";
+      const action = rest[0];
+      if (action === "invite") {
+        await handleHubRouter(["invite", "--service", service, ...rest.slice(1)], configPath);
+        return;
+      }
+      if (action === "ls") {
+        await handleHubRouter(["ls", "--service", service], configPath);
+        return;
+      }
+      throw new Error(`usage: rdsh-hub ${sub} invite|ls`);
+    }
     case "relay": {
       await handleHubRelay(rest, configPath);
       return;
@@ -309,7 +327,7 @@ async function handleHub(args: string[], configPath?: string): Promise<void> {
       }
     }
     default:
-      throw new Error("usage: rdsh-hub setup|serve|user|host|router|relay|audit|db|service");
+      throw new Error("usage: rdsh-hub setup|serve|user|host|router|llm|voice|relay|audit|db|service");
   }
 }
 
@@ -519,14 +537,15 @@ async function handleHubRouter(args: string[], configPath?: string): Promise<voi
   try {
     switch (action) {
       case "ls": {
-        const routers = await store.listLlmRouters();
+        const svc = arg(args, "--service");
+        const routers = (await store.listLlmRouters()).filter((r) => svc === undefined || r.service === svc);
         if (routers.length === 0) {
           console.log("(no routers)");
         } else {
           for (const r of routers) {
             const online = r.status === "active" && r.lastSeenAt !== null && Date.now() - r.lastSeenAt < 180_000;
             const onlineTag = r.status === "active" ? (online ? " (online)" : " (offline)") : "";
-            console.log(`${r.id}  ${r.name}  status=${r.status}${onlineTag}  ip=${r.lastIp ?? "-"}  url=${r.publicBaseUrl ?? "-"}`);
+            console.log(`${r.id}  [${r.service}]  ${r.name}  status=${r.status}${onlineTag}  ip=${r.lastIp ?? "-"}  url=${r.publicBaseUrl ?? "-"}`);
           }
         }
         return;
@@ -541,11 +560,17 @@ async function handleHubRouter(args: string[], configPath?: string): Promise<voi
           if (!Number.isInteger(t) || t <= 0 || t > 3600) throw new Error("ttl must be 1..3600 seconds");
           ttl = t;
         }
+        const svcRaw = arg(args, "--service");
+        let service = "llm";
+        if (svcRaw !== undefined) {
+          if (svcRaw !== "llm" && svcRaw !== "voice") throw new Error("service must be llm|voice");
+          service = svcRaw;
+        }
         const id = randomUUID();
         const token = `rdsh-join-${randomToken()}`;
         const expiresAt = Date.now() + ttl * 1000;
-        await store.createLlmRouterJoinToken(id, label, sha256(token), expiresAt, null);
-        console.log(JSON.stringify({ token, expiresAt }));
+        await store.createLlmRouterJoinToken(id, label, sha256(token), expiresAt, null, service);
+        console.log(JSON.stringify({ token, expiresAt, service }));
         return;
       }
       case "approve":

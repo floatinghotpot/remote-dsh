@@ -11,6 +11,7 @@ import { withTransaction, txDb } from "../pg.ts";
 import {
   RELAY_BYTES_PER_CREDIT,
   RELAY_OVERDRAFT_FLOOR_POINTS,
+  VOICE_OVERDRAFT_FLOOR_POINTS,
   relayBytesToMicro,
   type CreditBalances, type CreditHoldReserveResult, type CreditHoldRow, type CreditHoldSettleResult,
   type CreditLedgerRow, type CreditSpendResult,
@@ -30,6 +31,8 @@ export function credits(
   | "releaseCreditHold"
   | "spendCredits"
   | "chargeRelayBytes"
+  | "chargeVoiceUsage"
+  | "getVoiceUsageDaily"
   | "listRelayConsumption"
   | "sweepExpiredCreditHolds"
   | "listCreditLedger"
@@ -127,6 +130,28 @@ export function credits(
       );
     }
     return { ok: true, chargedMicro: amountMicro, balance: await getBalancesTx(c, userId) };
+  };
+
+  /** 三桶扣减但不写 credits_ledger（语音的日累计行本身就是账）。顺序与 debitBucketsTx 一致。 */
+  const debitVoiceTx = async (c: PoolClient, userId: number, amountMicro: number): Promise<void> => {
+    const balances = await getBalancesTx(c, userId);
+    const order: Array<{ col: string; bal: number }> = [
+      { col: "bonus_carried", bal: balances.bonusCarried },
+      { col: "bonus_current", bal: balances.bonusCurrent },
+      { col: "purchased_credits", bal: balances.purchased },
+    ];
+    let remaining = amountMicro;
+    for (const e of order) {
+      if (remaining <= 0) break;
+      const take = Math.min(Math.max(0, e.bal), remaining);
+      if (take > 0) {
+        await c.query(`UPDATE users SET ${e.col} = ${e.col} - $1 WHERE id = $2`, [take, userId]);
+        remaining -= take;
+      }
+    }
+    if (remaining > 0) {
+      await c.query("UPDATE users SET purchased_credits = purchased_credits - $1 WHERE id = $2", [remaining, userId]);
+    }
   };
 
   /** spendCredits 的事务体（spendCredits 与 chargeRelayBytes 共用，避免重复）。 */
@@ -370,6 +395,41 @@ export function credits(
         );
         return { chargedMicro: charged };
       }),
+
+    /** 语音按天累计计费（55）：水位幂等 + 三桶扣减（不写 credits_ledger）。 */
+    chargeVoiceUsage: async (userId, date, kind, provider, cumulative, priceMicroPerUnit, overdraftFloorPoints = VOICE_OVERDRAFT_FLOOR_POINTS): Promise<{ chargedMicro: number; balance: CreditBalances; storedCumulative: number }> =>
+      withTransaction(pool, async (c) => {
+        if (!Number.isSafeInteger(cumulative) || cumulative < 0) throw new Error("voice cumulative must be a non-negative integer");
+        if (!Number.isSafeInteger(priceMicroPerUnit) || priceMicroPerUnit < 0) throw new Error("voice priceMicroPerUnit must be a non-negative integer");
+        // 先物化水位行再 FOR UPDATE：并发首报（行尚不存在）幻读会让两个事务都从 0 起算、重复扣费。
+        await c.query(
+          "INSERT INTO voice_usage_daily (user_id, date, kind, provider, cumulative, charged_micro, updated_at) VALUES ($1, $2, $3, $4, 0, 0, $5) ON CONFLICT (user_id, date, kind) DO NOTHING",
+          [userId, date, kind, provider, Date.now()],
+        );
+        const row = one(await q(c, "SELECT cumulative FROM voice_usage_daily WHERE user_id = $1 AND date = $2 AND kind = $3 FOR UPDATE", [userId, date, kind]));
+        const stored = row === null ? 0 : Number(row.cumulative);
+        const deltaUnits = Math.max(0, cumulative - stored);
+        const micro = deltaUnits * priceMicroPerUnit;
+        let charged = 0;
+        if (micro > 0) {
+          const balance = (await getBalancesTx(c, userId)).total;
+          const floorMicro = overdraftFloorPoints * 10000; // 点数 → 微单位
+          charged = Math.min(micro, Math.max(0, balance - floorMicro));
+          if (charged > 0) await debitVoiceTx(c, userId, charged);
+        }
+        const newCumulative = Math.max(stored, cumulative);
+        await c.query(
+          "UPDATE voice_usage_daily SET cumulative = GREATEST(cumulative, $1), charged_micro = voice_usage_daily.charged_micro + $2, provider = $3, updated_at = $4 WHERE user_id = $5 AND date = $6 AND kind = $7",
+          [newCumulative, charged, provider, Date.now(), userId, date, kind],
+        );
+        return { chargedMicro: charged, balance: await getBalancesTx(c, userId), storedCumulative: newCumulative };
+      }),
+
+    /** 语音日累计查询（用量页 / 对账用；无逐笔明细）。 */
+    getVoiceUsageDaily: async (userId, from, to): Promise<Array<{ date: string; kind: string; provider: string; cumulative: number; chargedMicro: number }>> => {
+      const rows = (await q(txDb(pool), "SELECT date, kind, provider, cumulative, charged_micro FROM voice_usage_daily WHERE user_id = $1 AND date >= $2 AND date <= $3 ORDER BY date, kind", [userId, from, to])).rows;
+      return rows.map((r) => ({ date: String(r.date), kind: String(r.kind), provider: String(r.provider), cumulative: Number(r.cumulative), chargedMicro: Number(r.charged_micro) }));
+    },
 
     /** relay 消耗查询（31 R5）：累计已扣微单位 + 按日序列。 */
     listRelayConsumption: async (userId: number, from: string, to: string): Promise<{ totalMicro: number; days: Array<{ date: string; micro: number }> }> => {

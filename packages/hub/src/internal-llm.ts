@@ -213,6 +213,7 @@ export async function handleInternalApi(req: IncomingMessage, res: ServerRespons
     if (joinToken === null || joinToken.length < 16) return void writeError(res, 401, "UNAUTHORIZED", "missing join token"), true;
     const jt = await runtime.store.findLlmRouterJoinTokenByHash(sha256(joinToken));
     if (jt === null || jt.usedAt !== null || jt.expiresAt <= Date.now()) return void writeError(res, 401, "UNAUTHORIZED", "invalid, used or expired join token"), true;
+    if (jt.service !== "llm") return void writeError(res, 401, "UNAUTHORIZED", "join token is not for llm routers"), true;
     const body = await readJson(req);
     const name = body !== null && typeof body.name === "string" && body.name.trim() !== "" ? body.name.trim() : "router";
     const publicBaseUrl = body !== null && typeof body.publicBaseURL === "string" && body.publicBaseURL.trim() !== "" ? body.publicBaseURL.trim() : null;
@@ -220,7 +221,7 @@ export async function handleInternalApi(req: IncomingMessage, res: ServerRespons
     const token = `rdsh-rt-${randomToken()}`;
     const tokenRow = await runtime.store.createServiceToken(randomUUID(), `llm-router:${name}`, sha256(token), "llm:config:read,llm:authorize,llm:settle,llm:release");
     const routerId = randomUUID();
-    await runtime.store.createLlmRouter(routerId, name, tokenRow.id, clientIp(req, runtime), publicBaseUrl);
+    await runtime.store.createLlmRouter(routerId, name, tokenRow.id, clientIp(req, runtime), publicBaseUrl, "llm");
     return void json(res, 200, { routerId, token }), true;
   }
 

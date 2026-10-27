@@ -13,7 +13,7 @@ export function startLlmModelSync(runtime: HubRuntime): void {
 
   const run = async (): Promise<void> => {
     try {
-      const keys = await listEnabledKeys(runtime);
+      const keys = await listEnabledKeys(runtime, "llm");
       if (keys.length === 0) return;
       const apiKey = decryptKeyRow(runtime, keys[0]!);
       const res = await fetch(`${cfg.baseURL.replace(/\/+$/, "")}/models`, { headers: { authorization: `Bearer ${apiKey}` } });

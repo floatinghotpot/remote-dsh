@@ -264,6 +264,9 @@ export function mapLlmUpstreamKey(row: Record<string, unknown>): LlmUpstreamKeyR
   return {
     id: String(row.id),
     provider: String(row.provider),
+    service: row.service === null || row.service === undefined || row.service === "" ? "llm" : String(row.service),
+    credentialType: row.credential_type === null || row.credential_type === undefined || row.credential_type === "" ? null : String(row.credential_type),
+    params: row.params === null || row.params === undefined || row.params === "" ? null : String(row.params),
     label: String(row.label),
     keyCipher: String(row.key_cipher),
     dekWrapped: String(row.dek_wrapped),
@@ -279,6 +282,7 @@ export function mapLlmUpstreamKey(row: Record<string, unknown>): LlmUpstreamKeyR
 export function mapLlmRouterJoinToken(row: Record<string, unknown>): LlmRouterJoinTokenRow {
   return {
     id: String(row.id),
+    service: row.service === null || row.service === undefined || row.service === "" ? "llm" : String(row.service),
     label: String(row.label),
     tokenHash: String(row.token_hash),
     expiresAt: Number(row.expires_at),
@@ -291,6 +295,7 @@ export function mapLlmRouterJoinToken(row: Record<string, unknown>): LlmRouterJo
 export function mapLlmRouter(row: Record<string, unknown>): LlmRouterRow {
   return {
     id: String(row.id),
+    service: row.service === null || row.service === undefined || row.service === "" ? "llm" : String(row.service),
     name: String(row.name),
     tokenId: String(row.token_id),
     status: String(row.status) as LlmRouterStatus,

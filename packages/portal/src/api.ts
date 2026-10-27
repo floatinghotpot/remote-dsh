@@ -692,7 +692,10 @@ export const adminApi = {
   deleteLlmModel(id: string): Promise<{ ok: boolean }> {
     return adminJson(`/api/admin/llm/models/${id}`, { method: "DELETE", body: "{}" });
   },
-  llmUpstreamKeys(): Promise<{ keys: Array<{ id: string; provider: string; label: string; weight: number; enabled: boolean; kekVersion: number; createdAt: number; revokedAt: number | null }> }> {
+  upstreamProviders(): Promise<{ providers: Array<{ provider: string; service: string; credentialType: string; fields: string[] }> }> {
+    return adminJson("/api/admin/llm/upstream-providers");
+  },
+  llmUpstreamKeys(): Promise<{ keys: Array<{ id: string; provider: string; service: string; credentialType: string | null; params: string | null; label: string; weight: number; enabled: boolean; kekVersion: number; createdAt: number; revokedAt: number | null }> }> {
     return adminJson("/api/admin/llm/upstream-keys");
   },
   createLlmUpstreamKey(input: Record<string, unknown>): Promise<{ key: unknown }> {
@@ -704,7 +707,7 @@ export const adminApi = {
   revokeLlmUpstreamKey(id: string): Promise<{ ok: boolean }> {
     return adminJson(`/api/admin/llm/upstream-keys/${id}`, { method: "DELETE", body: "{}" });
   },
-  llmRouters(): Promise<{ routers: Array<{ id: string; name: string; tokenId: string; status: string; lastIp: string | null; publicBaseUrl: string | null; createdAt: number; approvedAt: number | null; lastSeenAt: number | null }> }> {
+  llmRouters(): Promise<{ routers: Array<{ id: string; service: string; name: string; tokenId: string; status: string; lastIp: string | null; publicBaseUrl: string | null; createdAt: number; approvedAt: number | null; lastSeenAt: number | null }> }> {
     return adminJson("/api/admin/llm/routers");
   },
   approveLlmRouter(id: string): Promise<{ ok: boolean }> {
@@ -719,10 +722,10 @@ export const adminApi = {
   deleteLlmRouter(id: string): Promise<{ ok: boolean }> {
     return adminJson(`/api/admin/llm/routers/${id}/delete`, { method: "POST", body: "{}" });
   },
-  llmRouterJoinTokens(): Promise<{ tokens: Array<{ id: string; label: string; expiresAt: number; usedAt: number | null; createdAt: number }> }> {
+  llmRouterJoinTokens(): Promise<{ tokens: Array<{ id: string; service: string; label: string; expiresAt: number; usedAt: number | null; createdAt: number }> }> {
     return adminJson("/api/admin/llm/router-join-tokens");
   },
-  createLlmRouterJoinToken(input: { label?: string; ttlMs?: number }): Promise<{ id: string; token: string; label: string; expiresAt: number }> {
+  createLlmRouterJoinToken(input: { label?: string; ttlMs?: number; service?: string }): Promise<{ id: string; token: string; label: string; service: string; expiresAt: number }> {
     return adminJson("/api/admin/llm/router-join-tokens", { method: "POST", body: JSON.stringify(input) });
   },
 };

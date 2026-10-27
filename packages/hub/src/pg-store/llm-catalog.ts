@@ -90,9 +90,9 @@ export function llmCatalog(
       return row === null ? null : mapLlmUpstreamKey(row);
     },
 
-    createLlmUpstreamKey: async (input: { id: string; provider: string; label: string; keyCipher: string; dekWrapped: string; kekVersion: number; weight?: number; now?: number }): Promise<LlmUpstreamKeyRow> => {
+    createLlmUpstreamKey: async (input: { id: string; provider: string; label: string; keyCipher: string; dekWrapped: string; kekVersion: number; service?: string; credentialType?: string | null; params?: string | null; weight?: number; now?: number }): Promise<LlmUpstreamKeyRow> => {
       const now = input.now ?? Date.now();
-      await q(txDb(pool), "INSERT INTO llm_upstream_keys (id, provider, label, key_cipher, dek_wrapped, kek_version, weight, enabled, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8)", [input.id, input.provider, input.label, input.keyCipher, input.dekWrapped, input.kekVersion, input.weight ?? 1, now]);
+      await q(txDb(pool), "INSERT INTO llm_upstream_keys (id, provider, service, credential_type, params, label, key_cipher, dek_wrapped, kek_version, weight, enabled, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 1, $11)", [input.id, input.provider, input.service ?? "llm", input.credentialType ?? null, input.params ?? null, input.label, input.keyCipher, input.dekWrapped, input.kekVersion, input.weight ?? 1, now]);
       return mapLlmUpstreamKey(one(await q(txDb(pool), "SELECT * FROM llm_upstream_keys WHERE id = $1", [input.id]))!);
     },
 
@@ -117,8 +117,8 @@ export function llmCatalog(
       await q(txDb(pool), "UPDATE llm_upstream_keys SET last_assigned_at = $1 WHERE id = $2", [now, id]);
     },
 
-    createLlmRouterJoinToken: async (id: string, label: string, tokenHash: string, expiresAt: number, createdBy: string | null, now = Date.now()): Promise<LlmRouterJoinTokenRow> => {
-      await q(txDb(pool), "INSERT INTO llm_router_join_tokens (id, label, token_hash, expires_at, created_by, created_at) VALUES ($1, $2, $3, $4, $5, $6)", [id, label, tokenHash, expiresAt, createdBy, now]);
+    createLlmRouterJoinToken: async (id: string, label: string, tokenHash: string, expiresAt: number, createdBy: string | null, service = "llm", now = Date.now()): Promise<LlmRouterJoinTokenRow> => {
+      await q(txDb(pool), "INSERT INTO llm_router_join_tokens (id, service, label, token_hash, expires_at, created_by, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)", [id, service, label, tokenHash, expiresAt, createdBy, now]);
       return mapLlmRouterJoinToken(one(await q(txDb(pool), "SELECT * FROM llm_router_join_tokens WHERE id = $1", [id]))!);
     },
 
@@ -137,8 +137,8 @@ export function llmCatalog(
       return rows.map((r) => mapLlmRouterJoinToken(r));
     },
 
-    createLlmRouter: async (id: string, name: string, tokenId: string, lastIp: string | null, publicBaseUrl: string | null, now = Date.now()): Promise<LlmRouterRow> => {
-      await q(txDb(pool), "INSERT INTO llm_routers (id, name, token_id, status, last_ip, public_base_url, created_at) VALUES ($1, $2, $3, 'pending', $4, $5, $6)", [id, name, tokenId, lastIp, publicBaseUrl, now]);
+    createLlmRouter: async (id: string, name: string, tokenId: string, lastIp: string | null, publicBaseUrl: string | null, service = "llm", now = Date.now()): Promise<LlmRouterRow> => {
+      await q(txDb(pool), "INSERT INTO llm_routers (id, service, name, token_id, status, last_ip, public_base_url, created_at) VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7)", [id, service, name, tokenId, lastIp, publicBaseUrl, now]);
       return mapLlmRouter(one(await q(txDb(pool), "SELECT * FROM llm_routers WHERE id = $1", [id]))!);
     },
 
