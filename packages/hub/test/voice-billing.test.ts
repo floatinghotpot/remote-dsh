@@ -75,3 +75,16 @@ test("chargeVoiceUsage：TTS 按字符 + 与 ASR 分行（每人每天最多 2 �
   assert.equal(rows.length, 2);
   assert.deepEqual(rows.map((r) => r.kind).sort(), ["asr", "tts"]);
 });
+
+test("voice_provider_configs：upsert/get/list 回读 + 覆盖更新", async () => {
+  const db = makeDb();
+  const store = createSqliteStore(db);
+  assert.equal(await store.getVoiceProviderConfig("volcengine"), null);
+  await store.upsertVoiceProviderConfig("volcengine", JSON.stringify({ asrUrl: "wss://x", voices: ["a", "b"] }));
+  const got = await store.getVoiceProviderConfig("volcengine");
+  assert.notEqual(got, null);
+  assert.deepEqual(JSON.parse(got!.params), { asrUrl: "wss://x", voices: ["a", "b"] });
+  await store.upsertVoiceProviderConfig("volcengine", JSON.stringify({ voices: ["c"] }));
+  assert.deepEqual(JSON.parse((await store.getVoiceProviderConfig("volcengine"))!.params), { voices: ["c"] });
+  assert.equal((await store.listVoiceProviderConfigs()).length, 1);
+});

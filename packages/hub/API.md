@@ -562,3 +562,36 @@ UI 文案必须写「**可云端中转主机数**」，**不要**写「主机配
 ### GET /api/admin/analytics —— 管理面产品分析快照（管理面认证）
 
 返回 Phase 1（今日注册/付费留存/漏斗/收入/流失）+ Phase 2（DAU/MAU/留存 cohort/付费尝试）聚合结果，供 admin 门户「产品分析」页使用。详见 admin 页面实现。
+
+## 语音（55-voice-router App 侧）
+
+### POST /api/voice/session —— 换取语音票据（用户 JWT）
+
+请求：无 body（登录态鉴权）。
+
+响应 `200`：
+
+```json
+{
+  "ticket": "<HS256 JWT，kid=voice-ticket-v1>",
+  "expiresAt": 1750000000000,
+  "balance": 1000,
+  "floor": -100,
+  "wsUrl": "wss://<host>/v1/asr",
+  "ttsUrl": "https://<host>/v1/tts",
+  "serverNow": 1750000000000
+}
+```
+
+- `balance` / `floor` 单位：点数（1 点 = 10000 微）；`wsUrl`/`ttsUrl` 由 active voice router 上报的公网基址推导（`/v1/asr`、`/v1/tts`）。
+- 票据短时效（≤5 分钟），内含余额快照与欠费下限；ASR 请求带 `X-Rdsh-Ticket`，TTS 请求带 `Authorization: Bearer <ticket>`。
+
+### GET /api/voice/config —— 音色白名单（用户 JWT）
+
+响应 `200`：
+
+```json
+{ "providers": [ { "provider": "volcengine", "voices": ["volc.zh_female_vv_uranus_bigtts", "..."] } ] }
+```
+
+- 来自供应商级配置（voice_provider_configs），不含机密；供设置页展示音色列表，音色按供应商分组。

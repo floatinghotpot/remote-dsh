@@ -82,3 +82,26 @@ export async function handleVoiceSession(req: IncomingMessage, res: ServerRespon
   }));
   return true;
 }
+
+
+/** App 公开端点：返回供应商级语音配置里的音色白名单（供设置页展示，不含机密）。 */
+export async function handleVoiceConfig(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<boolean> {
+  const url = new URL(req.url ?? "/", "http://rdsh.local");
+  if (url.pathname !== "/api/voice/config" || (req.method ?? "GET") !== "GET") return false;
+  const auth = authenticate(req, runtime);
+  if (auth === null) return void writeError(res, 401, "UNAUTHORIZED", "login required"), true;
+  const cfgs = await runtime.store.listVoiceProviderConfigs();
+  const providers = cfgs.map((c) => {
+    let voices: string[] = [];
+    try {
+      const p = JSON.parse(c.params) as Record<string, unknown>;
+      if (Array.isArray(p.voices)) voices = (p.voices as unknown[]).filter((v): v is string => typeof v === "string");
+    } catch {
+      // ignore malformed params
+    }
+    return { provider: c.provider, voices };
+  });
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ providers }));
+  return true;
+}

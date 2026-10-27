@@ -2,9 +2,9 @@
  * pg-store/llm-catalog.ts — 51-llm-model-catalog：模型目录 / 上游 key 池 / Router 注册的 PG 端口。
  */
 import type { Pool } from "pg";
-import { mapLlmModel, mapLlmUpstreamKey, mapLlmRouterJoinToken, mapLlmRouter, one, q } from "./mappers.ts";
+import { mapLlmModel, mapLlmUpstreamKey, mapLlmRouterJoinToken, mapLlmRouter, mapVoiceProviderConfig, one, q } from "./mappers.ts";
 import { txDb } from "../pg.ts";
-import type { LlmModelRow, LlmUpstreamKeyRow, LlmRouterJoinTokenRow, LlmRouterRow, LlmModelNameSource, LlmRouterStatus } from "../db.ts";
+import type { LlmModelRow, LlmUpstreamKeyRow, LlmRouterJoinTokenRow, LlmRouterRow, LlmModelNameSource, LlmRouterStatus, VoiceProviderConfigRow } from "../db.ts";
 import type { HubStore } from "../store.ts";
 
 export function llmCatalog(
@@ -15,6 +15,7 @@ export function llmCatalog(
   | "listLlmUpstreamKeys" | "getLlmUpstreamKey" | "createLlmUpstreamKey" | "updateLlmUpstreamKey" | "revokeLlmUpstreamKey" | "touchLlmUpstreamKeyAssigned"
   | "createLlmRouterJoinToken" | "findLlmRouterJoinTokenByHash" | "markLlmRouterJoinTokenUsed" | "listLlmRouterJoinTokens"
   | "createLlmRouter" | "getLlmRouter" | "getLlmRouterByTokenId" | "listLlmRouters" | "setLlmRouterStatus" | "setLlmRouterEnabled" | "touchLlmRouterSeen"
+  | "listVoiceProviderConfigs" | "getVoiceProviderConfig" | "upsertVoiceProviderConfig"
 > {
   return {
     listLlmModels: async (opts: { enabledOnly?: boolean } = {}): Promise<LlmModelRow[]> => {
@@ -90,20 +91,23 @@ export function llmCatalog(
       return row === null ? null : mapLlmUpstreamKey(row);
     },
 
-    createLlmUpstreamKey: async (input: { id: string; provider: string; label: string; keyCipher: string; dekWrapped: string; kekVersion: number; service?: string; credentialType?: string | null; params?: string | null; weight?: number; now?: number }): Promise<LlmUpstreamKeyRow> => {
+    createLlmUpstreamKey: async (input: { id: string; provider: string; label: string; keyCipher: string; dekWrapped: string; kekVersion: number; service?: string; credentialType?: string | null; weight?: number; now?: number }): Promise<LlmUpstreamKeyRow> => {
       const now = input.now ?? Date.now();
-      await q(txDb(pool), "INSERT INTO llm_upstream_keys (id, provider, service, credential_type, params, label, key_cipher, dek_wrapped, kek_version, weight, enabled, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 1, $11)", [input.id, input.provider, input.service ?? "llm", input.credentialType ?? null, input.params ?? null, input.label, input.keyCipher, input.dekWrapped, input.kekVersion, input.weight ?? 1, now]);
+      await q(txDb(pool), "INSERT INTO llm_upstream_keys (id, provider, service, credential_type, label, key_cipher, dek_wrapped, kek_version, weight, enabled, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1, $10)", [input.id, input.provider, input.service ?? "llm", input.credentialType ?? null, input.label, input.keyCipher, input.dekWrapped, input.kekVersion, input.weight ?? 1, now]);
       return mapLlmUpstreamKey(one(await q(txDb(pool), "SELECT * FROM llm_upstream_keys WHERE id = $1", [input.id]))!);
     },
 
-    updateLlmUpstreamKey: async (id: string, patch: { enabled?: boolean; weight?: number }): Promise<LlmUpstreamKeyRow | null> => {
+    updateLlmUpstreamKey: async (id: string, patch: { enabled?: boolean; weight?: number; label?: string; keyCipher?: string; dekWrapped?: string }): Promise<LlmUpstreamKeyRow | null> => {
       const cur = one(await q(txDb(pool), "SELECT * FROM llm_upstream_keys WHERE id = $1", [id]));
       if (cur === null) return null;
-      if (mapLlmUpstreamKey(cur).revokedAt !== null) return null;
       const c = mapLlmUpstreamKey(cur);
+      if (c.revokedAt !== null) return null;
       const enabled = patch.enabled === undefined ? c.enabled : patch.enabled;
       const weight = patch.weight ?? c.weight;
-      await q(txDb(pool), "UPDATE llm_upstream_keys SET enabled = $1, weight = $2 WHERE id = $3", [enabled ? 1 : 0, weight, id]);
+      const label = patch.label === undefined ? c.label : patch.label;
+      const keyCipher = patch.keyCipher === undefined ? c.keyCipher : patch.keyCipher;
+      const dekWrapped = patch.dekWrapped === undefined ? c.dekWrapped : patch.dekWrapped;
+      await q(txDb(pool), "UPDATE llm_upstream_keys SET enabled = $1, weight = $2, label = $3, key_cipher = $4, dek_wrapped = $5 WHERE id = $6", [enabled ? 1 : 0, weight, label, keyCipher, dekWrapped, id]);
       const row = one(await q(txDb(pool), "SELECT * FROM llm_upstream_keys WHERE id = $1", [id]));
       return row === null ? null : mapLlmUpstreamKey(row);
     },
@@ -172,6 +176,21 @@ export function llmCatalog(
 
     touchLlmRouterSeen: async (id: string, lastIp: string | null, now = Date.now()): Promise<void> => {
       await q(txDb(pool), "UPDATE llm_routers SET last_seen_at = $1, last_ip = $2 WHERE id = $3", [now, lastIp, id]);
+    },
+
+    listVoiceProviderConfigs: async (): Promise<VoiceProviderConfigRow[]> => {
+      const rows = (await q(txDb(pool), "SELECT * FROM voice_provider_configs ORDER BY provider")).rows;
+      return rows.map((r) => mapVoiceProviderConfig(r));
+    },
+
+    getVoiceProviderConfig: async (provider: string): Promise<VoiceProviderConfigRow | null> => {
+      const row = one(await q(txDb(pool), "SELECT * FROM voice_provider_configs WHERE provider = $1", [provider]));
+      return row === null ? null : mapVoiceProviderConfig(row);
+    },
+
+    upsertVoiceProviderConfig: async (provider: string, params: string, now = Date.now()): Promise<VoiceProviderConfigRow> => {
+      await q(txDb(pool), "INSERT INTO voice_provider_configs (provider, params, updated_at) VALUES ($1, $2, $3) ON CONFLICT (provider) DO UPDATE SET params = excluded.params, updated_at = excluded.updated_at", [provider, params, now]);
+      return mapVoiceProviderConfig(one(await q(txDb(pool), "SELECT * FROM voice_provider_configs WHERE provider = $1", [provider]))!);
     },
   };
 }

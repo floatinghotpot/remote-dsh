@@ -37,10 +37,10 @@ import { AdminError } from "./admin.ts";
 import { handleNodeRegister, handleNodeHeartbeat, handleNodeHosts, handleNodeSync, handleNodeLeave, handleNodeAssign, authenticateNode } from "./nodes.ts";
 import { handleInternalApi } from "./internal-llm.ts";
 import { handleInternalVoice } from "./internal-voice.ts";
-import { handleVoiceSession } from "./voice-session.ts";
+import { handleVoiceConfig, handleVoiceSession } from "./voice-session.ts";
 import { handleInternalHosts } from "./internal-hosts.ts";
 import { handleAccountLlm } from "./account-llm.ts";
-import { encryptUpstreamKey, loadKek } from "./crypto-upstream-keys.ts";
+import { decryptUpstreamKey, encryptUpstreamKey, loadKek } from "./crypto-upstream-keys.ts";
 import { currentKekVersion, kekDir } from "./llm-upstream-keys.ts";
 import { providerSpec, UPSTREAM_PROVIDERS } from "./upstream-providers.ts";
 import type { HostCookieSigner } from "./hostcookie.ts";
@@ -888,9 +888,30 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
     res.end(JSON.stringify({ providers: UPSTREAM_PROVIDERS }));
     return true;
   }
+  if (path === "/api/admin/llm/upstream-provider-configs" && method === "GET") {
+    const rows = await store.listVoiceProviderConfigs();
+    res.end(JSON.stringify({ configs: rows }));
+    return true;
+  }
+  const pcfgEdit = /^\/api\/admin\/llm\/upstream-provider-configs\/([^/]+)$/.exec(path);
+  if (pcfgEdit !== null && method === "PUT") {
+    if (!isWrite) { writeError(res, 403, "FORBIDDEN", "operator or admin required"); return true; }
+    const provider = decodeURIComponent(pcfgEdit[1]!);
+    if (providerSpec(provider) === undefined) { writeError(res, 400, "BAD_REQUEST", "unknown provider"); return true; }
+    const body = await readJsonBody(req);
+    const params = typeof body?.params === "string" && body.params.trim() !== ""
+      ? body.params.trim()
+      : (typeof body?.params === "object" && body.params !== null && !Array.isArray(body.params) ? JSON.stringify(body.params) : "");
+    if (params === "") { writeError(res, 400, "BAD_REQUEST", "params required"); return true; }
+    try { JSON.parse(params); } catch { writeError(res, 400, "BAD_REQUEST", "params must be valid JSON"); return true; }
+    const row = await store.upsertVoiceProviderConfig(provider, params);
+    await auditAdmin("llm.upstream-provider-config.upsert", { provider });
+    res.end(JSON.stringify({ config: row }));
+    return true;
+  }
   if (path === "/api/admin/llm/upstream-keys" && method === "GET") {
     const rows = await store.listLlmUpstreamKeys();
-    res.end(JSON.stringify({ keys: rows.map((k) => ({ id: k.id, provider: k.provider, service: k.service, credentialType: k.credentialType, params: k.params, label: k.label, weight: k.weight, enabled: k.enabled, kekVersion: k.kekVersion, createdAt: k.createdAt, lastAssignedAt: k.lastAssignedAt, revokedAt: k.revokedAt })) }));
+    res.end(JSON.stringify({ keys: rows.map((k) => ({ id: k.id, provider: k.provider, service: k.service, credentialType: k.credentialType, label: k.label, weight: k.weight, enabled: k.enabled, kekVersion: k.kekVersion, createdAt: k.createdAt, lastAssignedAt: k.lastAssignedAt, revokedAt: k.revokedAt })) }));
     return true;
   }
   if (path === "/api/admin/llm/upstream-keys" && method === "POST") {
@@ -903,14 +924,6 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
     const service = typeof body?.service === "string" && (body.service === "llm" || body.service === "voice") ? body.service : spec.service;
     if (service !== spec.service) { writeError(res, 400, "BAD_REQUEST", "service/provider mismatch"); return true; }
     const weight = typeof body?.weight === "number" && Number.isInteger(body.weight) && body.weight > 0 ? body.weight : 1;
-    const params = typeof body?.params === "string" && body.params.trim() !== "" ? body.params.trim() : null;
-    if (params !== null) {
-      try {
-        JSON.parse(params);
-      } catch {
-        writeError(res, 400, "BAD_REQUEST", "params must be valid JSON"); return true;
-      }
-    }
     // secret：LLM 为 apiKey 字符串；语音为按 schema 校验的字段对象（组装成 JSON 加密）。
     let secretPlain: string;
     if (spec.service === "llm") {
@@ -933,26 +946,72 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
       const kekVersion = currentKekVersion(runtime);
       const kek = loadKek(kekDir(runtime), kekVersion);
       const { keyCipher, dekWrapped } = encryptUpstreamKey(secretPlain, kek, kekVersion, id, provider);
-      const row = await store.createLlmUpstreamKey({ id, provider, service, credentialType: spec.credentialType, params, label, keyCipher, dekWrapped, kekVersion, weight });
+      const row = await store.createLlmUpstreamKey({ id, provider, service, credentialType: spec.credentialType, label, keyCipher, dekWrapped, kekVersion, weight });
       await auditAdmin("llm.upstream-key.create", { id, label, service, provider });
-      res.end(JSON.stringify({ key: { id: row.id, provider: row.provider, service: row.service, credentialType: row.credentialType, params: row.params, label: row.label, weight: row.weight, enabled: row.enabled, kekVersion: row.kekVersion, createdAt: row.createdAt } }));
+      res.end(JSON.stringify({ key: { id: row.id, provider: row.provider, service: row.service, credentialType: row.credentialType, label: row.label, weight: row.weight, enabled: row.enabled, kekVersion: row.kekVersion, createdAt: row.createdAt } }));
     } catch (err) {
       writeAdminError(res, err);
     }
     return true;
   }
   const keyEdit = /^\/api\/admin\/llm\/upstream-keys\/([^/]+)$/.exec(path);
+  const keyReveal = /^\/api\/admin\/llm\/upstream-keys\/([^/]+)\/reveal$/.exec(path);
+  if (keyReveal !== null && method === "GET") {
+    if (!isWrite) { writeError(res, 403, "FORBIDDEN", "operator or admin required"); return true; }
+    const id = decodeURIComponent(keyReveal[1]!);
+    const row = await store.getLlmUpstreamKey(id);
+    if (row === null) { writeError(res, 404, "NOT_FOUND", "key not found"); return true; }
+    try {
+      const kek = loadKek(kekDir(runtime), row.kekVersion);
+      const plain = decryptUpstreamKey(row.keyCipher, row.dekWrapped, kek, row.kekVersion, row.id, row.provider);
+      await auditAdmin("llm.upstream-key.reveal", { id });
+      res.end(JSON.stringify({ secret: plain }));
+    } catch (err) {
+      writeAdminError(res, err);
+    }
+    return true;
+  }
   if (keyEdit !== null && method === "PUT") {
     if (!isWrite) { writeError(res, 403, "FORBIDDEN", "operator or admin required"); return true; }
     const id = decodeURIComponent(keyEdit[1]!);
     const body = await readJsonBody(req);
-    const row = await store.updateLlmUpstreamKey(id, {
-      enabled: typeof body?.enabled === "boolean" ? body.enabled : undefined,
-      weight: typeof body?.weight === "number" && Number.isInteger(body.weight) && body.weight > 0 ? body.weight : undefined,
-    });
+    const cur = await store.getLlmUpstreamKey(id);
+    if (cur === null) { writeError(res, 404, "NOT_FOUND", "key not found"); return true; }
+    const label = typeof body?.label === "string" && body.label.trim() !== "" ? body.label.trim() : undefined;
+    const weight = typeof body?.weight === "number" && Number.isInteger(body.weight) && body.weight > 0 ? body.weight : undefined;
+    const enabled = typeof body?.enabled === "boolean" ? body.enabled : undefined;
+    let keyCipher: string | undefined;
+    let dekWrapped: string | undefined;
+    if (body?.secret !== undefined) {
+      const spec = providerSpec(cur.provider);
+      let secretPlain: string;
+      if (spec === undefined || spec.service === "llm") {
+        if (typeof body.secret !== "string" || body.secret.trim() === "") { writeError(res, 400, "BAD_REQUEST", "apiKey required"); return true; }
+        secretPlain = body.secret.trim();
+      } else {
+        const obj = body.secret;
+        if (typeof obj !== "object" || obj === null || Array.isArray(obj)) { writeError(res, 400, "BAD_REQUEST", "secret object required for voice"); return true; }
+        const secrets: Record<string, string> = {};
+        for (const f of spec.fields) {
+          const val = (obj as Record<string, unknown>)[f];
+          if (typeof val !== "string" || val.trim() === "") { writeError(res, 400, "BAD_REQUEST", `secret field "${f}" required`); return true; }
+          secrets[f] = val.trim();
+        }
+        secretPlain = JSON.stringify(secrets);
+      }
+      try {
+        const kek = loadKek(kekDir(runtime), cur.kekVersion);
+        const enc = encryptUpstreamKey(secretPlain, kek, cur.kekVersion, cur.id, cur.provider);
+        keyCipher = enc.keyCipher; dekWrapped = enc.dekWrapped;
+      } catch (err) {
+        writeAdminError(res, err);
+        return true;
+      }
+    }
+    const row = await store.updateLlmUpstreamKey(id, { enabled, weight, label, keyCipher, dekWrapped });
     if (row === null) { writeError(res, 404, "NOT_FOUND", "key not found"); return true; }
     await auditAdmin("llm.upstream-key.update", { id });
-    res.end(JSON.stringify({ key: { id: row.id, provider: row.provider, service: row.service, credentialType: row.credentialType, params: row.params, label: row.label, weight: row.weight, enabled: row.enabled, kekVersion: row.kekVersion, createdAt: row.createdAt, revokedAt: row.revokedAt } }));
+    res.end(JSON.stringify({ key: { id: row.id, provider: row.provider, service: row.service, credentialType: row.credentialType, label: row.label, weight: row.weight, enabled: row.enabled, kekVersion: row.kekVersion, createdAt: row.createdAt, revokedAt: row.revokedAt } }));
     return true;
   }
   if (keyEdit !== null && method === "DELETE") {
@@ -1163,6 +1222,7 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, runti
     const handled = await handleAccountLlm(req, res, runtime);
     if (handled) return true;
   }
+  if (await handleVoiceConfig(req, res, runtime)) return true;
   if (await handleVoiceSession(req, res, runtime)) return true;
   if (path === "/api/account/email" && method === "POST") {
     await handleBindEmail(req, res, runtime);

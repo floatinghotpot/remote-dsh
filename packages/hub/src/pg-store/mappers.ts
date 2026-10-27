@@ -266,7 +266,6 @@ export function mapLlmUpstreamKey(row: Record<string, unknown>): LlmUpstreamKeyR
     provider: String(row.provider),
     service: row.service === null || row.service === undefined || row.service === "" ? "llm" : String(row.service),
     credentialType: row.credential_type === null || row.credential_type === undefined || row.credential_type === "" ? null : String(row.credential_type),
-    params: row.params === null || row.params === undefined || row.params === "" ? null : String(row.params),
     label: String(row.label),
     keyCipher: String(row.key_cipher),
     dekWrapped: String(row.dek_wrapped),
@@ -276,6 +275,14 @@ export function mapLlmUpstreamKey(row: Record<string, unknown>): LlmUpstreamKeyR
     createdAt: Number(row.created_at),
     lastAssignedAt: row.last_assigned_at === null || row.last_assigned_at === undefined ? null : Number(row.last_assigned_at),
     revokedAt: row.revoked_at === null || row.revoked_at === undefined ? null : Number(row.revoked_at),
+  };
+}
+
+export function mapVoiceProviderConfig(row: Record<string, unknown>): { provider: string; params: string; updatedAt: number } {
+  return {
+    provider: String(row.provider),
+    params: String(row.params),
+    updatedAt: Number(row.updated_at),
   };
 }
 

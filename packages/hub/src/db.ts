@@ -462,7 +462,6 @@ export interface LlmUpstreamKeyRow {
   provider: string;
   service: string; // 'llm' | 'voice'（谁消费这把 key）
   credentialType: string | null; // voice: api_key / ak_sk / api_key_workspace / ...
-  params: string | null; // voice: 非机密参数 JSON
   label: string;
   keyCipher: string; // base64: version(1) || nonce(12) || ciphertext || tag(16)
   dekWrapped: string; // base64: nonce(12) || wrapped DEK || tag(16)
@@ -499,6 +498,13 @@ export interface LlmRouterRow {
   approvedAt: number | null;
   approvedBy: string | null;
   lastSeenAt: number | null;
+}
+
+/** 55-voice-router：供应商级配置（provider → 非机密参数 JSON），与 key 池分离。 */
+export interface VoiceProviderConfigRow {
+  provider: string;
+  params: string; // JSON: asrUrl/asrResourceId/ttsUrl/ttsResourceId/voices
+  updatedAt: number;
 }
 
 const USAGE_UPSERT_SQL = `INSERT INTO usage_daily (user_id, host_id, date, instance_id, source, relay_seconds, relay_bytes_up, relay_bytes_down, direct_bytes_up, direct_bytes_down, cloud_asr_seconds, local_asr_seconds, cloud_tts_chars, local_tts_chars, sessions, updated_at)
@@ -782,7 +788,6 @@ export class HubDb {
         provider TEXT NOT NULL DEFAULT 'deepseek',
         service TEXT NOT NULL DEFAULT 'llm',
         credential_type TEXT,
-        params TEXT,
         label TEXT NOT NULL,
         key_cipher TEXT NOT NULL,
         dek_wrapped TEXT NOT NULL,
@@ -815,6 +820,11 @@ export class HubDb {
         approved_at INTEGER,
         approved_by TEXT,
         last_seen_at INTEGER
+      );
+      CREATE TABLE IF NOT EXISTS voice_provider_configs (
+        provider TEXT PRIMARY KEY,
+        params TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
       );
       CREATE TABLE IF NOT EXISTS meta (
         key TEXT PRIMARY KEY,
@@ -944,13 +954,12 @@ export class HubDb {
     );
     if (!llmModelCols.has("effort_levels")) this.db.exec("ALTER TABLE llm_models ADD COLUMN effort_levels TEXT");
     if (!llmModelCols.has("effort_default")) this.db.exec("ALTER TABLE llm_models ADD COLUMN effort_default TEXT");
-    // 55：既有 llm_upstream_keys 补 service / credential_type / params 列
+    // 55：既有 llm_upstream_keys 补 service / credential_type 列
     const llmUpstreamKeyCols = new Set(
       (this.db.prepare("PRAGMA table_info(llm_upstream_keys)").all() as unknown as Array<{ name: string }>).map((c) => c.name),
     );
     if (!llmUpstreamKeyCols.has("service")) this.db.exec("ALTER TABLE llm_upstream_keys ADD COLUMN service TEXT NOT NULL DEFAULT 'llm'");
     if (!llmUpstreamKeyCols.has("credential_type")) this.db.exec("ALTER TABLE llm_upstream_keys ADD COLUMN credential_type TEXT");
-    if (!llmUpstreamKeyCols.has("params")) this.db.exec("ALTER TABLE llm_upstream_keys ADD COLUMN params TEXT");
     // 迁移守卫：既有库补列（SQLite ALTER ADD COLUMN 不支持 UNIQUE，邮箱唯一用独立索引）
     const userCols = new Set(
       (this.db.prepare("PRAGMA table_info(users)").all() as unknown as Array<{ name: string }>).map((c) => c.name),
@@ -3315,7 +3324,6 @@ export class HubDb {
       provider: String(row.provider),
       service: row.service === null || row.service === undefined || row.service === "" ? "llm" : String(row.service),
       credentialType: row.credential_type === null || row.credential_type === undefined || row.credential_type === "" ? null : String(row.credential_type),
-      params: row.params === null || row.params === undefined || row.params === "" ? null : String(row.params),
       label: String(row.label),
       keyCipher: String(row.key_cipher),
       dekWrapped: String(row.dek_wrapped),
@@ -3429,19 +3437,22 @@ export class HubDb {
     return row === undefined ? null : this.mapLlmUpstreamKey(row as unknown as Record<string, unknown>);
   }
 
-  createLlmUpstreamKey(input: { id: string; provider: string; label: string; keyCipher: string; dekWrapped: string; kekVersion: number; service?: string; credentialType?: string | null; params?: string | null; weight?: number; now?: number }): LlmUpstreamKeyRow {
+  createLlmUpstreamKey(input: { id: string; provider: string; label: string; keyCipher: string; dekWrapped: string; kekVersion: number; service?: string; credentialType?: string | null; weight?: number; now?: number }): LlmUpstreamKeyRow {
     const now = input.now ?? Date.now();
-    this.db.prepare("INSERT INTO llm_upstream_keys (id, provider, service, credential_type, params, label, key_cipher, dek_wrapped, kek_version, weight, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)").run(input.id, input.provider, input.service ?? "llm", input.credentialType ?? null, input.params ?? null, input.label, input.keyCipher, input.dekWrapped, input.kekVersion, input.weight ?? 1, now);
+    this.db.prepare("INSERT INTO llm_upstream_keys (id, provider, service, credential_type, label, key_cipher, dek_wrapped, kek_version, weight, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)").run(input.id, input.provider, input.service ?? "llm", input.credentialType ?? null, input.label, input.keyCipher, input.dekWrapped, input.kekVersion, input.weight ?? 1, now);
     const row = this.db.prepare("SELECT * FROM llm_upstream_keys WHERE id = ?").get(input.id);
     return this.mapLlmUpstreamKey(row as unknown as Record<string, unknown>);
   }
 
-  updateLlmUpstreamKey(id: string, patch: { enabled?: boolean; weight?: number }): LlmUpstreamKeyRow | null {
+  updateLlmUpstreamKey(id: string, patch: { enabled?: boolean; weight?: number; label?: string; keyCipher?: string; dekWrapped?: string }): LlmUpstreamKeyRow | null {
     const cur = this.getLlmUpstreamKey(id);
     if (cur === null || cur.revokedAt !== null) return null;
     const enabled = patch.enabled === undefined ? cur.enabled : patch.enabled;
     const weight = patch.weight ?? cur.weight;
-    this.db.prepare("UPDATE llm_upstream_keys SET enabled = ?, weight = ? WHERE id = ?").run(enabled ? 1 : 0, weight, id);
+    const label = patch.label === undefined ? cur.label : patch.label;
+    const keyCipher = patch.keyCipher === undefined ? cur.keyCipher : patch.keyCipher;
+    const dekWrapped = patch.dekWrapped === undefined ? cur.dekWrapped : patch.dekWrapped;
+    this.db.prepare("UPDATE llm_upstream_keys SET enabled = ?, weight = ?, label = ?, key_cipher = ?, dek_wrapped = ? WHERE id = ?").run(enabled ? 1 : 0, weight, label, keyCipher, dekWrapped, id);
     return this.getLlmUpstreamKey(id);
   }
 
@@ -3510,6 +3521,29 @@ export class HubDb {
 
   touchLlmRouterSeen(id: string, lastIp: string | null, now = Date.now()): void {
     this.db.prepare("UPDATE llm_routers SET last_seen_at = ?, last_ip = ? WHERE id = ?").run(now, lastIp, id);
+  }
+
+  private mapVoiceProviderConfig(row: Record<string, unknown>): VoiceProviderConfigRow {
+    return {
+      provider: String(row.provider),
+      params: String(row.params),
+      updatedAt: Number(row.updated_at),
+    };
+  }
+
+  listVoiceProviderConfigs(): VoiceProviderConfigRow[] {
+    const rows = this.db.prepare("SELECT * FROM voice_provider_configs ORDER BY provider").all() as unknown as Array<Record<string, unknown>>;
+    return rows.map((r) => this.mapVoiceProviderConfig(r));
+  }
+
+  getVoiceProviderConfig(provider: string): VoiceProviderConfigRow | null {
+    const row = this.db.prepare("SELECT * FROM voice_provider_configs WHERE provider = ?").get(provider);
+    return row === undefined ? null : this.mapVoiceProviderConfig(row as unknown as Record<string, unknown>);
+  }
+
+  upsertVoiceProviderConfig(provider: string, params: string, now = Date.now()): VoiceProviderConfigRow {
+    this.db.prepare("INSERT INTO voice_provider_configs (provider, params, updated_at) VALUES (?, ?, ?) ON CONFLICT(provider) DO UPDATE SET params = excluded.params, updated_at = excluded.updated_at").run(provider, params, now);
+    return this.getVoiceProviderConfig(provider)!;
   }
 
   // ---- 账号删除（R7：墓碑化，保留 orders/payments 账务 + audit 留痕）----

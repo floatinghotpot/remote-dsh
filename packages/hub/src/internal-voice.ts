@@ -80,13 +80,15 @@ async function effectiveVoiceConfig(runtime: HubRuntime) {
     } catch {
       secrets = { apiKey: plain }; // 兜底：非 JSON 明文按单 Key 处理
     }
-    let params: Record<string, unknown> = {};
-    if (k.params !== null) {
-      try {
-        params = JSON.parse(k.params) as Record<string, unknown>;
-      } catch {
-        params = {};
-      }
+    // 非机密参数来自供应商级配置（voice_provider_configs）；无配置或配置损坏则跳过该 provider，
+    // 由外层「无任何 upstream → 503 NO_UPSTREAM_KEY」fail-fast。
+    const pcfg = await runtime.store.getVoiceProviderConfig(provider);
+    if (pcfg === null) continue;
+    let params: Record<string, unknown>;
+    try {
+      params = JSON.parse(pcfg.params) as Record<string, unknown>;
+    } catch {
+      continue;
     }
     upstreams[provider] = { credentialType: k.credentialType ?? "api_key", params, secrets };
   }
