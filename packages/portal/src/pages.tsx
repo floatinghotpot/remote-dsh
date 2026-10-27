@@ -155,11 +155,11 @@ function AppShell({ children }: { children: React.ReactNode }): React.JSX.Elemen
     void api.accountInfo({ probe: true }).then((a) => setMe({ name: a.name, role: a.role })).catch(() => undefined);
   }, []);
   const tabs = [
+    { p: "/hosts", label: t("我的主机") },
     { p: "/settings/account", label: t("账户与安全") },
     { p: "/billing", label: t("套餐与订阅") },
     { p: "/settings/llm-keys", label: t("API Keys") },
     { p: "/usage", label: t("用量统计") },
-    { p: "/hosts", label: t("我的主机") },
     ...(me !== null && me.role !== "user" ? [{ p: "/admin", label: t("管理后台") }] : []),
   ];
   const active = tabs.find((x) => rel === x.p || rel.startsWith(x.p + "/"))?.p;
