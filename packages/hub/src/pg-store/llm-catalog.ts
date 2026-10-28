@@ -14,7 +14,7 @@ export function llmCatalog(
   | "listLlmModels" | "getLlmModel" | "createLlmModel" | "updateLlmModel" | "syncLlmModelMeta" | "deleteLlmModel"
   | "listLlmUpstreamKeys" | "getLlmUpstreamKey" | "createLlmUpstreamKey" | "updateLlmUpstreamKey" | "revokeLlmUpstreamKey" | "touchLlmUpstreamKeyAssigned"
   | "createLlmRouterJoinToken" | "findLlmRouterJoinTokenByHash" | "markLlmRouterJoinTokenUsed" | "listLlmRouterJoinTokens"
-  | "createLlmRouter" | "getLlmRouter" | "getLlmRouterByTokenId" | "listLlmRouters" | "setLlmRouterStatus" | "setLlmRouterEnabled" | "touchLlmRouterSeen"
+  | "createLlmRouter" | "getLlmRouter" | "getLlmRouterByTokenId" | "listLlmRouters" | "getActiveRouter" | "setLlmRouterStatus" | "setLlmRouterEnabled" | "touchLlmRouterSeen"
   | "listVoiceProviderConfigs" | "getVoiceProviderConfig" | "upsertVoiceProviderConfig"
 > {
   return {
@@ -159,6 +159,17 @@ export function llmCatalog(
     listLlmRouters: async (): Promise<LlmRouterRow[]> => {
       const rows = (await q(txDb(pool), "SELECT * FROM llm_routers ORDER BY created_at DESC")).rows;
       return rows.map((r) => mapLlmRouter(r));
+    },
+
+    /**
+     * Newest active router of `service` that has reported a public base URL.
+     * `llm_routers` stores both llm and voice rows, so the service is mandatory.
+     */
+    getActiveRouter: async (service: "llm" | "voice"): Promise<LlmRouterRow | null> => {
+      const row = one(await q(txDb(pool),
+        "SELECT * FROM llm_routers WHERE service = $1 AND status = 'active' AND public_base_url IS NOT NULL AND public_base_url <> '' ORDER BY created_at DESC, id DESC LIMIT 1",
+        [service]));
+      return row === null ? null : mapLlmRouter(row);
     },
 
     setLlmRouterStatus: async (id: string, status: LlmRouterStatus, actor: string | null, now = Date.now()): Promise<boolean> => {

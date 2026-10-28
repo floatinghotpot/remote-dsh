@@ -141,3 +141,42 @@ test("setLlmRouterEnabled：enable/disable 不改 approved_at；active 记审批
 
   db.close();
 });
+
+test("getActiveRouter：按 service 取最新 active 且已上报公网地址的 Router", () => {
+  const db = new HubDb(":memory:");
+  db.createLlmRouter("llm-old", "llm-old", "tok-1", null, "https://old.llm", "llm", 1000);
+  db.setLlmRouterStatus("llm-old", "active", "admin", 1000);
+  db.createLlmRouter("llm-new", "llm-new", "tok-2", null, "https://new.llm", "llm", 2000);
+  db.setLlmRouterStatus("llm-new", "active", "admin", 2000);
+  db.createLlmRouter("voice", "voice", "tok-3", null, "https://voice", "voice", 3000);
+  db.setLlmRouterStatus("voice", "active", "admin", 3000);
+
+  // 更新但没有公网地址 / 已 disabled 的都不应被选中。
+  db.createLlmRouter("llm-nourl", "llm-nourl", "tok-4", null, null, "llm", 4000);
+  db.setLlmRouterStatus("llm-nourl", "active", "admin", 4000);
+  db.createLlmRouter("llm-empty", "llm-empty", "tok-6", null, "", "llm", 4500);
+  db.setLlmRouterStatus("llm-empty", "active", "admin", 4500);
+  db.createLlmRouter("llm-disabled", "llm-disabled", "tok-5", null, "https://disabled.llm", "llm", 5000);
+  db.setLlmRouterStatus("llm-disabled", "disabled", "admin", 5000);
+
+  assert.equal(db.getActiveRouter("llm")!.id, "llm-new");
+  assert.equal(db.getActiveRouter("voice")!.id, "voice");
+
+  // 最新的 LLM 不可用时回退到较旧但仍有公网地址的一条；全部不可用则 null。
+  db.setLlmRouterStatus("llm-new", "revoked", "admin");
+  assert.equal(db.getActiveRouter("llm")!.id, "llm-old");
+  db.setLlmRouterStatus("llm-old", "revoked", "admin");
+  assert.equal(db.getActiveRouter("llm"), null);
+
+  db.close();
+});
+
+test("getActiveRouter：同 created_at 时按 id DESC 确定性取值", () => {
+  const db = new HubDb(":memory:");
+  db.createLlmRouter("llm-tie-a", "llm-tie-a", "tok-a", null, "https://tie-a.llm", "llm", 7000);
+  db.setLlmRouterStatus("llm-tie-a", "active", "admin", 7000);
+  db.createLlmRouter("llm-tie-b", "llm-tie-b", "tok-b", null, "https://tie-b.llm", "llm", 7000);
+  db.setLlmRouterStatus("llm-tie-b", "active", "admin", 7000);
+  assert.equal(db.getActiveRouter("llm")!.id, "llm-tie-b");
+  db.close();
+});

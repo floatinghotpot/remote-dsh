@@ -52,8 +52,7 @@ export async function handleVoiceSession(req: IncomingMessage, res: ServerRespon
   const v = runtime.config.billing?.voice;
   const balance = await runtime.store.getCreditBalances(auth.userId);
   // wsUrl/ttsUrl：优先取 active 的 voice router 上报的公网基址（join 时上报），无则回退 config。
-  const routers = await runtime.store.listLlmRouters();
-  const activeVoice = routers.find((r) => r.service === "voice" && r.status === "active");
+  const activeVoice = await runtime.store.getActiveRouter("voice");
   const base = activeVoice?.publicBaseUrl ?? (v?.wsUrl ?? "");
   const { wsUrl, ttsUrl } = base !== "" ? deriveVoiceUrls(base) : { wsUrl: "", ttsUrl: "" };
   const floor = v?.overdraftFloor ?? VOICE_DEFAULTS.overdraftFloor;

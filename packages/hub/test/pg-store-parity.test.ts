@@ -1,6 +1,6 @@
 /**
  * 43b-2：PgStore 对拍冒烟（真实 PG17）。跳过条件：PG 不可达。
- * 覆盖关键/易错路径：RETURNING id、ON CONFLICT(GREATEST)、动态 WHERE、账本幂等、事务。
+ * 覆盖关键/易错路径：RETURNING id、ON CONFLICT(GREATEST)、动态 WHERE、账本幂等、事务、Router 选取。
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -10,7 +10,7 @@ import { createPgStore } from "../src/pg-store/index.ts";
 
 const DSN = process.env.RDSH_TEST_PG_DSN ?? "postgres://rdsh:rdsh_dev_password@127.0.0.1:5432/rdsh_parity_test";
 
-test("PgStore 对拍：users/hosts/ledger/order/usage/audit/meta", async (t) => {
+test("PgStore 对拍：users/hosts/ledger/order/usage/audit/meta/routers", async (t) => {
   if (!isTestDb(DSN)) {
     t.skip(`not a test database (expected test_* or *_test): ${testDbName(DSN)}`);
     return;
@@ -78,6 +78,15 @@ test("PgStore 对拍：users/hosts/ledger/order/usage/audit/meta", async (t) => 
     assert.equal(audits[0]!.event, "test.evt");
     await store.setMeta("k", "v");
     assert.equal(await store.getMeta("k"), "v");
+
+    // routers: getActiveRouter 按 service + active + public_base_url 选取（PG SQL 与 SQLite 同义）
+    await store.createServiceToken("st-router", "router", "hash-router", "llm:authorize", 1_000);
+    await store.createLlmRouter("r-llm", "llm-router", "st-router", null, "https://llm.example", "llm", 1_000);
+    await store.setLlmRouterStatus("r-llm", "active", "admin", 1_000);
+    await store.createLlmRouter("r-voice", "voice-router", "st-router", null, "https://voice.example", "voice", 2_000);
+    await store.setLlmRouterStatus("r-voice", "active", "admin", 2_000);
+    assert.equal((await store.getActiveRouter("llm"))?.id, "r-llm");
+    assert.equal((await store.getActiveRouter("voice"))?.id, "r-voice");
 
     // 嵌套事务：appendCreditLedger 内部自带 withTransaction，外层再包一层 → SAVEPOINT 可嵌套
     await store.withTransaction(async () => {

@@ -3500,6 +3500,18 @@ export class HubDb {
     return rows.map((r) => this.mapLlmRouter(r));
   }
 
+  /**
+   * Newest active router of `service` that has reported a public base URL.
+   * `llm_routers` stores both llm and voice rows, so the service is mandatory:
+   * callers must name the kind they mean instead of taking the first match.
+   */
+  getActiveRouter(service: "llm" | "voice"): LlmRouterRow | null {
+    const row = this.db.prepare(
+      "SELECT * FROM llm_routers WHERE service = ? AND status = 'active' AND public_base_url IS NOT NULL AND public_base_url <> '' ORDER BY created_at DESC, id DESC LIMIT 1",
+    ).get(service);
+    return row === undefined ? null : this.mapLlmRouter(row as unknown as Record<string, unknown>);
+  }
+
   setLlmRouterStatus(id: string, status: LlmRouterStatus, actor: string | null, now = Date.now()): boolean {
     const info = status === "active"
       ? this.db.prepare("UPDATE llm_routers SET status = 'active', approved_at = ?, approved_by = ? WHERE id = ?").run(now, actor, id)
