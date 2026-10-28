@@ -3352,9 +3352,11 @@ async function handleHostLlmKey(req: IncomingMessage, res: ServerResponse, runti
     tokenHead4: token.slice(3, 7),
     tokenTail4: token.slice(-4),
   });
-  // baseURL 取活跃 Router 上报的地址（唯一活跃实例；就近/负载均衡分配见 53）。
+  // baseURL 取活跃 LLM Router 上报的地址（唯一活跃实例；就近/负载均衡分配见 53）。
+  // 必须按 service 过滤：llm_routers 同表存 LLM 与 Voice 两类 Router，且按
+  // created_at DESC 返回，不过滤会让较新的 Voice Router 抢占 LLM 地址。
   const routers = await runtime.store.listLlmRouters();
-  const active = routers.find((r) => r.status === "active" && r.publicBaseUrl !== null && r.publicBaseUrl !== "");
+  const active = routers.find((r) => r.service === "llm" && r.status === "active" && r.publicBaseUrl !== null && r.publicBaseUrl !== "");
   const baseURL = active?.publicBaseUrl ?? "";
   const models = (await runtime.store.listLlmModels({ enabledOnly: true })).map((m) => ({
     id: m.id,

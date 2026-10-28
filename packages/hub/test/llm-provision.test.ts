@@ -71,6 +71,30 @@ test("52：/api/hosts/llm-key 签发 + 重签 + 鉴权", async () => {
   }
 });
 
+test("52：/api/hosts/llm-key 只取 LLM Router，不被较新的 Voice Router 抢占", async () => {
+  const ctx = await boot();
+  try {
+    const owner = ctx.db.createUser("owner-voice", await hashPassword("pw"));
+    const hostToken = randomToken();
+    ctx.db.createHost("h-voice", owner.id, "host-voice", sha256(hostToken));
+
+    // LLM Router 先创建，Voice Router 后创建（listLlmRouters 按 created_at DESC 返回）。
+    const llmId = randomUUID();
+    ctx.db.createLlmRouter(llmId, "router-llm", "token-llm", null, "https://llmapi.rdsh.cn", "llm", 1_000);
+    ctx.db.setLlmRouterStatus(llmId, "active", "test");
+    const voiceId = randomUUID();
+    ctx.db.createLlmRouter(voiceId, "router-voice", "token-voice", null, "https://voiceapi.rdsh.cn", "voice", 2_000);
+    ctx.db.setLlmRouterStatus(voiceId, "active", "test");
+
+    const r = await post(ctx.base, "/api/hosts/llm-key", { token: hostToken });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.baseURL, "https://llmapi.rdsh.cn");
+  } finally {
+    await new Promise<void>((res) => ctx.server.server.close(() => res()));
+    ctx.db.close();
+  }
+});
+
 test("52：provision 返回模型推理档位（effortLevels/effortDefault）", async () => {
   const ctx = await boot();
   try {
