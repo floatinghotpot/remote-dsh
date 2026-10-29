@@ -122,9 +122,21 @@ export const RDSH_WEBVIEW_API = `(function () {
   function userTextOf() {
     var nodes = document.querySelectorAll('[data-chat-flow-kind="user"]');
     var last = nodes.length ? nodes[nodes.length - 1] : null;
-    return last
-      ? (last.innerText || last.textContent || '').replace(/\\s+/g, ' ').trim()
-      : '';
+    return userTextOfNode(last);
+  }
+  // 取用户消息正文，排除操作行（时间 + 复制/分支按钮，都在 [data-clock] 里）。
+  function userTextOfNode(node) {
+    if (!node) { return ''; }
+    try {
+      var clone = node.cloneNode(true);
+      var actions = clone.querySelectorAll('[data-clock]');
+      for (var i = 0; i < actions.length; i++) {
+        if (actions[i].parentNode) { actions[i].parentNode.removeChild(actions[i]); }
+      }
+      return (clone.innerText || clone.textContent || '').replace(/\\s+/g, ' ').trim();
+    } catch (e) {
+      return (node.innerText || node.textContent || '').replace(/\\s+/g, ' ').trim();
+    }
   }
   function reasoningTextOf() {
     var nodes = document.querySelectorAll('[data-chat-group-part="reasoning"]');
@@ -132,7 +144,7 @@ export const RDSH_WEBVIEW_API = `(function () {
     var t = last
       ? (last.innerText || last.textContent || '').replace(/\\s+/g, ' ').trim()
       : '';
-    return t.replace(/^思考[:：\\s]*/, ''); // 去掉块标题「思考」前缀（及可选冒号/空白）
+    return t.replace(/^(?:运行中思考|思考)[:：\\s]*/, ''); // 去掉「运行中思考/思考」标题前缀
   }
   function richCounts() {
     var counts = { code: 0, table: 0, file: 0 };
@@ -169,35 +181,68 @@ export const RDSH_WEBVIEW_API = `(function () {
       };
     } catch (e) { return null; }
   }
+  // 146：最近 10 段最终消息（用户提问 / 智能体回答），按 turn 升序。
+  function historyOf() {
+    var items = [];
+    try {
+      var users = document.querySelectorAll('[data-chat-flow-kind="user"]');
+      for (var i = 0; i < users.length; i++) {
+        var turn = parseInt(users[i].getAttribute('data-chat-turn'), 10);
+        var text = userTextOfNode(users[i]);
+        if (text) { items.push({ kind: 'user', text: text.slice(0, 400), turn: turn }); }
+      }
+      var steps = document.querySelectorAll('[data-chat-flow-kind="assistant-step"]');
+      var byTurn = {};
+      for (var j = 0; j < steps.length; j++) {
+        if (steps[j].getAttribute('data-chat-group-part') === 'reasoning') { continue; }
+        var turn = parseInt(steps[j].getAttribute('data-chat-turn'), 10);
+        var text = answerTextOf(steps[j], true);
+        if (text) {
+          if (!byTurn[turn]) { byTurn[turn] = []; }
+          byTurn[turn].push(text);
+        }
+      }
+      for (var t in byTurn) {
+        items.push({
+          kind: 'assistant',
+          text: byTurn[t].join('\\n\\n').slice(0, 1000),
+          turn: parseInt(t, 10)
+        });
+      }
+      items.sort(function (a, b) { return a.turn - b.turn; });
+    } catch (e) {}
+    return items.slice(-10);
+  }
   function activityOf(answerTurn, userTurn) {
     var act = { kind: 'idle', label: '', detail: '' };
     try {
-      if (document.querySelectorAll('[data-streaming]').length > 0) {
-        act.kind = 'writing';
+      // 思考优先：reasoning 正在运行（data-state="running"）即 thinking。
+      // 不依赖 answerTurn —— 思考阶段 DSH 可能已渲染空的 response 占位，导致
+      // answerTurn == userTurn，若按 streaming 判会把思考误判成「正在输出」。
+      var running = document.querySelectorAll(
+        '[data-variant="think"][data-state="running"]');
+      if (running.length > 0) {
+        var lastReas = running[running.length - 1];
+        var t = (lastReas.innerText || lastReas.textContent || '')
+          .replace(/\\s+/g, ' ').trim();
+        act.kind = 'thinking';
+        act.detail = t.replace(/^(?:运行中思考|思考)[:：\\s]*/, '');
         return act;
       }
-      // 当前轮（userTurn）尚无答案（userTurn > answerTurn）时，智能体还在
-      // 思考 / 执行工具；用 data-chat-turn 圈定当前轮，避免历史节点误判。
+      // 执行：本轮尚无回答，且 DOM 顺序最新是 tool-call → tool。
       if (userTurn > answerTurn) {
-        var reas = document.querySelectorAll('[data-chat-group-part="reasoning"]');
-        for (var i = 0; i < reas.length; i++) {
-          if (parseInt(reas[i].getAttribute('data-chat-turn'), 10) === userTurn) {
-            var t = (reas[i].innerText || reas[i].textContent || '')
-              .replace(/\\s+/g, ' ').trim();
-            act.kind = 'thinking';
-            act.detail = t.replace(/^思考[:：\\s]*/, '');
-            return act;
-          }
-        }
         var tools = document.querySelectorAll('[data-chat-flow-kind="tool-call"]');
-        for (var j = 0; j < tools.length; j++) {
-          if (parseInt(tools[j].getAttribute('data-chat-turn'), 10) === userTurn) {
-            act.kind = 'tool';
-            act.label = (tools[j].innerText || tools[j].textContent || '')
-              .replace(/\\s+/g, ' ').trim().slice(0, 80);
-            return act;
-          }
+        var lastTool = tools.length ? tools[tools.length - 1] : null;
+        if (lastTool) {
+          act.kind = 'tool';
+          act.label = (lastTool.innerText || lastTool.textContent || '')
+            .replace(/\\s+/g, ' ').trim().slice(0, 80);
         }
+        return act; // 无 tool-call → 用户刚发言、智能体还没开始（146 用 waiting 覆盖）
+      }
+      // 本轮已有回答：response 在流式 → writing，否则 idle。
+      if (document.querySelectorAll('[data-streaming]').length > 0) {
+        act.kind = 'writing';
       }
     } catch (e) {}
     return act;
@@ -228,7 +273,8 @@ export const RDSH_WEBVIEW_API = `(function () {
         userText: '', reasoning: '',
         activity: { kind: 'idle', label: '', detail: '' },
         rich: { code: 0, table: 0, file: 0 },
-        question: null
+        question: null,
+        history: []
       };
       try {
         out.streaming = document.querySelectorAll('[data-streaming]').length;
@@ -243,6 +289,7 @@ export const RDSH_WEBVIEW_API = `(function () {
           out.rich = richCounts();
           out.activity = activityOf(answer.turn, out.userTurn);
           out.question = questionCard();
+          out.history = historyOf();
         } else {
           out.text = document.body ? document.body.innerText : '';
         }
@@ -254,6 +301,21 @@ export const RDSH_WEBVIEW_API = `(function () {
       try {
         return document.querySelectorAll('[data-chat-flow-kind]').length > 0 ? '1' : '0';
       } catch (e) { return '0'; }
+    },
+    // 59：打断智能体生成 —— 点击 composer 主按钮（生成中其 aria-label 变为
+    // 「停止生成」/「Stop generating」）。返回 ok / no-stop。
+    stopGeneration: function () {
+      try {
+        var btns = document.querySelectorAll('button[aria-label]');
+        for (var i = 0; i < btns.length; i++) {
+          var label = btns[i].getAttribute('aria-label');
+          if (label === '停止生成' || label === 'Stop generating') {
+            btns[i].click();
+            return 'ok';
+          }
+        }
+        return 'no-stop';
+      } catch (e) { return 'no-stop'; }
     }
   };
 })();`;

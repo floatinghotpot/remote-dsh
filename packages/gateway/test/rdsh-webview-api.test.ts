@@ -68,6 +68,7 @@ function attach(n: El): El {
   self.focus = () => {};
   self.blur = () => {};
   self.select = () => {};
+  self.click = () => {};
   self.dispatchEvent = () => true;
   Object.defineProperty(self, "innerText", { get: () => innerTextOf(n), configurable: true });
   Object.defineProperty(self, "textContent", { get: () => innerTextOf(n), configurable: true });
@@ -218,7 +219,9 @@ test("feature 59：readReply 返回 v2 结构化字段", () => {
   const json = JSON.parse(Buffer.from(api.readReply(), "base64").toString("utf8"));
   assert.equal(json.userText, "用户发的新消息");
   assert.equal(json.reasoning, "不该读", "去掉「思考」前缀");
-  assert.equal(json.activity.kind, "writing", "streaming>0 → writing");
+  // 历史 reasoning 无 data-state="running"，不会误判为 thinking；
+  // 用户刚发言、无 tool-call → idle（146 层用 userTurn>turn 的 waiting 覆盖）。
+  assert.equal(json.activity.kind, "idle");
   assert.deepEqual(json.rich, { code: 0, table: 0, file: 0 }, "最新 turn 无富内容");
   assert.equal(json.question, null);
 });
@@ -233,7 +236,9 @@ test("feature 59：activity 在多轮对话中按当前轮判定（回归 P0）"
   const thinking = el("BODY", {}, [
     el("DIV", { "data-chat-flow-kind": "assistant-step", "data-chat-group-part": "answer", "data-chat-turn": "1" }, [], "上一轮答案"),
     el("DIV", { "data-chat-flow-kind": "user", "data-chat-turn": "2" }, [], "新问题"),
-    el("DIV", { "data-chat-flow-kind": "assistant-step", "data-chat-group-part": "reasoning", "data-chat-turn": "2" }, [], "思考：这一轮怎么答"),
+    el("DIV", { "data-chat-flow-kind": "assistant-step", "data-chat-group-part": "reasoning", "data-chat-turn": "2" }, [
+      el("DIV", { "data-variant": "think", "data-state": "running" }, [], "思考：这一轮怎么答"),
+    ]),
   ]);
   const thinkingJson = JSON.parse(Buffer.from((runAdapter(thinking) as { readReply: () => string }).readReply(), "base64").toString("utf8"));
   assert.equal(thinkingJson.activity.kind, "thinking", "有历史答案仍应报 thinking 而非 idle");
@@ -248,6 +253,54 @@ test("feature 59：activity 在多轮对话中按当前轮判定（回归 P0）"
   const toolJson = JSON.parse(Buffer.from((runAdapter(tool) as { readReply: () => string }).readReply(), "base64").toString("utf8"));
   assert.equal(toolJson.activity.kind, "tool");
   assert.equal(toolJson.activity.label, "读取 /tmp/x.md");
+});
+
+test("feature 59：本轮已有回答且 streaming → writing", () => {
+  const writing = el("BODY", {}, [
+    el("DIV", { "data-chat-flow-kind": "assistant-step", "data-chat-group-part": "answer", "data-chat-turn": "2" }, [], "正在生成的回答"),
+    el("DIV", { "data-chat-flow-kind": "user", "data-chat-turn": "2" }, [], "问题"),
+    el("DIV", { "data-streaming": "true" }),
+  ]);
+  const json = JSON.parse(Buffer.from((runAdapter(writing) as { readReply: () => string }).readReply(), "base64").toString("utf8"));
+  assert.equal(json.activity.kind, "writing", "本轮已有回答 + streaming → writing");
+});
+
+test("feature 59：stopGeneration 点击停止按钮", () => {
+  const withStop = el("BODY", {}, [
+    el("BUTTON", { "aria-label": "发送" }),
+    el("BUTTON", { "aria-label": "停止生成" }),
+  ]);
+  const api = runAdapter(withStop) as { stopGeneration: () => string };
+  assert.equal(api.stopGeneration(), "ok");
+  const noStop = runAdapter(el("BODY", {}, [el("BUTTON", { "aria-label": "发送" })])) as { stopGeneration: () => string };
+  assert.equal(noStop.stopGeneration(), "no-stop");
+});
+
+test("feature 59：readReply 返回最近 10 段 history", () => {
+  const dom = el("BODY", {}, [
+    el("DIV", { "data-chat-flow-kind": "user", "data-chat-turn": "1" }, [], "第一问"),
+    el("DIV", { "data-chat-flow-kind": "assistant-step", "data-chat-group-part": "reasoning", "data-chat-turn": "1" }, [], "思考：不该进 history"),
+    el("DIV", { "data-chat-flow-kind": "assistant-step", "data-chat-group-part": "answer", "data-chat-turn": "1" }, [], "第一答"),
+    el("DIV", { "data-chat-flow-kind": "user", "data-chat-turn": "2" }, [], "第二问"),
+    el("DIV", { "data-chat-flow-kind": "assistant-step", "data-chat-group-part": "answer", "data-chat-turn": "2" }, [], "第二答"),
+    el("DIV", { "data-chat-flow-kind": "user", "data-chat-turn": "3" }, [], "第三问"),
+    el("DIV", { "data-chat-flow-kind": "assistant-step", "data-chat-group-part": "answer", "data-chat-turn": "3" }, [], "第三答"),
+  ]);
+  const json = JSON.parse(Buffer.from((runAdapter(dom) as { readReply: () => string }).readReply(), "base64").toString("utf8"));
+  // 共 6 段最终消息，不足 10 段时全量返回（同一 turn 内 user 在前、assistant 在后）。
+  assert.equal(json.history.length, 6, "不足 10 段全量返回");
+  assert.equal(json.history[0].kind, "user");
+  assert.equal(json.history[0].text, "第一问");
+  assert.equal(json.history[1].kind, "assistant");
+  assert.equal(json.history[1].text, "第一答");
+  assert.equal(json.history[2].kind, "user");
+  assert.equal(json.history[2].text, "第二问");
+  assert.equal(json.history[3].kind, "assistant");
+  assert.equal(json.history[3].text, "第二答");
+  assert.equal(json.history[4].kind, "user");
+  assert.equal(json.history[4].text, "第三问");
+  assert.equal(json.history[5].kind, "assistant");
+  assert.equal(json.history[5].text, "第三答");
 });
 
 test("防御式：缺 DOM 不抛错，readReply 返回空结果", () => {
