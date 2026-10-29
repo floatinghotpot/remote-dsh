@@ -10,7 +10,7 @@
  * `rdsh host <cmd>` 仍可用（兼容别名，TTY 下提示一次）。hub 命令已迁到 `rdsh-hub`（feature 47）。
  */
 import { createInterface } from "node:readline";
-import { hostname } from "node:os";
+import { hostname, userInfo } from "node:os";
 import { rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
@@ -37,6 +37,8 @@ import {
   startService,
   stopService,
   restartService,
+  isLingerEnabled,
+  enableLinger,
   HOST_SERVICE_NAME,
   JOIN_SERVICE_NAME,
 } from "rdsh-gateway";
@@ -344,6 +346,9 @@ async function handleHostJoin(args: string[], configPath?: string): Promise<void
     else if (flag === "--reset") opts.reset = true;
     else throw new Error(`unknown option '${flag}'`);
   }
+  // 仅「扫码接入」（无 --token、无持久化 session、bindByQr 成功）才在退出前询问装服务；
+  // --token / 粘贴 token 可能是 AI 或脚本驱动，不应被交互打断。
+  let joinedViaQr = false;
   if (opts.token === undefined && readPersistedToken(hubUrl) === null) {
     // 无 --token 且无持久化 session：TTY 下走扫码接入；非 TTY 报错不 hang。
     if (!process.stdin.isTTY) {
@@ -356,6 +361,8 @@ async function handleHostJoin(args: string[], configPath?: string): Promise<void
       const pasted = (await promptLine("Paste your join token (hub portal → Add host): ")).trim();
       if (pasted === "") throw new Error("需要 join token（hub portal → 添加主机 生成）");
       opts.token = pasted;
+    } else {
+      joinedViaQr = true;
     }
   }
 
@@ -370,6 +377,48 @@ async function handleHostJoin(args: string[], configPath?: string): Promise<void
   await saveConfig(target, config);
   console.log(`rdsh: host 已接入 ${hubUrl}（${config.name}）—— session 已保存`);
   console.log("rdsh: 运行 `rdsh host serve` 前台启动，或 `rdsh host service install` 常驻。");
+  if (joinedViaQr) await offerPostJoinActions(target);
+}
+
+/**
+ * 扫码接入完成、退出前：询问是否安装服务；装完若为 Linux 非 root 且 linger 未开，
+ * 再询问是否用 sudo 开启 linger（用户级服务开机自启的前提）。
+ * 仅扫码路径调用（--token/粘贴 token 可能是 AI/脚本驱动，不打断）。
+ */
+async function offerPostJoinActions(target: string): Promise<void> {
+  // 非交互（脚本/管道/--token）不询问，保持原行为、不 hang。
+  if (!process.stdin.isTTY) return;
+
+  if (await promptYesNo("是否安装为常驻服务（开机自启 + 崩溃重启）？[y/N] ")) {
+    try {
+      console.log(await installService({ name: JOIN_SERVICE_NAME, args: ["serve"], configPath: target, pathEnv: nodePathEnv() }));
+      console.log(`rdsh: host service installed (${JOIN_SERVICE_NAME}) —— 开机自启 + 崩溃重启。`);
+    } catch (err) {
+      // 自动安装是「锦上添花」：join 已成功，安装失败不应把整个 join 判为失败。
+      console.log(`rdsh: 服务安装失败：${err instanceof Error ? err.message : String(err)}（已接入，可稍后手动 \`rdsh service install\`）。`);
+      return;
+    }
+  } else {
+    return;
+  }
+
+  // Linux 用户级服务需 linger 才能在开机时自动启动；root 例外（跳过，按 root 场景自行管理）。
+  if (process.platform !== "linux") return;
+  if (process.getuid?.() === 0) return;
+  const user = userInfo().username;
+  const linger = await isLingerEnabled(user);
+  if (linger === true) return;
+  if (linger === null) {
+    console.log("rdsh: 无法检测 linger 状态（loginctl 不可用？），如需开机自启请手动开启。");
+    return;
+  }
+  if (await promptYesNo(`rdsh: 未开启 linger，开机后用户服务不会自动启动。是否用 sudo 开启（需 root，可能要求输入密码）？[y/N] `)) {
+    if (enableLinger(user)) {
+      console.log(`rdsh: linger 已开启（${user}）—— 开机自启生效。`);
+    } else {
+      console.log(`rdsh: linger 开启失败，请手动运行 \`sudo loginctl enable-linger ${user}\`。`);
+    }
+  }
 }
 
 /** `rdsh host serve`：前台常驻，读 host.json 按 mode 分发（join→隧道，lan/cloud→网关）。 */
@@ -578,6 +627,13 @@ function promptLine(prompt: string): Promise<string> {
       resolve(answer);
     });
   });
+}
+
+/** 交互式 y/n 询问：接受 y/yes/n/no（不区分大小写），空输入与非 TTY 取默认「否」。 */
+async function promptYesNo(prompt: string): Promise<boolean> {
+  if (!process.stdin.isTTY) return false;
+  const answer = (await promptLine(prompt)).trim().toLowerCase();
+  return answer === "y" || answer === "yes";
 }
 
 function nextPipeLine(): Promise<string> {

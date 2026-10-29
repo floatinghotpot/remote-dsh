@@ -10,7 +10,7 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { execFile } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { promisify } from "node:util";
 
 const execFileP = promisify(execFile);
@@ -153,6 +153,31 @@ export async function installService(spec: ServiceSpec): Promise<string> {
   await run("launchctl", ["unload", plistPath]).catch(() => undefined); // 重装幂等：先卸旧 job（不存在时忽略）
   await run("launchctl", ["load", plistPath]);
   return `installed launchd plist: ${plistPath}`;
+}
+
+/**
+ * 查询 systemd 用户 linger 是否已开启（用户级服务开机自启的前提）。
+ * 仅 Linux 有效；查询失败（无 loginctl / 非 systemd 环境）返回 null，交由调用方决定。
+ */
+export async function isLingerEnabled(user: string): Promise<boolean | null> {
+  if (!isLinux()) return null;
+  try {
+    const out = await run("loginctl", ["show-user", user, "-p", "Linger"]);
+    return out.includes("Linger=yes");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 用 sudo 开启用户 linger（需要 root；sudo 可能要求交互输入密码）。
+ * 必须显式传 user——sudo 下 `loginctl enable-linger` 的“当前用户”是 root，不是目标用户。
+ * 返回是否成功；非 Linux 恒为 false。
+ */
+export function enableLinger(user: string): boolean {
+  if (!isLinux()) return false;
+  const res = spawnSync("sudo", ["loginctl", "enable-linger", user], { stdio: "inherit" });
+  return res.status === 0;
 }
 
 /** 服务状态。 */
