@@ -208,6 +208,48 @@ test("fillAndSend：有 Lexical composer 返回 'ok'，无 composer 返回 'no-c
   assert.equal((runAdapter(noComposer) as { fillAndSend: (t: string) => string }).fillAndSend("hello"), "no-composer");
 });
 
+test("feature 59：version 升到 2", () => {
+  const api = runAdapter(dshDom()) as { version: number };
+  assert.equal(api.version, 2);
+});
+
+test("feature 59：readReply 返回 v2 结构化字段", () => {
+  const api = runAdapter(dshDom()) as { readReply: () => string };
+  const json = JSON.parse(Buffer.from(api.readReply(), "base64").toString("utf8"));
+  assert.equal(json.userText, "用户发的新消息");
+  assert.equal(json.reasoning, "不该读", "去掉「思考」前缀");
+  assert.equal(json.activity.kind, "writing", "streaming>0 → writing");
+  assert.deepEqual(json.rich, { code: 0, table: 0, file: 0 }, "最新 turn 无富内容");
+  assert.equal(json.question, null);
+});
+
+test("feature 59：fillAndSend 走全局标记 __rdshInserting，不再自带键盘守卫", () => {
+  assert.ok(RDSH_WEBVIEW_API.includes("__rdshInserting"), "改用全局标记放行 App 焦点门控");
+  assert.ok(!RDSH_WEBVIEW_API.includes("keyboardGuard"), "网关不再内置键盘守卫");
+});
+
+test("feature 59：activity 在多轮对话中按当前轮判定（回归 P0）", () => {
+  // 有历史答案（turn 1）+ 新一轮用户消息（turn 2）+ 当前轮思考、尚无答案 → thinking。
+  const thinking = el("BODY", {}, [
+    el("DIV", { "data-chat-flow-kind": "assistant-step", "data-chat-group-part": "answer", "data-chat-turn": "1" }, [], "上一轮答案"),
+    el("DIV", { "data-chat-flow-kind": "user", "data-chat-turn": "2" }, [], "新问题"),
+    el("DIV", { "data-chat-flow-kind": "assistant-step", "data-chat-group-part": "reasoning", "data-chat-turn": "2" }, [], "思考：这一轮怎么答"),
+  ]);
+  const thinkingJson = JSON.parse(Buffer.from((runAdapter(thinking) as { readReply: () => string }).readReply(), "base64").toString("utf8"));
+  assert.equal(thinkingJson.activity.kind, "thinking", "有历史答案仍应报 thinking 而非 idle");
+  assert.equal(thinkingJson.activity.detail, "这一轮怎么答", "detail 去掉「思考」前缀");
+
+  // 当前轮 tool-call → tool。
+  const tool = el("BODY", {}, [
+    el("DIV", { "data-chat-flow-kind": "assistant-step", "data-chat-group-part": "answer", "data-chat-turn": "1" }, [], "上一轮答案"),
+    el("DIV", { "data-chat-flow-kind": "user", "data-chat-turn": "2" }, [], "新问题"),
+    el("DIV", { "data-chat-flow-kind": "tool-call", "data-chat-turn": "2" }, [], "读取 /tmp/x.md"),
+  ]);
+  const toolJson = JSON.parse(Buffer.from((runAdapter(tool) as { readReply: () => string }).readReply(), "base64").toString("utf8"));
+  assert.equal(toolJson.activity.kind, "tool");
+  assert.equal(toolJson.activity.label, "读取 /tmp/x.md");
+});
+
 test("防御式：缺 DOM 不抛错，readReply 返回空结果", () => {
   const api = runAdapter(null) as { readReply: () => string; isDshPage: () => string };
   assert.equal(api.isDshPage(), "0");

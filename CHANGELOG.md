@@ -7,6 +7,12 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **WebView API v2** (gateway): the injected `window.__rdshWebViewApi` bumps `version` to `2`; `readReply` now also returns `userText` / `reasoning` / `activity` / `rich` / `question`; `fillAndSend` now signals the insert window via the global `window.__rdshInserting` marker instead of an internal keyboard guard. Contract documented in `packages/gateway/WEBVIEW_API.md`.
+
 ## [rdsh-gateway 0.15.3 · remote-dsh 0.19.1 · dsh-web-remote 0.13.1] - 2026-10-24
 
 ### Added

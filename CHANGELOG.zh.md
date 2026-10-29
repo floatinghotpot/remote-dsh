@@ -9,6 +9,10 @@
 
 ## [未发布]
 
+### Changed
+
+- **WebView API v2**（gateway）：注入的 `window.__rdshWebViewApi` 将 `version` 升至 `2`；`readReply` 新增返回 `userText` / `reasoning` / `activity` / `rich` / `question`；`fillAndSend` 改用全局标记 `window.__rdshInserting` 表示插入窗口，取代内置键盘守卫。契约见 `packages/gateway/WEBVIEW_API.md`。
+
 ## [rdsh-gateway 0.15.3 · remote-dsh 0.19.1 · dsh-web-remote 0.13.1] - 2026-10-24
 
 ### 新增

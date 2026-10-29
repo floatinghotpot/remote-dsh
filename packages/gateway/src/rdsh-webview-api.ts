@@ -1,14 +1,18 @@
 /**
  * rdsh-webview-api.ts — 智能体 API 契约适配脚本（注入 DSH 首页，feature 22）。
  *
- * 挂出稳定契约 `window.__rdshWebViewApi`（version 1），供 WebView 客户端（如 the App）优先消费，
+ * 挂出稳定契约 `window.__rdshWebViewApi`（version 2），供 WebView 客户端（如 the App）优先消费，
  * 以把「DSH 版本适配」从 App（发版慢）挪到 gateway（随 npm 包快速发布）。
  *
  * 契约正文与语义以 App 内部契约文档 R7 为准；
  * 本脚本是 App 的 WebView bridge 的 `_bridgeJs` 的**精简等价物**：
  * - 保留：isDshPage / readReply / fillAndSend 三方法及其 DOM 细节（Lexical 写入管线、
- *   键盘守卫、最后一轮答案提取、UTF-8 安全 base64）；
+ *   最后一轮答案提取、UTF-8 安全 base64）；
  * - 去掉：`report()` 通道与 105 诊断探针（那是 App 侧独有的 debug 机制）。
+ *
+ * feature 59：version 升到 2；readReply 增加结构化字段（userText / reasoning /
+ * activity / rich / question）；fillAndSend 改用全局标记 `window.__rdshInserting`
+ * 放行 App 的焦点门控（交互策略归 App，网关不再自带键盘守卫）。
  *
  * 安全约定：幂等（已注入即返回）、防御式（任何 DOM 缺失/异常返回安全默认值、绝不抛错）。
  */
@@ -65,8 +69,8 @@ export const RDSH_WEBVIEW_API = `(function () {
       el.dispatchEvent(new KeyboardEvent('keyup', opts));
     } catch (e) {}
   }
-  // 键盘守卫：语音写入后关软键盘；用户真实触摸页面即解除。
-  var keyboardGuard = false;
+  // 发送后主动收起软键盘（blur + 清选区）。常开的焦点门控由 App 侧注入的
+  // __rdshBridge 负责，这里不重复实现（feature 59）。
   function dismissKeyboard() {
     try {
       var active = document.activeElement;
@@ -75,10 +79,6 @@ export const RDSH_WEBVIEW_API = `(function () {
       if (selection && selection.removeAllRanges) selection.removeAllRanges();
     } catch (e) {}
   }
-  function onUserTouch() { if (keyboardGuard) keyboardGuard = false; }
-  document.addEventListener('focusin', function () { if (!keyboardGuard) return; dismissKeyboard(); }, true);
-  document.addEventListener('pointerdown', onUserTouch, true);
-  document.addEventListener('touchstart', onUserTouch, true);
 
   // 单个 flow 节点的可见文本；proseOnly 额外丢弃整块代码与表格（105 只读答案正文）。
   function answerTextOf(el, proseOnly) {
@@ -118,24 +118,118 @@ export const RDSH_WEBVIEW_API = `(function () {
     }
     return { text: texts.join('\\n\\n'), turn: maxTurn };
   }
+  // ---- feature 59 v2：readReply 的补充提取（简洁模式消费） ----
+  function userTextOf() {
+    var nodes = document.querySelectorAll('[data-chat-flow-kind="user"]');
+    var last = nodes.length ? nodes[nodes.length - 1] : null;
+    return last
+      ? (last.innerText || last.textContent || '').replace(/\\s+/g, ' ').trim()
+      : '';
+  }
+  function reasoningTextOf() {
+    var nodes = document.querySelectorAll('[data-chat-group-part="reasoning"]');
+    var last = nodes.length ? nodes[nodes.length - 1] : null;
+    var t = last
+      ? (last.innerText || last.textContent || '').replace(/\\s+/g, ' ').trim()
+      : '';
+    return t.replace(/^思考[:：\\s]*/, ''); // 去掉块标题「思考」前缀（及可选冒号/空白）
+  }
+  function richCounts() {
+    var counts = { code: 0, table: 0, file: 0 };
+    try {
+      var steps = Array.prototype.slice.call(
+        document.querySelectorAll('[data-chat-flow-kind="assistant-step"]'));
+      var answers = steps.filter(function (el) {
+        return el.getAttribute('data-chat-group-part') !== 'reasoning';
+      });
+      var maxTurn = -1;
+      for (var i = 0; i < answers.length; i++) {
+        var t = parseInt(answers[i].getAttribute('data-chat-turn'), 10);
+        if (!isNaN(t) && t > maxTurn) { maxTurn = t; }
+      }
+      var parts = answers.filter(function (el) {
+        return parseInt(el.getAttribute('data-chat-turn'), 10) === maxTurn;
+      });
+      for (var j = 0; j < parts.length; j++) {
+        counts.code += parts[j].querySelectorAll('pre').length;
+        counts.table += parts[j].querySelectorAll('table').length;
+      }
+      counts.file = document.querySelectorAll('[data-presented-file]').length;
+    } catch (e) {}
+    return counts;
+  }
+  function questionCard() {
+    try {
+      var card = document.querySelector('[data-question-key]');
+      if (!card) { return null; }
+      return {
+        key: card.getAttribute('data-question-key') || '',
+        text: (card.innerText || card.textContent || '')
+          .replace(/\\s+/g, ' ').trim().slice(0, 300)
+      };
+    } catch (e) { return null; }
+  }
+  function activityOf(answerTurn, userTurn) {
+    var act = { kind: 'idle', label: '', detail: '' };
+    try {
+      if (document.querySelectorAll('[data-streaming]').length > 0) {
+        act.kind = 'writing';
+        return act;
+      }
+      // 当前轮（userTurn）尚无答案（userTurn > answerTurn）时，智能体还在
+      // 思考 / 执行工具；用 data-chat-turn 圈定当前轮，避免历史节点误判。
+      if (userTurn > answerTurn) {
+        var reas = document.querySelectorAll('[data-chat-group-part="reasoning"]');
+        for (var i = 0; i < reas.length; i++) {
+          if (parseInt(reas[i].getAttribute('data-chat-turn'), 10) === userTurn) {
+            var t = (reas[i].innerText || reas[i].textContent || '')
+              .replace(/\\s+/g, ' ').trim();
+            act.kind = 'thinking';
+            act.detail = t.replace(/^思考[:：\\s]*/, '');
+            return act;
+          }
+        }
+        var tools = document.querySelectorAll('[data-chat-flow-kind="tool-call"]');
+        for (var j = 0; j < tools.length; j++) {
+          if (parseInt(tools[j].getAttribute('data-chat-turn'), 10) === userTurn) {
+            act.kind = 'tool';
+            act.label = (tools[j].innerText || tools[j].textContent || '')
+              .replace(/\\s+/g, ' ').trim().slice(0, 80);
+            return act;
+          }
+        }
+      }
+    } catch (e) {}
+    return act;
+  }
 
   window.__rdshWebViewApi = {
-    version: 1,
+    version: 2,
     // 104：写入 composer 并提交。返回裸状态 token。
+    // 用全局标记 window.__rdshInserting 放行 App 的焦点门控（feature 59）。
     fillAndSend: function (text) {
       var found = findComposer();
       if (!found) return 'no-composer';
-      keyboardGuard = false;
-      if (!insertText(found.el, text)) return 'fill-failed';
-      keyboardGuard = true;
+      window.__rdshInserting = true;
+      if (!insertText(found.el, text)) {
+        window.__rdshInserting = false;
+        return 'fill-failed';
+      }
+      window.__rdshInserting = false;
       dismissKeyboard();
       setTimeout(function () { pressEnter(found.el); dismissKeyboard(); }, 80);
       return 'ok';
     },
-    // 105/111：待朗读内容 + 状态。返回 UTF-8 安全的 base64 JSON
-    // {dsh, streaming, text, turn, userTurn}（turn / userTurn 取不到时为 -1）。
+    // 105/111：待朗读内容 + 状态；59 v2 增加结构化字段。
+    // 返回 UTF-8 安全的 base64 JSON。
     readReply: function () {
-      var out = { dsh: false, streaming: 0, text: '', turn: -1, userTurn: -1 };
+      var out = {
+        dsh: false, streaming: 0, text: '', turn: -1, userTurn: -1,
+        userText: '', reasoning: '',
+        activity: { kind: 'idle', label: '', detail: '' },
+        rich: { code: 0, table: 0, file: 0 },
+        question: null
+      };
       try {
         out.streaming = document.querySelectorAll('[data-streaming]').length;
         if (document.querySelectorAll('[data-chat-flow-kind]').length > 0) {
@@ -144,6 +238,11 @@ export const RDSH_WEBVIEW_API = `(function () {
           out.text = answer.text;
           out.turn = answer.turn;
           out.userTurn = maxTurnOf('user');
+          out.userText = userTextOf();
+          out.reasoning = reasoningTextOf();
+          out.rich = richCounts();
+          out.activity = activityOf(answer.turn, out.userTurn);
+          out.question = questionCard();
         } else {
           out.text = document.body ? document.body.innerText : '';
         }
