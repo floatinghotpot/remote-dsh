@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **WebView API v2** (gateway): the injected `window.__rdshWebViewApi` bumps `version` to `2`; `readReply` now also returns `userText` / `reasoning` / `activity` / `rich` / `question`; `fillAndSend` now signals the insert window via the global `window.__rdshInserting` marker instead of an internal keyboard guard. Contract documented in `packages/gateway/WEBVIEW_API.md`.
 
+### Fixed
+
+- **Admin plan labels** (portal): the admin user list and user detail "Plan" column now localizes every `plan_status` value (`internal` / `trial` / `grace` / `free` / `subscribed`). Previously only `internal` was translated and the rest leaked raw English enums; unknown values now show a localized placeholder instead of the backend value.
+- **Admin account status labels** (portal): the admin user list and user detail "Status" column now localizes `account_status` (`active` / `banned` / `deleted` / `pending`) instead of leaking raw English enums.
+
 ## [rdsh-gateway 0.15.3 · remote-dsh 0.19.1 · dsh-web-remote 0.13.1] - 2026-10-24
 
 ### Added

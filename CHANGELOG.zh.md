@@ -13,6 +13,11 @@
 
 - **WebView API v2**（gateway）：注入的 `window.__rdshWebViewApi` 将 `version` 升至 `2`；`readReply` 新增返回 `userText` / `reasoning` / `activity` / `rich` / `question`；`fillAndSend` 改用全局标记 `window.__rdshInserting` 表示插入窗口，取代内置键盘守卫。契约见 `packages/gateway/WEBVIEW_API.md`。
 
+### 修复
+
+- **管理台套餐文案**（portal）：管理台用户列表与用户详情页的「套餐」列现在本地化所有 `plan_status`（`internal` / `trial` / `grace` / `free` / `subscribed`）；此前只有 `internal` 有文案，其余直接显示英文枚举。未知值改为显示本地化占位，不再回显后端原值。
+- **管理台账号状态文案**（portal）：管理台用户列表与用户详情页的「状态」列现在本地化 `account_status`（`active` / `banned` / `deleted` / `pending`），不再直出英文枚举。
+
 ## [rdsh-gateway 0.15.3 · remote-dsh 0.19.1 · dsh-web-remote 0.13.1] - 2026-10-24
 
 ### 新增

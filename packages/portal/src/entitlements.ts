@@ -165,6 +165,58 @@ export function tierShortName(t: PlanTier): string {
   }
 }
 
+/**
+ * 管理台「套餐」列：`plan_status` → i18n key（中文原文）。
+ *
+ * 与 [tierShortName] 的区别：这里展示**原始计费状态**（含 `subscribed`），
+ * 而不是解析后的档位。未知值绝不回退成英文枚举（`plan_status` 是后端内部值）。
+ */
+export function planStatusLabelKey(planStatus: string | null | undefined): string {
+  const s = planStatus?.trim().toLowerCase();
+  switch (s) {
+    case "internal":
+      return "专属账号";
+    case "trial":
+      return "试用中";
+    case "grace":
+      return "宽限期";
+    case "free":
+      return "免费档";
+    case "subscribed":
+      return "已订阅";
+    case undefined:
+    case "":
+      return "—";
+    default:
+      return "未知";
+  }
+}
+
+/**
+ * 管理台「状态」列：`account_status` → i18n key（中文原文）。
+ *
+ * `account_status` 取值来自 `packages/hub` 的 `account_status`（active / banned /
+ * deleted / pending）；未知值不回退成英文枚举（与 [planStatusLabelKey] 同一原则）。
+ */
+export function accountStatusLabelKey(accountStatus: string | null | undefined): string {
+  const s = accountStatus?.trim().toLowerCase();
+  switch (s) {
+    case "active":
+      return "正常";
+    case "banned":
+      return "封禁";
+    case "deleted":
+      return "删除";
+    case "pending":
+      return "待验证";
+    case undefined:
+    case "":
+      return "—";
+    default:
+      return "未知";
+  }
+}
+
 /** 权益名（中文原文，同上）。 */
 export function entitlementLabel(e: Entitlement): string {
   switch (e) {

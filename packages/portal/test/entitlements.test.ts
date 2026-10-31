@@ -4,8 +4,10 @@ import {
   COMPARABLE_TIERS,
   DISPLAY_ORDER,
   SHARED,
+  accountStatusLabelKey,
   entitlementLabel,
   has,
+  planStatusLabelKey,
   relayHostsFor,
   tierOf,
   type Entitlement,
@@ -211,5 +213,45 @@ describe("文案（Portal 以中文原文为 i18n key）", () => {
     expect(entitlementLabel("cloudRelay")).toBe("云端中转");
     // 档位名走 tierShortName；这里只锚定最易回退的两个词
     expect(entitlementLabel("cloudSpeech")).toContain("自费 API Key");
+  });
+});
+
+describe("管理台「套餐」列 planStatusLabelKey", () => {
+  it("五种计费状态都映射到中文 i18n key（不再直出英文枚举）", () => {
+    expect(planStatusLabelKey("internal")).toBe("专属账号");
+    expect(planStatusLabelKey("subscribed")).toBe("已订阅");
+    expect(planStatusLabelKey("trial")).toBe("试用中");
+    expect(planStatusLabelKey("grace")).toBe("宽限期");
+    expect(planStatusLabelKey("free")).toBe("免费档");
+  });
+
+  it("大小写 / 空白变体归一化", () => {
+    expect(planStatusLabelKey(" Internal ")).toBe("专属账号");
+    expect(planStatusLabelKey("SUBSCRIBED")).toBe("已订阅");
+  });
+
+  it("null / 空值 → —；未知值 → 未知（绝不回显后端枚举）", () => {
+    expect(planStatusLabelKey(null)).toBe("—");
+    expect(planStatusLabelKey(undefined)).toBe("—");
+    expect(planStatusLabelKey("  ")).toBe("—");
+    expect(planStatusLabelKey("weird")).toBe("未知");
+  });
+});
+
+describe("管理台「状态」列 accountStatusLabelKey", () => {
+  it("已知 account_status 都映射到中文 i18n key", () => {
+    expect(accountStatusLabelKey("active")).toBe("正常");
+    expect(accountStatusLabelKey("banned")).toBe("封禁");
+    expect(accountStatusLabelKey("deleted")).toBe("删除");
+    expect(accountStatusLabelKey("pending")).toBe("待验证");
+  });
+
+  it("大小写 / 空白变体归一化", () => {
+    expect(accountStatusLabelKey(" Banned ")).toBe("封禁");
+  });
+
+  it("null / 未知 → 不直出英文枚举", () => {
+    expect(accountStatusLabelKey(null)).toBe("—");
+    expect(accountStatusLabelKey("weird")).toBe("未知");
   });
 });

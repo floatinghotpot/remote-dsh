@@ -14,8 +14,10 @@ import type { T } from "./i18n.ts";
 import {
   COMPARABLE_TIERS,
   DISPLAY_ORDER,
+  accountStatusLabelKey,
   entitlementLabel,
   has,
+  planStatusLabelKey,
   relayHostsFor,
   tierOf,
   tierShortName,
@@ -2948,7 +2950,7 @@ function AdminUserDetail({ userId }: { userId: number }): React.JSX.Element {
     <div>
       <button onClick={() => navigate("/admin/users")} style={adminBtnStyle("ghost")}>{t("← 返回用户列表")}</button>
       <h2 style={{ fontSize: 18, margin: "10px 0 4px" }}>{u.name}</h2>
-      <p style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", margin: "0 0 8px" }}>{t("ID")} {u.id} · {adminRoleLabel(t, u.role)} · {u.accountStatus}</p>
+      <p style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", margin: "0 0 8px" }}>{t("ID")} {u.id} · {adminRoleLabel(t, u.role)} · {t(accountStatusLabelKey(u.accountStatus))}</p>
 
       {section(t("账号信息"))}
       <table className="admintbl" style={adminTableStyle()}>
@@ -2958,8 +2960,8 @@ function AdminUserDetail({ userId }: { userId: number }): React.JSX.Element {
             {adminTd(t("手机号"), u.phone === null ? "—" : `${u.phone}${u.phoneVerified ? ` (${t("手✓")})` : ` (${t("手未验证")})`}`)}
           </tr>
           <tr>
-            {adminTd(t("状态"), u.locked ? `${u.accountStatus} · ${t("锁定至 {time}", { params: { time: new Date((u.lockedUntil as number)).toLocaleString() } })}` : u.accountStatus)}
-            {adminTd(t("套餐"), `${u.planStatus === "internal" ? t("专属账号") : (u.planStatus ?? "—")}${u.planExpiresAt !== null ? ` · ${t("到期 {date}", { params: { date: ts(u.planExpiresAt) } })}` : ""}`)}
+            {adminTd(t("状态"), u.locked ? `${t(accountStatusLabelKey(u.accountStatus))} · ${t("锁定至 {time}", { params: { time: new Date((u.lockedUntil as number)).toLocaleString() } })}` : t(accountStatusLabelKey(u.accountStatus)))}
+            {adminTd(t("套餐"), `${t(planStatusLabelKey(u.planStatus))}${u.planExpiresAt !== null ? ` · ${t("到期 {date}", { params: { date: ts(u.planExpiresAt) } })}` : ""}`)}
           </tr>
           <tr>
             {adminTd(t("主机"), d.quota !== null ? `${d.hostCount} / ${d.quota}` : String(d.hostCount))}
@@ -3788,7 +3790,7 @@ function AdminUsers({ isWrite, isAdmin }: { isWrite: boolean; isAdmin: boolean }
   const statusCell = (u: AdminUserRow): React.JSX.Element => {
     const stateParts: string[] = [];
     if (u.locked) stateParts.push(t("锁定至 {time}", { params: { time: new Date((u.lockedUntil as number)).toLocaleTimeString() } }));
-    if (u.accountStatus !== "active") stateParts.push(u.accountStatus);
+    if (u.accountStatus !== "active") stateParts.push(t(accountStatusLabelKey(u.accountStatus)));
     if (stateParts.length === 0) stateParts.push(t("正常"));
     const badges: string[] = [];
     if (u.email !== null && u.email !== "") badges.push(u.emailVerified ? t("邮✓") : t("邮未验证"));
@@ -3838,7 +3840,7 @@ function AdminUsers({ isWrite, isAdmin }: { isWrite: boolean; isAdmin: boolean }
               {adminTd(t("角色"), <span style={{ color: "var(--rdsh-fg-muted)" }}>{adminRoleLabel(t, u.role)}</span>)}
               {adminTd(t("状态"), statusCell(u))}
               {adminTd(t("主机"), u.hostCount)}
-              {adminTd(t("套餐"), u.planStatus === "internal" ? t("专属账号") : (u.planStatus ?? "—"))}
+              {adminTd(t("套餐"), t(planStatusLabelKey(u.planStatus)))}
               {adminTd(t("最后登录"), fmtLogin(u.lastLoginAt))}
               {adminTd(null, (isWrite || isAdmin) && (
                 <div style={{ position: "relative" }} onClick={(e) => e.stopPropagation()}>
