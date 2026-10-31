@@ -229,7 +229,58 @@ export const RDSH_WEBVIEW_API = `(function () {
         act.detail = t.replace(/^(?:运行中思考|思考)[:：\\s]*/, '');
         return act;
       }
-      // 执行：本轮尚无回答，且 DOM 顺序最新是 tool-call → tool。
+      // 工作中？DSH 的「深度求索中」标记（data-chat-running）是 session 级 running，
+      // 无 data-holding 才是真正在跑（holding = turn 未关但已停）。
+      var working = false;
+      var runningStatus = document.querySelectorAll('[data-chat-running]');
+      for (var i = 0; i < runningStatus.length; i++) {
+        if (!runningStatus[i].hasAttribute('data-holding')) { working = true; break; }
+      }
+      if (working) {
+        // 细分：进程组头的 data-process-activity 给出当前工具类别（编辑/命令/读取/联网）。
+        // 只在 working 时读——已关闭的分组也会渲染该属性（counts[0].kind），不能当「正在跑」。
+        var proc = document.querySelectorAll('[data-process-activity]');
+        if (proc.length > 0) {
+          var procEl = proc[proc.length - 1];
+          var p = procEl.getAttribute('data-process-activity');
+          var g = null;
+          if (p === 'commands' || p === 'code') { g = 'commands'; }
+          else if (p === 'edit' || p === 'write') { g = 'edit'; }
+          else if (p === 'read' || p === 'readImage' || p === 'search') { g = 'read'; }
+          else if (p === 'webSearch' || p === 'webFetch') { g = 'web'; }
+          else if (p === 'tools') { g = 'tools'; }
+          else if (p === 'subagents') { g = 'subagents'; }
+          else if (p === 'plan') { g = 'plan'; }
+          else if (p === 'questions') { g = 'questions'; }
+          if (g !== null) {
+            act.kind = g;
+            // 进程组头标题是「label · detail」，分隔符固定为「 · 」（label 里不含它），
+            // 取后半段作为具体参数（命令 / 文件路径 / 查询 / 链接）。
+            var raw = procEl.innerText || procEl.textContent || '';
+            var sep = raw.indexOf(' · ');
+            if (sep >= 0) {
+              act.label = raw.slice(sep + 3).trim().slice(0, 80);
+            }
+            return act;
+          }
+        }
+      }
+      // 命令卡仍在 running（data-state="running"）→ tool + 文本。自带 running 信号，不依赖 working。
+      var runningTools = document.querySelectorAll(
+        '[data-variant="others"][data-state="running"]');
+      if (runningTools.length > 0) {
+        var runningTool = runningTools[runningTools.length - 1];
+        act.kind = 'tool';
+        act.label = (runningTool.innerText || runningTool.textContent || '')
+          .replace(/\\s+/g, ' ').trim().slice(0, 80);
+        return act;
+      }
+      // 其它工作态（无细分/命令标记）→ 通用 tool。
+      if (working) {
+        act.kind = 'tool';
+        return act;
+      }
+      // 未在跑：本轮尚无回答且 DOM 最新是 tool-call → tool（覆盖无 data-state 的工具类型）。
       if (userTurn > answerTurn) {
         var tools = document.querySelectorAll('[data-chat-flow-kind="tool-call"]');
         var lastTool = tools.length ? tools[tools.length - 1] : null;
@@ -240,7 +291,7 @@ export const RDSH_WEBVIEW_API = `(function () {
         }
         return act; // 无 tool-call → 用户刚发言、智能体还没开始（146 用 waiting 覆盖）
       }
-      // 本轮已有回答：response 在流式 → writing，否则 idle。
+      // 本轮已有回答：response 在流式 → writing（只在已有回答后，用户刚发言时不会流式输出）。
       if (document.querySelectorAll('[data-streaming]').length > 0) {
         act.kind = 'writing';
       }

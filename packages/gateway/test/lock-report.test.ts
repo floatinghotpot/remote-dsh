@@ -49,7 +49,7 @@ test("describeLock：pid 已死 → dead / allowed", () => {
   assert.equal(r.unlock, "allowed");
 });
 
-test("describeLock：活着且非复用 → alive / blocked", () => {
+test("describeLock：活着且非复用 → alive / allowed", () => {
   // 持有者启动时间（NOW-5000）早于锁写入时间（NOW-1000）→ 合法持有者
   const r = report({
     raw: raw({ pid: 99999, role: "plugin" }, false, NOW - 1_000),
@@ -57,7 +57,7 @@ test("describeLock：活着且非复用 → alive / blocked", () => {
   });
   assert.equal(r.reason, "alive");
   assert.equal(r.confirmed, true);
-  assert.equal(r.unlock, "blocked");
+  assert.equal(r.unlock, "allowed");
 });
 
 test("describeLock：pid 复用（启动晚于锁写入）→ pid-reuse / allowed", () => {
@@ -86,13 +86,13 @@ test("describeLock：本进程自己的 pid → self / blocked", () => {
   assert.equal(r.unlock, "blocked");
 });
 
-test("forceUnlockJoinLock：alive → 不删文件", async () => {
+test("forceUnlockJoinLock：alive → 删除文件（后启动实例优先）", async () => {
   const path = join(await mkdtemp(join(tmpdir(), "rdsh-lock-report-")), "join.lock");
   writeFileSync(path, JSON.stringify({ pid: 99999, role: "plugin" }));
   const res = await forceUnlockJoinLock(path, { probe: async () => ({ alive: true, startedAtMs: 0 }) });
   assert.equal(res.reason, "alive");
-  assert.equal(res.removed, false);
-  assert.equal(existsSync(path), true, "活锁不得删除");
+  assert.equal(res.removed, true);
+  assert.equal(existsSync(path), false, "alive 锁现可被后启动实例强制清除");
 });
 
 test("forceUnlockJoinLock：dead → 删除文件", async () => {

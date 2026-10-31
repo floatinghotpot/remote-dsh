@@ -255,6 +255,93 @@ test("feature 59：activity 在多轮对话中按当前轮判定（回归 P0）"
   assert.equal(toolJson.activity.label, "读取 /tmp/x.md");
 });
 
+test("feature 59：已出答案后仍在执行命令 → tool（不依赖 userTurn > turn）", () => {
+  // 已有答案（turn 2）+ 用户消息（turn 2）+ 正在运行的命令卡（data-state="running"）→ tool。
+  const running = el("BODY", {}, [
+    el("DIV", { "data-chat-flow-kind": "assistant-step", "data-chat-group-part": "answer", "data-chat-turn": "2" }, [], "已出的部分答案"),
+    el("DIV", { "data-chat-flow-kind": "user", "data-chat-turn": "2" }, [], "问题"),
+    el("DIV", { "data-chat-flow-kind": "tool-call", "data-chat-turn": "2" }, [
+      el("DIV", { "data-variant": "others", "data-state": "running" }, [], "bash: 执行命令"),
+    ]),
+  ]);
+  const json = JSON.parse(Buffer.from((runAdapter(running) as { readReply: () => string }).readReply(), "base64").toString("utf8"));
+  assert.equal(json.activity.kind, "tool", "已出答案仍应报 tool 而非 idle");
+  assert.equal(json.activity.label, "bash: 执行命令");
+});
+
+test("feature 59：深度求索中标记（data-chat-running）→ tool（不挑工具类型）", () => {
+  // 已有答案 + 用户消息 + 深度求索中标记（无 data-holding）→ tool，
+  // 覆盖编辑/读取/写入等不打 data-state 的工作态。
+  const working = el("BODY", {}, [
+    el("DIV", { "data-chat-flow-kind": "assistant-step", "data-chat-group-part": "answer", "data-chat-turn": "2" }, [], "已出的部分答案"),
+    el("DIV", { "data-chat-flow-kind": "user", "data-chat-turn": "2" }, [], "问题"),
+    el("DIV", { "data-chat-running": "" }, [], "深度求索中"),
+  ]);
+  const json = JSON.parse(Buffer.from((runAdapter(working) as { readReply: () => string }).readReply(), "base64").toString("utf8"));
+  assert.equal(json.activity.kind, "tool", "深度求索中应报 tool 而非 idle");
+});
+
+test("feature 59：深度求索中标记带 data-holding → 不报 tool（turn 已停）", () => {
+  const holding = el("BODY", {}, [
+    el("DIV", { "data-chat-flow-kind": "assistant-step", "data-chat-group-part": "answer", "data-chat-turn": "2" }, [], "已出的答案"),
+    el("DIV", { "data-chat-flow-kind": "user", "data-chat-turn": "2" }, [], "问题"),
+    el("DIV", { "data-chat-running": "", "data-holding": "" }, [], "深度求索中"),
+  ]);
+  const json = JSON.parse(Buffer.from((runAdapter(holding) as { readReply: () => string }).readReply(), "base64").toString("utf8"));
+  assert.equal(json.activity.kind, "idle", "带 data-holding 的标记不应报 tool");
+});
+
+test("feature 59：data-process-activity 细分工具类别（working 时 edit/commands）", () => {
+  const editing = el("BODY", {}, [
+    el("DIV", { "data-chat-flow-kind": "assistant-step", "data-chat-group-part": "answer", "data-chat-turn": "2" }, [], "已出的部分答案"),
+    el("DIV", { "data-chat-flow-kind": "user", "data-chat-turn": "2" }, [], "问题"),
+    el("DIV", { "data-chat-running": "" }, [], "深度求索中"),
+    el("BUTTON", { "data-process-activity": "edit" }, [], "正在编辑文件 · /tmp/x.md"),
+  ]);
+  const editJson = JSON.parse(Buffer.from((runAdapter(editing) as { readReply: () => string }).readReply(), "base64").toString("utf8"));
+  assert.equal(editJson.activity.kind, "edit", "data-process-activity=edit 应报 edit");
+  assert.equal(editJson.activity.label, "/tmp/x.md", "按「 · 」切出 detail 作为 label");
+
+  const commanding = el("BODY", {}, [
+    el("DIV", { "data-chat-flow-kind": "assistant-step", "data-chat-group-part": "answer", "data-chat-turn": "2" }, [], "已出的部分答案"),
+    el("DIV", { "data-chat-flow-kind": "user", "data-chat-turn": "2" }, [], "问题"),
+    el("DIV", { "data-chat-running": "" }, [], "深度求索中"),
+    el("BUTTON", { "data-process-activity": "commands" }, [], "正在运行命令 · bash ls -la"),
+  ]);
+  const cmdJson = JSON.parse(Buffer.from((runAdapter(commanding) as { readReply: () => string }).readReply(), "base64").toString("utf8"));
+  assert.equal(cmdJson.activity.kind, "commands", "data-process-activity=commands 应报 commands");
+  assert.equal(cmdJson.activity.label, "bash ls -la", "命令 detail 应作为 label");
+});
+
+test("feature 59：data-process-activity 细分 tools/subagents/plan/questions", () => {
+  const cases: Array<[string, string, string]> = [
+    ["tools", "tools", "正在调用工具 · read_file"],
+    ["subagents", "subagents", "协调子智能体 · 审查代码"],
+    ["plan", "plan", "更新计划 · 3 项任务"],
+    ["questions", "questions", "等待操作 · 是否继续"],
+  ];
+  for (const [attr, kind, text] of cases) {
+    const body = el("BODY", {}, [
+      el("DIV", { "data-chat-flow-kind": "assistant-step", "data-chat-group-part": "answer", "data-chat-turn": "2" }, [], "已出的部分答案"),
+      el("DIV", { "data-chat-flow-kind": "user", "data-chat-turn": "2" }, [], "问题"),
+      el("DIV", { "data-chat-running": "" }, [], "深度求索中"),
+      el("BUTTON", { "data-process-activity": attr }, [], text),
+    ]);
+    const json = JSON.parse(Buffer.from((runAdapter(body) as { readReply: () => string }).readReply(), "base64").toString("utf8"));
+    assert.equal(json.activity.kind, kind, `data-process-activity=${attr} 应报 ${kind}`);
+  }
+});
+
+test("feature 59：data-process-activity 无 data-chat-running（已关闭分组）→ idle", () => {
+  const closed = el("BODY", {}, [
+    el("DIV", { "data-chat-flow-kind": "assistant-step", "data-chat-group-part": "answer", "data-chat-turn": "2" }, [], "已完成的答案"),
+    el("DIV", { "data-chat-flow-kind": "user", "data-chat-turn": "2" }, [], "问题"),
+    el("BUTTON", { "data-process-activity": "edit" }, [], "修改了文件"),
+  ]);
+  const json = JSON.parse(Buffer.from((runAdapter(closed) as { readReply: () => string }).readReply(), "base64").toString("utf8"));
+  assert.equal(json.activity.kind, "idle", "无 data-chat-running 的 data-process-activity 不应报 edit");
+});
+
 test("feature 59：本轮已有回答且 streaming → writing", () => {
   const writing = el("BODY", {}, [
     el("DIV", { "data-chat-flow-kind": "assistant-step", "data-chat-group-part": "answer", "data-chat-turn": "2" }, [], "正在生成的回答"),

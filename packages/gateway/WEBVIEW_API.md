@@ -59,7 +59,8 @@ Field rules (v2):
 - `turn` — highest `data-chat-turn` among answer parts; `userTurn` — highest among user messages; both `-1` when absent.
 - `userText` — latest user message text.
 - `reasoning` — latest reasoning text with the `思考` title prefix (and optional `:`/whitespace) stripped.
-- `activity` — `writing` while streaming; otherwise, when `userTurn > turn`, `thinking` (current-turn reasoning) or `tool` (current-turn tool call); otherwise `idle`.
+- `activity` — `thinking` while reasoning runs (`[data-variant="think"][data-state="running"]`); `writing` while streaming; finer `commands` / `edit` / `read` / `web` / `tools` / `subagents` / `plan` / `questions` from the process header (`[data-process-activity]`, mapped from `commands`+`code` / `edit`+`write` / `read`+`readImage`+`search` / `webSearch`+`webFetch` / `tools` / `subagents` / `plan` / `questions`); else `tool` while a command/tool card runs (`[data-variant="others"][data-state="running"]`), a current-turn `tool-call` exists (`userTurn > turn`), or the `深度求索中` marker is present (`[data-chat-running]` without `data-holding`); otherwise `idle`.
+  - `activity.label` — the specific argument (command / file path / query / URL) for the finer kinds, taken from the process-header title after the fixed ` · ` separator; empty when the header shows no detail.
 - `rich` — `code`/`table` count within the latest-turn answer; `file` counts `[data-presented-file]` cards **page-wide** (deliverables persist in the session).
 - `question` — the pending question card (`[data-question-key]`), read-only: its `key` and visible `text` (header + question + options).
 

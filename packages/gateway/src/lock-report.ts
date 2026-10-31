@@ -85,9 +85,9 @@ export interface DescribeLockInput {
 
 /**
  * 锁诊断的纯函数：给定原始锁 + 探测结果 → 报告与「能否强解锁」。
- * 闸门规则（discussion §5 Q2 用户原决定 + §5.1）：
- * - `dead` / `pid-reuse` / `damaged` / `unconfirmed` → allowed（其中 unconfirmed 由面板更醒目二次确认）；
- * - `alive` / `self` / `fresh-corrupt` → blocked；
+ * 闸门规则（discussion §5 Q2 + §5.1；2026-10-31 修订：alive 改为 allowed，后启动实例优先）：
+ * - `dead` / `pid-reuse` / `damaged` / `unconfirmed` / `alive` → allowed（其中 unconfirmed / alive 由面板更醒目二次确认）；
+ * - `self` / `fresh-corrupt` → blocked；
  * - `none` → unnecessary。
  */
 export function describeLock(input: DescribeLockInput): LockReport {
@@ -124,7 +124,7 @@ export function describeLock(input: DescribeLockInput): LockReport {
     return { ...base, held: true, role, pid, alive: true, pidReuse: true, confirmed: true, reason: "pid-reuse", unlock: "allowed", hint: HINTS["pid-reuse"], command: probe?.command };
   }
   if (confirmed) {
-    return { ...base, held: true, role, pid, alive: true, confirmed: true, reason: "alive", unlock: "blocked", hint: HINTS.alive, command: probe?.command };
+    return { ...base, held: true, role, pid, alive: true, confirmed: true, reason: "alive", unlock: "allowed", hint: HINTS.alive, command: probe?.command };
   }
   // ps 不可用/失败 → 无法确认（用户原决定：开放，面板更醒目二次确认）
   return { ...base, held: true, role, pid, alive: true, reason: "unconfirmed", unlock: "allowed", hint: HINTS.unconfirmed, command: probe?.command };

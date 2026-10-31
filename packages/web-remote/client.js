@@ -63,7 +63,6 @@ window.__ModuleLoader__.load({
       tip_disconnected: "已断开，配置与授权已保留，点击接入即可恢复。如需更换服务器或主机名，请先注销。",
       tip_external_cli: "该主机由 rdsh CLI / 服务托管，请用 rdsh 命令管理。",
       tip_external_plugin: "本机已有另一份 dsh-web-remote 插件在托管隧道（pid {pid}）。如需切换，请先退出另一个 DSH，或点下方「诊断」。",
-      tip_external_same_process: "本进程内另一个插件实例已在托管隧道（pid {pid}），本面板已复用该隧道。桌面版启动时会加载插件两次，属已知现象。",
       diagTitle: "诊断与修复",
       diagButton: "诊断",
       diagHoldBy: "隧道被占用：{kind}（pid {pid}）",
@@ -149,7 +148,6 @@ window.__ModuleLoader__.load({
       tip_disconnected: "Disconnected — config and auth are kept. Click Connect to resume. To change the server or host name, revoke first.",
       tip_external_cli: "This host is managed by the rdsh CLI/service; manage it with rdsh commands.",
       tip_external_plugin: "Another dsh-web-remote plugin is running the tunnel on this machine (pid {pid}). To switch, quit the other DSH first, or use Diagnostics below.",
-      tip_external_same_process: "Another plugin instance in this process already runs the tunnel (pid {pid}); this panel reuses it. The desktop app loads the plugin twice at startup — a known behaviour.",
       diagTitle: "Diagnostics & repair",
       diagButton: "Diagnose",
       diagHoldBy: "Tunnel held by: {kind} (pid {pid})",
@@ -434,7 +432,7 @@ window.__ModuleLoader__.load({
 
       const doForceUnlock = async () => {
         const reason = diag && diag.lock && diag.lock.reason;
-        const confirmMsg = reason === "unconfirmed" ? t("forceUnlockConfirmRisk") : t("forceUnlockConfirm");
+        const confirmMsg = reason === "unconfirmed" || reason === "alive" ? t("forceUnlockConfirmRisk") : t("forceUnlockConfirm");
         if (!window.confirm(confirmMsg)) return;
         setDiagBusy(true);
         try {
@@ -562,7 +560,6 @@ window.__ModuleLoader__.load({
       };
       const reasonLabel = (reason) => t("reason_" + String(reason || "none").replace(/-/g, "_"));
       const externalTip = () => {
-        if (lock && lock.sameProcess) return t("tip_external_same_process").replace("{pid}", String(lock.pid != null ? lock.pid : "?"));
         if (lock && lock.role === "plugin") return t("tip_external_plugin").replace("{pid}", String(lock.pid != null ? lock.pid : "?"));
         return t("tip_external_cli");
       };

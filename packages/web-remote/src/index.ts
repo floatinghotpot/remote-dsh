@@ -493,6 +493,9 @@ export function apply(ctx: Ctx): void {
   }
 
   async function disconnect(): Promise<RpcResult> {
+    // 「桌面壳重复 apply」兜底：本实例可能尚未 adopt（handle 为空），但隧道就在本进程
+    // （processTunnel 已登记）。先接管到句柄，保证「断开」真的停掉隧道，而不是空转。
+    adoptProcessTunnel();
     if (handle !== null) {
       await handle.stop();
       handle = null;
@@ -509,6 +512,8 @@ export function apply(ctx: Ctx): void {
 
   async function revoke(): Promise<RpcResult> {
     try {
+      // 同上：注销前先接管本进程内已建好的隧道，避免 handle 为空时停了个寂寞。
+      adoptProcessTunnel();
       if (handle !== null) {
         await handle.stop();
         handle = null;
@@ -580,9 +585,26 @@ export function apply(ctx: Ctx): void {
       }
       const held = readJoinLock();
       if (held !== null) {
+        const sameProcess = held.pid === process.pid;
+        // 锁由本进程持有（桌面壳重复 apply 的另一个实例持有隧道）：隧道就在本进程里，
+        // 应按 connected 展示「断开/注销」，而不是误报成 external（那会渲染成「诊断/强制清锁」）。
+        if (sameProcess) {
+          return ok({
+            status: "connected",
+            hub: currentHub,
+            name: currentName,
+            message: lastMessage,
+            hasToken: true,
+            lock: { role: held.role, pid: held.pid, sameProcess },
+            uiCompat: compat,
+            hasAccessCode: accessCodeEnabled(),
+            ...picker,
+            ...meta,
+          });
+        }
         return ok({
           status: "external",
-          lock: { role: held.role, pid: held.pid, sameProcess: held.pid === process.pid },
+          lock: { role: held.role, pid: held.pid, sameProcess },
           uiCompat: compat,
           hasAccessCode: accessCodeEnabled(),
           ...picker,
@@ -754,9 +776,10 @@ export function apply(ctx: Ctx): void {
   void autoConnect();
 
   ctx.on("dispose", () => {
-    // 只停本实例创建的隧道：复用者（桌面壳重复 apply 的第二个实例）退出时不能误杀别人的隧道。
+    // 只停本实例创建的隧道与直连口：复用者（桌面壳重复 apply 的第二个实例）退出时不能误杀别人的资源。
     if (!ownsTunnel) return;
     void handle?.stop();
+    void stopDirect();
     if (processTunnel !== null && processTunnel === myShared) processTunnel = null;
   });
 }

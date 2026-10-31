@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Admin plan labels** (portal): the admin user list and user detail "Plan" column now localizes every `plan_status` value (`internal` / `trial` / `grace` / `free` / `subscribed`). Previously only `internal` was translated and the rest leaked raw English enums; unknown values now show a localized placeholder instead of the backend value.
 - **Admin account status labels** (portal): the admin user list and user detail "Status" column now localizes `account_status` (`active` / `banned` / `deleted` / `pending`) instead of leaking raw English enums.
+- **Direct listener leaked on plugin uninstall** (web-remote): the plugin's `dispose` handler stopped the tunnel but not the LAN direct listener (port 8442); reinstalling the plugin without restarting DSH then left the old listener holding the port, so `startDirect` failed with `EADDRINUSE` and reported empty direct candidates. `dispose` now also stops the direct listener.
+- **Force unlock now supersedes a live lock holder** (web-remote): the lock gate now treats a confirmed-alive holder (`alive`) as `allowed` (with a risk confirmation), so a freshly reinstalled plugin can reclaim a lock left by a stale DSH process that did not exit. `self` and `fresh-corrupt` remain `blocked`.
+- **Same-process lock no longer misreported as external** (web-remote): when the join lock is held by the plugin's own process (the desktop shell applies the plugin twice), `state()` now returns `connected` (showing 断开/注销) instead of `external`, which previously rendered the wrong "diagnose / force unlock" panel.
+- **Disconnect/revoke now adopt the in-process tunnel** (web-remote): when the desktop shell applies the plugin twice, the second instance's `handle` could stay empty, making 断开/注销 a no-op. `disconnect()` and `revoke()` now call `adoptProcessTunnel()` first so they actually stop the tunnel.
 
 ## [rdsh-gateway 0.15.3 · remote-dsh 0.19.1 · dsh-web-remote 0.13.1] - 2026-10-24
 
