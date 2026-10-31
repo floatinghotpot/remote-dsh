@@ -40,7 +40,7 @@ import {
   DEFAULT_HOST_CONFIG_PATH,
   UsageReporter,
 } from "rdsh-gateway";
-import type { DirectHandle, DirectTicketManager, JoinHandle, JoinState, LockReport, RdshConfig, UsageMeter } from "rdsh-gateway";
+import type { DirectHandle, DirectOptions, DirectTicketManager, JoinHandle, JoinState, RdshConfig, UsageMeter } from "rdsh-gateway";
 import { RPC_CHANNEL, handleRpcRoute } from "./rpc-route.ts";
 import type { ConnectionService, RpcDispatch, RpcResult, WebServerService } from "./rpc-route.ts";
 import { classifyHolder, scanPluginInstalls, uninstallCommand } from "./lock-diagnostics.ts";
@@ -133,23 +133,33 @@ function mapState(s: JoinState): Status {
 export const inject = ["connection", "webServer"];
 
 /**
- * 进程级隧道记录。桌面壳会在同一进程里 apply 两次（组合配置里只有一行，重复来自宿主），
- * 而「同机单隧道」本来就是进程级资源：首个实例建隧道后登记，后续实例直接复用，
- * 避免抢锁失败把面板卡在 external。
+ * 单例守卫：桌面壳会在同一进程里 apply 本插件两次（组合配置只有一行，重复来自宿主）。
+ * 只让第一个实例干活，第二个实例在注册任何贡献之前直接退出；dispose 时复位，保证
+ * 「卸载 → 重装不重启」时新实例能正常接管。
  */
-interface ProcessTunnel {
-  handle: JoinHandle;
-  state: JoinState | null;
-  hub: string | undefined;
-  name: string | undefined;
-  message: string | undefined;
-  /** 复用该记录的实例数；创建者 dispose 时才允许停止隧道。 */
-  owners: number;
+let applied = false;
+
+/** 直连口 EADDRINUSE 退避重试间隔（上一个实例异步释放端口期间；累计约 3.5s）。 */
+const EADDRINUSE_RETRY_DELAYS_MS = [500, 1000, 2000];
+
+/** 起直连口；撞 EADDRINUSE（上一实例异步释放端口期间）按退避间隔重试，最终失败则抛给 syncDirect 降级。 */
+async function startDirectWithRetry(opts: DirectOptions): Promise<DirectHandle> {
+  for (let attempt = 0; attempt <= EADDRINUSE_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      return await startDirect(opts);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EADDRINUSE" || attempt === EADDRINUSE_RETRY_DELAYS_MS.length) {
+        throw err;
+      }
+      await new Promise((resolve) => setTimeout(resolve, EADDRINUSE_RETRY_DELAYS_MS[attempt]));
+    }
+  }
+  // 不可达：循环要么 return 要么 throw。
+  throw new Error("unreachable");
 }
 
-let processTunnel: ProcessTunnel | null = null;
-
 export function apply(ctx: Ctx): void {
+  if (applied) return;
   /**
    * 用量上报器：**归插件进程**，不随隧道 handle 走。
    *
@@ -175,24 +185,6 @@ export function apply(ctx: Ctx): void {
   let bindSession: { bindId: string; consumeToken: string; hub: string; name: string; insecure: boolean; expiresAt: number } | null = null; // 扫码绑定会话（26）
   let directAccessCode: string | null | undefined = undefined; // 直连口当前应用的口令（undefined=未启动）
   let directMeter: UsageMeter | undefined; // 直连口当前挂的 meter（undefined=没挂，尚未接 hub）
-
-  /** 本实例创建（ownsTunnel）或复用的进程级记录。 */
-  let myShared: ProcessTunnel | null = null;
-  /** 只有创建者负责停止隧道；复用者 dispose 时不能误杀别人的隧道。 */
-  let ownsTunnel = false;
-
-  /** 复用同进程内已建立的隧道（幂等；竞态下由 state() 轮询补齐）。 */
-  function adoptProcessTunnel(): void {
-    if (myShared !== null || processTunnel === null) return;
-    myShared = processTunnel;
-    myShared.owners += 1;
-    handle = myShared.handle;
-    liveState = myShared.state;
-    currentHub = myShared.hub;
-    currentName = myShared.name;
-    lastMessage = myShared.message;
-  }
-  adoptProcessTunnel();
 
   // 0.1.2+ 进程内换发：能力探测 authenticatedUrl → 换发浏览器会话 cookie（0.1.1 无此方法 → 跳过）
   const authConn = ctx.connection;
@@ -227,12 +219,6 @@ export function apply(ctx: Ctx): void {
       } else if (s === "connected") {
         // 已连接 → 清掉「connecting…」之类的过渡信息
         lastMessage = undefined;
-      }
-      if (myShared !== null) {
-        myShared.state = liveState;
-        myShared.message = lastMessage;
-        myShared.hub = currentHub;
-        myShared.name = currentName;
       }
     },
     onLog: (level: "info" | "warn" | "error", message: string): void => {
@@ -398,17 +384,6 @@ export function apply(ctx: Ctx): void {
       hooks,
       reporter,
     });
-    // 登记为进程级记录：同进程的后续实例直接复用，不再抢锁。
-    if (myShared === null) {
-      myShared = { handle, state: liveState, hub, name, message: undefined, owners: 1 };
-      processTunnel = myShared;
-    } else {
-      myShared.handle = handle;
-      myShared.state = liveState;
-      myShared.hub = hub;
-      myShared.name = name;
-    }
-    ownsTunnel = true;
     void syncDirect(config);
   }
 
@@ -428,7 +403,7 @@ export function apply(ctx: Ctx): void {
       }
       directTicketManager = createDirectTicketManager(directSecret);
       if (directHandle === null) {
-        directHandle = await startDirect({
+        directHandle = await startDirectWithRetry({
           dshPort: ctx.webServer.port,
           dshAuthCookieHeader,
           secret: directSecret,
@@ -471,10 +446,14 @@ export function apply(ctx: Ctx): void {
   async function autoConnect(): Promise<void> {
     try {
       if (handle !== null) return;
-      // 任何活锁都不接入：他人（CLI / 另一实例）由 state() 显示为 external；
-      // 同 pid 说明本进程内已有另一个插件实例持有隧道（桌面壳会重复 apply），
-      // 抢锁会抛「another tunnel is already running in this process」并被面板当成错误。
-      if (readJoinLock() !== null) return;
+      // 活锁不接入：他人（CLI / 另一进程）由 state() 显示为 external。
+      // 例外是 pid-reuse 残锁（锁里的 pid 被别的进程复用、isAlive 为真）：先 reap 再接入。
+      // 窄闸门（reasonFilter 只放行 pid-reuse）保证不误删 alive 活锁。
+      const held = readJoinLock();
+      if (held !== null) {
+        const res = await forceUnlockJoinLock(undefined, { reasonFilter: ["pid-reuse"] });
+        if (!res.removed) return;                    // 非 pid-reuse 活锁 / CAS 失败 → 放弃本轮
+      }
       const config = await loadConfig(DEFAULT_HOST_CONFIG_PATH);
       if (config.mode !== "join" || typeof config.hub !== "string" || config.hub === "") return;
       if (readPersistedToken(config.hub) === null) return;
@@ -493,17 +472,10 @@ export function apply(ctx: Ctx): void {
   }
 
   async function disconnect(): Promise<RpcResult> {
-    // 「桌面壳重复 apply」兜底：本实例可能尚未 adopt（handle 为空），但隧道就在本进程
-    // （processTunnel 已登记）。先接管到句柄，保证「断开」真的停掉隧道，而不是空转。
-    adoptProcessTunnel();
     if (handle !== null) {
       await handle.stop();
       handle = null;
       liveState = null;
-      if (myShared !== null) {
-        myShared.state = null;
-        myShared.message = undefined;
-      }
     }
     // 只停隧道，**不停直连口**：join 模式下直连口始终监听（见 gateway/direct.ts 设计），
     // 停掉它会让同网段的 APP 退化成走公网隧道、且断开期间完全不可用。
@@ -512,8 +484,6 @@ export function apply(ctx: Ctx): void {
 
   async function revoke(): Promise<RpcResult> {
     try {
-      // 同上：注销前先接管本进程内已建好的隧道，避免 handle 为空时停了个寂寞。
-      adoptProcessTunnel();
       if (handle !== null) {
         await handle.stop();
         handle = null;
@@ -552,15 +522,6 @@ export function apply(ctx: Ctx): void {
 
   async function state(): Promise<RpcResult> {
     try {
-      // 竞态兜底：另一实例可能在本实例 apply 之后才建好隧道。
-      adoptProcessTunnel();
-      if (myShared !== null && myShared.state !== null) {
-        liveState = myShared.state;
-        handle = myShared.handle;
-        currentHub = myShared.hub;
-        currentName = myShared.name;
-        lastMessage = myShared.message;
-      }
       const compat = uiCompatEnabled();
       // 只读诊断：每个分支都带上，面板据此显示/告警当前目录选择器形态
       const picker = pickerDiagnostics(ctx);
@@ -585,26 +546,9 @@ export function apply(ctx: Ctx): void {
       }
       const held = readJoinLock();
       if (held !== null) {
-        const sameProcess = held.pid === process.pid;
-        // 锁由本进程持有（桌面壳重复 apply 的另一个实例持有隧道）：隧道就在本进程里，
-        // 应按 connected 展示「断开/注销」，而不是误报成 external（那会渲染成「诊断/强制清锁」）。
-        if (sameProcess) {
-          return ok({
-            status: "connected",
-            hub: currentHub,
-            name: currentName,
-            message: lastMessage,
-            hasToken: true,
-            lock: { role: held.role, pid: held.pid, sameProcess },
-            uiCompat: compat,
-            hasAccessCode: accessCodeEnabled(),
-            ...picker,
-            ...meta,
-          });
-        }
         return ok({
           status: "external",
-          lock: { role: held.role, pid: held.pid, sameProcess },
+          lock: { role: held.role, pid: held.pid, sameProcess: held.pid === process.pid },
           uiCompat: compat,
           hasAccessCode: accessCodeEnabled(),
           ...picker,
@@ -776,10 +720,14 @@ export function apply(ctx: Ctx): void {
   void autoConnect();
 
   ctx.on("dispose", () => {
-    // 只停本实例创建的隧道与直连口：复用者（桌面壳重复 apply 的第二个实例）退出时不能误杀别人的资源。
-    if (!ownsTunnel) return;
+    // 先停资源、再复位：handle.stop() 在首个 await 前同步释放锁；reporter.stop() 清定时器。
     void handle?.stop();
     void stopDirect();
-    if (processTunnel !== null && processTunnel === myShared) processTunnel = null;
+    void reporter?.stop();
+    applied = false;
   });
+
+  // 单例标志在注册全部完成后再置位：若上面 ctx.effect/ctx.on 同步抛错，applied 仍为 false，
+  // 后续重 apply 还能重来，不会永久卡死（P2-3）。
+  applied = true;
 }

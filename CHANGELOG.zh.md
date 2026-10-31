@@ -12,6 +12,7 @@
 ### Changed
 
 - **WebView API v2**（gateway）：注入的 `window.__rdshWebViewApi` 将 `version` 升至 `2`；`readReply` 新增返回 `userText` / `reasoning` / `activity` / `rich` / `question`；`fillAndSend` 改用全局标记 `window.__rdshInserting` 表示插入窗口，取代内置键盘守卫。契约见 `packages/gateway/WEBVIEW_API.md`。
+- **单例化 apply**（web-remote）：桌面壳会在同一进程 apply 本插件两次；`apply()` 现在只让第一个实例干活（第二个实例在注册任何东西之前就返回），隧道、直连口、RPC 路由、dispose 都只跑一次。删除 `processTunnel` / `adoptProcessTunnel` / `ownsTunnel` 共享补丁及其衍生问题（断开/注销 no-op、卸载时直连口泄漏）；`describeLock` 现在把「本进程 pid 被复用」的残锁判为 `pid-reuse`（可回收）供 `autoConnect` 清掉；`startDirect` 撞 `EADDRINUSE`（上一实例异步释放端口）时重试一次。
 
 ### 修复
 
@@ -19,8 +20,6 @@
 - **管理台账号状态文案**（portal）：管理台用户列表与用户详情页的「状态」列现在本地化 `account_status`（`active` / `banned` / `deleted` / `pending`），不再直出英文枚举。
 - **卸载插件时直连口泄漏**（web-remote）：插件 `dispose` 只停了隧道、没停局域网直连口（8442），导致不重启 DSH 就重装插件时旧直连口仍占端口、`startDirect` 撞 `EADDRINUSE` 失败、直连候选为空。现在 `dispose` 会一并停掉直连口。
 - **强制清锁可顶替存活持有者**（web-remote）：锁闸门现在把「持有者进程确认存活」的 `alive` 视为 `allowed`（面板二次确认风险），让重新安装的插件能夺回被「未退出的旧 DSH 进程」占着的锁。`self` / `fresh-corrupt` 仍为 `blocked`。
-- **本进程持有的锁不再误报为 external**（web-remote）：当 join 锁由插件自己进程持有（桌面壳重复 apply 的另一个实例）时，`state()` 现在返回 `connected`（显示「断开/注销」），不再误报 `external`（之前会错误渲染成「诊断/强制清锁」面板）。
-- **断开/注销会先接管本进程隧道**（web-remote）：桌面壳重复 apply 时，第二个实例的 `handle` 可能为空，导致「断开/注销」空转。`disconnect()` 与 `revoke()` 现在先 `adoptProcessTunnel()`，确保真的停掉隧道。
 
 ## [rdsh-gateway 0.15.3 · remote-dsh 0.19.1 · dsh-web-remote 0.13.1] - 2026-10-24
 

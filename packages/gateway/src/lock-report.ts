@@ -59,6 +59,13 @@ export interface LockReport {
 
 const REUSE_SLACK_MS = 2000;
 
+/**
+ * 本进程启动时刻（模块加载时只算一次）：供 `describeFromRaw` 判断「本进程 pid 被复用」的残锁。
+ * 不能每次调用用 `Date.now() - process.uptime()` 重算——那会混用墙钟（Date.now，受 NTP/手动改钟影响）
+ * 与单调钟（uptime），墙钟跳变会让「启动时刻」漂移，把本进程真·活锁误判成 pid-reuse。
+ */
+const PROCESS_START_MS = Date.now() - Math.round(process.uptime() * 1000);
+
 const HINTS: Record<LockReason, string> = {
   none: "no lock present",
   dead: "the holder process is gone; the lock is stale",
@@ -110,18 +117,20 @@ export function describeLock(input: DescribeLockInput): LockReport {
 
   // 3) 可解析的锁
   const { pid, role } = raw.lock;
-  if (pid === selfPid) {
-    return { ...base, held: true, role, pid, alive: true, reason: "self", unlock: "blocked", hint: HINTS.self };
-  }
   const alive = probe?.alive === true;
   if (!alive) {
     return { ...base, held: true, role, pid, reason: "dead", unlock: "allowed", hint: HINTS.dead };
   }
-  // 活着 → 看能否证明「pid 复用」（持有者启动时间晚于锁写入时间）
+  // 活着 → 先看能否证明「pid 复用」（持有者启动时间晚于锁写入时间）。
+  // 注意：pid-reuse 判定放在 self 之前 —— 本进程 pid 被复用的残锁（锁 mtime 早于本进程启动）
+  // 其实是 pid-reuse 而非 self，否则单例下会被误判成「本进程持有」而无法 reap。
   const startedAtMs = probe?.startedAtMs;
   const confirmed = startedAtMs !== undefined;
   if (confirmed && raw.mtimeMs !== null && startedAtMs! > raw.mtimeMs + reuseSlackMs) {
     return { ...base, held: true, role, pid, alive: true, pidReuse: true, confirmed: true, reason: "pid-reuse", unlock: "allowed", hint: HINTS["pid-reuse"], command: probe?.command };
+  }
+  if (pid === selfPid) {
+    return { ...base, held: true, role, pid, alive: true, reason: "self", unlock: "blocked", hint: HINTS.self };
   }
   if (confirmed) {
     return { ...base, held: true, role, pid, alive: true, confirmed: true, reason: "alive", unlock: "allowed", hint: HINTS.alive, command: probe?.command };
@@ -183,7 +192,9 @@ async function describeFromRaw(raw: RawJoinLock, probeFn: (pid: number) => Promi
   if (raw.lock !== null && raw.lock.pid !== process.pid) {
     probe = await probeFn(raw.lock.pid);
   } else if (raw.lock !== null && raw.lock.pid === process.pid) {
-    probe = { alive: true };
+    // 本进程 pid：用 process.uptime() 反推启动时刻，供 pid-reuse 判定——上一同 pid 进程留下的
+    // 残锁（mtime 早于本进程启动）应判 pid-reuse 而非 self，否则单例下会误判成「本进程持有」而无法 reap。
+    probe = { alive: true, startedAtMs: PROCESS_START_MS };
   }
   return describeLock({ raw, probe, selfPid: process.pid, now: Date.now() });
 }
@@ -202,7 +213,7 @@ export async function describeJoinLockAt(
  */
 export async function forceUnlockJoinLock(
   path = JOIN_LOCK_PATH,
-  deps: { probe?: (pid: number) => Promise<ProcessProbe> } = {},
+  deps: { probe?: (pid: number) => Promise<ProcessProbe>; reasonFilter?: readonly LockReason[] } = {},
 ): Promise<{ removed: boolean; reason: LockReason; report: LockReport }> {
   const probeFn = deps.probe ?? probeProcess;
   const first = snapshotJoinLock(path);
@@ -212,6 +223,11 @@ export async function forceUnlockJoinLock(
   }
   const report = await describeFromRaw(rawJoinLockFromSnapshot(first), probeFn);
   if (report.unlock !== "allowed") {
+    return { removed: false, reason: report.reason, report };
+  }
+  // 窄闸门：调用方可限定只删除指定 reason（如 autoConnect 只 reap pid-reuse 残锁、不碰 alive 活锁）。
+  // 面板的「强制清锁」不传此参，保持宽闸门（alive → allowed 由用户二次确认）。
+  if (deps.reasonFilter !== undefined && !deps.reasonFilter.includes(report.reason)) {
     return { removed: false, reason: report.reason, report };
   }
   const removed = removeJoinLockIfUnchanged(path, first);

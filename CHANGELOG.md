@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **WebView API v2** (gateway): the injected `window.__rdshWebViewApi` bumps `version` to `2`; `readReply` now also returns `userText` / `reasoning` / `activity` / `rich` / `question`; `fillAndSend` now signals the insert window via the global `window.__rdshInserting` marker instead of an internal keyboard guard. Contract documented in `packages/gateway/WEBVIEW_API.md`.
+- **Singleton apply** (web-remote): the desktop shell applies the plugin twice in one process; `apply()` now runs only the first instance (the second returns before registering anything), so the tunnel, direct listener, RPC route, and dispose each run once. This removes the `processTunnel` / `adoptProcessTunnel` / `ownsTunnel` sharing workaround and its fallout (disconnect/revoke no-op, direct-listener leak on uninstall). `describeLock` now classifies a reused self pid as `pid-reuse` (reap-able) so `autoConnect` clears it; `startDirect` retries once on `EADDRINUSE` (previous instance releasing the port asynchronously).
 
 ### Fixed
 
@@ -19,8 +20,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Admin account status labels** (portal): the admin user list and user detail "Status" column now localizes `account_status` (`active` / `banned` / `deleted` / `pending`) instead of leaking raw English enums.
 - **Direct listener leaked on plugin uninstall** (web-remote): the plugin's `dispose` handler stopped the tunnel but not the LAN direct listener (port 8442); reinstalling the plugin without restarting DSH then left the old listener holding the port, so `startDirect` failed with `EADDRINUSE` and reported empty direct candidates. `dispose` now also stops the direct listener.
 - **Force unlock now supersedes a live lock holder** (web-remote): the lock gate now treats a confirmed-alive holder (`alive`) as `allowed` (with a risk confirmation), so a freshly reinstalled plugin can reclaim a lock left by a stale DSH process that did not exit. `self` and `fresh-corrupt` remain `blocked`.
-- **Same-process lock no longer misreported as external** (web-remote): when the join lock is held by the plugin's own process (the desktop shell applies the plugin twice), `state()` now returns `connected` (showing 断开/注销) instead of `external`, which previously rendered the wrong "diagnose / force unlock" panel.
-- **Disconnect/revoke now adopt the in-process tunnel** (web-remote): when the desktop shell applies the plugin twice, the second instance's `handle` could stay empty, making 断开/注销 a no-op. `disconnect()` and `revoke()` now call `adoptProcessTunnel()` first so they actually stop the tunnel.
 
 ## [rdsh-gateway 0.15.3 · remote-dsh 0.19.1 · dsh-web-remote 0.13.1] - 2026-10-24
 
