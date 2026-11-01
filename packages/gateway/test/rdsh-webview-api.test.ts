@@ -244,15 +244,25 @@ test("feature 59：activity 在多轮对话中按当前轮判定（回归 P0）"
   assert.equal(thinkingJson.activity.kind, "thinking", "有历史答案仍应报 thinking 而非 idle");
   assert.equal(thinkingJson.activity.detail, "这一轮怎么答", "detail 去掉「思考」前缀");
 
-  // 当前轮 tool-call → tool。
+  // 当前轮 tool-call + 停止按钮还在 → tool。
   const tool = el("BODY", {}, [
     el("DIV", { "data-chat-flow-kind": "assistant-step", "data-chat-group-part": "answer", "data-chat-turn": "1" }, [], "上一轮答案"),
     el("DIV", { "data-chat-flow-kind": "user", "data-chat-turn": "2" }, [], "新问题"),
     el("DIV", { "data-chat-flow-kind": "tool-call", "data-chat-turn": "2" }, [], "读取 /tmp/x.md"),
+    el("BUTTON", { "aria-label": "停止生成" }, [], ""),
   ]);
   const toolJson = JSON.parse(Buffer.from((runAdapter(tool) as { readReply: () => string }).readReply(), "base64").toString("utf8"));
   assert.equal(toolJson.activity.kind, "tool");
   assert.equal(toolJson.activity.label, "读取 /tmp/x.md");
+
+  // 被打断后「停止生成」按钮消失 → 残留 tool-call 判 idle（P0 镜像修复）。
+  const interrupted = el("BODY", {}, [
+    el("DIV", { "data-chat-flow-kind": "assistant-step", "data-chat-group-part": "answer", "data-chat-turn": "1" }, [], "上一轮答案"),
+    el("DIV", { "data-chat-flow-kind": "user", "data-chat-turn": "2" }, [], "新问题"),
+    el("DIV", { "data-chat-flow-kind": "tool-call", "data-chat-turn": "2" }, [], "读取 /tmp/x.md"),
+  ]);
+  const interruptedJson = JSON.parse(Buffer.from((runAdapter(interrupted) as { readReply: () => string }).readReply(), "base64").toString("utf8"));
+  assert.equal(interruptedJson.activity.kind, "idle");
 });
 
 test("feature 59：已出答案后仍在执行命令 → tool（不依赖 userTurn > turn）", () => {

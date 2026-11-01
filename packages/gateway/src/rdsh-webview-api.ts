@@ -282,6 +282,13 @@ export const RDSH_WEBVIEW_API = `(function () {
       }
       // 未在跑：本轮尚无回答且 DOM 最新是 tool-call → tool（覆盖无 data-state 的工具类型）。
       if (userTurn > answerTurn) {
+        // 被打断后「停止生成」按钮消失（回到「发送」），此时 tool-call 是残留 → 判 idle，
+        // 避免图标卡在红色停止。只有按钮还在（智能体确实在跑）才报 tool。
+        // 注意：与 stopGeneration 一致，仅匹配 zh/en 的 aria-label；非 zh/en 下会误判 idle
+        // （纯外观、下一轮用户消息自愈），与既有 stop 功能的 locale 限制保持一致。
+        var stopBtn = document.querySelector(
+          'button[aria-label="停止生成"], button[aria-label="Stop generating"]');
+        if (!stopBtn) return act;
         var tools = document.querySelectorAll('[data-chat-flow-kind="tool-call"]');
         var lastTool = tools.length ? tools[tools.length - 1] : null;
         if (lastTool) {
