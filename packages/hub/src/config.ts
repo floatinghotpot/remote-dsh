@@ -74,6 +74,13 @@ export interface BillingConfig {
    */
   productsFile?: string;
   /**
+   * **权益矩阵文件**（单一真相）—— hub 启动时读它取订阅档的 `hosts`/`credits`。
+   *
+   * 就是 App 仓库的 assets/entitlements.json（App 展示、hub 记账共用），
+   * 部署时 scp 到服务器并在配置里写绝对路径。读的是 `levels[].package.hosts/credits`。
+   */
+  entitlementsFile?: string;
+  /**
    * 点数充值档位（解析结果：来自 `productsFile`，或配置内联兜底）。
    *
    * 缺省为空数组 ⇒ **不卖点数**（`/api/credits/recharge` 与入账都会拒绝未知 goodsId）。
@@ -572,10 +579,11 @@ function parsePlanEntries(raw: unknown, source: string, where: string): PlanSpec
 /** 解析商品清单里的订阅条目（`products.subscription[]`）→ hub 套餐。
  *
  * 清单是 App/商店/hub 共用的单一真相，字段映射见 `API.md`：
- * `name` ← `l10nName["zh-CN"]`（**键缺失时回落 `en`**；键存在但为空 ⇒ 启动失败；只用于支付订单主题）、`hosts` ← `package.hosts`、
- * `vip_tier` ← `package.vip_tier`、月赠点 ← `package.credits`、周期 ← `duration {unit, count}`。
+ * `name` ← `l10nName["zh-CN"]`（**键缺失时回落 `en`**；键存在但为空 ⇒ 启动失败；只用于支付订单主题）、
+ * `entitlement` ← 档位 key（指向 entitlements.json 的 level）、`hosts`/月赠点 ← `entitlements[entitlement].package`、
+ * `vip_tier` ← 顶层 `vip_tier`、周期 ← `duration {unit, count}`。
  */
-function parseSubscriptionEntries(raw: unknown, source: string, where: string): PlanSpec[] {
+function parseSubscriptionEntries(raw: unknown, source: string, where: string, entitlements?: Record<string, { hosts?: number; credits?: number }>): PlanSpec[] {
   if (raw === undefined) return [];
   if (!Array.isArray(raw)) throw new Error(`${source}: "${where}" must be an array`);
   const out: PlanSpec[] = [];
@@ -586,10 +594,13 @@ function parseSubscriptionEntries(raw: unknown, source: string, where: string): 
     // `??` 只在「zh-CN 键缺失」时回落 en；键存在但为空串 ⇒ 不回落，按 fail-fast 报错（空名称不该有）。
     const name = l10nName === undefined || l10nName === null ? "" : String(l10nName["zh-CN"] ?? l10nName.en ?? "").trim();
     if (name === "") throw new Error(`${source}: "${where}[].l10nName" must carry a non-empty "zh-CN" (or "en") name — the hub needs it for the payment subject`);
-    const pkg = g.package as Record<string, unknown> | undefined;
-    if (typeof pkg !== "object" || pkg === null) throw new Error(`${source}: "${where}[].package" must be an object`);
-    const hosts = pkg.hosts;
-    if (!Number.isInteger(hosts) || (hosts as number) < 1) throw new Error(`${source}: "${where}[].package.hosts" must be a positive integer`);
+    // 档位 key（指向 entitlements.json 的 level）；hosts/credits 从 entitlements 取（单一真相）。
+    const entitlement = g.entitlement;
+    if (typeof entitlement !== "string" || entitlement.length === 0) throw new Error(`${source}: "${where}[].entitlement" must be a non-empty string`);
+    const ent = entitlements?.[entitlement];
+    if (ent === undefined) throw new Error(`${source}: "${where}[].entitlement" "${entitlement}" not found in "billing.entitlementsFile"`);
+    const hosts = ent.hosts;
+    if (!Number.isInteger(hosts) || (hosts as number) < 1) throw new Error(`${source}: "${where}[].entitlement" "${entitlement}" has no positive hosts`);
     const priceCny = g.priceCNY ?? g.priceCny;
     if (typeof priceCny !== "number" || priceCny < 0) throw new Error(`${source}: "${where}[].priceCNY" must be a non-negative number`);
     const priceUsd = g.priceUSD ?? g.priceUsd;
@@ -603,12 +614,12 @@ function parseSubscriptionEntries(raw: unknown, source: string, where: string): 
     if (unit === "month") intervalMonths = count as number;
     else if (unit === "year") intervalMonths = (count as number) * 12;
     else throw new Error(`${source}: "${where}[].duration.unit" must be month|year for a hub plan (got ${JSON.stringify(unit)})`);
-    const vipTierRaw = pkg.vip_tier;
-    if (vipTierRaw !== undefined && (!Number.isInteger(vipTierRaw) || (vipTierRaw as number) < 1)) throw new Error(`${source}: "${where}[].package.vip_tier" must be a positive integer (1=标准版 / 2=专业版 / 3=旗舰版)`);
+    const vipTierRaw = g.vip_tier;
+    if (vipTierRaw !== undefined && (!Number.isInteger(vipTierRaw) || (vipTierRaw as number) < 1)) throw new Error(`${source}: "${where}[].vip_tier" must be a positive integer (1=标准版 / 2=专业版 / 3=旗舰版)`);
     const vipTier = typeof vipTierRaw === "number" ? vipTierRaw : out.length + 1;
-    if (out.some((x) => x.vipTier === vipTier)) throw new Error(`${source}: "${where}[].package.vip_tier" must be unique (duplicate ${vipTier})`);
-    const bonusRaw = pkg.credits;
-    if (bonusRaw !== undefined && (!Number.isInteger(bonusRaw) || (bonusRaw as number) < 0)) throw new Error(`${source}: "${where}[].package.credits" must be a non-negative integer`);
+    if (out.some((x) => x.vipTier === vipTier)) throw new Error(`${source}: "${where}[].vip_tier" must be unique (duplicate ${vipTier})`);
+    const bonusRaw = ent.credits;
+    if (bonusRaw !== undefined && (!Number.isInteger(bonusRaw) || (bonusRaw as number) < 0)) throw new Error(`${source}: "${where}[].entitlement" "${entitlement}" credits must be a non-negative integer`);
     if (out.some((x) => x.id === g.id)) throw new Error(`${source}: "${where}[].id" must be unique (duplicate ${g.id})`);
     out.push({ id: g.id, name, hosts: hosts as number, priceCny, priceUsd: typeof priceUsd === "number" ? priceUsd : undefined, intervalMonths, vipTier, bonusCredits: typeof bonusRaw === "number" ? bonusRaw : 0, isPopular: g.isPopular === true, isBestValue: g.isBestValue === true });
   }
@@ -645,12 +656,54 @@ function parseCreditEntries(raw: unknown, source: string, where: string): Credit
 }
 
 /**
+ * 读权益矩阵文件（App 仓库的 assets/entitlements.json）：
+ * `levels.<档位>.package.{hosts,credits}` → 订阅档的配额/月赠点。
+ *
+ * **配置错误要吵**：路径写了但读不到 / JSON 坏 / 缺 `levels` ⇒ 启动失败。
+ */
+function loadEntitlementsFromFile(path: string, source: string): Record<string, { hosts?: number; credits?: number }> {
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch (e) {
+    throw new Error(`${source}: cannot read "billing.entitlementsFile" (${path}): ${(e as Error).message}`);
+  }
+  let doc: unknown;
+  try {
+    doc = JSON.parse(text);
+  } catch (e) {
+    throw new Error(`${source}: "billing.entitlementsFile" is not valid JSON (${path}): ${(e as Error).message}`);
+  }
+  const levels = (doc as { levels?: Record<string, unknown> })?.levels;
+  if (typeof levels !== "object" || levels === null) {
+    throw new Error(`${source}: "billing.entitlementsFile" has no "levels" (${path})`);
+  }
+  const out: Record<string, { hosts?: number; credits?: number }> = {};
+  for (const [key, value] of Object.entries(levels)) {
+    const pkg = (value as Record<string, unknown>).package as Record<string, unknown> | undefined;
+    if (typeof pkg !== "object" || pkg === null) {
+      throw new Error(`${source}: "billing.entitlementsFile" levels.${key}.package must be an object`);
+    }
+    const hosts = pkg.hosts;
+    if (hosts !== undefined && (!Number.isInteger(hosts) || (hosts as number) < 0)) {
+      throw new Error(`${source}: "billing.entitlementsFile" levels.${key}.package.hosts must be a non-negative integer`);
+    }
+    const credits = pkg.credits;
+    if (credits !== undefined && (!Number.isInteger(credits) || (credits as number) < 0)) {
+      throw new Error(`${source}: "billing.entitlementsFile" levels.${key}.package.credits must be a non-negative integer`);
+    }
+    out[key] = { ...(typeof hosts === "number" ? { hosts } : {}), ...(typeof credits === "number" ? { credits } : {}) };
+  }
+  return out;
+}
+
+/**
  * 读商品清单文件（App 仓库的 assets/iap_products.json）：
  * `products.consumable[]` → 点数档位，`products.subscription[]` → 套餐（plans）。
  *
  * **配置错误要吵**：路径写了但文件读不到 / JSON 坏 / 缺字段 ⇒ 启动失败（而不是静默不卖点数）。
  */
-function loadCatalogFromFile(path: string, source: string): { credits: CreditProduct[]; plans: PlanSpec[]; channelBonus: Record<string, number> } {
+function loadCatalogFromFile(path: string, source: string, entitlements?: Record<string, { hosts?: number; credits?: number }>): { credits: CreditProduct[]; plans: PlanSpec[]; channelBonus: Record<string, number> } {
   let text: string;
   try {
     text = readFileSync(path, "utf8");
@@ -672,7 +725,7 @@ function loadCatalogFromFile(path: string, source: string): { credits: CreditPro
     throw new Error(`${source}: "billing.productsFile" has no "products.subscription" (${path})`);
   }
   const credits = parseCreditEntries(products.consumable, source, "billing.productsFile: products.consumable");
-  const plans = parseSubscriptionEntries(products.subscription, source, "billing.productsFile: products.subscription");
+  const plans = parseSubscriptionEntries(products.subscription, source, "billing.productsFile: products.subscription", entitlements);
   // 同一个 id 不能既是点数档位又是订阅套餐 —— 否则下单/入账无法区分。
   for (const plan of plans) {
     if (credits.some((c) => c.id === plan.id)) {
@@ -711,10 +764,20 @@ function normalizeBilling(raw: unknown, source: string): BillingConfig {
     }
     productsFile = b.productsFile;
   }
-  const fromFile = productsFile !== undefined ? loadCatalogFromFile(productsFile, source) : undefined;
+  // 权益矩阵文件（订阅档的 hosts/credits 单一真相）；有订阅条目时才必须配（由 parseSubscriptionEntries 校验）。
+  let entitlementsFile: string | undefined;
+  if (b.entitlementsFile !== undefined) {
+    if (typeof b.entitlementsFile !== "string" || b.entitlementsFile.length === 0) {
+      throw new Error(`${source}: "billing.entitlementsFile" must be a non-empty string`);
+    }
+    entitlementsFile = b.entitlementsFile;
+  }
+  const entitlements = entitlementsFile !== undefined ? loadEntitlementsFromFile(entitlementsFile, source) : undefined;
+  const fromFile = productsFile !== undefined ? loadCatalogFromFile(productsFile, source, entitlements) : undefined;
   const credits: CreditProduct[] = fromFile !== undefined ? fromFile.credits : parseCreditEntries(b.credits, source, "billing.credits");
   const resolvedPlans: PlanSpec[] = fromFile !== undefined ? fromFile.plans : parsePlanEntries(b.plans, source, "billing.plans");
   const out: BillingConfig = { plans: resolvedPlans, credits, productsFile };
+  if (entitlementsFile !== undefined) out.entitlementsFile = entitlementsFile;
   // 渠道加量：优先取 productsFile 顶层，其次配置内联（测试/小规模部署用）。
   const channelBonus = fromFile !== undefined && Object.keys(fromFile.channelBonus).length > 0
     ? fromFile.channelBonus

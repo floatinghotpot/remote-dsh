@@ -9,6 +9,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadHubConfig, normalizeHubConfig, resolveHubConfigPath, DEFAULT_HUB_CONFIG_PATH } from "../src/index.ts";
 
+/** 写一份测试用 entitlements.json（levels → package.hosts/credits），返回路径。 */
+async function writeEntitlements(dir: string, levels: Record<string, { hosts?: number; credits?: number }>): Promise<string> {
+  const path = join(dir, "entitlements.json");
+  const out: Record<string, { package: Record<string, number> }> = {};
+  for (const [k, v] of Object.entries(levels)) {
+    out[k] = { package: { ...(v.hosts !== undefined ? { hosts: v.hosts } : {}), ...(v.credits !== undefined ? { credits: v.credits } : {}) } };
+  }
+  await writeFile(path, JSON.stringify({ levels: out }));
+  return path;
+}
+
 test("默认值（无文件）", async () => {
   const dir = await mkdtemp(join(tmpdir(), "hubcfg-"));
   const cfg = await loadHubConfig(join(dir, "missing.json"));
@@ -199,14 +210,16 @@ await writeFile(file, JSON.stringify({
         subscriptionGroup: "vip",
         l10nName: { "zh-CN": "标准版" },
         duration: { unit: "month", count: 1 },
-        package: { hosts: 2, vip_tier: 1, credits: 3000 },
+        vip_tier: 1,
+        entitlement: "plus",
         priceCNY: 38,
         priceUSD: 4.99,
       },
     ],
   },
 }));
-const cfg = normalizeHubConfig({ billing: { productsFile: file } });
+const entFile = await writeEntitlements(dir, { plus: { hosts: 2, credits: 3000 } });
+const cfg = normalizeHubConfig({ billing: { productsFile: file, entitlementsFile: entFile } });
 assert.deepEqual(cfg.billing?.credits, [
   { id: "credits_1_usd", credits: 800, priceCny: 8, priceUsd: 0.99 },
   { id: "credits_5_usd", credits: 5000, priceCny: 38, priceUsd: 4.99 },
@@ -254,11 +267,12 @@ test("billing.channelBonus：内联兜底 + 非法值 fail-fast", () => {
 
 test("billing.productsFile：订阅段生成套餐（与 App/商店同一份清单）", (t) => {
   const real = process.env.RDSH_IAP_PRODUCTS_FILE;
+  const realEnt = process.env.RDSH_ENTITLEMENTS_FILE;
   if (real === undefined || !existsSync(real)) {
     t.skip("RDSH_IAP_PRODUCTS_FILE not set，跳过真实清单冒烟");
     return;
   }
-  const cfg = normalizeHubConfig({ billing: { productsFile: real } });
+  const cfg = normalizeHubConfig({ billing: { productsFile: real, entitlementsFile: realEnt } });
   assert.equal(cfg.billing?.plans.length, 3);
   // 全部字段都由清单推导：name 取 l10nName["zh-CN"]，hosts/价格/vipTier/赠点各归其位。
   assert.deepEqual(cfg.billing?.plans[0], {
@@ -269,10 +283,10 @@ test("billing.productsFile：订阅段生成套餐（与 App/商店同一份清�
     priceUsd: 4.99,
     intervalMonths: 1,
     vipTier: 1,
-    bonusCredits: 3000,
+    bonusCredits: 1900,
   });
   assert.deepEqual(cfg.billing?.plans.map((p) => p.vipTier), [1, 2, 3]);
-  assert.deepEqual(cfg.billing?.plans.map((p) => p.bonusCredits), [3000, 8000, 20000]);
+  assert.deepEqual(cfg.billing?.plans.map((p) => p.bonusCredits), [1900, 3400, 8400]);
 });
 
 test("billing.productsFile：duration 年付映射 + name 回落英文", async () => {
@@ -290,14 +304,16 @@ test("billing.productsFile：duration 年付映射 + name 回落英文", async (
             subscriptionGroup: "vip",
             l10nName: { en: "Pro" },                       // 无 zh-CN ⇒ 回落 en
             duration: { unit: "year", count: 1 },           // 年付 ⇒ 12 个月
-            package: { hosts: 5, vip_tier: 2, credits: 0 },
+            vip_tier: 2,
+            entitlement: "pro",
             priceCNY: 168,
           },
         ],
       },
     }),
   );
-  const cfg = normalizeHubConfig({ billing: { productsFile: file } });
+  const entFile = await writeEntitlements(dir, { pro: { hosts: 5, credits: 0 } });
+  const cfg = normalizeHubConfig({ billing: { productsFile: file, entitlementsFile: entFile } });
   assert.equal(cfg.billing?.plans[0]?.name, "Pro");
   assert.equal(cfg.billing?.plans[0]?.intervalMonths, 12);
 });
@@ -317,16 +333,19 @@ test("billing.productsFile：文件里的套餐优先于内联 plans", async () 
             subscriptionGroup: "vip",
             l10nName: { "zh-CN": "文件套餐", en: "From file" },
             duration: { unit: "month", count: 1 },
-            package: { hosts: 3, vip_tier: 1, credits: 100 },
+            vip_tier: 1,
+            entitlement: "plus",
             priceCNY: 10,
           },
         ],
       },
     }),
   );
+  const entFile = await writeEntitlements(dir, { plus: { hosts: 3, credits: 100 } });
   const cfg = normalizeHubConfig({
     billing: {
       productsFile: file,
+      entitlementsFile: entFile,
       plans: [{ id: "inline", name: "Inline", hosts: 1, priceCny: 1, intervalMonths: 1 }],
     },
   });
@@ -338,18 +357,24 @@ test("billing.productsFile：文件里的套餐优先于内联 plans", async () 
 
 test("billing.productsFile：订阅段坏字段 ⇒ 启动失败（不静默不猜）", async () => {
   const dir = await mkdtemp(join(tmpdir(), "hubcfg-iap5-"));
-  const base = { package: { hosts: 1, vip_tier: 1 }, priceCNY: 1, duration: { unit: "month", count: 1 }, l10nName: { "zh-CN": "套餐" } };
+  const entFile = await writeEntitlements(dir, { plus: { hosts: 2, credits: 3000 } });
+  const base = { vip_tier: 1, entitlement: "plus", priceCNY: 1, duration: { unit: "month", count: 1 }, l10nName: { "zh-CN": "套餐" } };
   const cases: Array<[string, unknown, RegExp]> = [
     ["no-name", { ...base, l10nName: {} }, /l10nName" must carry/],
     ["bad-unit", { ...base, duration: { unit: "week", count: 1 } }, /duration.unit" must be month\|year/],
-    ["no-hosts", { ...base, package: { vip_tier: 1 } }, /package.hosts" must be a positive integer/],
+    ["no-entitlement", { ...base, entitlement: undefined }, /entitlement" must be a non-empty string/],
     ["zero-count", { ...base, duration: { unit: "month", count: 0 } }, /duration.count" must be a positive integer/],
   ];
   for (const [name, sub, re] of cases) {
     const f = join(dir, `${name}.json`);
     await writeFile(f, JSON.stringify({ products: { consumable: [], subscription: [{ id: "p_monthly", ...sub }] } }));
-    assert.throws(() => normalizeHubConfig({ billing: { productsFile: f } }), re, name);
+    assert.throws(() => normalizeHubConfig({ billing: { productsFile: f, entitlementsFile: entFile } }), re, name);
   }
+
+  // 引用权益档位但缺 entitlementsFile ⇒ 启动失败（"not found in entitlementsFile"）
+  const noEnt = join(dir, "no-entfile.json");
+  await writeFile(noEnt, JSON.stringify({ products: { consumable: [], subscription: [{ id: "p_monthly", ...base }] } }));
+  assert.throws(() => normalizeHubConfig({ billing: { productsFile: noEnt } }), /not found in "billing.entitlementsFile"/);
 
   // 缺 subscription 段键（如笔误成 `subscriptions`）⇒ 启动失败，而不是静默"不卖订阅"
   const noSub = join(dir, "no-subscription.json");
@@ -367,7 +392,7 @@ test("billing.productsFile：订阅段坏字段 ⇒ 启动失败（不静默不�
       },
     }),
   );
-  assert.throws(() => normalizeHubConfig({ billing: { productsFile: dup } }), /both products\.consumable and products\.subscription/);
+  assert.throws(() => normalizeHubConfig({ billing: { productsFile: dup, entitlementsFile: entFile } }), /both products\.consumable and products\.subscription/);
 });
 
 test("billing.productsFile：坏路径 / 坏 JSON / 缺字段 ⇒ 启动失败（不静默不卖点数）", async () => {
@@ -393,11 +418,12 @@ assert.throws(() => normalizeHubConfig({ billing: { productsFile: noCredits } })
 test("billing.productsFile：真实 assets/iap_products.json 可解析（6 档）", (t) => {
 // 真实清单属于 App 仓库（私有）；设置 RDSH_IAP_PRODUCTS_FILE 指向它才跑这个冒烟。
 const real = process.env.RDSH_IAP_PRODUCTS_FILE;
+const realEnt = process.env.RDSH_ENTITLEMENTS_FILE;
 if (real === undefined || !existsSync(real)) {
   t.skip("RDSH_IAP_PRODUCTS_FILE not set，跳过真实清单冒烟");
   return;
 }
-const cfg = normalizeHubConfig({ billing: { productsFile: real } });
+const cfg = normalizeHubConfig({ billing: { productsFile: real, entitlementsFile: realEnt } });
 assert.equal(cfg.billing?.credits.length, 6);
 assert.deepEqual(cfg.billing?.credits[0], { id: "credits_1_usd", credits: 800, priceCny: 8, priceUsd: 0.99 });
 });
