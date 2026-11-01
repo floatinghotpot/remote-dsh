@@ -1,5 +1,5 @@
 /**
- * host-quota.test.ts — hostQuota 的配额计算（冻结矩阵 §13.2 的"可云端中转主机数"）。
+ * host-quota.test.ts — hostQuota 的配额计算（"可云端中转主机数"，术语见 API.md §13.2）。
  *
  * 重点回归：取消订阅（到期不续，status=canceled）或进入宽限期后，
  * plan_status 仍是 subscribed/grace（当前周期仍有效），配额必须保留 ——

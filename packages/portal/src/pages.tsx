@@ -2291,7 +2291,7 @@ function VerifyPage(): React.JSX.Element {
 interface PlanInfo {
   id: string;
   name: string;
-  /** 该档可接入云端中转的主机数（API.md §13.3：不是"用户拥有几台主机"）。 */
+  /** 该档可接入云端中转的主机数（API.md §13.2：不是"用户拥有几台主机"）。 */
   hosts: number;
   priceCny: number;
   priceUsd?: number;

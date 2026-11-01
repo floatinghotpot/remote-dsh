@@ -17,7 +17,8 @@ import {
 /**
  * 权益与档位的**契约测试**（镜像 App 侧的 `test/rdsh/entitlements_test.dart`）。
  *
- * 冻结矩阵见 `packages/hub/API.md` §13.2。**任何权益调整都必须同时改 §13 与两端实现及测试**。
+ * 冻结矩阵由两端代码各自维护（本文件 src/entitlements.ts + App 侧 entitlements.dart），
+ * 调整权益必须**同时改两端实现及测试**。
  */
 describe("档位解析 tierOf", () => {
   it("无数据（未登录/接口失败）→ null，绝不等于专属账号", () => {
@@ -53,7 +54,7 @@ describe("档位解析 tierOf", () => {
   });
 });
 
-describe("冻结矩阵（API.md §13.2）", () => {
+describe("冻结矩阵（两端代码）", () => {
   const MATRIX: Record<PlanTier, Record<Entitlement, boolean>> = {
     internal: {
       cloudRelay: true,

@@ -1,10 +1,8 @@
 /**
- * 权益全集与各档位子集 —— Portal 侧**唯一数据源**。
+ * 权益全集与各档位子集 —— Portal 侧**唯一数据源**（权益矩阵已从 `packages/hub/API.md` 移出，
+ * 本文件与 App 侧 `rdsh-app/lib/rdsh/entitlements.dart` 是两端各自的权威实现）。
  *
- * 契约来源：`packages/hub/API.md` §13（跨语言契约）。任何调整**必须先改 §13**，
- * 再同步本文件与 App（私有仓 `rdsh-app/lib/rdsh/entitlements.dart`）—— 两端都有单测。
- *
- * 判据（同 §13.2）：
+ * 判据（与 App 侧一致）：
  * - **消耗服务端成本**的能力（离线语音包走我方 CDN、云端中转走我方带宽与中继节点）→ 免费档不给；
  * - **端侧零成本**能力（直连、系统语音识别/合成）→ 全档开放；
  * - **云端语音识别/合成**分 BYO（自备 Key）与代理（走语音路由扣点），按策略给**专业版及以上**。
@@ -20,7 +18,7 @@ export type PlanTier =
   | "ultra"; // 旗舰版（vipTier 3）
 
 export type Entitlement =
-  /** 云端中转（= 内网穿透/隧道）；数量见 hostQuota（API.md §13.3） */
+  /** 云端中转（= 内网穿透/隧道）；数量见 hostQuota（API.md §13.2） */
   | "cloudRelay"
   /** 直连（局域网 IP / 公网域名）：不占配额、不经我方服务器 */
   | "directConnect"
@@ -109,7 +107,7 @@ export function tierOf(input: TierInput): PlanTier | null {
   }
 }
 
-/** 档位是否拥有某权益（冻结矩阵的代码化，见 API.md §13.2）。 */
+/** 档位是否拥有某权益（冻结矩阵的代码化；本文件即权威，App 侧镜像 `rdsh-app/lib/rdsh/entitlements.dart`）。 */
 export function has(tier: PlanTier, e: Entitlement): boolean {
   switch (e) {
     case "directConnect":
@@ -129,7 +127,7 @@ export function has(tier: PlanTier, e: Entitlement): boolean {
 }
 
 /**
- * 「云端中转」行取值：免费 0；其余档位由计划表给出（`PlanSpec.hosts`，见 API.md §13.3）。
+ * 「云端中转」行取值：免费 0；其余档位由计划表给出（`PlanSpec.hosts`，见 API.md §13.2）。
  * 未配置 → `undefined`（界面显示 `—`，**不猜数字**）。
  */
 export function relayHostsFor(
