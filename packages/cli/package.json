@@ -1,6 +1,6 @@
 {
   "name": "remote-dsh",
-  "version": "0.19.1",
+  "version": "0.20.0",
   "description": "Secure remote access for DeepSeek Harness: rdsh setup / join / serve (gateway & host)",
   "license": "MIT",
   "type": "module",

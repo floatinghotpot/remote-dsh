@@ -460,7 +460,8 @@ UI 文案必须写「**可云端中转主机数**」，**不要**写「主机配
 ## 17. LLM 模型目录（/api/admin/llm/* + /api/internal/llm/routers|config，51-llm-model-catalog，2026-10-22）
 
 > Hub 是模型目录与上游 key 池的唯一事实源；Router 经 join 注册/启用后拉取整段配置（密文密封）。
-> 上游 key 加密入库（信封 KEK/DEK）；管理后台只显示掩码，永不返回明文。
+> 上游 key 加密入库（信封 KEK/DEK）；管理后台只显示掩码，永不返回明文（`/reveal` 是唯一的明文出口，需写权限且记审计）。
+> 55-voice-router 复用同一套表：`llm_routers` / `llm_router_join_tokens` / `llm_upstream_keys` 各有 `service` 列（`llm` | `voice`），语音侧的内部端点见 §17.3。
 
 ### 17.1 Admin（管理员会话）
 
@@ -470,13 +471,17 @@ UI 文案必须写「**可云端中转主机数**」，**不要**写「主机配
 | POST | `/api/admin/llm/models` | 新增，`{id, displayName, provider?, upstreamModel?, 价格?, 容量?, sortOrder?}` |
 | PUT | `/api/admin/llm/models/{id}` | 编辑（含 `enabled`/`nameSource`） |
 | DELETE | `/api/admin/llm/models/{id}` | 软删（`enabled=0`） |
-| GET | `/api/admin/llm/upstream-keys` | 上游 key 列表（掩码，不含密文） |
-| POST | `/api/admin/llm/upstream-keys` | 新增（明文 `apiKey` 仅本次输入，加密入库），`{apiKey, label?, provider?, weight?}` |
-| PUT | `/api/admin/llm/upstream-keys/{id}` | 启停 / 改权重 |
+| GET | `/api/admin/llm/upstream-providers` | 供应商枚举 + 凭据 schema：`{providers:[{provider, service, credentialType, fields, paramsFields?}]}`；Portal 依此渲染表单，写接口依此校验 |
+| GET | `/api/admin/llm/upstream-keys` | 上游 key 列表（掩码；含 `provider`/`service`/`credentialType`，不含密文） |
+| POST | `/api/admin/llm/upstream-keys` | 新增（明文只此一次，加密入库），`{secret, label?, provider?, service?, weight?}`：`provider` 缺省 `deepseek`；`service` 缺省取该 provider 的 service，与 provider 不符 400；`secret` = LLM 的 apiKey 字符串，或语音供应商的凭据对象（键取 `/upstream-providers` 的 `fields`，缺字段 400） |
+| PUT | `/api/admin/llm/upstream-keys/{id}` | 改 `label` / `weight` / `enabled`；带 `secret` 时按原 provider 重加密（语音同 POST 的对象形态） |
+| GET | `/api/admin/llm/upstream-keys/{id}/reveal` | 解密返回 `{secret}`（其中语音为 JSON 字符串）；需 `operator`/`admin`，记审计 `llm.upstream-key.reveal` |
 | DELETE | `/api/admin/llm/upstream-keys/{id}` | 吊销（`revoked_at` + `enabled=0`） |
-| GET | `/api/admin/llm/router-join-tokens` | join token 列表 |
-| POST | `/api/admin/llm/router-join-tokens` | 生成一次性 join token，`{label?, ttlMs?}` → `{id, token, label, expiresAt}` |
-| GET | `/api/admin/llm/routers` | Router 列表（`pending`/`active`/`disabled`/`revoked`） |
+| GET | `/api/admin/llm/upstream-provider-configs` | 语音供应商级参数（`voice_provider_configs`，不含机密） |
+| PUT | `/api/admin/llm/upstream-provider-configs/{provider}` | 写入供应商级参数，`{params}`（JSON 对象或字符串）；`provider` 必须在枚举内，否则 400 |
+| GET | `/api/admin/llm/router-join-tokens` | join token 列表（含 `service`） |
+| POST | `/api/admin/llm/router-join-tokens` | 生成一次性 join token，`{label?, ttlMs?, service?}` → `{id, token, label, expiresAt}`；`service` ∈ `llm`/`voice`（缺省 `llm`），`ttlMs` 缺省 600000、范围 1 分钟–24 小时 |
+| GET | `/api/admin/llm/routers` | Router 列表（`pending`/`active`/`disabled`/`revoked`，含 `service` 区分 LLM / 语音） |
 | POST | `/api/admin/llm/routers/{id}/approve` | 启用（`pending → active`，记审批人/时间） |
 | POST | `/api/admin/llm/routers/{id}/enable` | 再启用（`disabled → active`，不改审批记录） |
 | POST | `/api/admin/llm/routers/{id}/disable` | 禁用（`active → disabled`） |
@@ -484,7 +489,7 @@ UI 文案必须写「**可云端中转主机数**」，**不要**写「主机配
 
 写操作需 `operator`/`admin`（403 `FORBIDDEN`）；读操作 `readonly` 可读。
 
-### 17.2 内部（Router，服务令牌）
+### 17.2 内部（LLM Router，服务令牌）
 
 | 方法 | 路径 | 鉴权 | 说明 |
 |---|---|---|---|
@@ -495,7 +500,19 @@ UI 文案必须写「**可云端中转主机数**」，**不要**写「主机配
 - config 未启用 Router → 403 `ROUTER_NOT_APPROVED`；
 - config 响应体用该 Router 唯一 token 派生密钥（HKDF-SHA256 + AES-256-GCM）加密；解密后为 `{provider:{name,baseURL,apiKey,keyId,protocol}, models:[...]}`。
 
-### 17.3 用户（会话）
+### 17.3 内部（语音 Router，服务令牌）
+
+| 方法 | 路径 | 鉴权 | 说明 |
+|---|---|---|---|
+| POST | `/api/internal/voice/routers/join` | voice join token（`Bearer`） | 一次性注册 → `{routerId, token}`；body `{name?, publicBaseURL?}`；token 为 `rdsh-vt-…`，scope `voice:config:read,voice:usage:write`；非 voice 的 join token 401 |
+| GET | `/api/internal/voice/config` | 服务令牌 + scope `voice:config:read` | 返回 `{v:1, payload}`（封签；`status=active` 且 `service=voice` 才 200） |
+| POST | `/api/internal/voice/usage` | 服务令牌 + scope `voice:usage:write` | 按天累计上报，body `{userId, kind:'asr'\|'tts', provider?, cumulative}` → `{balance, storedCumulative, chargedMicro}` |
+
+- config 未启用/非语音 Router → 403 `ROUTER_NOT_APPROVED`；无启用的语音上游 key → 503 `NO_UPSTREAM_KEY`；
+- config 封签 AAD = `routerId`；解密后为 `{reportIntervalSeconds, overdraftFloorPoints, asrPriceMicroPerSecond, ttsPriceMicroPerChar, session:{maxSeconds, idleTimeoutSeconds, maxPerUser}, globalConcurrency, bufferMaxSeconds, ticketSecret, wsUrl, upstreams:{<provider>:{credentialType, params, secrets}}}` —— `params` 来自 `voice_provider_configs`，`secrets` 来自 `llm_upstream_keys`（同 provider 多把 key 按权重轮换一把），无配置行的供应商被跳过；
+- usage 的日期由服务端归日（不信任客户端）；`cumulative` 为当日累计值，按幂等水位只对增量计费；只落 `voice_usage_daily`，不产生逐笔账本。
+
+### 17.4 用户（会话）
 
 | 方法 | 路径 | 说明 |
 |---|---|---|

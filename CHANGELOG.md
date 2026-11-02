@@ -7,12 +7,26 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [rdsh-gateway 0.16.0 · rdsh-hub 0.20.0 · rdsh-hub-cli 0.20.0 · remote-dsh 0.20.0 · dsh-web-remote 0.14.0] - 2026-11-03
+
+### Added
+
+- **Product analytics** (hub): `POST /api/analytics/event` accepts client events (`app_open` / `purchase_start`) with idempotent `event_id` and UTC+8 day bucketing, feeding `analytics_daily` plus `analytics_first_seen` aggregation; `GET /api/admin/analytics` backs the admin dashboard (paid retention cohorts, subscription funnel, revenue, churn, daily registrations). Contract in `packages/hub/API.md` §19.
+- **Cloud voice router** (hub, cli, portal): voice billing lives in `voice_usage_daily` (idempotent watermark + three-bucket debit); `POST /api/voice/session` issues short-lived ASR/TTS tickets; the router joins and pulls its sealed config through `/api/internal/voice/{routers/join,config,usage}`. Upstream keys gain `service` / `credential_type` and a per-provider credential schema (volcengine / aliyun / tencent / iflytek / baidu / minimax); routers and join tokens reuse the `llm_routers` / `llm_router_join_tokens` tables with a `service` column. `rdsh-hub router --service` plus `llm` / `voice` aliases; the portal renders the structured key form and a router type column.
+- **Voice provider config** (hub, portal): new `voice_provider_configs` table (migration 0020) separates provider-level params (URLs, resource ids, voice list) from key secrets; providers without a config row are skipped. Admin API gains `upstream-providers` (provider enum + credential schema), `upstream-provider-configs` (CRUD), key `reveal`, and key update (label / weight / secret re-encrypt). `GET /api/voice/config` exposes the voice whitelist to the app.
+- **Entitlements file** (hub): `billing.entitlementsFile` reads the app's `entitlements.json` (`levels.<tier>.package.{hosts,credits}`), so subscription host counts and monthly bonus credits come from one source; a missing or malformed file fails startup instead of silently falling back.
+- **Granular activity** (gateway): `activityOf` reports eight kinds (commands / edit / read / web / tools / subagents / plan / questions) with detail taken from the process header.
+- **Service install after join** (cli): after a QR join, `rdsh` offers to install the host service and enable `loginctl` linger, so the host survives logout without a manual `rdsh service install`.
 
 ### Changed
 
 - **WebView API v2** (gateway): the injected `window.__rdshWebViewApi` bumps `version` to `2`; `readReply` now also returns `userText` / `reasoning` / `activity` / `rich` / `question`; `fillAndSend` now signals the insert window via the global `window.__rdshInserting` marker instead of an internal keyboard guard. Contract documented in `packages/gateway/WEBVIEW_API.md`.
 - **Singleton apply** (web-remote): the desktop shell applies the plugin twice in one process; `apply()` now runs only the first instance (the second returns before registering anything), so the tunnel, direct listener, RPC route, and dispose each run once. This removes the `processTunnel` / `adoptProcessTunnel` / `ownsTunnel` sharing workaround and its fallout (disconnect/revoke no-op, direct-listener leak on uninstall). `describeLock` now classifies a reused self pid as `pid-reuse` (reap-able) so `autoConnect` clears it; `startDirect` retries once on `EADDRINUSE` (previous instance releasing the port asynchronously).
+- **Plan status** (hub): `plan_status="internal"` replaces `NULL` as the exclusive / unlimited tier, and `NULL` is now fail-closed (no privileges); bonus credits are granted by subscription events (started / renewed / changed) plus the tier difference on upgrade, replacing the calendar-month sweep; `rdsh-hub user add` creates internal accounts and the admin plan action rejects `null`.
+- **Daily points spend** (hub, portal): `GET /api/credits/spend-daily` aggregates `relay_charge` / `llm_usage_daily` / `voice_usage_daily` by day; the per-transaction debit ledger view is dropped.
+- **Active router by service** (hub): router selection is centralised on `service`, so host LLM keys and the voice config no longer pick each other's router.
+- **Migration safety** (hub): migration runs are serialised by a session advisory lock, and `schema_migrations` records `source` / `pid` for auditing.
+- **Portal** (portal): plan cards, tier matrix, and navigation aligned with the app; nav reordered (hosts before account) and plans shown for internal accounts.
 
 ### Fixed
 
@@ -20,6 +34,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Admin account status labels** (portal): the admin user list and user detail "Status" column now localizes `account_status` (`active` / `banned` / `deleted` / `pending`) instead of leaking raw English enums.
 - **Direct listener leaked on plugin uninstall** (web-remote): the plugin's `dispose` handler stopped the tunnel but not the LAN direct listener (port 8442); reinstalling the plugin without restarting DSH then left the old listener holding the port, so `startDirect` failed with `EADDRINUSE` and reported empty direct candidates. `dispose` now also stops the direct listener.
 - **Force unlock now supersedes a live lock holder** (web-remote): the lock gate now treats a confirmed-alive holder (`alive`) as `allowed` (with a risk confirmation), so a freshly reinstalled plugin can reclaim a lock left by a stale DSH process that did not exit. `self` and `fresh-corrupt` remain `blocked`.
+- **Stop-button activity parity** (gateway): `activityOf` now applies the same stop-button check as the app, so a stopped run no longer reports a stale activity.
+- **Destructive PG test guard** (hub): tests that wipe tables refuse to run unless the target looks like a test database.
+
+### Notes
+
+- **`dsh-web-remote`** and **`remote-dsh`** are republished so their pinned `rdsh-gateway` moves from `0.15.3` to `0.16.0`; both also carry their own changes above.
+- **`rdsh-tunnel`** is unchanged this release — the wire protocol is untouched.
+- The rebuilt portal bundle must be committed together with its source; production only pulls, deploys, and verifies.
 
 ## [rdsh-gateway 0.15.3 · remote-dsh 0.19.1 · dsh-web-remote 0.13.1] - 2026-10-24
 

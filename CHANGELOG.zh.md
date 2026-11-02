@@ -7,12 +7,26 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [未发布]
+## [rdsh-gateway 0.16.0 · rdsh-hub 0.20.0 · rdsh-hub-cli 0.20.0 · remote-dsh 0.20.0 · dsh-web-remote 0.14.0] - 2026-11-03
 
-### Changed
+### 新增
+
+- **产品分析**（hub）：`POST /api/analytics/event` 接收客户端事件（`app_open` / `purchase_start`），`event_id` 幂等、按 UTC+8 归日，累进 `analytics_daily` 与 `analytics_first_seen` 聚合；`GET /api/admin/analytics` 支撑管理台看板（付费留存队列、订阅漏斗、收入、流失、每日注册）。契约见 `packages/hub/API.md` §19。
+- **云端语音路由**（hub、cli、portal）：语音计费落 `voice_usage_daily`（幂等水位 + 三段扣费）；`POST /api/voice/session` 签发短时效 ASR/TTS 票据；语音路由经 `/api/internal/voice/{routers/join,config,usage}` 注册并拉取封签配置。上游 key 增加 `service` / `credential_type` 与按供应商的凭据 schema（volcengine / aliyun / tencent / iflytek / baidu / minimax）；Router 与 join token 复用 `llm_routers` / `llm_router_join_tokens` 表并带 `service` 列。`rdsh-hub router --service` 及 `llm` / `voice` 别名；portal 渲染结构化 key 表单与 Router 类型列。
+- **语音供应商配置**（hub、portal）：新增 `voice_provider_configs` 表（migration 0020），把供应商级参数（URL、resource id、音色列表）与 key 机密分离；没有配置行的供应商直接跳过。管理 API 新增 `upstream-providers`（供应商枚举 + 凭据 schema）、`upstream-provider-configs`（增删改查）、key `reveal`，以及 key 更新（label / weight / secret 重加密）。`GET /api/voice/config` 向 App 下发音色白名单。
+- **权益文件**（hub）：`billing.entitlementsFile` 读取 App 的 `entitlements.json`（`levels.<档位>.package.{hosts,credits}`），订阅档主机数与每月赠点同源；文件缺失或格式错误直接启动失败，不再静默兜底。
+- **细分活动状态**（gateway）：`activityOf` 上报 8 种（commands / edit / read / web / tools / subagents / plan / questions），详情取自进程头部。
+- **加入后引导装服务**（cli）：扫码 join 成功后，`rdsh` 会询问是否安装主机服务并开启 `loginctl` linger，主机不再需要手动 `rdsh service install` 才能在退出登录后存活。
+
+### 变更
 
 - **WebView API v2**（gateway）：注入的 `window.__rdshWebViewApi` 将 `version` 升至 `2`；`readReply` 新增返回 `userText` / `reasoning` / `activity` / `rich` / `question`；`fillAndSend` 改用全局标记 `window.__rdshInserting` 表示插入窗口，取代内置键盘守卫。契约见 `packages/gateway/WEBVIEW_API.md`。
 - **单例化 apply**（web-remote）：桌面壳会在同一进程 apply 本插件两次；`apply()` 现在只让第一个实例干活（第二个实例在注册任何东西之前就返回），隧道、直连口、RPC 路由、dispose 都只跑一次。删除 `processTunnel` / `adoptProcessTunnel` / `ownsTunnel` 共享补丁及其衍生问题（断开/注销 no-op、卸载时直连口泄漏）；`describeLock` 现在把「本进程 pid 被复用」的残锁判为 `pid-reuse`（可回收）供 `autoConnect` 清掉；`startDirect` 撞 `EADDRINUSE`（上一实例异步释放端口）时重试一次。
+- **套餐状态**（hub）：`plan_status="internal"` 取代 `NULL` 作为内部无限档，`NULL` 变为 fail-closed（无任何权益）；赠点改为由订阅事件驱动（started / renewed / changed，升级补档位差额），取消按自然月扫描；`rdsh-hub user add` 建号即为 internal，管理台套餐动作拒绝 `null`。
+- **每日点数消耗**（hub、portal）：`GET /api/credits/spend-daily` 按天聚合 `relay_charge` / `llm_usage_daily` / `voice_usage_daily`；移除逐笔扣费账本视图。
+- **按 service 选活跃 Router**（hub）：Router 选择统一按 `service` 收敛，主机 LLM key 与语音配置不会再选中对方的 Router。
+- **迁移安全**（hub）：迁移执行用会话级 advisory lock 串行化，`schema_migrations` 记录 `source` / `pid` 供审计。
+- **Portal**（portal）：套餐卡片、档位矩阵与导航与 App 对齐；导航重排（主机在账号之前），内部账号也展示套餐。
 
 ### 修复
 
@@ -20,6 +34,14 @@
 - **管理台账号状态文案**（portal）：管理台用户列表与用户详情页的「状态」列现在本地化 `account_status`（`active` / `banned` / `deleted` / `pending`），不再直出英文枚举。
 - **卸载插件时直连口泄漏**（web-remote）：插件 `dispose` 只停了隧道、没停局域网直连口（8442），导致不重启 DSH 就重装插件时旧直连口仍占端口、`startDirect` 撞 `EADDRINUSE` 失败、直连候选为空。现在 `dispose` 会一并停掉直连口。
 - **强制清锁可顶替存活持有者**（web-remote）：锁闸门现在把「持有者进程确认存活」的 `alive` 视为 `allowed`（面板二次确认风险），让重新安装的插件能夺回被「未退出的旧 DSH 进程」占着的锁。`self` / `fresh-corrupt` 仍为 `blocked`。
+- **停止按钮判定对齐**（gateway）：`activityOf` 改用与 App 相同的停止按钮判定，已停止的会话不再上报残留活动状态。
+- **危险 PG 测试护栏**（hub）：会清空数据表的测试在目标不像测试库时拒绝执行。
+
+### 说明
+
+- **`dsh-web-remote`** 与 **`remote-dsh`** 重新发布，使其钉住的 `rdsh-gateway` 从 `0.15.3` 升到 `0.16.0`；两者自身也有上述改动。
+- **`rdsh-tunnel`** 本次无改动 —— 线协议未动。
+- portal 产物须与源码一起提交；生产只 pull、部署、验证，不构建、不提交产物。
 
 ## [rdsh-gateway 0.15.3 · remote-dsh 0.19.1 · dsh-web-remote 0.13.1] - 2026-10-24
 
