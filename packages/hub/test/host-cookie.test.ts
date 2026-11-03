@@ -1,11 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { HubDb } from "../src/db.ts";
-import { HubAuth } from "../src/auth.ts";
+import { HubAuth, REFRESH_TTL_MS } from "../src/auth.ts";
 import { createSqliteStore } from "../src/store.ts";
 import { loadHostCookieSigner } from "../src/hostcookie.ts";
 import { Jwt } from "../src/jwt.ts";
-import { clearHostCookie } from "../src/server.ts";
+import { clearHostCookie, hostCookie } from "../src/server.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -57,4 +57,26 @@ test("clearHostCookie 必须带 Domain（否则清不掉跨域 cookie）", () =>
     "rdsh_host=; HttpOnly; SameSite=Lax; Path=/; Domain=.rdsh.cn; Max-Age=0",
   );
   assert.equal(clearHostCookie(), "rdsh_host=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0");
+});
+
+test("host cookie 有效期 30d（非 7d）——防回退", () => {
+  const { db, auth } = setup();
+  const user = db.createUser("alice", "scrypt:fake");
+  const token = auth.signHostCookie("host-abc", user.id);
+  const raw = Buffer.from(token, "base64url").toString("utf8");
+  const exp = Number(raw.split(".")[3]);
+  const ttlMs = exp - Date.now();
+  assert.ok(
+    ttlMs >= 29 * 24 * 60 * 60 * 1000,
+    `host cookie TTL 应为 30d（${REFRESH_TTL_MS}ms），实际 ${ttlMs}ms`,
+  );
+});
+
+test("hostCookie Set-Cookie Max-Age 与签名 exp 一致（30d，防漂移）", () => {
+  const { db, auth } = setup();
+  const user = db.createUser("alice", "scrypt:fake");
+  const cookie = hostCookie("host-abc", user.id, auth, ".rdsh.cn");
+  const expected = Math.floor(REFRESH_TTL_MS / 1000);
+  assert.ok(cookie.includes(`Max-Age=${expected}`), `Max-Age 应为 ${expected}（30d 秒），实际：${cookie}`);
+  assert.ok(!cookie.includes(`Max-Age=${7 * 24 * 60 * 60}`), "Max-Age 不应是 7d");
 });

@@ -20,7 +20,7 @@ import { WebSocketServer } from "ws";
 import type { WebSocket } from "ws";
 import { sha256 } from "./jwt.ts";
 import { HubDb, RELAY_BYTES_PER_CREDIT, RELAY_OVERDRAFT_FLOOR_POINTS, relayFreePolicy } from "./db.ts";
-import { HubAuth } from "./auth.ts";
+import { HubAuth, REFRESH_TTL_MS } from "./auth.ts";
 import { authenticate, clientIp, handleApi, writeError, sweepBilling } from "./api.ts";
 import type { HubRuntime } from "./api.ts";
 import type { EmailConfig } from "./email/types.ts";
@@ -108,7 +108,7 @@ const TUNNEL_PATH = "/tunnel";
 export const HOST_COOKIE = "rdsh_host";
 /** portal 根路径前缀。 */
 export const PORTAL_PREFIX = "/portal";
-const HOST_COOKIE_MAX_AGE = 7 * 24 * 60 * 60; // 7 天（签名 host cookie，含会话版本）
+const HOST_COOKIE_MAX_AGE = Math.floor(REFRESH_TTL_MS / 1000); // 30d（对齐 refresh 会话，签名 host cookie 含会话版本）
 
 /**
  * 无 host 上下文时的兜底 web app manifest。
@@ -379,7 +379,7 @@ async function handleEnterHost(
   search: string,
 ): Promise<void> {
   // 入口凭据：优先 access（Bearer / rdsh_hub_session，1h，首次进入）；access 失效时回退
-  // 7d capability cookie（rdsh_host）——已进入过该主机的客户端在 cookie 有效期内重进 / 刷新 /
+  // 30d capability cookie（rdsh_host）——已进入过该主机的客户端在 cookie 有效期内重进 / 刷新 /
   // 被系统回收后重建都不再依赖 access，与 relay 的 capability 语义一致（2026-10-08 fix）。
   let userId = authenticate(req, runtime)?.userId ?? null;
   if (userId === null) {
@@ -421,7 +421,7 @@ async function handleEnterHost(
     return;
   }
   await runtime.store.recordAudit(userId, "host.enter", { hostId, role: isOwner ? "owner" : "member" }, clientIp(req, runtime));
-  // Set-Cookie（Ed25519 签名 host cookie，7d，Domain=区域根域）+ 302 到 /h/<hostId>/（带前缀，多标签隔离）。
+  // Set-Cookie（Ed25519 签名 host cookie，30d，Domain=区域根域）+ 302 到 /h/<hostId>/（带前缀，多标签隔离）。
   // 30-relay-node R9：在线外部节点 → 节点根路径；hub 内置 relay → defaultRelayUrl（配置了才强制，避免与站点根路径混用）；否则回退 hub 根路径。
   const node = host.nodeId !== null ? await runtime.store.getNodeById(host.nodeId) : null;
   const enterBase = node !== null && node.status === "online" ? node.advertiseUrl : (runtime.config.defaultRelayUrl ?? "");

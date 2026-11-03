@@ -1,7 +1,7 @@
 /**
  * auth.ts — hub 认证：登录/刷新/登出/改密 + 限流 + 用户版本化会话。
  *
- * - access JWT（1h，带 ver）；refresh 随机不透明串（DB 存 SHA-256 摘要，7d，轮换）
+ * - access JWT（1h，带 ver）；refresh 随机不透明串（DB 存 SHA-256 摘要，30d，轮换）
  * - 改密 → users.ver + 1 → 全部旧 access 立即失效 + 全部 refresh 吊销
  * - 密码 scrypt（格式与 gateway 一致：`scrypt:$N:$r:$p:$salt:$hash`）
  *
@@ -231,11 +231,11 @@ export class HubAuth {
   }
 
 
-/** 签发 host 访问 cookie（HMAC 签名，7 天）。relay 后续只验此 cookie（含会话版本），
+/** 签发 host 访问 cookie（Ed25519 签名，30d；无签名器时 HMAC 回退）。relay 后续只验此 cookie（含会话版本），
  * 进入后 DSH 持续可用，不受 access 1h 过期影响；改密（ver+1）后旧 cookie 立即失效。 */
 signHostCookie(hostId: string, userId: number): string {
   const ver = this.lookupUser(userId)?.ver ?? 1;
-  const exp = Date.now() + 7 * 24 * 60 * 60 * 1000;
+  const exp = Date.now() + REFRESH_TTL_MS;
   const payload = [hostId, userId, ver, exp].join('.');
   // R17：Ed25519（sig = hex 128 字符）；无签名器时回退 HMAC（兼容期）
   const sig = this.hostCookieSigner !== undefined ? this.hostCookieSigner.sign(payload) : this.hmac(payload);

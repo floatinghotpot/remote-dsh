@@ -10,7 +10,7 @@ import { createHmac, createHash, randomBytes, timingSafeEqual } from "node:crypt
 /** 网关访问 cookie 名（hub 侧 relay 白名单同名硬编码，注释互指）。 */
 export const GATE_COOKIE = "rdsh_gate";
 
-/** 访问 cookie 有效期（对齐 host cookie 7 天）。 */
+/** 访问 cookie 有效期：7 天（主机访问口令，独立于 host cookie 会话时长）。 */
 export const GATE_COOKIE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** 派生 HMAC 密钥：sha256(accessCode)（改 code 即吊销旧 cookie）。 */

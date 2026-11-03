@@ -27,7 +27,7 @@ import { CREDITS_MICRO_PER_CREDIT } from "./credits.ts";
 const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD_LENGTH });
 
 /**
- * 授权 host 访问：验 HMAC 签名 host cookie（进入 host 时签发，7 天，绑定会话版本）。
+ * 授权 host 访问：验 HMAC 签名 host cookie（进入 host 时签发，30d，绑定会话版本）。
  * 不依赖 rdsh_hub_session —— 进入后 DSH 持续可用；改密（ver+1）或吊销后立即失效。
  */
 async function authorizeHost(req: IncomingMessage, runtime: HubRuntime, pathHostId?: string): Promise<{ hostId: string; userId: number } | null> {
@@ -119,7 +119,7 @@ export async function handleRelay(req: IncomingMessage, res: ServerResponse, run
         // 缓冲注入时去掉 content-length（回写时重算）
         const h: Record<string, string | string[]> = { ...respHeaders };
         delete h["content-length"];
-        // 滑动续期：导航（text/html）时重签 host cookie（7 天，无 302，前缀常驻）
+        // 滑动续期：导航（text/html）时重签 host cookie（30d，无 302，前缀常驻）
         const domain = runtime.config.hostCookieDomain ?? rootDomain(req.headers.host);
         h["set-cookie"] = hostCookie(hostId, auth.userId, runtime.auth, domain);
         res.writeHead(status, h);
