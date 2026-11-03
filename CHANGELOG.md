@@ -7,6 +7,22 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [rdsh-gateway 0.16.1 · dsh-web-remote 0.14.1] - 2026-11-04
+
+### Fixed
+
+- **Plugin teardown never ran** (web-remote, gateway): the plugin registered shutdown on `ctx.on("dispose")`, which Cordis 4 does not emit, so the tunnel, the LAN direct listener (port 8442), and the reporter timer were never stopped at host shutdown. The leftover listener kept the host process alive past the desktop shell's 10 s graceful deadline and refused in-app updates (`desktop update: Host did not complete graceful task teardown`). Teardown now registers through `ctx.effect(...)`, which the host awaits, and a `disposed` guard closes the `autoConnect` race.
+- **Bounded final usage report** (gateway): `UsageReporter.flush`/`stop` and `JoinHandle.stop` now accept an optional `timeoutMs`/`flushTimeoutMs` (defaults unchanged); teardown passes 1.5 s so a slow hub cannot hold the process past the shutdown deadline. `hubRequest` also gained an `AbortSignal` and no longer pools keep-alive sockets, so an in-flight report is aborted and its socket released.
+- **Reconnect timer leak** (gateway): a pending exponential-backoff reconnect timer is now stored and cancelled on `stop()`, so a tunnel stopped mid-backoff can no longer keep the process alive up to 60 s.
+
+### Changed
+
+- **Correction** (web-remote): the 0.14.0 note "dispose now also stops the direct listener" was wired to the never-fired `dispose` event and did not actually take effect; this release makes teardown real and covers it with a real-Cordis lifecycle test and a `getActiveResourcesInfo()` no-linger test.
+
+### Known issues
+
+- During the startup `autoConnect` window (the first seconds after boot), an in-flight `registerJoin` HTTP request can still hold the process up to its 10 s timeout if shutdown lands exactly then; noted, not fixed (low probability).
+
 ## [rdsh-gateway 0.16.0 · rdsh-hub 0.20.0 · rdsh-hub-cli 0.20.0 · remote-dsh 0.20.0 · dsh-web-remote 0.14.0] - 2026-11-03
 
 ### Added
@@ -32,7 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Admin plan labels** (portal): the admin user list and user detail "Plan" column now localizes every `plan_status` value (`internal` / `trial` / `grace` / `free` / `subscribed`). Previously only `internal` was translated and the rest leaked raw English enums; unknown values now show a localized placeholder instead of the backend value.
 - **Admin account status labels** (portal): the admin user list and user detail "Status" column now localizes `account_status` (`active` / `banned` / `deleted` / `pending`) instead of leaking raw English enums.
-- **Direct listener leaked on plugin uninstall** (web-remote): the plugin's `dispose` handler stopped the tunnel but not the LAN direct listener (port 8442); reinstalling the plugin without restarting DSH then left the old listener holding the port, so `startDirect` failed with `EADDRINUSE` and reported empty direct candidates. `dispose` now also stops the direct listener.
+- **Direct listener leaked on plugin uninstall** (web-remote): the plugin's `dispose` handler stopped the tunnel but not the LAN direct listener (port 8442); reinstalling the plugin without restarting DSH then left the old listener holding the port, so `startDirect` failed with `EADDRINUSE` and reported empty direct candidates. `dispose` now also stops the direct listener. _(Correction in 0.14.1: this was wired to the never-fired `ctx.on("dispose")` event and did not actually take effect.)_
 - **Force unlock now supersedes a live lock holder** (web-remote): the lock gate now treats a confirmed-alive holder (`alive`) as `allowed` (with a risk confirmation), so a freshly reinstalled plugin can reclaim a lock left by a stale DSH process that did not exit. `self` and `fresh-corrupt` remain `blocked`.
 - **Stop-button activity parity** (gateway): `activityOf` now applies the same stop-button check as the app, so a stopped run no longer reports a stale activity.
 - **Destructive PG test guard** (hub): tests that wipe tables refuse to run unless the target looks like a test database.

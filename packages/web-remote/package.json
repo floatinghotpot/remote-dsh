@@ -1,6 +1,6 @@
 {
   "name": "dsh-web-remote",
-  "version": "0.14.0",
+  "version": "0.14.1",
   "description": "Secure remote access to your agent (no public IP required, end-to-end encrypted). Two-way voice (with the WhaleLink app).",
   "license": "MIT",
   "type": "module",
@@ -30,6 +30,9 @@
   },
   "dependencies": {
     "rdsh-gateway": "workspace:*"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.5"
   },
   "dsh": {
     "bundle": {

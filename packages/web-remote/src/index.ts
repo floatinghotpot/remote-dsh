@@ -142,6 +142,9 @@ let applied = false;
 /** 直连口 EADDRINUSE 退避重试间隔（上一个实例异步释放端口期间；累计约 3.5s）。 */
 const EADDRINUSE_RETRY_DELAYS_MS = [500, 1000, 2000];
 
+/** 收尾时 hub 上报类操作的上限：`hubRequest` 默认 10s 超时，会吃满桌面端 10s 优雅窗口。 */
+const TEARDOWN_FLUSH_BUDGET_MS = 1500;
+
 /** 起直连口；撞 EADDRINUSE（上一实例异步释放端口期间）按退避间隔重试，最终失败则抛给 syncDirect 降级。 */
 async function startDirectWithRetry(opts: DirectOptions): Promise<DirectHandle> {
   for (let attempt = 0; attempt <= EADDRINUSE_RETRY_DELAYS_MS.length; attempt += 1) {
@@ -170,6 +173,8 @@ export function apply(ctx: Ctx): void {
    * 这样即便隧道断开、只有直连口在服务，它仍能继续定时上报直连字节。
    */
   let reporter: UsageReporter | null = null;
+  /** 收尾与 autoConnect 的竞态：dispose 后禁止再建隧道/直连口。 */
+  let disposed = false;
   let handle: JoinHandle | null = null;
   let liveState: JoinState | null = null; // 仅隧道运行中非 null
   let currentHub: string | undefined;
@@ -355,6 +360,7 @@ export function apply(ctx: Ctx): void {
 
   /** 起隧道并同步面板状态（connect / autoConnect 共用；转发到本进程 dsh）。 */
   function startTunnel(config: RdshConfig, hub: string, token: string, name: string, insecure: boolean): void {
+    if (disposed) return;
     currentConfig = config;
     liveCompat = config.dshUiCompat?.trustE2EEAsLoopback !== false;
     liveAccessCode = config.gateway?.accessCode ?? null;
@@ -403,7 +409,7 @@ export function apply(ctx: Ctx): void {
       }
       directTicketManager = createDirectTicketManager(directSecret);
       if (directHandle === null) {
-        directHandle = await startDirectWithRetry({
+        const started = await startDirectWithRetry({
           dshPort: ctx.webServer.port,
           dshAuthCookieHeader,
           secret: directSecret,
@@ -416,6 +422,13 @@ export function apply(ctx: Ctx): void {
           // 尚未接入过 hub 时为 undefined（无可上报目标），属预期。
           meter,
         });
+        // 收尾可能恰在 startDirect 的异步 listen 期间到达：此时 teardown 的 stopDirect() 因
+        // directHandle 仍为 null 已跳过，这里必须补停，否则 8442 监听口在收尾之后泄漏。
+        if (disposed) {
+          await started.stop().catch(() => undefined);
+          return;
+        }
+        directHandle = started;
         directMeter = meter;
         directAccessCode = code;
       }
@@ -719,15 +732,19 @@ export function apply(ctx: Ctx): void {
   // 启动自动接入（静默；CLI 托管时跳过，见 autoConnect 前置条件）
   void autoConnect();
 
-  ctx.on("dispose", () => {
-    // 先停资源、再复位：handle.stop() 在首个 await 前同步释放锁；reporter.stop() 清定时器。
-    void handle?.stop();
-    void stopDirect();
-    void reporter?.stop();
+  ctx.effect(() => async () => {
+    // 同步置 disposed：立即阻止 autoConnect/syncDirect 再建隧道/直连口。
+    disposed = true;
+    // 顺序 = CLI join()（direct → handle → dsh）：先关直连口（含直连尾账），
+    // 再 handle.stop() 做末次 flush，最后 reporter.stop() 清定时器（其内部 flush 与 handle.stop 幂等）。
+    await stopDirect();
+    if (handle !== null) await handle.stop({ flushTimeoutMs: TEARDOWN_FLUSH_BUDGET_MS }).catch(() => undefined);
+    if (reporter !== null) await reporter.stop(TEARDOWN_FLUSH_BUDGET_MS).catch(() => undefined);
+    // 收尾完成后再复位单例：新实例此时才允许接管（也便于测试证明「dispose 被 await」）。
     applied = false;
-  });
+  }, "dsh-web-remote: teardown");
 
-  // 单例标志在注册全部完成后再置位：若上面 ctx.effect/ctx.on 同步抛错，applied 仍为 false，
+  // 单例标志在注册全部完成后再置位：若上面 ctx.effect 同步抛错，applied 仍为 false，
   // 后续重 apply 还能重来，不会永久卡死（P2-3）。
   applied = true;
 }

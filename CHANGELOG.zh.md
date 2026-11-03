@@ -7,6 +7,22 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [rdsh-gateway 0.16.1 · dsh-web-remote 0.14.1] - 2026-11-04
+
+### 修复
+
+- **插件收尾从未执行**（web-remote + gateway）：插件把收尾注册在 `ctx.on("dispose")` 上，而 Cordis 4 不会触发该事件，导致宿主关闭时隧道、局域网直连口（8442）与上报定时器从未被停掉。残留的监听口让宿主进程活过桌面端 10s 优雅窗口，in-app 升级被拒（`desktop update: Host did not complete graceful task teardown`）。现在收尾改走 `ctx.effect(...)`（宿主会 await），并加 `disposed` 守卫堵住 `autoConnect` 竞态。
+- **最终用量上报有界**（gateway）：`UsageReporter.flush`/`stop` 与 `JoinHandle.stop` 增加可选 `timeoutMs`/`flushTimeoutMs`（默认不变）；收尾传 1.5s，hub 慢时不会把进程拖过关闭死线。`hubRequest` 同时支持 `AbortSignal`、且不再复用 keep-alive 连接池，在途上报可被中止、socket 即时释放。
+- **重连定时器泄漏**（gateway）：退避重连的 `setTimeout` 现在会存句柄并在 `stop()` 时取消——隧道在退避期被停时，不再把进程最多再拉 60s。
+
+### 变更
+
+- **更正**（web-remote）：0.14.0 的「`dispose` 一并停掉直连口」挂在永不触发的 `dispose` 事件上、实际未生效；本版才真正修复，并配了「真实 Cordis 生命周期」与「`getActiveResourcesInfo()` 无残留」两条回归测试。
+
+### 已知问题
+
+- 启动 `autoConnect` 窗口内（开机后数秒），若恰逢关闭，在途的 `registerJoin` HTTP 请求仍可能把进程最多拖到其 10s 超时；已记录、暂不修（概率极低）。
+
 ## [rdsh-gateway 0.16.0 · rdsh-hub 0.20.0 · rdsh-hub-cli 0.20.0 · remote-dsh 0.20.0 · dsh-web-remote 0.14.0] - 2026-11-03
 
 ### 新增
@@ -32,7 +48,7 @@
 
 - **管理台套餐文案**（portal）：管理台用户列表与用户详情页的「套餐」列现在本地化所有 `plan_status`（`internal` / `trial` / `grace` / `free` / `subscribed`）；此前只有 `internal` 有文案，其余直接显示英文枚举。未知值改为显示本地化占位，不再回显后端原值。
 - **管理台账号状态文案**（portal）：管理台用户列表与用户详情页的「状态」列现在本地化 `account_status`（`active` / `banned` / `deleted` / `pending`），不再直出英文枚举。
-- **卸载插件时直连口泄漏**（web-remote）：插件 `dispose` 只停了隧道、没停局域网直连口（8442），导致不重启 DSH 就重装插件时旧直连口仍占端口、`startDirect` 撞 `EADDRINUSE` 失败、直连候选为空。现在 `dispose` 会一并停掉直连口。
+- **卸载插件时直连口泄漏**（web-remote）：插件 `dispose` 只停了隧道、没停局域网直连口（8442），导致不重启 DSH 就重装插件时旧直连口仍占端口、`startDirect` 撞 `EADDRINUSE` 失败、直连候选为空。现在 `dispose` 会一并停掉直连口。_（0.14.1 更正：此修复挂在永不触发的 `ctx.on("dispose")` 上，实际未生效。）_
 - **强制清锁可顶替存活持有者**（web-remote）：锁闸门现在把「持有者进程确认存活」的 `alive` 视为 `allowed`（面板二次确认风险），让重新安装的插件能夺回被「未退出的旧 DSH 进程」占着的锁。`self` / `fresh-corrupt` 仍为 `blocked`。
 - **停止按钮判定对齐**（gateway）：`activityOf` 改用与 App 相同的停止按钮判定，已停止的会话不再上报残留活动状态。
 - **危险 PG 测试护栏**（hub）：会清空数据表的测试在目标不像测试库时拒绝执行。

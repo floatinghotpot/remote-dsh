@@ -149,7 +149,7 @@ export interface StartJoinOptions {
 
 /** 可停止的 join 隧道句柄。 */
 export interface JoinHandle {
-  stop(): Promise<void>;
+  stop(opts?: { flushTimeoutMs?: number }): Promise<void>;
   /**
    * 用量计量器（CLI 与插件**共用同一份**实现，见 `startJoin` 内注释）。
    * 直连口把它传给自己（`startDirect({ meter })`）后，direct 字节才会被计量上报。
@@ -193,7 +193,7 @@ const RECONNECT_MAX_MS = 60_000;
 export function hubRequest(
   baseUrl: string,
   path: string,
-  opts: { method: string; insecure: boolean; body?: unknown },
+  opts: { method: string; insecure: boolean; body?: unknown; signal?: AbortSignal },
   timeoutMs = 10_000,
 ): Promise<{ ok: boolean; status: number; body: Record<string, unknown> }> {
   const url = new URL(baseUrl + path);
@@ -201,11 +201,13 @@ export function hubRequest(
   return new Promise((resolve, reject) => {
     let settled = false;
     let timer: NodeJS.Timeout | undefined;
-    /** 幂等结算：无论超时 / 响应 / 错误哪条路径先到，都只结算一次并清掉超时定时器。 */
+    let onAbort: (() => void) | undefined;
+    /** 幂等结算：无论超时 / 响应 / 错误 / 中止哪条路径先到，都只结算一次并清掉超时定时器与中止监听。 */
     const done = (fn: () => void): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (onAbort !== undefined && opts.signal !== undefined) opts.signal.removeEventListener("abort", onAbort);
       fn();
     };
     const req = lib(
@@ -216,6 +218,9 @@ export function hubRequest(
         method: opts.method,
         headers: { "content-type": "application/json" },
         rejectUnauthorized: !opts.insecure,
+        // 不进入全局 keep-alive 连接池：hub 调用低频（用量上报/控制面），池化 socket 会在
+        // 响应后残留 ~5s，把收尾后的宿主进程再拉几秒；按请求新建 agent，响应完即关。
+        agent: false,
       },
       (res) => {
         const chunks: Buffer[] = [];
@@ -247,6 +252,16 @@ export function hubRequest(
     timer.unref();
     req.on("error", (err) => done(() => reject(err)));
     req.end(opts.method === "POST" ? JSON.stringify(opts.body ?? {}) : undefined);
+    // 中止支持：在 end() 之后接线，保证「信号已中止」时 destroy 发生在请求已发送之后（否则 end() 会作用在已销毁的请求上）。
+    if (opts.signal !== undefined) {
+      onAbort = (): void => {
+        const err = new Error(`hub request aborted: ${path}`);
+        req.destroy(err);
+        done(() => reject(err));
+      };
+      if (opts.signal.aborted) onAbort();
+      else opts.signal.addEventListener("abort", onAbort, { once: true });
+    }
   });
 }
 
@@ -279,6 +294,10 @@ export class UsageReporter {
   private timer: NodeJS.Timeout | undefined;
   private flushing: Promise<void> | null = null;
   private pendingFlush = false;
+  /** 在途上报的中止句柄：`flush(更短)` / `stop()` 用它中止旧请求，保证收尾有界。 */
+  private inFlightAbort: AbortController | null = null;
+  /** 在途 flush 链使用的超时；`flush(更短)` 据此决定是否中止在途重跑。 */
+  private inFlightTimeoutMs = 10_000;
 
   constructor(opts: { hubUrl: string; token: string; insecure: boolean; instanceId?: string; meter?: UsageMeter }) {
     this.meter = opts.meter ?? new UsageMeter();
@@ -307,16 +326,21 @@ export class UsageReporter {
   }
 
   /** 上报当前累计；跨日则先按旧日报、再清零并推进到新日。加并发互斥：定时与 stop()/finalize
-   * 同时触发时只跑一轮在途 flush、收尾补刷（否则同一段累计被重复上报，且与 reset() 竞态丢账）。 */
-  async flush(): Promise<void> {
+   * 同时触发时只跑一轮在途 flush、收尾补刷（否则同一段累计被重复上报，且与 reset() 竞态丢账）。
+   * 若在途链的超时比请求的长（如 60s 周期的 10s vs 收尾的 1.5s），先中止在途再以更短超时重跑。 */
+  async flush(timeoutMs = 10_000): Promise<void> {
     if (this.flushing !== null) {
       // 并发（定时与 stop/finalize 撞车）：标记 pending 并等当前在途链收尾补刷完成。
-      // 必须返回同一 promise —— stop() 要真正等到最终一次上报，否则 shutdown 的
-      // process.exit 会截断在途上报、丢最后一段累计。
       this.pendingFlush = true;
+      if (timeoutMs < this.inFlightTimeoutMs) {
+        // 更短超时需求：中止在途长请求，pendingFlush 循环下一轮改用更短超时（见 flushLoop）。
+        this.inFlightAbort?.abort();
+        this.inFlightTimeoutMs = timeoutMs;
+      }
       return this.flushing;
     }
-    const run = this.flushLoop();
+    this.inFlightTimeoutMs = timeoutMs;
+    const run = this.flushLoop(timeoutMs);
     this.flushing = run;
     try {
       await run;
@@ -325,39 +349,56 @@ export class UsageReporter {
     }
   }
 
-  private async flushLoop(): Promise<void> {
+  private async flushLoop(timeoutMs: number): Promise<void> {
     do {
       this.pendingFlush = false;
-      await this.flushOnce();
+      await this.flushOnce(timeoutMs);
+      // 期间若有更短超时的 flush 请求（如收尾 1.5s），下一轮改用更短超时。
+      if (this.inFlightTimeoutMs < timeoutMs) timeoutMs = this.inFlightTimeoutMs;
     } while (this.pendingFlush);
   }
 
-  private async flushOnce(): Promise<void> {
+  private async flushOnce(timeoutMs: number): Promise<void> {
     const today = localDate();
     const snap = this.meter.snapshot();
     const hasUsage =
       snap.relayBytesUp + snap.relayBytesDown + snap.directBytesUp + snap.directBytesDown + snap.relaySeconds + snap.sessions > 0;
     if (today !== this.meter.currentDay) {
-      if (hasUsage) await this.report(this.meter.currentDay, snap).catch(() => undefined);
+      if (hasUsage) {
+        this.inFlightAbort = new AbortController();
+        try {
+          await this.report(this.meter.currentDay, snap, timeoutMs).catch(() => undefined);
+        } finally {
+          this.inFlightAbort = null;
+        }
+      }
       this.meter.reset();
       return;
     }
-    if (hasUsage) await this.report(today, snap).catch(() => undefined);
+    if (hasUsage) {
+      this.inFlightAbort = new AbortController();
+      try {
+        await this.report(today, snap, timeoutMs).catch(() => undefined);
+      } finally {
+        this.inFlightAbort = null;
+      }
+    }
   }
 
-  /** 停止：清定时器 + 最终上报（`hubRequest` 已有 10s 超时，不会无限等；幂等）。 */
-  async stop(): Promise<void> {
+  /** 停止：清定时器，再以 `timeoutMs` 做一次有界最终上报（`flush` 会在在途超时更长时先中止它）。 */
+  async stop(timeoutMs = 10_000): Promise<void> {
     if (this.timer !== undefined) {
       clearInterval(this.timer);
       this.timer = undefined;
     }
-    await this.flush().catch(() => undefined);
+    await this.flush(timeoutMs).catch(() => undefined);
   }
 
-  private async report(day: string, snap: UsageSnapshot): Promise<void> {
+  private async report(day: string, snap: UsageSnapshot, timeoutMs: number): Promise<void> {
     await hubRequest(this.hubUrl, "/api/host/usage/report", {
       method: "POST",
       insecure: this.insecure,
+      signal: this.inFlightAbort?.signal,
       body: {
         token: this.token,
         date: day,
@@ -371,7 +412,7 @@ export class UsageReporter {
         localAsrSeconds: 0,
         sessions: snap.sessions,
       },
-    });
+    }, timeoutMs);
   }
 }
 
@@ -658,6 +699,8 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
 
   let shuttingDown = false;
   let reconnectDelay = RECONNECT_BASE_MS;
+  /** 已武装的退避重连定时器：`stop()` 须取消它，否则 ref'd timer 会把进程再拉最多 60s。 */
+  let reconnectTimer: NodeJS.Timeout | undefined;
   let heartbeat: NodeJS.Timeout | undefined;
   /** 发出 PING 后的存活死线：期间收到**任何**入站帧即撤销（PROTOCOL.md 心跳与重连）。 */
   let livenessDeadline: NodeJS.Timeout | undefined;
@@ -1343,6 +1386,10 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
       clearTimeout(livenessDeadline);
       livenessDeadline = undefined;
     }
+    if (reconnectTimer !== undefined) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = undefined;
+    }
     plainDispatcher.cleanup();
     for (const raw of rawStreams.values()) raw.inner.cleanup();
     rawStreams.clear();
@@ -1501,7 +1548,8 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
   // 注：不在此处 setState —— 调用方（close handler）已 setState("reconnecting")。
   function reconnectSoon(delayMs: number): void {
     if (shuttingDown) return;
-    setTimeout(() => {
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = undefined;
       try {
         connect();
       } catch (err) {
@@ -1541,10 +1589,10 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
       gateFailures.lockedUntil = 0;
       console.log(`rdsh join: accessCode = ${code === null ? "(off)" : "***"}（运行中生效）`);
     },
-    async stop(): Promise<void> {
+    async stop(stopOpts: { flushTimeoutMs?: number } = {}): Promise<void> {
       if (shuttingDown) {
         // 已提前停过（rejected / superseded）：只补一次最终上报（幂等）。
-        await reporter.flush().catch(() => undefined);
+        await reporter.flush(stopOpts.flushTimeoutMs).catch(() => undefined);
         return;
       }
       shuttingDown = true;
@@ -1560,10 +1608,10 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
       setState("stopped");
       if (ownsReporter) {
         // 自己建的报告器：清定时器 + 最终上报。
-        await reporter.stop();
+        await reporter.stop(stopOpts.flushTimeoutMs);
       } else {
         // 外部传入的报告器：只做最终上报，**不动**调用方的定时器（直连口还在服务）。
-        await reporter.flush().catch(() => undefined);
+        await reporter.flush(stopOpts.flushTimeoutMs).catch(() => undefined);
       }
     },
   };
