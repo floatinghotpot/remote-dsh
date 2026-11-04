@@ -46,7 +46,13 @@
   > 客户端不要用"价格排序"或"数组下标"猜档位 —— 必须用本字段。
 
 ### GET /api/billing/subscription —— 当前订阅状态
-认证：需要。响应 `{ "planStatus", "plan", "planExpiresAt", "graceUntil", "hostsInUse", "hostQuota" }`
+认证：需要。响应 `{ "planStatus", "planId", "planExpiresAt", "channel", "willRenew", "status", "hostQuota", "hostsInUse" }`
+
+- `planStatus` = **账号级**状态（`internal | trial | subscribed | grace | free`，见 §13），与 `status`（订阅**行**状态）不是一回事。
+- `planId` = 当前有效订阅的档位 id（与 `billing.plans[].id`、商店商品 id 同一命名空间）；无订阅为 `null`。
+- `channel` = 购买渠道（由下单/回调写入，如 `apple` / `google` / `unicpay`）；无订阅为 `null`。
+- `willRenew` = 是否自动续费；`status` = 订阅**行**状态，由支付渠道回调写入（如 `active` / `grace` / `expired` / `revoked`），`POST /api/billing/cancel` 写入 `canceled`。
+- `hostQuota` / `hostsInUse` 语义见 §13.2（**可接入云端中转的主机数**，不是"拥有几台主机"）。
 
 ### POST /api/billing/cancel —— 取消订阅（到期不续）
 认证：需要。标记 `subscriptions.status=canceled`；当前周期仍有效至到期。
@@ -142,7 +148,7 @@ portal 后台充值页据此渲染档位（不再前端写死；与 `/api/billin
 ## 4. 账号信息与删除（S2，R7）
 
 ### GET /api/account —— 当前账号信息（绑定状态）
-认证：需要。响应：`{ "name", "role", "email": string|null, "emailVerified": bool, "phone": string|null, "phoneVerified": bool, "totpEnabled": bool, "smsEnabled": bool, "planStatus": string|null, "planExpiresAt": number|null, "planId": string|null }`
+认证：需要。响应：`{ "name", "role", "email": string|null, "emailVerified": bool, "phone": string|null, "phoneVerified": bool, "totpEnabled": bool, "wechatBound": bool, "wechatNickname": string|null, "appleBound": bool, "smsEnabled": bool, "planStatus": string|null, "planExpiresAt": number|null, "planId": string|null }`
 （email/phone 为完整值，客户端自行脱敏显示；`smsEnabled` = `config.sms` 是否配置，供前端隐藏手机号入口；`role` = `user | readonly | operator | admin`，见 §10。）
 
 ### DELETE /api/account —— 自助删除
@@ -212,7 +218,21 @@ JSAPI 支付需用户 openid（公众号 OAuth2）。门户在微信内浏览器
 
 ### GET /api/admin/me —— `{ userId, name, role }`
 
+### GET /api/admin/credits?userId= —— 用户点数账本
+
+管理面认证。`userId` 必填正整数，否则 400 `BAD_REQUEST`。
+
+响应：`{ "balances": { "purchased", "bonusCarried", "bonusCurrent", "total" }, "ledger": [ { "id", "delta", "bucket", "reason", "sourceType", "sourceId", "idempotencyKey", "balanceAfter", "createdAt" } ] }`
+
+- 金额与变动均为整数**微单位**（1 点数 = 10000）。
+- `ledger` 按 id 倒序，最多返回 1000 条；`bucket ∈ purchased | bonus_carried | bonus_current`；`reason ∈ recharge | bonus_subscription | refund | expire | carry_over`。
+- 管理台「用户详情 → 点数余额 / 点数流水」即消费本接口。
+
 ### GET /api/admin/dashboard —— 运营总览统计。
+
+### GET /api/admin/users/{id} —— 用户详情
+
+管理面认证。→ `{ "user": {...}, ... }`（含订阅、主机、用量摘要）；不存在 404。
 
 ### GET /api/admin/users?q=&limit=&offset=
 分页 + 模糊搜索（name/email/phone）。响应 `{ "users": [{ ...UserRow, hostCount }], "total" }`；`limit` 默认 50、上限 200。
@@ -237,7 +257,7 @@ JSAPI 支付需用户 openid（公众号 OAuth2）。门户在微信内浏览器
 
 ### POST /api/admin/hosts/{id}/revoke —— 吊销主机（需 `reason`）。
 
-### GET /api/admin/orders / payments / audit / audit.csv
+### GET /api/admin/orders —— 订单列表；GET /api/admin/payments —— 支付流水；GET /api/admin/audit —— 审计日志
 订单/支付/审计列表；audit 支持 `?userId=&event=&since=&source=`；audit.csv 全量导出（90 天保留）。
 
 ### POST /api/admin/orders/{id}/refund —— 人工退款（`operator`；仅 `paid` 订单；置 refunded + 取消订阅降免费档）。
@@ -248,7 +268,34 @@ JSAPI 支付需用户 openid（公众号 OAuth2）。门户在微信内浏览器
 
 ### GET /api/admin/config —— 脱敏后的运行时配置。
 
-### GET /api/admin/admins；POST /api/admin/admins/{id}/role|remove —— 管理员管理（`admin` only；`role` 请求体 `{ role, reason }`；不能操作自己）。
+### GET /api/admin/admins；POST /api/admin/admins/{id}/{action} —— 管理员管理（`admin` only；`role` 请求体 `{ role, reason }`；不能操作自己）。
+
+### GET /api/admin/nodes；POST /api/admin/nodes —— 中继节点
+
+管理面认证（`admin`/`operator`）。
+
+- `GET` → `{ "nodes": [...], "total": number }`
+- `POST` `{ "name", "advertiseUrl" }` → 节点对象；缺字段 400 `BAD_REQUEST`。
+
+### GET /api/admin/nodes/{id}；POST /api/admin/nodes/{id}/{action}
+
+- `GET {id}` → `{ "node": { ..., "hostCount", "bandwidth" }, "hosts": [...] }`；不存在 404 `NOT_FOUND`。
+- `POST {id}/{action}`，`action ∈ rename | revoke | toggle | enable | disable`（`rename` 需 `{ "name" }`；其余带 `reason`）→ `{ "ok": true }`。
+
+### GET /api/admin/join-tokens；POST /api/admin/join-tokens —— 节点接入码
+
+- `GET` → `{ "tokens": [...] }`；`POST` `{ "name" }` → 新建记录（明文 token 仅首次返回）。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/api/admin/join-tokens/{id}/{action}` | `action ∈ revoke \| rename` → `{ "ok": true }` |
+| GET | `/api/admin/join-tokens/{id}/token` | → `{ "token": "..." }`（**明文，敏感，仅管理面**） |
+| GET | `/api/admin/join-tokens/{id}/events` | → `{ "events": [...] }`（该接入码的使用事件） |
+
+### GET /api/admin/audit.csv —— 审计导出（CSV）
+
+管理面认证。响应 `text/csv; charset=utf-8`，表头固定：
+`id,created_at,user_id,event,source,detail`（所有字段带双引号，`detail` 内部引号转义）。
 
 ## 11. 用量统计（11-usage-analytics，2026-10-10 新增）
 
@@ -284,6 +331,15 @@ JSAPI 支付需用户 openid（公众号 OAuth2）。门户在微信内浏览器
 ### GET /api/admin/usage?userId=&from=&to= —— 管理面查任意用户日用量
 
 管理面认证（`authenticateAdmin`）。`userId` 必须为正整数；`from`/`to` 同 `GET /api/usage` 约束。响应同 `GET /api/usage`（查指定 `userId`）。
+
+### GET /api/usage/host?hostId=&from=&to= —— 单台主机的日用量序列（用户会话认证）
+
+调用者必须是该主机的 **owner 或共享成员**。
+
+- `hostId` 必填；`from`/`to` 为 `YYYY-MM-DD` 且 `from <= to`，跨度上限 366 天，否则 400 `BAD_REQUEST`。
+- 主机不存在 → 404 `NOT_FOUND`；非成员 → 403 `FORBIDDEN`。
+- 响应 `{ "days": [ { "date", "relaySeconds", "relayBytesUp", "relayBytesDown", "directBytesUp", "directBytesDown", "cloudAsrSeconds", "localAsrSeconds", "cloudTtsChars", "localTtsChars", "sessions" } ] }`。
+- 字段口径与 `GET /api/usage` 一致（`sessions`/`relaySeconds` 为预留字段，见 §12 末）。
 
 ## 12. 转发侧用量上报（11-usage-analytics 第二轮，2026-10-10）
 
@@ -438,11 +494,17 @@ UI 文案必须写「**可云端中转主机数**」，**不要**写「主机配
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/api/account/llm/keys` | 列出自己的 key：`{id,name,status,spentMicro,budgetMicro,createdAt,lastUsedAt}` |
+| GET | `/api/account/llm/keys` | 列出自己的 key（`{keys:[…]}`，字段见下） |
 | POST | `/api/account/llm/keys` | 创建，`{name?}` → `{keyId, token, name}`（token 前缀 `sk-rdsh-`，仅此一次） |
-| POST | `/api/account/llm/keys/{id}/revoke` | 吊销自己的 key → `{ok}` |
+| PATCH | `/api/account/llm/keys/{id}` | 改名，`{name}`（1-64 字符）→ `{ok, name}` |
+| DELETE | `/api/account/llm/keys/{id}` | 删除 → `{ok}` |
+| POST | `/api/account/llm/keys/{id}/revoke` | 吊销（保留记录）→ `{ok}` |
+
+key 条目字段：`{ id, name, hostId, tokenHead4, tokenTail4, status, spentMicro, budgetMicro, createdAt, lastUsedAt }`
+（`tokenHead4`/`tokenTail4` 是明文首尾 4 位，供界面识别；完整 token 不可再取。）
 
 - 未登录 401 `UNAUTHORIZED`；操作他人 key 404 `NOT_FOUND`；
+- **host 自动签发的 key**（`hostId != null`）不可用 PATCH/DELETE 修改 → 403 `FORBIDDEN`（由主机侧管理）；
 - key 用于 DSH 的 `DEEPSEEK_API_KEY`（经 `rdsh-router`）；额度 = 用户钱包点数，余额不足时 Router 返回 402。
 
 ## 16. 内部 host invite（/api/internal/hosts/invite，50-hub-host-invite，2026-10-22）
@@ -599,3 +661,163 @@ UI 文案必须写「**可云端中转主机数**」，**不要**写「主机配
 ```
 
 - 来自供应商级配置（voice_provider_configs），不含机密；供设置页展示音色列表，音色按供应商分组。
+
+## 20. 主机、共享与 join token（2026-11-04 补齐）
+
+### GET /api/hosts —— 主机列表（含他人共享给我的主机）
+
+认证：需要。响应 `{ "hosts": [ { "id", "name", "online", "createdAt", "role", "e2eePublicKey", "nodeUrl" } ] }`
+
+- `online`：节点路由的主机按节点心跳判定；hub 直连的主机按 tunnel 注册表判定。
+- `role`：`owner`（自己拥有）/ `member`（他人共享）。
+- `e2eePublicKey`：主机上报的 E2EE 公钥，可为 `null`。
+- `nodeUrl`：**用途待确认**——R9 曾设计为「客户端据此直连节点」，但当前 App 未使用该字段（全走 hub 中转）。改动前先与客户端对齐。
+
+### PATCH /api/hosts/{id} —— 重命名
+
+认证：需要，**仅 owner**（否则 403 `FORBIDDEN`）。请求 `{ "name" }`（1-64 字符，否则 400 `BAD_REQUEST`）。响应 `{ "ok": true, "name" }`。
+
+### DELETE /api/hosts/{id} —— 吊销主机
+
+认证：需要，仅 owner。断隧道、摘注册表、吊销该主机的 LLM key，并向 owner 推送 `host.offline` 事件。响应 `{ "ok": true, "revoked": hostId }`。
+
+### 主机共享（仅 owner 可操作）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/api/hosts/{id}/share` | `{ "name": "<对方用户名>" }` → `{ "ok": true }`；用户不存在 400 `BAD_REQUEST` |
+| GET | `/api/hosts/{id}/share` | → `{ "shares": [ { "userId", "name", "role" } ] }` |
+| DELETE | `/api/hosts/{id}/share/{userId}` | → `{ "ok": true }` |
+
+### join token（一次性加入码）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/api/hosts/join-token` | `{ "label"?, "ttlSeconds"? }` → `{ "id", "token", "expiresAt" }`（明文仅此一次） |
+| GET | `/api/hosts/join-tokens` | → `{ "tokens": [ { "id", "label", "fingerprint", "createdAt", "expiresAt", "revoked" } ] }` |
+| DELETE | `/api/hosts/join-tokens/{id}` | → `{ "ok": true, "revoked": id }`；非本人 403 `FORBIDDEN` |
+
+- `ttlSeconds` 默认 **30 天**、上限 **1 年**；非正整数或超上限 → 400 `BAD_REQUEST`。
+- 吊销只阻止**未来**注册，已注册主机不受影响。
+
+## 21. 扫码绑定会话（/api/bind-sessions）
+
+> 一次性短码（TTL 5 分钟）：面板创建会话并展示二维码 `rdsh://bind?code={bindId}`；用户在已登录端批准；面板凭 `consumeToken` 领取 host token。
+
+| 方法 | 路径 | 认证 | 说明 |
+|---|---|---|---|
+| POST | `/api/bind-sessions` | 无（IP 限流） | `{ "name"?, "e2eePublicKey"? }` → `{ "bindId", "consumeToken", "expiresAt", "qrDataUri" }`；`qrDataUri` 可为 `null`（此时展示明文 `rdsh://bind?code=`） |
+| GET | `/api/bind-sessions/{id}` | 无 | → `{ "status": "pending\|approved\|consumed\|expired" }`（过期懒判定）；不存在 404 |
+| POST | `/api/bind-sessions/{id}/approve` | 会话 | → `{ "name" }`；同账号重复批准幂等；他人已批准 409 `CONFLICT`；已消费 409 `CONSUMED`；过期 410 `EXPIRED`；超配额 403 `QUOTA_EXCEEDED` |
+| POST | `/api/bind-sessions/{id}/consume` | consumeToken | `{ "consumeToken" }` → `{ "hostId", "hostToken", "hostCookiePubKey" }`；token 不匹配 401；未批准/过期 409 `NOT_APPROVED`；已消费 409 `CONSUMED` |
+
+## 22. 人机验证（/api/captcha/*）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/captcha/config` | 未认证 → `{ "provider": "none\|arithmetic\|aliyun", "sceneId"?, "prefix"? }`（后两者仅 aliyun） |
+| POST | `/api/captcha/arithmetic` | 未认证 → `{ "token", "question" }`；题目**一次性**（校验命中即删除） |
+
+需要人机验证的端点按其 `provider` 提交：
+- `arithmetic`：`{ "captchaToken", "captchaAnswer" }`
+- `aliyun`：`{ "captchaVerifyParam" }`
+- `none`：不校验
+
+## 23. 认证补充（改密 / 找回密码 / 登出）
+
+### POST /api/auth/password —— 已登录改密
+
+认证：需要。请求 `{ "currentPassword", "newPassword" }`（`newPassword` ≥ 8 字符，否则 400 `BAD_REQUEST`；当前密码错 400 `BAD_CREDENTIALS`）。
+成功 `{ "ok": true, "message": "password updated; all sessions revoked" }`：**吊销全部会话**并清会话/续期 cookie。
+
+### POST /api/auth/password/reset —— 发送重置验证码
+
+未认证。请求 `{ "channel"?: "email"|"phone", "identifier" | "email"?, "captchaToken"+"captchaAnswer" | "captchaVerifyParam" }`。
+**统一返回 `{ "ok": true }`（防账号枚举）**；参数非法 400 `BAD_REQUEST`；人机验证失败 400 `BAD_CAPTCHA`。
+
+### POST /api/auth/password/reset/confirm —— 提交新密码
+
+未认证。请求 `{ "channel"?, "identifier", "code", "newPassword" }`（≥ 8 字符）。
+成功 `{ "ok": true, "message": "password reset; all sessions revoked" }`；验证码错/过期 400 `BAD_RESET`。
+
+### POST /api/auth/logout —— 登出
+
+无需认证（幂等）。优先取 `rdsh_refresh` cookie，其次请求体 `{ "refreshToken" }`；吊销该 refresh token。
+响应 **204 No Content**，同时清除会话 / 续期 / host 三类 cookie。
+
+## 24. App 第三方登录（/api/app/*）
+
+> 客户端走原生 SDK 取凭据后调用；会话形状与 `/api/auth/login` 一致（`accessToken` / `refreshToken`），另带 `user: { id, name }`。
+
+### POST /api/app/apple/login —— Apple 登录
+
+请求 `{ "identity_token", "nonce", "authorization_code"?, "full_name"? }`（前两者必填，否则 400 `BAD_REQUEST`）。
+成功 → `{ "accessToken", "refreshToken", "user": { "id", "name" } }`。
+错误：401 `APPLE_IDENTITY_INVALID` / `APPLE_CODE_FAILED`；403 `FORBIDDEN`（账号非 active）；429 `RATE_LIMITED`；503 `APPLE_KEY_ERROR`；未配置时 404 `APPLE_LOGIN_DISABLED`（`/api/capabilities` 的 `appleLoginEnabled` 为 false）。
+
+### POST /api/app/apple/bind —— 绑定 Apple 到当前账号
+
+认证：需要。请求同上（`identity_token` + `nonce`，可带 `authorization_code`）→ `{ "ok": true }`。
+已绑到其它账号 409 `APPLE_ALREADY_BOUND`。
+
+### 微信登录（App 侧）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/api/app/wechat/login` | `{ "code" }` → 会话；新用户需确认时 `{ "needConfirm": true, "pendingToken" }` |
+| POST | `/api/app/wechat/confirm` | `{ "pendingToken" }` → 会话（超限 429；失效 400 `BAD_STATE`） |
+| GET | `/api/app/wechat/authorize` | 浏览器流：跳转微信授权 |
+| GET | `/api/app/wechat/callback` | 授权回调，302 回 App scheme（未配置 `appSchemes` → 503 `APP_REDIRECT_DISABLED`） |
+| POST | `/api/app/wechat/handoff` | `{ "handoff" }` → 会话（一次性，失效 400 `BAD_STATE`） |
+| POST | `/api/app/wechat/bind` | 认证：需要；`{ "code" }` → `{ "ok": true }`；已绑他人 409 `WECHAT_ALREADY_BOUND` |
+| POST | `/api/app/wechat/bind/init` | 认证：需要；→ `{ "bindToken" }`（一次性，供 authorize/callback 流使用） |
+| GET | `/api/app/wechat/bind/authorize` | 浏览器流：跳转微信授权（绑定） |
+| GET | `/api/app/wechat/bind/callback` | 绑定回调；已绑他人 409 `WECHAT_ALREADY_BOUND` |
+
+> 换取 openid 失败统一 400 `OAUTH_FAILED`；账号非 active 403 `FORBIDDEN`。
+
+## 25. 账号绑定补充（邮箱 / 微信 / Apple 解绑）
+
+### 邮箱
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/api/account/email` | 认证：需要；`{ "email", "lang"? }` 发验证码 → `{ "ok": true }`；未配置 400 `EMAIL_DISABLED`；限流 429 `RATE_LIMITED`；刚解绑 429 `UNBIND_COOLDOWN` |
+| POST | `/api/account/email/verify` | 认证：需要；`{ "email", "code" }` → `{ "ok": true }`；码错 400 `BAD_CODE` |
+| POST | `/api/account/email/unbind` | 认证：需要；→ `{ "ok": true }`；若是最后一种登录方式 409 `LAST_LOGIN_METHOD` |
+
+### 解绑微信 / Apple
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/api/account/wechat/unbind` | 认证：需要；清 openid / unionid / 昵称头像 → `{ "ok": true }`；最后一种登录方式 409 `LAST_LOGIN_METHOD` |
+| POST | `/api/account/apple/unbind` | 认证：需要；尽力吊销 Apple 令牌后清除绑定 → `{ "ok": true }`；同上 409 |
+
+> 「最后一种登录方式」判定：排除本次解绑方式后，**已验证**邮箱 / 已验证手机 / 微信 / Apple 四者剩余任一即可绑定；密码不计入。
+
+## 26. 认证会话（登录 / 续期 / 2FA）
+
+> 会话形状与 App 侧 `RdshHubSession` 一致；访问令牌 `accessToken`（短期）+ 续期令牌 `refreshToken`（HttpOnly cookie `rdsh_hub_refresh`，`Path=/api/auth`）。
+
+### POST /api/auth/login —— 账号密码登录
+
+未认证。请求 `{ "identifier" | "name", "password" }`。
+
+- 成功 → `{ "accessToken", "refreshToken", "mustChangePassword", "user": { "id", "name" } }` + 会话/续期 cookie。
+- 需 2FA → `{ "requiresTotp": true, "pendingToken", "name" }`。
+- 错误：400 `BAD_REQUEST`、401 `BAD_CREDENTIALS`、423 `ACCOUNT_LOCKED`、429 `RATE_LIMITED`。
+- 可信设备 cookie `rdsh_trusted` 有效期内直接签发会话（跳过 TOTP）。
+
+### POST /api/auth/refresh —— 续期
+
+优先取 `rdsh_hub_refresh` cookie，其次 body `{ "refreshToken" }`（旧客户端回退）。
+
+成功 → `{ "accessToken", "refreshToken" }`（**轮换**：旧 refresh 吊销、发新，30 天滚动）。
+错误：401 `MISSING_REFRESH`（无令牌）/ `INVALID_REFRESH`（无效或已吊销）。
+
+### POST /api/auth/totp —— 2FA 校验
+
+请求 `{ "pendingToken", "code", "trustDevice"? }`。
+
+成功 → `{ "accessToken", "refreshToken", "mustChangePassword" }` + cookie（`trustDevice: true` 时附带 30 天 `rdsh_trusted`）。
+错误：400 `BAD_REQUEST`、401 `BAD_TOTP`。
