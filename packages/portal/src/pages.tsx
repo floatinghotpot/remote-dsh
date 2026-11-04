@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
 import { api, ApiError, subscribeEvents, adminApi } from "./api.ts";
-import type { HostInfo, JoinTokenInfo, CaptchaPayload, AccountInfo, Capabilities, UsageDay, WechatPayInfo, AdminMe, AdminUserRow, AdminHostRow, AdminNodeRow, AdminOrderRow, AdminPaymentRow, AdminAuditRow, AdminSubscriptionRow, AdminUserDetail, AdminDashboard, AdminAnalytics, AdminConfig, LlmKeyInfo, LlmUsageModel, LlmCatalogModel } from "./api.ts";
+import type { HostInfo, JoinTokenInfo, CaptchaPayload, AccountInfo, Capabilities, UsageDay, WechatPayInfo, AdminMe, AdminUserRow, AdminHostRow, AdminNodeRow, AdminOrderRow, AdminPaymentRow, AdminAuditRow, AdminSubscriptionRow, AdminUserDetail, AdminUserCredits, AdminDashboard, AdminAnalytics, AdminConfig, LlmKeyInfo, LlmUsageModel, LlmCatalogModel } from "./api.ts";
 import { fingerprint } from "./e2ee.ts";
 import { useT, getLang } from "./i18n.ts";
 import type { T } from "./i18n.ts";
@@ -2937,9 +2937,15 @@ function ActionDialog({ spec, onClose }: { spec: DialogSpec; onClose: () => void
 function AdminUserDetail({ userId }: { userId: number }): React.JSX.Element {
   const { t } = useT();
   const [d, setD] = useState<AdminUserDetail | null>(null);
+  const [c, setC] = useState<AdminUserCredits | null>(null);
+  const [creditsErr, setCreditsErr] = useState(false);
   const [err, setErr] = useState("");
   useEffect(() => {
+    setC(null); // 切换用户先清空，避免短暂显示上一个用户的点数
+    setCreditsErr(false);
     adminApi.userDetail(userId).then(setD).catch((e: unknown) => setErr(e instanceof Error ? e.message : "load failed"));
+    // 点数账本单独取：失败不影响账号信息/订阅/订单等主视图。
+    adminApi.userCredits(userId).then(setC).catch(() => setCreditsErr(true));
   }, [userId]);
   if (err !== "") return <p style={{ color: "var(--rdsh-danger)" }}>{err}</p>;
   if (d === null) return <p>{t("加载中…")}</p>;
@@ -2970,6 +2976,44 @@ function AdminUserDetail({ userId }: { userId: number }): React.JSX.Element {
           <tr>{adminTd(t("最后登录"), u.lastLoginAt !== null ? ts(u.lastLoginAt) : t("从未登录"))}{adminTd(null, "")}</tr>
         </tbody>
       </table>
+
+      {section(t("点数余额", { en: "Credits" }))}
+      {creditsErr ? (
+        <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{t("点数读取失败")}</p>
+      ) : c === null ? (
+        <p style={{ color: "var(--rdsh-fg-subtle)", fontSize: 13 }}>{t("加载中…")}</p>
+      ) : (
+        <>
+          <table className="admintbl" style={adminTableStyle()}>
+            <tbody>
+              <tr>
+                {adminTd(t("充值余额"), formatPoints(c.balances.purchased))}
+                {adminTd(t("赠送（结转）"), formatPoints(c.balances.bonusCarried))}
+              </tr>
+              <tr>
+                {adminTd(t("赠送（当期）"), formatPoints(c.balances.bonusCurrent))}
+                {adminTd(t("合计"), formatPoints(c.balances.total))}
+              </tr>
+            </tbody>
+          </table>
+          {section(t("点数流水", { en: "Credit ledger" }))}
+          {c.ledger.length === 0 ? <p style={{ color: "var(--rdsh-fg-subtle)", fontSize: 13 }}>{t("（无）")}</p> : (
+            <table className="admintbl" style={adminTableStyle()}>
+              <thead><tr style={{ borderBottom: "1px solid var(--rdsh-border)" }}>{[t("时间"), t("变动"), t("桶"), t("原因"), t("余额")].map(adminTh)}</tr></thead>
+              <tbody>{c.ledger.slice(0, 50).map((r) => (
+                <tr key={r.id} style={{ borderBottom: "1px solid var(--rdsh-bg-subtle)" }}>
+                  {adminTd(t("时间"), ts(r.createdAt))}
+                  {adminTd(t("变动"), `${r.delta > 0 ? "+" : ""}${formatPoints(r.delta)}`)}
+                  {adminTd(t("桶"), creditBucketLabel(t, r.bucket))}
+                  {adminTd(t("原因"), creditReasonLabel(t, r.reason))}
+                  {adminTd(t("余额"), r.balanceAfter === null ? "—" : formatPoints(r.balanceAfter))}
+                </tr>
+              ))}</tbody>
+            </table>
+          )}
+          {c.ledger.length > 50 && <p style={{ color: "var(--rdsh-fg-subtle)", fontSize: 12 }}>{t("仅显示最近 50 条（共 {n} 条）", { params: { n: c.ledger.length } })}</p>}
+        </>
+      )}
 
       {section(t("订阅历史"))}
       {d.subscriptions.length === 0 ? <p style={{ color: "var(--rdsh-fg-subtle)", fontSize: 13 }}>{t("（无）")}</p> : (
@@ -4720,6 +4764,28 @@ function formatChars(chars: number, t: T): string {
 
 function formatPoints(micro: number): string {
   return (micro / CREDITS_MICRO).toLocaleString(undefined, { maximumFractionDigits: 1 });
+}
+
+/** 点数桶标签（credits_ledger.bucket）。 */
+function creditBucketLabel(t: T, bucket: string): string {
+  switch (bucket) {
+    case "purchased": return t("充值");
+    case "bonus_carried": return t("赠送（结转）");
+    case "bonus_current": return t("赠送（当期）");
+    default: return bucket;
+  }
+}
+
+/** 点数流水原因标签（credits_ledger.reason）。 */
+function creditReasonLabel(t: T, reason: string): string {
+  switch (reason) {
+    case "recharge": return t("充值");
+    case "bonus_subscription": return t("订阅赠点");
+    case "refund": return t("退款冲正");
+    case "expire": return t("过期清零");
+    case "carry_over": return t("结转");
+    default: return reason;
+  }
 }
 
 /** 每根柱 = 一天；series 支持多序列（对照图并排）。null = 无数据日（不画柱）。 */

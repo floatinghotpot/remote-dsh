@@ -483,6 +483,28 @@ export interface AdminUserDetail {
   payments: AdminPaymentRow[];
   audit: AdminAuditRow[];
 }
+export interface AdminCreditBalances {
+  purchased: number;
+  bonusCarried: number;
+  bonusCurrent: number;
+  total: number;
+}
+/** 点数流水行（`delta` / `balanceAfter` 为整数微单位，1 点数 = 10000）。 */
+export interface AdminCreditLedgerRow {
+  id: number;
+  delta: number;
+  bucket: string;
+  reason: string;
+  sourceType: string | null;
+  sourceId: string | null;
+  idempotencyKey: string | null;
+  balanceAfter: number | null;
+  createdAt: number;
+}
+export interface AdminUserCredits {
+  balances: AdminCreditBalances;
+  ledger: AdminCreditLedgerRow[];
+}
 export interface AdminDashboard {
   totalUsers: number;
   totalHosts: number;
@@ -580,6 +602,10 @@ export const adminApi = {
   },
   userDetail(id: number): Promise<AdminUserDetail> {
     return adminJson(`/api/admin/users/${id}`);
+  },
+  /** 管理面：某用户的点数余额与流水（GET /api/admin/credits，2026-11-04 接入详情页）。 */
+  userCredits(id: number): Promise<AdminUserCredits> {
+    return adminJson(`/api/admin/credits?userId=${id}`);
   },
   hosts(params?: { q?: string; online?: string; e2ee?: string; createdFrom?: number; createdTo?: number; limit?: number; offset?: number }): Promise<{ hosts: AdminHostRow[]; total: number }> {
     const sp = new URLSearchParams();
