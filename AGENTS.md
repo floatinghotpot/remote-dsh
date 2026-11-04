@@ -33,7 +33,8 @@ Vibe Coding 八荣八耻
 ## 2. Risk, Production Safety & Code Quality
 - **Quality First**: Do not rush. If unsure about the quality of the code, ask for clarification.
 - **Simplicity First**: 最小实现解决该问题；不加需求外功能，不为单次使用造抽象；若"资深工程师会说这是过度设计"就简化。
-- **Surgical Changes**: 只动该动的；不改相邻代码/注释/格式；每行改动都对应需求；发现无关死代码只提不删。
+- **Surgical Changes**: 只动该动的；不改相邻代码/注释/格式；每行改动都对应需求。
+- **死代码处置（有牙齿）**: ① 本次改动**直接孤儿化**、且能确证「无调用方 + 无动态引用 + 改动小」→ **当场删**（独立 commit，可回滚）；② **顺带发现**、不确定是否真死、或面积大 → **记 TODO**（带日期 + 理由），不得只口头一句；③ 提了必须落到「删」或「TODO」——**禁止「提了就当处理过」**。
 - **Code Review**: 改后必查括号/语法，修到零问题——TS 跑 `pnpm build`（tsc strict，含 info 级）、纯 JS 跑 `node --check <file>`、Go 跑 `go build ./... && go test ./...`。
 - **Defer Requires Proof**: 任何延期都必须给出具体阻塞（API 未提供、里程碑未开闸）；"严重度/工作量"不是理由。
 - **Partial Formatting**: ONLY format new or modified code. Global reformatting is FORBIDDEN.
