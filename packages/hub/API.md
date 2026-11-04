@@ -51,11 +51,8 @@
 - `planStatus` = **账号级**状态（`internal | trial | subscribed | grace | free`，见 §13），与 `status`（订阅**行**状态）不是一回事。
 - `planId` = 当前有效订阅的档位 id（与 `billing.plans[].id`、商店商品 id 同一命名空间）；无订阅为 `null`。
 - `channel` = 购买渠道（由下单/回调写入，如 `apple` / `google` / `unicpay`）；无订阅为 `null`。
-- `willRenew` = 是否自动续费；`status` = 订阅**行**状态，由支付渠道回调写入（如 `active` / `grace` / `expired` / `revoked`），`POST /api/billing/cancel` 写入 `canceled`。
+- `willRenew` = 是否自动续费；`status` = 订阅**行**状态，由支付渠道回调写入（如 `active` / `grace` / `expired` / `revoked`），`canceled`（取消自动续费，由渠道回调或管理台写入）。
 - `hostQuota` / `hostsInUse` 语义见 §13.2（**可接入云端中转的主机数**，不是"拥有几台主机"）。
-
-### POST /api/billing/cancel —— 取消订阅（到期不续）
-认证：需要。标记 `subscriptions.status=canceled`；当前周期仍有效至到期。
 
 ### GET /api/credits/balance —— 点数余额
 认证：需要。响应 `{ "purchased", "bonusCarried", "bonusCurrent", "total" }`（**微单位**，客户端 ÷10000 转点数；分桶语义见 §3 点数段）。

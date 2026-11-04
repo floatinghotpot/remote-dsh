@@ -313,9 +313,6 @@ export const api = {
   subscription(): Promise<{ planStatus: string | null; planId: string | null; planExpiresAt: number | null; hostQuota: number | null; hostsInUse: number }> {
     return jsonFetch("/api/billing/subscription");
   },
-  cancelSubscription(): Promise<{ ok: boolean }> {
-    return jsonFetch("/api/billing/cancel", { method: "POST", body: "{}" });
-  },
   deleteAccount(password: string): Promise<{ ok: boolean }> {
     return jsonFetch("/api/account", { method: "DELETE", body: JSON.stringify({ password }) });
   },

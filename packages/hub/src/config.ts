@@ -159,7 +159,7 @@ export interface BillingConfig {
 }
 
 /** 计费默认值（config.billing 未提供时消费方取此）。 */
-export const BILLING_DEFAULTS = { trialDays: 3, trialHosts: 1, graceDays: 3, retentionDays: 30 } as const;
+export const BILLING_DEFAULTS = { trialDays: 3, trialHosts: 1, graceDays: 3, retentionDays: 90 } as const;
 
 /** 语音计费默认值（config.billing.voice 未提供时消费方取此）。 */
 export const VOICE_DEFAULTS = {

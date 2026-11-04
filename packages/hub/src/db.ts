@@ -1069,6 +1069,10 @@ export class HubDb {
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_usage_daily_host ON usage_daily(host_id, date);`);
     // 42 P0：N2 心跳按节点校验在线 host 归属；避免 hosts 全表扫描。
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_hosts_node ON hosts(node_id);`);
+    // 2026-11-04：host 列表/清理按 owner_id 过滤，缺索引会全表扫；补 owner 与共享索引。
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_hosts_owner ON hosts(owner_id);`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_host_share_host ON host_share(host_id);`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_host_share_user ON host_share(user_id);`);
     // 32-tts-usage：usage_daily 补朗读字符数列。简单加列（不涉及 UNIQUE 约束），
     // 幂等（列已存在即跳过）；既有行缺省 0。
     const usageCols2 = new Set(
@@ -2434,18 +2438,6 @@ export class HubDb {
 
   getActiveSubscription(userId: number): SubscriptionRow | null {
     const row = this.db.prepare("SELECT * FROM subscriptions WHERE user_id = ? AND status = 'active' ORDER BY id DESC LIMIT 1").get(userId);
-    return row === undefined ? null : this.mapSubscription(row as unknown as Record<string, unknown>);
-  }
-
-  /**
-   * 取用户**最近一条**订阅（不按 status 过滤）。
-   *
-   * 用于配额计算：取消订阅（status=canceled）或进入宽限期（status 尚未翻但计划仍有效）时，
-   * plan_status 仍是 subscribed/grace —— 当前周期仍有效，配额应保留。
-   * 若用 getActiveSubscription（只看 active），此时会返回 null，配额被误判为 0。
-   */
-  getLatestSubscription(userId: number): SubscriptionRow | null {
-    const row = this.db.prepare("SELECT * FROM subscriptions WHERE user_id = ? ORDER BY id DESC LIMIT 1").get(userId);
     return row === undefined ? null : this.mapSubscription(row as unknown as Record<string, unknown>);
   }
 

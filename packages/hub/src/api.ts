@@ -9,7 +9,7 @@ import { readFileSync, statSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { HubConfig, PlanSpec, WechatLoginConfig, AppleLoginConfig } from "./config.ts";
 import { BILLING_DEFAULTS } from "./config.ts";
-import { RELAY_BYTES_PER_CREDIT, RELAY_OVERDRAFT_FLOOR_POINTS, isRelayFreeUser, relayFreePolicy, type HubDb, type UserRow, type UsageDayRow, type HostRow, type OrderRow } from "./db.ts";
+import { RELAY_BYTES_PER_CREDIT, RELAY_OVERDRAFT_FLOOR_POINTS, isRelayFreeUser, relayFreePolicy, type HubDb, type UserRow, type UsageDayRow, type HostRow, type OrderRow, type SubscriptionRow } from "./db.ts";
 import type { HubAuth } from "./auth.ts";
 import { createLoginLimiter, hashPassword, verifyPassword, ADMIN_TTL_MS, RECENT_TOTP_WINDOW_MS, ACCESS_TTL_MS, REFRESH_TTL_MS } from "./auth.ts";
 import type { TunnelRegistry, TunnelTimings } from "./tunnel.ts";
@@ -1262,10 +1262,6 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, runti
   }
   if (path === "/api/billing/subscription" && method === "GET") {
     await handleSubscription(req, res, runtime);
-    return true;
-  }
-  if (path === "/api/billing/cancel" && method === "POST") {
-    await handleCancelSubscription(req, res, runtime);
     return true;
   }
   if (path === "/api/billing/unicpay/initiate" && method === "POST") {
@@ -3639,6 +3635,26 @@ async function resolveLoginName(store: HubStore, identifier: string): Promise<st
   return identifier;
 }
 
+/**
+ * 当前「生效」的订阅行（读法唯一真相，2026-11-04 统一三处读点）。
+ * 有有效行（expires_at > now 且 status ∉ {expired, revoked}）→ 取最高档（vipTier 降序）、
+ * 同档取到期最晚；无有效行（grace 期 / 刚过期瞬间）→ 取最近到期那行（它就是触发 grace 的行）。
+ */
+export async function getEffectiveSubscription(runtime: HubRuntime, user: UserRow): Promise<SubscriptionRow | null> {
+  const subs = await runtime.store.listSubscriptionsByUser(user.id);
+  if (subs.length === 0) return null;
+  const plans = runtime.config.billing?.plans ?? [];
+  const tierOf = (sub: SubscriptionRow): number => plans.find((p) => p.id === sub.planId)?.vipTier ?? 0;
+  const now = Date.now();
+  const valid = subs.filter((sub) => sub.expiresAt > now && sub.status !== "expired" && sub.status !== "revoked");
+  if (valid.length > 0) {
+    valid.sort((a, b) => tierOf(b) - tierOf(a) || b.expiresAt - a.expiresAt);
+    return valid[0]!;
+  }
+  subs.sort((a, b) => b.expiresAt - a.expiresAt);
+  return subs[0]!;
+}
+
 /** 当前账号 host 配额：null = 不限；否则为上限（internal/trial/subscribed/grace/free）。 */
 export async function hostQuota(runtime: HubRuntime, user: UserRow): Promise<number | null> {
   const plan = user.planStatus;
@@ -3646,10 +3662,8 @@ export async function hostQuota(runtime: HubRuntime, user: UserRow): Promise<num
   const billing = runtime.config.billing;
   if (plan === "trial") return billing?.trialHosts ?? BILLING_DEFAULTS.trialHosts;
   if (plan === "free" || plan === null) return 0; // NULL = 无权限（fail-closed）
-  // subscribed / grace：取**最近一条**订阅（不按 status 过滤）。
-  // 取消订阅（到期不续）或进入宽限期时 status 已翻成 canceled/expired，
-  // 但 plan_status 仍是 subscribed/grace（当前周期仍有效），配额应保留。
-  const sub = await runtime.store.getLatestSubscription(user.id);
+  // subscribed / grace：取「生效」订阅（有效行最高档，无有效行取最近到期行）。
+  const sub = await getEffectiveSubscription(runtime, user);
   if (sub !== null) {
     return (billing?.plans ?? []).find((p) => p.id === sub.planId)?.hosts ?? 0;
   }
@@ -4616,8 +4630,7 @@ async function handleSubscription(req: IncomingMessage, res: ServerResponse, run
     return;
   }
   const user = await runtime.store.getUserById(auth.userId);
-  const subs = await runtime.store.listSubscriptionsByUser(auth.userId);
-  const sub = subs.length > 0 ? subs[0] : null;
+  const sub = user === null ? null : await getEffectiveSubscription(runtime, user);
   res.writeHead(200, { "content-type": "application/json" });
   res.end(
     JSON.stringify({
@@ -4633,19 +4646,6 @@ async function handleSubscription(req: IncomingMessage, res: ServerResponse, run
   );
 }
 
-async function handleCancelSubscription(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
-  const auth = authenticate(req, runtime);
-  if (auth === null) {
-    writeError(res, 401, "UNAUTHORIZED", "missing or invalid session");
-    return;
-  }
-  const sub = await runtime.store.getActiveSubscription(auth.userId);
-  if (sub !== null) await runtime.store.setSubscriptionStatus(sub.id, "canceled");
-  await runtime.store.recordAudit(auth.userId, "billing.canceled", {}, clientIp(req, runtime));
-  res.writeHead(200, { "content-type": "application/json" });
-  res.end(JSON.stringify({ ok: true, message: "subscription canceled; remains active until expiry" }));
-}
-
 /** 当前账号信息（绑定状态）：账户页回显（邮箱/手机号/2FA/plan）。 */
 async function handleAccountInfo(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
   const auth = authenticate(req, runtime);
@@ -4658,7 +4658,7 @@ async function handleAccountInfo(req: IncomingMessage, res: ServerResponse, runt
     writeError(res, 404, "NOT_FOUND", "user not found");
     return;
   }
-  const sub = await runtime.store.getActiveSubscription(auth.userId);
+  const sub = await getEffectiveSubscription(runtime, user);
   res.writeHead(200, { "content-type": "application/json" });
   res.end(
     JSON.stringify({

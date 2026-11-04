@@ -16,7 +16,6 @@ export function billing(
   HubStore,
   | "createSubscription"
   | "getActiveSubscription"
-  | "getLatestSubscription"
   | "setSubscriptionStatus"
   | "getSubscriptionBySubscriptionId"
   | "updateSubscriptionBySubscriptionId"
@@ -60,18 +59,6 @@ export function billing(
       const row = one(
         await q(txDb(pool), "SELECT * FROM subscriptions WHERE user_id = $1 AND status = 'active' ORDER BY id DESC LIMIT 1", [userId]),
       );
-      return row === null ? null : mapSubscription(row);
-    },
-
-    /**
-     * 取用户**最近一条**订阅（不按 status 过滤）。
-     *
-     * 用于配额计算：取消订阅（status=canceled）或进入宽限期（status 尚未翻但计划仍有效）时，
-     * plan_status 仍是 subscribed/grace —— 当前周期仍有效，配额应保留。
-     * 若用 getActiveSubscription（只看 active），此时会返回 null，配额被误判为 0。
-     */
-    async getLatestSubscription(userId: number): Promise<SubscriptionRow | null> {
-      const row = one(await q(txDb(pool), "SELECT * FROM subscriptions WHERE user_id = $1 ORDER BY id DESC LIMIT 1", [userId]));
       return row === null ? null : mapSubscription(row);
     },
 
