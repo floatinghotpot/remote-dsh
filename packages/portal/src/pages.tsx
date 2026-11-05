@@ -2849,6 +2849,8 @@ interface ActionField {
 }
 interface DialogSpec {
   title: string;
+  /** 可选说明：危险操作的后果/边界，渲染在标题下方（灰字）。 */
+  desc?: string;
   fields: ActionField[];
   danger?: boolean;
   /** 二次确认（feature 16 E5）：输入须等于此值才可提交（如删除时输入用户名）。 */
@@ -2884,6 +2886,9 @@ function ActionDialog({ spec, onClose }: { spec: DialogSpec; onClose: () => void
     <div style={{ position: "fixed", inset: 0, background: "var(--rdsh-scrim-soft)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 16, boxSizing: "border-box" }}>
       <div style={{ background: "var(--rdsh-bg-surface)", borderRadius: 12, padding: 20, width: 440, maxWidth: "100%", fontFamily: "system-ui, sans-serif" }}>
         <h3 style={{ margin: "0 0 12px", fontSize: 16 }}>{spec.title}</h3>
+        {spec.desc !== undefined && (
+          <p style={{ margin: "0 0 12px", fontSize: 13, lineHeight: 1.6, color: "var(--rdsh-fg-muted)" }}>{spec.desc}</p>
+        )}
         {spec.fields.map((f) => (
           <div key={f.key} style={{ marginBottom: 10 }}>
             <label style={{ display: "block", fontSize: 12, color: "var(--rdsh-fg-muted)", marginBottom: 4 }}>{f.label}</label>
@@ -4020,6 +4025,9 @@ function AdminHosts({ isWrite }: { isWrite: boolean }): React.JSX.Element {
   const revoke = (h: AdminHostRow): void => {
     setDialog({
       title: `${t("吊销")} · ${h.name}`,
+      desc: t(
+        "仅吊销这一台主机与其 LLM key：隧道立即断开、旧凭证失效。账号不受影响，该设备仍可重新接入（重绑会新建一条主机，不会复活这条）。如需禁止该用户继续使用，请封禁账号。",
+      ),
       fields: [],
       danger: true,
       submit: (reason) =>

@@ -286,6 +286,8 @@ const EN: Record<string, string> = {
   "成员用户名": "Member username",
   "尚未共享给任何人": "Not shared with anyone yet",
   "移除": "Remove",
+  "仅吊销这一台主机与其 LLM key：隧道立即断开、旧凭证失效。账号不受影响，该设备仍可重新接入（重绑会新建一条主机，不会复活这条）。如需禁止该用户继续使用，请封禁账号。":
+    "Revokes this host and its LLM keys only: the tunnel drops immediately and its credentials stop working. The account is unaffected and the device can join again (that creates a new host entry; this row stays revoked). To stop the user entirely, ban the account instead.",
   "吊销该 host？其隧道立即断开，需重新接入。":
     "Revoke this host? Its tunnel drops immediately and it must rejoin.",
   "吊销该 join token？已注册主机不受影响，仅阻止未来注册。":
