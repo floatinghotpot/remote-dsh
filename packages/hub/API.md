@@ -663,12 +663,14 @@ key 条目字段：`{ id, name, hostId, tokenHead4, tokenTail4, status, spentMic
 
 ### GET /api/hosts —— 主机列表（含他人共享给我的主机）
 
-认证：需要。响应 `{ "hosts": [ { "id", "name", "online", "createdAt", "role", "e2eePublicKey", "nodeUrl" } ] }`
+认证：需要。响应 `{ "hosts": [ { "id", "name", "online", "createdAt", "role", "e2eePublicKey", "nodeUrl", "deviceKind", "versions" } ] }`
 
 - `online`：节点路由的主机按节点心跳判定；hub 直连的主机按 tunnel 注册表判定。
 - `role`：`owner`（自己拥有）/ `member`（他人共享）。
 - `e2eePublicKey`：主机上报的 E2EE 公钥，可为 `null`。
 - `nodeUrl`：**用途待确认**——R9 曾设计为「客户端据此直连节点」，但当前 App 未使用该字段（全走 hub 中转）。改动前先与客户端对齐。
+- `deviceKind`：`"desktop"` | `"cli"` | `"box"` | `"unknown"`，**首次上报前为 `null`**（老数据）。App 按它选图标，`null` 视为 `unknown`。
+- `versions`：主机自报的版本对象，形状由主机决定（推荐 `{ "dsh", "rdsh", "gateway", "boxd"? }`），未上报为 `null`。**仅用于展示与运维判断，服务端不解释其内容**。
 
 ### PATCH /api/hosts/{id} —— 重命名
 
@@ -685,6 +687,21 @@ key 条目字段：`{ id, name, hostId, tokenHead4, tokenTail4, status, spentMic
 | POST | `/api/hosts/{id}/share` | `{ "name": "<对方用户名>" }` → `{ "ok": true }`；用户不存在 400 `BAD_REQUEST` |
 | GET | `/api/hosts/{id}/share` | → `{ "shares": [ { "userId", "name", "role" } ] }` |
 | DELETE | `/api/hosts/{id}/share/{userId}` | → `{ "ok": true }` |
+
+### POST /api/hosts/self/meta —— 主机上报类型与版本（2026-11-06，63-bind-agent-box）
+
+认证：**host token**（`body.token`，与 `/api/hosts/llm-key` 同一套；不是会话 cookie）。
+
+请求：`{ "token": string, "deviceKind"?: "desktop"|"cli"|"box"|"unknown", "versions"?: object }`
+
+- `token`：主机自己的 host token（≥16 字符），否则 401 `UNAUTHORIZED`。
+- `deviceKind`：可选；非法枚举 → 400 `BAD_REQUEST`。**缺省不改动**已存的值。
+- `versions`：可选；序列化后 ≤ **4096 字节**，超出 → 400 `BAD_REQUEST`。**缺省不改动**。
+- 语义：**覆盖写**（同 host 重复上报以最后一次为准）；未知字段忽略。
+
+响应：`{ "ok": true, "deviceKind": string|null, "versions": object|null }`
+
+调用时机（客户端约定）：gateway **启动时一次**，之后**每 ≥30 分钟**一次（覆盖"只换 dsh 二进制、网关未重启"）；`dsh` 版本变化时可立即补报。老 hub 无此端点时返回 404，客户端应**只记一次日志后停用上报**，不影响主流程。
 
 ### join token（一次性加入码）
 

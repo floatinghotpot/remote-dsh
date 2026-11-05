@@ -74,6 +74,10 @@ export interface HostRow {
   /** 节点路由的主机在线状态（N4 上报）；hub 路由的用 TunnelRegistry。 */
   online: boolean;
   createdAt: string;
+  /** 设备类型（63-bind-agent-box）：desktop/cli/box/unknown；未上报为 null。 */
+  deviceKind: string | null;
+  /** 主机自报的版本对象（原始 JSON 字符串）；未上报为 null。 */
+  versionsJson: string | null;
 }
 
 export interface NodeRow {
@@ -1008,6 +1012,9 @@ export class HubDb {
     if (!hostCols.has("online")) this.db.exec(`ALTER TABLE hosts ADD COLUMN online INTEGER NOT NULL DEFAULT 0`);
     // 软删（leave/吊销）：保留行以保住历史流量、主机名与共享关系；读路径统一过滤 revoked_at。
     if (!hostCols.has("revoked_at")) this.db.exec(`ALTER TABLE hosts ADD COLUMN revoked_at TEXT`);
+    // 63-bind-agent-box：主机自报设备类型与版本（未上报为 NULL）
+    if (!hostCols.has("device_kind")) this.db.exec(`ALTER TABLE hosts ADD COLUMN device_kind TEXT`);
+    if (!hostCols.has("versions_json")) this.db.exec(`ALTER TABLE hosts ADD COLUMN versions_json TEXT`);
     const nodeCols = new Set(
       (this.db.prepare("PRAGMA table_info(nodes)").all() as unknown as Array<{ name: string }>).map((c) => c.name),
     );
@@ -1132,6 +1139,8 @@ export class HubDb {
       nodeId: row.node_id === null || row.node_id === undefined ? null : String(row.node_id),
       online: Number(row.online ?? 0) === 1,
       createdAt: String(row.created_at),
+      deviceKind: row.device_kind === null || row.device_kind === undefined ? null : String(row.device_kind),
+      versionsJson: row.versions_json === null || row.versions_json === undefined ? null : String(row.versions_json),
     };
   }
 
@@ -2026,6 +2035,25 @@ export class HubDb {
         "SELECT DISTINCT h.* FROM hosts h LEFT JOIN host_share s ON s.host_id = h.id WHERE (h.owner_id = ? OR s.user_id = ?) AND h.revoked_at IS NULL ORDER BY h.created_at",
       )
       .all(userId, userId) as unknown as Array<Record<string, unknown>>).map((r) => this.mapHost(r));
+  }
+
+  /** 覆盖写主机的类型与版本（63-bind-agent-box）；未提供的字段保持原值。 */
+  setHostMeta(hostId: string, deviceKind: string | null, versionsJson: string | null): boolean {
+    const sets: string[] = [];
+    const args: Array<string | null> = [];
+    if (deviceKind !== null) {
+      sets.push("device_kind = ?");
+      args.push(deviceKind);
+    }
+    if (versionsJson !== null) {
+      sets.push("versions_json = ?");
+      args.push(versionsJson);
+    }
+    if (sets.length === 0) return false;
+    const info = this.db
+      .prepare(`UPDATE hosts SET ${sets.join(", ")} WHERE id = ? AND revoked_at IS NULL`)
+      .run(...args, hostId);
+    return Number(info.changes) > 0;
   }
 
   isHostOwner(hostId: string, userId: number): boolean {

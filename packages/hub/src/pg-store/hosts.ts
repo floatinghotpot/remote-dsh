@@ -33,6 +33,7 @@ export function hosts(
   | "listShares"
   | "listHostsForUser"
   | "isHostOwner"
+  | "setHostMeta"
 > {
   const getHostById = async (id: string): Promise<HostRow | null> => {
     const row = one(await q(txDb(pool), "SELECT * FROM hosts WHERE id = $1 AND revoked_at IS NULL", [id]));
@@ -206,6 +207,26 @@ export function hosts(
         )
       ).rows;
       return rows.map((r) => mapHost(r));
+    },
+
+    async setHostMeta(hostId: string, deviceKind: string | null, versionsJson: string | null): Promise<boolean> {
+      const sets: string[] = [];
+      const args: unknown[] = [];
+      if (deviceKind !== null) {
+        args.push(deviceKind);
+        sets.push(`device_kind = $${args.length}`);
+      }
+      if (versionsJson !== null) {
+        args.push(versionsJson);
+        sets.push(`versions_json = $${args.length}`);
+      }
+      if (sets.length === 0) return false;
+      args.push(hostId);
+      const r = await q(txDb(pool),
+        `UPDATE hosts SET ${sets.join(", ")} WHERE id = $${args.length} AND revoked_at IS NULL`,
+        args,
+      );
+      return (r.rowCount ?? 0) > 0;
     },
 
     async isHostOwner(hostId: string, userId: number): Promise<boolean> {

@@ -1346,6 +1346,10 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, runti
     await handleHostLlmKey(req, res, runtime);
     return true;
   }
+  if (path === "/api/hosts/self/meta" && method === "POST") {
+    await handleHostMeta(req, res, runtime);
+    return true;
+  }
   if (path === "/api/hosts/register" && method === "POST") {
     await handleRegister(req, res, runtime);
     return true;
@@ -2615,6 +2619,9 @@ async function handleListHosts(req: IncomingMessage, res: ServerResponse, runtim
       createdAt: h.createdAt,
       role: h.ownerId === auth.userId ? "owner" : "member",
       e2eePublicKey: h.e2eePublicKey,
+      // 63-bind-agent-box：设备类型与自报版本（未上报均为 null）
+      deviceKind: h.deviceKind,
+      versions: h.versionsJson != null ? safeJson(h.versionsJson) : null,
       // R9：客户端据此直连节点（凭据不变）；hub 内置 relay（node=null）配置了 defaultRelayUrl 时返回该 URL
       nodeUrl: node !== null ? node.advertiseUrl : (runtime.config.defaultRelayUrl ?? null),
     };
@@ -3319,6 +3326,63 @@ async function handleRevokeJoinToken(req: IncomingMessage, res: ServerResponse, 
 }
 
 /** 52-auto-provision-router：网关以 host token 领取该 host 的 LLM key + baseURL + 模型目录。 */
+/** 主机上报类型与版本（63-bind-agent-box）。host token 认证；覆盖写；缺省字段不改。 */
+const DEVICE_KINDS = new Set(["desktop", "cli", "box", "unknown"]);
+const HOST_VERSIONS_MAX_BYTES = 4096;
+
+async function handleHostMeta(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const body = await readJsonBody(req);
+  if (body === null || typeof body.token !== "string" || body.token.length < 16) {
+    writeError(res, 400, "BAD_REQUEST", "host token required");
+    return;
+  }
+  const host = await runtime.store.findHostByTokenHash(sha256(body.token));
+  if (host === null) {
+    writeError(res, 401, "UNAUTHORIZED", "invalid host token");
+    return;
+  }
+  let deviceKind: string | null = null;
+  if (body.deviceKind !== undefined && body.deviceKind !== null) {
+    if (typeof body.deviceKind !== "string" || !DEVICE_KINDS.has(body.deviceKind)) {
+      writeError(res, 400, "BAD_REQUEST", `deviceKind must be one of ${[...DEVICE_KINDS].join("|")}`);
+      return;
+    }
+    deviceKind = body.deviceKind;
+  }
+  let versionsJson: string | null = null;
+  if (body.versions !== undefined && body.versions !== null) {
+    if (typeof body.versions !== "object" || Array.isArray(body.versions)) {
+      writeError(res, 400, "BAD_REQUEST", "versions must be an object");
+      return;
+    }
+    const serialized = JSON.stringify(body.versions);
+    if (Buffer.byteLength(serialized, "utf8") > HOST_VERSIONS_MAX_BYTES) {
+      writeError(res, 400, "BAD_REQUEST", `versions must be <= ${HOST_VERSIONS_MAX_BYTES} bytes`);
+      return;
+    }
+    versionsJson = serialized;
+  }
+  if (deviceKind !== null || versionsJson !== null) {
+    await runtime.store.setHostMeta(host.id, deviceKind, versionsJson);
+  }
+  const updated = await runtime.store.getHostById(host.id);
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({
+    ok: true,
+    deviceKind: updated?.deviceKind ?? null,
+    versions: updated?.versionsJson != null ? safeJson(updated.versionsJson) : null,
+  }));
+}
+
+/** 解析存库的 versions JSON；脏数据不炸接口，退化为 null。 */
+function safeJson(raw: string): unknown {
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    return null;
+  }
+}
+
 async function handleHostLlmKey(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
   const body = await readJsonBody(req);
   if (body === null || typeof body.token !== "string" || body.token.length < 16) {
