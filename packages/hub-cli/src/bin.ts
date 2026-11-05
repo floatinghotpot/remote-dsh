@@ -489,8 +489,15 @@ async function handleHubHost(args: string[], configPath?: string): Promise<void>
         if (hostId === undefined) throw new Error("usage: rdsh-hub host revoke <hostId>");
         const host = await store.getHostById(hostId);
         if (host === null) throw new Error(`host '${hostId}' not found`);
-        await store.removeHost(hostId);
-        console.log(`rdsh-hub: host '${hostId}' revoked — its tunnel will drop and reconnects are rejected`);
+        // 与 portal/管理台一致：**软删**（保留行与历史用量）+ 吊销该 host 的 LLM key。
+        // 标记 revoked_by='admin' ⇒ 同一设备重绑不会复活这条记录。
+        const revoked = await store.revokeHostRecord(hostId, undefined, "admin");
+        if (!revoked) throw new Error(`host '${hostId}' not found or already revoked`);
+        const keys = await store.revokeLlmKeysByHost(hostId);
+        console.log(
+          `rdsh-hub: host '${hostId}' revoked (soft) — reconnects are rejected, ${keys} LLM key(s) revoked; ` +
+            "the device can join again, which creates a new host entry",
+        );
         return;
       }
       case "invite": {

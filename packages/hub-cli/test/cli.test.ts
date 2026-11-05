@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { HubDb } from "../../hub/src/db.ts";
 import { tmpdir } from "node:os";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -83,6 +84,45 @@ test("rdsh-hub relay ls + invite (temp sqlite)", async () => {
     const out = JSON.parse(inv.stdout) as { id: string; name: string; token: string };
     assert.equal(out.name, "staging-relay-01");
     assert.ok(out.token.length >= 16, "join token should be issued");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("rdsh-hub host revoke → 软删（保留行 + 标记 admin），可重复执行报错", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "rdsh-hub-host-"));
+  try {
+    const cfg = join(dir, "hub.json");
+    const dbPath = join(dir, "hub.db");
+    await writeFile(cfg, JSON.stringify({ dbPath }));
+    // 直接建库造一台 host（CLI 之外的数据准备）
+    const db = new HubDb(dbPath);
+    const u = db.createUser("alice", "hash");
+    db.createHost("h-revoke", u.id, "客厅盒子", "tok-hash");
+    db.close();
+
+    const r = await run(["host", "revoke", "h-revoke", "--config", cfg]);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /revoked \(soft\)/);
+
+    // 行仍在，且被标记为 admin 吊销
+    const after = new HubDb(dbPath);
+    try {
+      const row = after.db.prepare("SELECT revoked_at, revoked_by, name FROM hosts WHERE id = ?").get("h-revoke") as
+        | { revoked_at: string | null; revoked_by: string | null; name: string }
+        | undefined;
+      assert.ok(row !== undefined, "软删不得物理删除行");
+      assert.ok(row?.revoked_at !== null && row?.revoked_at !== undefined, "应写入 revoked_at");
+      assert.equal(row?.revoked_by, "admin");
+      assert.equal(row?.name, "客厅盒子", "主机名应保留");
+    } finally {
+      after.close();
+    }
+
+    // 再吊销一次：已是吊销态（getHostById 过滤 revoked）→ 明确报错
+    const again = await run(["host", "revoke", "h-revoke", "--config", cfg]);
+    assert.notEqual(again.code, 0);
+    assert.match(again.stderr, /not found/);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
