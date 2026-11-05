@@ -74,7 +74,7 @@ Configure and run this machine (the DSH host).
 Commands:
   setup lan              Configure a LAN gateway (access-code auth, plain http)
   setup cloud            Configure a cloud HTTPS gateway (password + TLS + allowFrom)
-  join <hub-url>         Connect to a hub (interactive token paste; --token for scripts)
+  join <hub-url>         Connect to a hub (QR/paste; --token for scripts; --headless for devices)
   serve                  Run the configured mode in the foreground
   service install|status|start|stop|restart|uninstall   Run as a systemd/launchd service
   leave                  Unregister this machine from the hub
@@ -83,7 +83,8 @@ Commands:
 
 Options (setup lan):   --port <n>
 Options (setup cloud):  --tls-cert <path> --tls-key <path> [--port <n>] [--allow-from <cidr,...>]
-Options (join):         --token <t> --name <n> --dsh <path> --insecure
+Options (join):         --token <t> --name <n> --dsh <path> --insecure --headless
+                        --headless: no TTY/QR; prints RDSH_BIND {bindId,expiresAt} and installs the service
 `,
 };
 
@@ -274,7 +275,12 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
  * 用后即弃，且必须由手机端已登录账号批准。
  * @returns true 已接入；false hub 不支持绑定会话（旧版本），调用方回退到粘贴 token。
  */
-async function bindByQr(hubUrl: string, name: string, insecure: boolean): Promise<boolean> {
+async function bindByQr(
+  hubUrl: string,
+  name: string,
+  insecure: boolean,
+  opts: { headless?: boolean } = {},
+): Promise<boolean> {
   const keys = loadOrCreateE2eeKeyPair();
   const created = await hubRequest(hubUrl, "/api/bind-sessions", {
     method: "POST",
@@ -287,14 +293,20 @@ async function bindByQr(hubUrl: string, name: string, insecure: boolean): Promis
   if (typeof session.bindId !== "string" || typeof session.consumeToken !== "string" || typeof session.expiresAt !== "number") {
     throw new Error("hub returned malformed bind session");
   }
-  const payload = `rdsh://bind?code=${session.bindId}`;
-  console.log("");
-  console.log(`  用鲸语通 App 扫码接入 ${hubUrl}`);
-  console.log("  App → 地址列表 → 远程智能体 → 扫码添加");
-  console.log("");
-  qrcode.generate(payload, { small: true }, (qr) => console.log(qr));
-  console.log(`  二维码 ${Math.max(0, Math.round((session.expiresAt - Date.now()) / 1000))} 秒后过期；也可手输：${payload}`);
-  console.log("");
+  if (opts.headless === true) {
+    // 无头模式（盒子 boxd 调用）：把会话 id 以机器可读的一行交给调用方。
+    // bindId 不是密钥：没有 approve（登录态）与 consumeToken（只在盒子进程内）都用不了。
+    console.log(`RDSH_BIND ${JSON.stringify({ bindId: session.bindId, expiresAt: session.expiresAt })}`);
+  } else {
+    const payload = `rdsh://bind?code=${session.bindId}`;
+    console.log("");
+    console.log(`  用鲸语通 App 扫码接入 ${hubUrl}`);
+    console.log("  App → 地址列表 → 远程智能体 → 扫码添加");
+    console.log("");
+    qrcode.generate(payload, { small: true }, (qr) => console.log(qr));
+    console.log(`  二维码 ${Math.max(0, Math.round((session.expiresAt - Date.now()) / 1000))} 秒后过期；也可手输：${payload}`);
+    console.log("");
+  }
   for (;;) {
     if (Date.now() >= session.expiresAt) throw new Error("二维码已过期，请重新运行 `rdsh join`");
     await sleep(1500);
@@ -332,6 +344,8 @@ async function handleHostJoin(args: string[], configPath?: string): Promise<void
     first = 1;
   }
   const opts: JoinOptions = { hubUrl };
+  // 无头接入（盒子 boxd 调用）：不要求 TTY、不打印二维码、装服务与 linger 自动执行。
+  let headless = false;
   for (let i = first; i < args.length; i++) {
     const flag = args[i];
     const value = (name: string): string => {
@@ -344,19 +358,26 @@ async function handleHostJoin(args: string[], configPath?: string): Promise<void
     else if (flag === "--dsh") opts.dshPath = value(flag);
     else if (flag === "--insecure") opts.insecure = true;
     else if (flag === "--reset") opts.reset = true;
+    else if (flag === "--headless") headless = true;
     else throw new Error(`unknown option '${flag}'`);
+  }
+  // --headless 是「首次绑定」的入口：已有持久化 session 时直接复用它不会建新会话，
+  // 静默成功反而更糟——明确报错，让调用方先 `rdsh leave`。
+  if (headless && opts.token === undefined && readPersistedToken(hubUrl) !== null) {
+    throw new Error("已存在持久化 session；--headless 只用于首次绑定，重新绑定请先 `rdsh leave`");
   }
   // 仅「扫码接入」（无 --token、无持久化 session、bindByQr 成功）才在退出前询问装服务；
   // --token / 粘贴 token 可能是 AI 或脚本驱动，不应被交互打断。
   let joinedViaQr = false;
   if (opts.token === undefined && readPersistedToken(hubUrl) === null) {
-    // 无 --token 且无持久化 session：TTY 下走扫码接入；非 TTY 报错不 hang。
-    if (!process.stdin.isTTY) {
-      throw new Error("无持久化 session 且未提供 --token；非交互环境请用 --token <t>");
+    // 无 --token 且无持久化 session：TTY 下走扫码接入；headless 同样走绑定会话但不需 TTY。
+    if (!process.stdin.isTTY && !headless) {
+      throw new Error("无持久化 session 且未提供 --token；非交互环境请用 --token <t> 或 --headless");
     }
     const insecure = opts.insecure === true || (await detectInsecure(hubUrl));
-    const bound = await bindByQr(hubUrl, opts.name?.trim() || hostname(), insecure);
+    const bound = await bindByQr(hubUrl, opts.name?.trim() || hostname(), insecure, { headless });
     if (!bound) {
+      if (headless) throw new Error("hub 不支持绑定会话（HTTP 404），无法无头接入");
       // hub 不支持绑定会话（旧版本）→ 回退到粘贴 token
       const pasted = (await promptLine("Paste your join token (hub portal → Add host): ")).trim();
       if (pasted === "") throw new Error("需要 join token（hub portal → 添加主机 生成）");
@@ -377,7 +398,7 @@ async function handleHostJoin(args: string[], configPath?: string): Promise<void
   await saveConfig(target, config);
   console.log(`rdsh: host 已接入 ${hubUrl}（${config.name}）—— session 已保存`);
   console.log("rdsh: 运行 `rdsh serve` 前台启动，或 `rdsh service install` 常驻。");
-  if (joinedViaQr) await offerPostJoinActions(target);
+  if (joinedViaQr) await offerPostJoinActions(target, { auto: headless });
 }
 
 /**
@@ -385,11 +406,17 @@ async function handleHostJoin(args: string[], configPath?: string): Promise<void
  * 再询问是否用 sudo 开启 linger（用户级服务开机自启的前提）。
  * 仅扫码路径调用（--token/粘贴 token 可能是 AI/脚本驱动，不打断）。
  */
-async function offerPostJoinActions(target: string): Promise<void> {
-  // 非交互（脚本/管道/--token）不询问，保持原行为、不 hang。
-  if (!process.stdin.isTTY) return;
+async function offerPostJoinActions(target: string, opts: { auto?: boolean } = {}): Promise<void> {
+  // 非交互（脚本/管道/--token）不询问，保持原行为、不 hang；headless 则自动执行（不询问）。
+  const auto = opts.auto === true;
+  if (!auto && !process.stdin.isTTY) return;
+  // --headless 是「设备（Linux 盒子）」场景：非 Linux 不自动装服务，避免在开发机上产生 launchd 副作用。
+  if (auto && process.platform !== "linux") {
+    console.log("rdsh: --headless 自动安装服务仅在 Linux 生效，已跳过");
+    return;
+  }
 
-  if (await promptYesNo("是否安装为常驻服务（开机自启 + 崩溃重启）？[y/N] ")) {
+  if (auto || (await promptYesNo("是否安装为常驻服务（开机自启 + 崩溃重启）？[y/N] "))) {
     try {
       console.log(await installService({ name: JOIN_SERVICE_NAME, args: ["serve"], configPath: target, pathEnv: nodePathEnv() }));
       console.log(`rdsh: host service installed (${JOIN_SERVICE_NAME}) —— 开机自启 + 崩溃重启。`);
@@ -412,7 +439,7 @@ async function offerPostJoinActions(target: string): Promise<void> {
     console.log("rdsh: 无法检测 linger 状态（loginctl 不可用？），如需开机自启请手动开启。");
     return;
   }
-  if (await promptYesNo(`rdsh: 未开启 linger，开机后用户服务不会自动启动。是否用 sudo 开启（需 root，可能要求输入密码）？[y/N] `)) {
+  if (auto || (await promptYesNo(`rdsh: 未开启 linger，开机后用户服务不会自动启动。是否用 sudo 开启（需 root，可能要求输入密码）？[y/N] `))) {
     if (enableLinger(user)) {
       console.log(`rdsh: linger 已开启（${user}）—— 开机自启生效。`);
     } else {

@@ -382,6 +382,8 @@ export function apply(ctx: Ctx): void {
       insecure,
       target: { host: "127.0.0.1", port: ctx.webServer.port },
       role: "plugin",
+      // 63-bind-agent-box R33：桌面插件自报 desktop。
+      deviceKind: "desktop",
       dshUiCompat: config.dshUiCompat,
       gateway: config.gateway,
       direct: { candidates: () => directHandle?.candidates() ?? [], mintTicket: () => directTicketManager!.mint() },
