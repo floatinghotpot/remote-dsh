@@ -220,7 +220,8 @@ export async function revokeHost(store: HubStore, ctx: AdminCtx, hostId: string,
   assertRole(ctx, "operator");
   const host = await store.getHostById(hostId);
   if (host === null) throw new AdminError("NOT_FOUND", "host not found");
-  await store.revokeHostRecord(hostId);
+  // 标记来源为 admin：该主机不会因设备重绑被复活。
+  await store.revokeHostRecord(hostId, undefined, "admin");
   await store.revokeLlmKeysByHost(hostId);
   await audit(store, ctx, host.ownerId, "admin.revoke-host", { hostId, name: host.name }, reason);
 }

@@ -78,6 +78,10 @@ export interface HostRow {
   deviceKind: string | null;
   /** 主机自报的版本对象（原始 JSON 字符串）；未上报为 null。 */
   versionsJson: string | null;
+  /** 设备标识（rdsh 安装期生成、随注册上送）：重绑时据此复用同一 host 记录；老客户端为 null。 */
+  deviceId: string | null;
+  /** 谁吊销的：`user`（解绑/用户删除，可被重绑复活）/ `admin`（管理员吊销，不可复活）；老数据为 null。 */
+  revokedBy: string | null;
 }
 
 export interface NodeRow {
@@ -580,7 +584,8 @@ export class HubDb {
         e2ee_public_key TEXT,
         node_id TEXT,
         online INTEGER NOT NULL DEFAULT 0,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        device_id TEXT
       );
       CREATE TABLE IF NOT EXISTS refresh_tokens (
         id INTEGER PRIMARY KEY,
@@ -1015,6 +1020,10 @@ export class HubDb {
     // 63-bind-agent-box：主机自报设备类型与版本（未上报为 NULL）
     if (!hostCols.has("device_kind")) this.db.exec(`ALTER TABLE hosts ADD COLUMN device_kind TEXT`);
     if (!hostCols.has("versions_json")) this.db.exec(`ALTER TABLE hosts ADD COLUMN versions_json TEXT`);
+    // 重绑去重：设备标识（未上送为 NULL）
+    if (!hostCols.has("device_id")) this.db.exec(`ALTER TABLE hosts ADD COLUMN device_id TEXT`);
+    // 吊销来源：user（可复活）/ admin（不可复活）；老数据 NULL → 视为不可复活（保守）
+    if (!hostCols.has("revoked_by")) this.db.exec(`ALTER TABLE hosts ADD COLUMN revoked_by TEXT`);
     const nodeCols = new Set(
       (this.db.prepare("PRAGMA table_info(nodes)").all() as unknown as Array<{ name: string }>).map((c) => c.name),
     );
@@ -1078,6 +1087,8 @@ export class HubDb {
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_hosts_node ON hosts(node_id);`);
     // 2026-11-04：host 列表/清理按 owner_id 过滤，缺索引会全表扫；补 owner 与共享索引。
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_hosts_owner ON hosts(owner_id);`);
+    // 重绑去重：同账号同设备只允许一行（老客户端 device_id=NULL 不受限，NULL 彼此不等）。
+    this.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_hosts_owner_device_uniq ON hosts(owner_id, device_id) WHERE device_id IS NOT NULL;`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_host_share_host ON host_share(host_id);`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_host_share_user ON host_share(user_id);`);
     // 32-tts-usage：usage_daily 补朗读字符数列。简单加列（不涉及 UNIQUE 约束），
@@ -1141,6 +1152,8 @@ export class HubDb {
       createdAt: String(row.created_at),
       deviceKind: row.device_kind === null || row.device_kind === undefined ? null : String(row.device_kind),
       versionsJson: row.versions_json === null || row.versions_json === undefined ? null : String(row.versions_json),
+      deviceId: row.device_id === null || row.device_id === undefined ? null : String(row.device_id),
+      revokedBy: row.revoked_by === null || row.revoked_by === undefined ? null : String(row.revoked_by),
     };
   }
 
@@ -1473,14 +1486,24 @@ export class HubDb {
 
   // ---- hosts ----
 
-  createHost(id: string, ownerId: number, name: string, tokenHash: string, e2eePublicKey?: string, now = new Date().toISOString()): HostRow {
-    this.db.prepare("INSERT INTO hosts (id, owner_id, name, token_hash, e2ee_public_key, created_at) VALUES (?, ?, ?, ?, ?, ?)").run(
+  createHost(
+    id: string,
+    ownerId: number,
+    name: string,
+    tokenHash: string,
+    e2eePublicKey?: string,
+    now = new Date().toISOString(),
+    // deviceId 放在最后：已有调用方按位置传 now，不能插在中间破坏兼容。
+    deviceId?: string,
+  ): HostRow {
+    this.db.prepare("INSERT INTO hosts (id, owner_id, name, token_hash, e2ee_public_key, created_at, device_id) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
       id,
       ownerId,
       name,
       tokenHash,
       e2eePublicKey ?? null,
       now,
+      deviceId ?? null,
     );
     const row = this.db.prepare("SELECT * FROM hosts WHERE id = ?").get(id);
     return this.mapHost(row as unknown as Record<string, unknown>);
@@ -1561,10 +1584,52 @@ export class HubDb {
    * token_hash 置为唯一占位值 → 旧 host token 立即失效且不阻塞 UNIQUE；node_id/online 清空。
    * 读路径统一带 `revoked_at IS NULL`，因此软删后该 host 对所有业务查询不可见。
    */
-  revokeHostRecord(id: string, now = new Date().toISOString()): boolean {
+  /**
+   * 软删 host。`by` 决定重绑时能否复活：`user`（解绑/用户删除）可复活，
+   * `admin`（管理员吊销）不可——否则管理员处置会被一次重绑抹掉。
+   */
+  revokeHostRecord(id: string, now = new Date().toISOString(), by: "user" | "admin" = "user"): boolean {
+    // admin 吊销额外抹掉 device_id 关联：否则这条行仍占着 (owner, device_id) 唯一槽位，
+    // 设备重绑时「不复用、新建一条」会被唯一索引挡住。
+    const unlink = by === "admin" ? ", device_id = NULL" : "";
     const info = this.db
-      .prepare("UPDATE hosts SET revoked_at = ?, token_hash = 'revoked:' || id, node_id = NULL, online = 0 WHERE id = ? AND revoked_at IS NULL")
-      .run(now, id);
+      .prepare(
+        `UPDATE hosts SET revoked_at = ?, revoked_by = ?, token_hash = 'revoked:' || id, node_id = NULL, online = 0${unlink} WHERE id = ? AND revoked_at IS NULL`,
+      )
+      .run(now, by, id);
+    return info.changes > 0;
+  }
+
+  /**
+   * 按「账号 + 设备标识」找 host（**包含已吊销行**）。
+   *
+   * 重绑必须能命中被 `leave` 吊销过的那条，否则每次「解绑→绑定」都会新建记录。
+   * device-id 是秘密（不出现在 GET /api/hosts），所以复活被删记录没有冒用风险。
+   */
+  findHostByOwnerDeviceId(ownerId: number, deviceId: string): HostRow | null {
+    const row = this.db
+      .prepare(
+        "SELECT * FROM hosts WHERE owner_id = ? AND device_id = ? AND (revoked_at IS NULL OR revoked_by = 'user') ORDER BY created_at DESC LIMIT 1",
+      )
+      .get(ownerId, deviceId);
+    return row === undefined ? null : this.mapHost(row as unknown as Record<string, unknown>);
+  }
+
+  /**
+   * 复用旧 host 记录：清吊销标记 + 轮换 host token（旧 token 立即失效）。
+   * `name` / 共享关系 / hostId 保持不变，所以重绑不会打断共享与链接。
+   */
+  reissueHostToken(hostId: string, tokenHash: string, e2eePublicKey?: string): boolean {
+    const sets = ["token_hash = ?", "revoked_at = NULL", "revoked_by = NULL", "online = 0"];
+    const args: Array<string | null> = [tokenHash];
+    if (e2eePublicKey !== undefined) {
+      sets.push("e2ee_public_key = ?");
+      args.push(e2eePublicKey);
+    }
+    args.push(hostId);
+    const info = this.db
+      .prepare(`UPDATE hosts SET ${sets.join(", ")} WHERE id = ? AND (revoked_at IS NULL OR revoked_by = 'user')`)
+      .run(...args);
     return info.changes > 0;
   }
 

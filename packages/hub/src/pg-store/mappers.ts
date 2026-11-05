@@ -74,6 +74,8 @@ export function mapHost(row: Record<string, unknown>): HostRow {
     createdAt: String(row.created_at),
     deviceKind: row.device_kind === null || row.device_kind === undefined ? null : String(row.device_kind),
     versionsJson: row.versions_json === null || row.versions_json === undefined ? null : String(row.versions_json),
+    deviceId: row.device_id === null || row.device_id === undefined ? null : String(row.device_id),
+    revokedBy: row.revoked_by === null || row.revoked_by === undefined ? null : String(row.revoked_by),
   };
 }
 

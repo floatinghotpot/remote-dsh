@@ -396,13 +396,13 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
     // 先按 SQL 条件取全量、再按 online 过滤、最后手动分页（管理列表量级可控）。
     if (onlineFilter !== undefined) {
       const all = (await store.listHostsPage({ q, e2ee, createdFrom, createdTo, limit: 1_000_000, offset: 0 })).rows
-        .map((h) => ({ ...h, online: isHostOnline(h, runtime) }));
+        .map((h) => adminHostView(h, runtime));
       const matched = all.filter((h) => h.online === onlineFilter);
       res.end(JSON.stringify({ hosts: matched.slice(offset, offset + limit), total: matched.length }));
       return true;
     }
     const { rows, total } = await store.listHostsPage({ q, e2ee, createdFrom, createdTo, limit, offset });
-    const hosts = rows.map((h) => ({ ...h, online: isHostOnline(h, runtime) }));
+    const hosts = rows.map((h) => adminHostView(h, runtime));
     res.end(JSON.stringify({ hosts, total }));
     return true;
   }
@@ -2597,6 +2597,12 @@ async function handlePassword(req: IncomingMessage, res: ServerResponse, runtime
   res.end(JSON.stringify({ ok: true, message: "password updated; all sessions revoked" }));
 }
 
+/** 管理面 host 视图：剔除仅供内部匹配的 `deviceId`（不对外暴露）。 */
+function adminHostView(h: HostRow, runtime: HubRuntime): Record<string, unknown> {
+  const { deviceId: _deviceId, ...rest } = h;
+  return { ...rest, online: isHostOnline(h, runtime) };
+}
+
 /** 主机在线：节点路由用内存 presence（N2 心跳/N4）；hub 路由（无节点）用 TunnelRegistry。 */
 function isHostOnline(h: HostRow, runtime: HubRuntime): boolean {
   return h.nodeId !== null ? runtime.presence.isOnline(h.id) : runtime.tunnels.isOnline(h.id);
@@ -3103,7 +3109,8 @@ async function handleRevokeHost(req: IncomingMessage, res: ServerResponse, runti
 
 /** 删除 host + 断隧道 + 摘注册表 + 推送 offline（用户吊销 / host 自吊销共用）。 */
 async function revokeHost(runtime: HubRuntime, hostId: string, ownerId: number): Promise<void> {
-  await runtime.store.revokeHostRecord(hostId);
+  // 用户解绑/删除 → 标记 user：同一设备重绑时可复活这一行（hostId 稳定）。
+  await runtime.store.revokeHostRecord(hostId, undefined, "user");
   await runtime.store.revokeLlmKeysByHost(hostId);
   const conn = runtime.tunnels.get(hostId);
   if (conn !== null) conn.terminate();
@@ -3462,6 +3469,25 @@ async function handleRegister(req: IncomingMessage, res: ServerResponse, runtime
     writeError(res, 401, "UNAUTHORIZED", "join token invalid, expired, or revoked");
     return;
   }
+  const e2eePublicKey = typeof body.e2eePublicKey === "string" && body.e2eePublicKey.length > 0 ? body.e2eePublicKey.slice(0, 256) : undefined;
+  const deviceId = typeof body.deviceId === "string" && isValidDeviceId(body.deviceId) ? body.deviceId : undefined;
+
+  // 2.5) 同一设备重绑：复用它的旧记录（**含已吊销**），轮换 token，保留 hostId/name/共享。
+  //      配额检查放在这里之后：复用不新增主机，不应被配额挡住。
+  if (deviceId !== undefined) {
+    const prior = await runtime.store.findHostByOwnerDeviceId(jt.ownerId, deviceId);
+    if (prior !== null) {
+      const rotated = randomToken();
+      // reissue 返回 false = 该行在 find 与 update 之间被删（管理员硬删）→ 退回新建，
+      // 否则会发出一个指向已不存在主机的 token。
+      if (await runtime.store.reissueHostToken(prior.id, sha256(rotated), e2eePublicKey)) {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ hostId: prior.id, hostToken: rotated, hostCookiePubKey: runtime.config.hostCookiePubKey ?? "" }));
+        return;
+      }
+    }
+  }
+
   const owner = await runtime.store.getUserById(jt.ownerId);
   if (owner !== null) {
     const quota = await hostQuota(runtime, owner);
@@ -3472,10 +3498,40 @@ async function handleRegister(req: IncomingMessage, res: ServerResponse, runtime
   }
   const hostId = randomUUID();
   const hostToken = randomToken();
-  const e2eePublicKey = typeof body.e2eePublicKey === "string" && body.e2eePublicKey.length > 0 ? body.e2eePublicKey.slice(0, 256) : undefined;
-  await runtime.store.createHost(hostId, jt.ownerId, name ?? `host-${hostId.slice(0, 8)}`, sha256(hostToken), e2eePublicKey);
+  try {
+    await runtime.store.createHost(
+      hostId,
+      jt.ownerId,
+      name ?? `host-${hostId.slice(0, 8)}`,
+      sha256(hostToken),
+      e2eePublicKey,
+      undefined,
+      deviceId,
+    );
+  } catch (err) {
+    // 并发首绑（同机插件 + CLI 同时首 join）会同时撞上 (owner_id, device_id) 唯一索引：
+    // 一方 create 成功、另一方抛唯一冲突 → 转为复用，避免静默留下两行。
+    const code = (err as { code?: string }).code ?? "";
+    if (deviceId !== undefined && (code === "23505" || code.startsWith("SQLITE_CONSTRAINT"))) {
+      const prior = await runtime.store.findHostByOwnerDeviceId(jt.ownerId, deviceId);
+      if (prior !== null) {
+        const rotated = randomToken();
+        if (await runtime.store.reissueHostToken(prior.id, sha256(rotated), e2eePublicKey)) {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ hostId: prior.id, hostToken: rotated, hostCookiePubKey: runtime.config.hostCookiePubKey ?? "" }));
+          return;
+        }
+      }
+    }
+    throw err;
+  }
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({ hostId, hostToken, hostCookiePubKey: runtime.config.hostCookiePubKey ?? "" }));
+}
+
+/** 设备标识（rdsh 安装期生成，base64url 16–128 字符）；非法值一律忽略。 */
+function isValidDeviceId(value: string): boolean {
+  return value.length >= 16 && value.length <= 128 && /^[A-Za-z0-9_-]+$/.test(value);
 }
 
 function sessionCookie(accessToken: string, domain?: string): string {

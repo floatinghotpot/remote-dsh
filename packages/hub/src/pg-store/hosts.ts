@@ -34,6 +34,8 @@ export function hosts(
   | "listHostsForUser"
   | "isHostOwner"
   | "setHostMeta"
+  | "findHostByOwnerDeviceId"
+  | "reissueHostToken"
 > {
   const getHostById = async (id: string): Promise<HostRow | null> => {
     const row = one(await q(txDb(pool), "SELECT * FROM hosts WHERE id = $1 AND revoked_at IS NULL", [id]));
@@ -48,10 +50,12 @@ export function hosts(
       tokenHash: string,
       e2eePublicKey?: string,
       now: string = new Date().toISOString(),
+      // deviceId 放最后：与 SQLite 端口保持同一签名顺序（已有调用方按位置传 now）。
+      deviceId?: string,
     ): Promise<HostRow> => {
       const r = await q(txDb(pool),
-        "INSERT INTO hosts (id, owner_id, name, token_hash, e2ee_public_key, created_at) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *",
-        [id, ownerId, name, tokenHash, e2eePublicKey ?? null, now],
+        "INSERT INTO hosts (id, owner_id, name, token_hash, e2ee_public_key, created_at, device_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *",
+        [id, ownerId, name, tokenHash, e2eePublicKey ?? null, now, deviceId ?? null],
       );
       return mapHost(one(r)!);
     },
@@ -142,10 +146,16 @@ export function hosts(
     },
 
     /** 软删（leave / 管理员吊销）：保留行以保住历史流量、主机名与共享关系；旧 token 立即失效。 */
-    async revokeHostRecord(id: string, now: string = new Date().toISOString()): Promise<boolean> {
+    async revokeHostRecord(
+      id: string,
+      now: string = new Date().toISOString(),
+      by: "user" | "admin" = "user",
+    ): Promise<boolean> {
       const r = await txDb(pool).query(
-        "UPDATE hosts SET revoked_at = $1, token_hash = 'revoked:' || id, node_id = NULL, online = 0 WHERE id = $2 AND revoked_at IS NULL",
-        [now, id],
+        (by === "admin"
+          ? "UPDATE hosts SET revoked_at = $1, revoked_by = $2, token_hash = 'revoked:' || id, node_id = NULL, online = 0, device_id = NULL WHERE id = $3 AND revoked_at IS NULL"
+          : "UPDATE hosts SET revoked_at = $1, revoked_by = $2, token_hash = 'revoked:' || id, node_id = NULL, online = 0 WHERE id = $3 AND revoked_at IS NULL"),
+        [now, by, id],
       );
       return (r.rowCount ?? 0) > 0;
     },
@@ -207,6 +217,29 @@ export function hosts(
         )
       ).rows;
       return rows.map((r) => mapHost(r));
+    },
+
+    async findHostByOwnerDeviceId(ownerId: number, deviceId: string): Promise<HostRow | null> {
+      const r = await q(txDb(pool),
+        "SELECT * FROM hosts WHERE owner_id = $1 AND device_id = $2 AND (revoked_at IS NULL OR revoked_by = 'user') ORDER BY created_at DESC LIMIT 1",
+        [ownerId, deviceId],
+      );
+      return r.rows.length === 0 ? null : mapHost(r.rows[0]! as Record<string, unknown>);
+    },
+
+    async reissueHostToken(hostId: string, tokenHash: string, e2eePublicKey?: string): Promise<boolean> {
+      const sets = ["token_hash = $1", "revoked_at = NULL", "revoked_by = NULL", "online = 0"];
+      const args: unknown[] = [tokenHash];
+      if (e2eePublicKey !== undefined) {
+        args.push(e2eePublicKey);
+        sets.push(`e2ee_public_key = $${args.length}`);
+      }
+      args.push(hostId);
+      const r = await q(txDb(pool),
+        `UPDATE hosts SET ${sets.join(", ")} WHERE id = $${args.length} AND (revoked_at IS NULL OR revoked_by = 'user')`,
+        args,
+      );
+      return (r.rowCount ?? 0) > 0;
     },
 
     async setHostMeta(hostId: string, deviceKind: string | null, versionsJson: string | null): Promise<boolean> {

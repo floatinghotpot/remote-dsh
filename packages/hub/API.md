@@ -167,6 +167,25 @@ portal 后台充值页据此渲染档位（不再前端写死；与 `/api/billin
 
 `/api/hosts/register` 建 host 前按 `plan_status` 检查 **可接入云端中转的主机数**（⚠️ 语义与术语见 §13.2 —— **不是**「用户拥有几台主机」）：`internal` 不限；`NULL`=0（无权限）；`trial`=1；`subscribed`=plan.hosts；`free`/`grace`（grace 保留原配额，按原 plan.hosts）。超限 → `403 QUOTA_EXCEEDED`。
 
+### 5.1 重绑去重：请求体 `deviceId`（2026-11-06）
+
+请求体可带 `{ "deviceId": string }` —— rdsh 在安装期生成的设备标识（base64url，16–128 字符；
+**只做身份匹配，不在任何读接口返回**，与 `e2eePublicKey` 职责分离）。
+
+- 命中规则：同 `owner` + 同 `deviceId`，且 `revoked_at IS NULL` **或** `revoked_by = 'user'`；
+- 命中后：清 `revoked_at`（复活）、**轮换 host token**（旧 token 立即失效）、保留 `hostId`/`name`/共享关系；
+- 未命中、或未携带（老客户端）、或值非法：照旧新建主机（行为与升级前一致）；
+- **复用不新增主机，所以不经过上文的配额检查**。
+
+- **吊销来源区分**：`revoked_by = 'user'`（`rdsh leave` 解绑 / 用户在 App 删除）→ 可复活；
+  `revoked_by = 'admin'`（管理台吊销）或老数据 `NULL` → **不复活**，本次注册新建一条主机。
+  否则管理员处置会被"重绑一次"抹掉。
+- **唯一性**：`hosts(owner_id, device_id) WHERE device_id IS NOT NULL` 部分唯一索引——同一账号同一设备
+  最多一条「活跃或可复活」记录；管理员吊销会同时把该行 `device_id` 置空（释放槽位），所以重绑能新建一条。
+
+> 为什么要含 user 吊销行：`rdsh leave`（解绑）会 selfRevoke 把行置为 revoked；
+> 若只匹配未吊销行，「解绑→绑定」每轮都会新建一条 host，账号里留下永远离线的僵尸记录。
+
 ## 6. 状态机语义（req §2.5，非端点）
 
 `account_status`: pending → active → banned | deleted（封禁/删除）。
@@ -250,9 +269,19 @@ JSAPI 支付需用户 openid（公众号 OAuth2）。门户在微信内浏览器
 - 带试用时写 `plan=trial` + 到期时间（**不再写 `null`+到期**）；`expiresAtMs` 为遗留字段，等价"试用到该时刻"。
 
 ### GET /api/admin/hosts?q=&limit=&offset=
-分页 + 模糊搜索（主机名/归属用户名，JOIN users）。响应 `{ "hosts": [{ ...HostRow, ownerName, online }], "total" }`。
+分页 + 模糊搜索（主机名/归属用户名，JOIN users）。响应 `{ "hosts": [{ ...HostRow（不含 deviceId）, ownerName, online }], "total" }`。
+> `deviceId` 是内部匹配键，**不出现在任何读接口**（含管理面）。
 
-### POST /api/admin/hosts/{id}/revoke —— 吊销主机（需 `reason`）。
+### POST /api/admin/hosts/{id}/revoke —— 吊销主机（需 `reason`，`operator` 及以上）
+
+效果：**软删该主机**（`revoked_at` + `revoked_by='admin'`，host token 立即失效 → 隧道断开、再连 401）+ **吊销该主机名下所有 LLM key** + 审计 `admin.revoke-host`。
+
+**这只是"掐掉这一台"，不是"封这个人"**：
+
+- 账号不受影响，仍可用其他主机；
+- 该设备/用户仍可**重新接入**（用其账号的 join token 再 `rdsh join`）——重绑会**新建一条主机**，
+  不会复活被管理员吊销的那条（`revoked_by='admin'` 的行不可复活）；
+- 要禁止该用户继续使用，请用 **`banUser`（账号封禁）**，而不是吊销主机。
 
 ### GET /api/admin/orders —— 订单列表；GET /api/admin/payments —— 支付流水；GET /api/admin/audit —— 审计日志
 订单/支付/审计列表；audit 支持 `?userId=&event=&since=&source=`；audit.csv 全量导出（90 天保留）。
