@@ -7,7 +7,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -100,6 +100,90 @@ test("CLI --headless 走完 bind-sessions → approve → consume，host 出现�
     // host.json 落在隔离 HOME 下
     const cfg = JSON.parse(readFileSync(join(home, "host.json"), "utf8")) as { mode?: string };
     assert.equal(cfg.mode, "join");
+  } finally {
+    await new Promise<void>((r) => server.server.close(() => r()));
+    db.close();
+  }
+});
+
+/**
+ * 重绑去重（fix 20261106-box-rebind-duplicate-host）：同一台机器（同一 HOME →
+ * 同一 `~/.rdsh/device-id`）用新的 join token 再接入一次，必须复用同一个 hostId，
+ * 而不是在账号里再新建一条。
+ */
+test("同一台机器换 join token 重绑 → 复用同一 hostId", async () => {
+  const db = new HubDb(":memory:");
+  const auth = new HubAuth(createSqliteStore(db), (id) => db.getUserById(id), new Jwt(Buffer.from("test-key-0123456789abcdef")));
+  const server = await startHubServer({
+    host: "127.0.0.1",
+    port: 0,
+    db,
+    auth,
+    tunnels: new TunnelRegistry(),
+    events: new EventHub(),
+    portalDir: "/nonexistent-portal",
+    // register 按 IP 限流（10 次/分钟）；测试里用 XFF 换桶。
+    behindProxy: true,
+  });
+  const base = `http://127.0.0.1:${server.actualPort}`;
+  const home = mkdtempSync(join(tmpdir(), "rdsh-rebind-"));
+  const env = { ...process.env, HOME: home, RDSH_CONFIG: join(home, "host.json") };
+  let ip = 0;
+  let cookie = "";
+  const mintToken = async (name: string): Promise<string> => {
+    const res = await fetch(`${base}/api/hosts/join-token`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie, "x-forwarded-for": `10.1.0.${++ip}` },
+      body: JSON.stringify({ ttlSeconds: 300 }),
+    });
+    assert.equal(res.status, 200, `mint join token failed: ${name}`);
+    return ((await res.json()) as { token: string }).token;
+  };
+
+  try {
+    const user = db.createUser("bob", await hashPassword("pw123456"));
+    db.setPlan(user.id, "internal", null);
+    const login = await fetch(`${base}/api/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-forwarded-for": "10.1.0.1" },
+      body: JSON.stringify({ name: "bob", password: "pw123456" }),
+    });
+    assert.equal(login.status, 200);
+    cookie = `rdsh_hub_session=${((await login.json()) as { accessToken: string }).accessToken}`;
+
+    // 1) 首次接入
+    const t1 = await mintToken("first");
+    await new Promise<void>((resolve, reject) => {
+      execFile(process.execPath, [bin, "join", base, "--token", t1, "--name", "rebind-box"], { env, timeout: 30_000 }, (err) =>
+        err ? reject(err) : resolve(),
+      );
+    });
+    const metaPath = join(home, ".rdsh");
+    assert.ok(existsSync(metaPath), "隔离 HOME 下应出现 .rdsh");
+
+    const firstId = ((await (await fetch(`${base}/api/hosts`, { headers: { cookie } })).json()) as {
+      hosts: Array<{ id: string }>;
+    }).hosts[0]!.id;
+    // device-id 已持久化
+    const deviceIdFile = join(metaPath, "device-id");
+    assert.ok(existsSync(deviceIdFile), "应持久化 ~/.rdsh/device-id");
+    const deviceId = readFileSync(deviceIdFile, "utf8").trim();
+
+    // 2) 换一个新 join token 再接入（模拟「解绑→绑定」）
+    const t2 = await mintToken("second");
+    assert.notEqual(t2, t1);
+    await new Promise<void>((resolve, reject) => {
+      execFile(process.execPath, [bin, "join", base, "--token", t2, "--name", "rebind-box"], { env, timeout: 30_000 }, (err) =>
+        err ? reject(err) : resolve(),
+      );
+    });
+
+    const hosts = ((await (await fetch(`${base}/api/hosts`, { headers: { cookie } })).json()) as {
+      hosts: Array<{ id: string }>;
+    }).hosts;
+    assert.equal(hosts.length, 1, `重绑不应新建记录：${JSON.stringify(hosts)}`);
+    assert.equal(hosts[0]!.id, firstId, "同一设备必须复用 hostId");
+    assert.equal(readFileSync(deviceIdFile, "utf8").trim(), deviceId, "device-id 必须稳定不变");
   } finally {
     await new Promise<void>((r) => server.server.close(() => r()));
     db.close();
