@@ -32,6 +32,7 @@ import { acquireJoinLock, releaseJoinLock, readJoinLock } from "./lock.ts";
 import type { JoinLockRole } from "./lock.ts";
 import { responderHandshake, Aead } from "./e2ee.ts";
 import type { KeyPair, E2eeKeys } from "./e2ee.ts";
+import { loadOrCreateDeviceId } from "./device-id.ts";
 import { loadOrCreateE2eeKeyPair } from "./e2ee-key-store.ts";
 import { GATE_COOKIE, signGateCookie, verifyGateCookie, verifyGateCode } from "./access-gate.ts";
 import { startDirect, directBootstrapScript } from "./direct.ts";
@@ -76,6 +77,8 @@ export interface JoinOptions {
   direct?: { host?: string; port?: number };
   /** host E2EE 静态密钥对目录（缺省 ~/.rdsh；**仅供测试注入**，生产不要传 —— 见 e2ee-key-store.ts） */
   e2eeKeyDir?: string;
+  /** device-id 目录（缺省 ~/.rdsh；**仅供测试注入**，生产不要传 —— 见 device-id.ts） */
+  deviceIdDir?: string;
 }
 
 /** 注册/接入结果：解析出的 host token + 是否需 insecure + 生效的主机名（缺省=机器 hostname）。 */
@@ -574,7 +577,16 @@ export async function registerJoin(opts: JoinOptions): Promise<RegisterOutcome> 
   if (opts.token !== undefined) {
     // --token = join token（或旧 host token）→ register 端点换 host token
     const e2eeKeyPair = loadOrCreateE2eeKeyPair(opts.e2eeKeyDir);
-    const r = await register(opts.hubUrl, opts.token, name, insecure, e2eeKeyPair.publicRaw.toString("base64url"));
+    // device-id：hub 据此识别"同一台设备重绑"，复用旧的 host 记录。
+    const deviceId = loadOrCreateDeviceId(opts.deviceIdDir);
+    const r = await register(
+      opts.hubUrl,
+      opts.token,
+      name,
+      insecure,
+      e2eeKeyPair.publicRaw.toString("base64url"),
+      deviceId,
+    );
     token = r.hostToken;
     hostId = r.hostId;
     hostCookiePubKey = r.hostCookiePubKey;
@@ -603,9 +615,12 @@ async function register(
   name: string | undefined,
   insecure: boolean,
   e2eePublicKey?: string,
+  deviceId?: string,
 ): Promise<{ hostId: string; hostToken: string; hostCookiePubKey: string }> {
   const body: Record<string, unknown> = { token: joinToken, name };
   if (e2eePublicKey !== undefined) body.e2eePublicKey = e2eePublicKey;
+  // device-id 只做身份匹配（hub 不对外返回）；老 hub 忽略未知字段，故后端升级可独立进行。
+  if (deviceId !== undefined) body.deviceId = deviceId;
   const res = await hubRequest(hubUrl, "/api/hosts/register", { method: "POST", insecure, body });
   if (!res.ok) {
     const msg = (res.body as { error?: { message?: string } }).error?.message ?? `HTTP ${res.status}`;
