@@ -195,11 +195,11 @@ async function handleHost(args: string[], configPath?: string): Promise<void> {
       await handleHostGate(rest, configPath);
       return;
     default:
-      throw new Error("usage: rdsh host setup|join|serve|service|leave|user|gate");
+      throw new Error("usage: rdsh setup|join|serve|service|leave|user|gate");
   }
 }
 
-/** `rdsh host setup lan|cloud`：写 host.json（mode + 预设字段），配置完退出。 */
+/** `rdsh setup lan|cloud`：写 host.json（mode + 预设字段），配置完退出。 */
 async function handleHostSetup(args: string[], configPath?: string): Promise<void> {
   const which = args[0];
   const target = resolveConfigPath(configPath);
@@ -224,8 +224,8 @@ async function handleHostSetup(args: string[], configPath?: string): Promise<voi
     config.dshPath = config.dshPath ?? findDsh() ?? undefined;
     await saveConfig(target, config);
     console.log(`rdsh: host 配置为 LAN 网关（访问口令，端口 ${port}）→ ${target}`);
-    console.log(`rdsh: 访问口令（请记录，可用 \`rdsh host gate set\` 修改）：${code}`);
-    console.log("rdsh: 运行 `rdsh host serve` 前台启动，或 `rdsh host service install` 常驻。");
+    console.log(`rdsh: 访问口令（请记录，可用 \`rdsh gate set\` 修改）：${code}`);
+    console.log("rdsh: 运行 `rdsh serve` 前台启动，或 `rdsh service install` 常驻。");
     return;
   }
 
@@ -243,7 +243,7 @@ async function handleHostSetup(args: string[], configPath?: string): Promise<voi
       else throw new Error(`unknown option '${flag}'`);
     }
     if (cert === undefined || key === undefined) {
-      throw new Error("usage: rdsh host setup cloud --tls-cert <path> --tls-key <path> [--port <n>] [--allow-from <cidr,...>]");
+      throw new Error("usage: rdsh setup cloud --tls-cert <path> --tls-key <path> [--port <n>] [--allow-from <cidr,...>]");
     }
     config.mode = "cloud";
     config.port = port;
@@ -254,11 +254,11 @@ async function handleHostSetup(args: string[], configPath?: string): Promise<voi
     config.dshPath = config.dshPath ?? findDsh() ?? undefined;
     await saveConfig(target, config);
     console.log(`rdsh: host 配置为云 HTTPS 网关（password，端口 ${port}）→ ${target}`);
-    console.log("rdsh: 用 `rdsh host user add <name>` 建用户，再 `rdsh host serve` / `rdsh host service install`。");
+    console.log("rdsh: 用 `rdsh user add <name>` 建用户，再 `rdsh serve` / `rdsh service install`。");
     return;
   }
 
-  throw new Error("usage: rdsh host setup lan|cloud");
+  throw new Error("usage: rdsh setup lan|cloud");
 }
 
 /** 省略位置参数时使用的默认 hub。 */
@@ -296,7 +296,7 @@ async function bindByQr(hubUrl: string, name: string, insecure: boolean): Promis
   console.log(`  二维码 ${Math.max(0, Math.round((session.expiresAt - Date.now()) / 1000))} 秒后过期；也可手输：${payload}`);
   console.log("");
   for (;;) {
-    if (Date.now() >= session.expiresAt) throw new Error("二维码已过期，请重新运行 `rdsh host join`");
+    if (Date.now() >= session.expiresAt) throw new Error("二维码已过期，请重新运行 `rdsh join`");
     await sleep(1500);
     const poll = await hubRequest(hubUrl, `/api/bind-sessions/${session.bindId}`, { method: "GET", insecure });
     if (!poll.ok) continue;
@@ -320,7 +320,7 @@ async function bindByQr(hubUrl: string, name: string, insecure: boolean): Promis
   }
 }
 
-/** `rdsh host join <hub>`：注册（join token）→ 写 host.json + session，配置完退出。 */
+/** `rdsh join <hub>`：注册（join token）→ 写 host.json + session，配置完退出。 */
 async function handleHostJoin(args: string[], configPath?: string): Promise<void> {
   // hub 可省略：省略时用 DEFAULT_HUB_URL；首个不以 '-' 开头的参数视为 hub。
   let hubUrl = DEFAULT_HUB_URL;
@@ -376,7 +376,7 @@ async function handleHostJoin(args: string[], configPath?: string): Promise<void
   config.dshPath = opts.dshPath ?? findDsh() ?? config.dshPath;
   await saveConfig(target, config);
   console.log(`rdsh: host 已接入 ${hubUrl}（${config.name}）—— session 已保存`);
-  console.log("rdsh: 运行 `rdsh host serve` 前台启动，或 `rdsh host service install` 常驻。");
+  console.log("rdsh: 运行 `rdsh serve` 前台启动，或 `rdsh service install` 常驻。");
   if (joinedViaQr) await offerPostJoinActions(target);
 }
 
@@ -421,25 +421,25 @@ async function offerPostJoinActions(target: string): Promise<void> {
   }
 }
 
-/** `rdsh host serve`：前台常驻，读 host.json 按 mode 分发（join→隧道，lan/cloud→网关）。 */
+/** `rdsh serve`：前台常驻，读 host.json 按 mode 分发（join→隧道，lan/cloud→网关）。 */
 async function handleHostServe(_args: string[], configPath?: string): Promise<void> {
   const target = resolveConfigPath(configPath);
   const config = await loadConfig(target);
   if (config.mode === "join") {
-    if (config.hub === undefined) throw new Error("host.json 缺 hub（join 模式）；先 `rdsh host join <hub>`");
+    if (config.hub === undefined) throw new Error("host.json 缺 hub（join 模式）；先 `rdsh join <hub>`");
     await join({ hubUrl: config.hub, name: config.name, insecure: config.insecure, dshPath: config.dshPath, dshUiCompat: config.dshUiCompat, gateway: config.gateway, llm: config.llm, direct: { host: config.host, port: config.port } });
     return;
   }
   await serve({ configPath: target });
 }
 
-/** `rdsh host service install|status|start|stop|restart|uninstall`：读 host.json mode 定位服务（unit 不含 token）。 */
+/** `rdsh service install|status|start|stop|restart|uninstall`：读 host.json mode 定位服务（unit 不含 token）。 */
 async function handleHostService(args: string[], configPath?: string): Promise<void> {
   const action = args[0];
   const target = resolveConfigPath(configPath);
   const actions = ["install", "status", "start", "stop", "restart", "uninstall"];
   if (action === undefined || !actions.includes(action)) {
-    throw new Error(`usage: rdsh host service ${actions.join("|")}`);
+    throw new Error(`usage: rdsh service ${actions.join("|")}`);
   }
   if (action === "install") {
     await maybeRegisterForServiceInstall(args, target);
@@ -453,7 +453,7 @@ async function handleHostService(args: string[], configPath?: string): Promise<v
       console.log(`rdsh: host service installed (${name}) —— 开机自启 + 崩溃重启。`);
       return;
     case "status":
-      console.log(`rdsh host service (${name}): ${await serviceStatus(name)}`);
+      console.log(`rdsh service (${name}): ${await serviceStatus(name)}`);
       return;
     case "start":
       console.log(await startService(name));
@@ -493,7 +493,7 @@ async function maybeRegisterForServiceInstall(args: string[], target: string): P
   await saveConfig(target, cfg);
 }
 
-/** `rdsh host gate set|clear|status`：访问口令（gateway.accessCode）——隧道与直连两条通道共用的门禁。 */
+/** `rdsh gate set|clear|status`：访问口令（gateway.accessCode）——隧道与直连两条通道共用的门禁。 */
 async function handleHostGate(args: string[], configPath?: string): Promise<void> {
   const action = args[0];
   const target = resolveConfigPath(configPath);
@@ -518,10 +518,10 @@ async function handleHostGate(args: string[], configPath?: string): Promise<void
     console.log(code === null ? "rdsh: 未设置访问口令（直连口仍监听，仅认一次性直连票；隧道无门禁）。" : "rdsh: 访问口令已设置（两条通道均需口令）。");
     return;
   }
-  throw new Error("usage: rdsh host gate set|clear|status");
+  throw new Error("usage: rdsh gate set|clear|status");
 }
 
-/** `rdsh host leave`：self-revoke + 清 session + 删 host.json → 未配置。 */
+/** `rdsh leave`：self-revoke + 清 session + 删 host.json → 未配置。 */
 async function handleHostLeave(_args: string[], configPath?: string): Promise<void> {
   const target = resolveConfigPath(configPath);
   const config = await loadConfig(target);
@@ -540,14 +540,14 @@ async function handleHostLeave(_args: string[], configPath?: string): Promise<vo
   console.log(`rdsh: host 已注销（清理 ${target}）—— 回到未配置状态`);
 }
 
-/** `rdsh host user add|passwd|ls|rm`：本机网关用户（写 host.json auth.users）。 */
+/** `rdsh user add|passwd|ls|rm`：本机网关用户（写 host.json auth.users）。 */
 async function handleHostUser(args: string[], configPath?: string): Promise<void> {
   const action = args[0];
   const um = new UserManager(resolveConfigPath(configPath));
   switch (action) {
     case "add": {
       const name = args[1];
-      if (name === undefined) throw new Error("usage: rdsh host user add <name>");
+      if (name === undefined) throw new Error("usage: rdsh user add <name>");
       const password = await promptPassword(`password for ${name}: `);
       const again = await promptPassword("confirm: ");
       if (password !== again) throw new Error("passwords do not match");
@@ -557,7 +557,7 @@ async function handleHostUser(args: string[], configPath?: string): Promise<void
     }
     case "passwd": {
       const name = args[1];
-      if (name === undefined) throw new Error("usage: rdsh host user passwd <name>");
+      if (name === undefined) throw new Error("usage: rdsh user passwd <name>");
       const password = await promptPassword(`new password for ${name}: `);
       const again = await promptPassword("confirm: ");
       if (password !== again) throw new Error("passwords do not match");
@@ -573,14 +573,14 @@ async function handleHostUser(args: string[], configPath?: string): Promise<void
     }
     case "rm": {
       const name = args[1];
-      if (name === undefined) throw new Error("usage: rdsh host user rm <name>");
+      if (name === undefined) throw new Error("usage: rdsh user rm <name>");
       const ok = await um.remove(name);
       if (!ok) throw new Error(`user '${name}' not found`);
       console.log(`rdsh: user '${name}' removed`);
       return;
     }
     default:
-      throw new Error("usage: rdsh host user add|passwd|ls|rm");
+      throw new Error("usage: rdsh user add|passwd|ls|rm");
   }
 }
 

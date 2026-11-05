@@ -70,7 +70,7 @@ export function directForbiddenHtml(acceptLanguage?: string): string {
         heading: "无法直接访问",
         note: "为了保护这台主机，直接访问前需要先设置一个访问口令。",
         how: "如何设置（取决于主机的启动方式）：",
-        opt1: "命令行启动：在主机上执行 rdsh host gate set <口令>",
+        opt1: "命令行启动：在主机上执行 rdsh gate set <口令>",
         opt2: "插件启动（dsh-web-remote）：在 DSH 的「远程访问」面板里设置访问密码",
       }
     : {
@@ -78,7 +78,7 @@ export function directForbiddenHtml(acceptLanguage?: string): string {
         heading: "Direct access denied",
         note: "To protect this host, direct access requires an access code.",
         how: "How to set it (depends on how the host was started):",
-        opt1: "CLI: run rdsh host gate set <code> on the host",
+        opt1: "CLI: run rdsh gate set <code> on the host",
         opt2: "Plugin (dsh-web-remote): set the access code in the DSH \"Remote Access\" panel",
       };
   return (

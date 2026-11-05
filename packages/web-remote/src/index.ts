@@ -453,7 +453,7 @@ export function apply(ctx: Ctx): void {
 
   /**
    * 启动时自动接入：host.json 已是 join 模式且有持久化 host token、隧道未被 CLI/他人持有 →
-   * 复用 token 自动建隧道（与 CLI `rdsh host serve` 行为一致，消除「需先点接入才有隧道」的鸡生蛋）。
+   * 复用 token 自动建隧道（与 CLI `rdsh serve` 行为一致，消除「需先点接入才有隧道」的鸡生蛋）。
    * 任一前置条件不满足则静默跳过，面板保持 disconnected，由用户手动接入。
    */
   async function autoConnect(): Promise<void> {

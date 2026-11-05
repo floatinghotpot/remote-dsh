@@ -3104,7 +3104,7 @@ async function revokeHost(runtime: HubRuntime, hostId: string, ownerId: number):
   runtime.events.pushToUser(ownerId, { type: "host.offline", hostId });
 }
 
-/** host 自吊销：持自己的 host token 注销（未认证端点，IP 限流）。`rdsh host leave` 调用。 */
+/** host 自吊销：持自己的 host token 注销（未认证端点，IP 限流）。`rdsh leave` 调用。 */
 async function handleSelfRevoke(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
   const ip = clientIp(req, runtime);
   const now = Date.now();

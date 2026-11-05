@@ -95,7 +95,7 @@ export async function serve(opts: ServeOptions): Promise<void> {
   if (accessCode === null && authMode !== "password") {
     console.warn(
       "\n⚠  rdsh: 认证已禁用（未设访问口令且 auth.mode=none）—— 任何能访问该端口的设备将直接操作 DSH！\n" +
-        "     仅限完全可信网络！用 `rdsh host gate set <口令>` 开启访问口令。\n",
+        "     仅限完全可信网络！用 `rdsh gate set <口令>` 开启访问口令。\n",
     );
   }
 

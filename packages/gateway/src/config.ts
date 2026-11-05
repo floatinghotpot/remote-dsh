@@ -42,7 +42,7 @@ export interface RdshConfig {
   allowFrom: string[];
   auth: AuthConfig;
   /**
-   * `dsh` 可执行文件路径，**仅 CLI（`rdsh host serve` / `rdsh host join`）使用**。
+   * `dsh` 可执行文件路径，**仅 CLI（`rdsh serve` / `rdsh join`）使用**。
    * 插件形态（`dsh-web-remote`）跑在 dsh 进程内部，把流量转发到 `127.0.0.1:<webServer.port>`，
    * 从不 spawn dsh，因此忽略此字段。
    */
@@ -147,7 +147,7 @@ export async function loadConfig(path: string): Promise<RdshConfig> {
     const code = generateAccessCode();
     config.gateway = { accessCode: code };
     await saveConfig(path, config);
-    console.log("rdsh: 检测到旧配对码配置，已迁移为访问口令（已写入 host.json 的 gateway.accessCode，可用 `rdsh host gate set` 修改）");
+    console.log("rdsh: 检测到旧配对码配置，已迁移为访问口令（已写入 host.json 的 gateway.accessCode，可用 `rdsh gate set` 修改）");
   }
   return config;
 }

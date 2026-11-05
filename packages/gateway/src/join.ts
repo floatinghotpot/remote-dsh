@@ -265,7 +265,7 @@ export function hubRequest(
   });
 }
 
-/** 调用 hub self-revoke 注销本机（host 持自己的 host token）。`rdsh host leave` 使用。 */
+/** 调用 hub self-revoke 注销本机（host 持自己的 host token）。`rdsh leave` 使用。 */
 export async function selfRevoke(hubUrl: string, token: string, insecure: boolean): Promise<void> {
   const res = await hubRequest(hubUrl, "/api/hosts/self-revoke", { method: "POST", insecure, body: { token } });
   if (!res.ok) {
@@ -443,7 +443,7 @@ export async function registerJoin(opts: JoinOptions): Promise<RegisterOutcome> 
       hostCookiePubKey = meta?.hostCookiePubKey ?? "";
       console.log("rdsh join: reusing persisted host token");
     } else {
-      throw new Error("未接入：无持久化 session 且未提供 --token；先 `rdsh host join <hub>` 生成/粘贴 join token");
+      throw new Error("未接入：无持久化 session 且未提供 --token；先 `rdsh join <hub>` 生成/粘贴 join token");
     }
   }
   return { token, insecure, name, hostId, hostCookiePubKey };
@@ -1617,7 +1617,7 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
   };
 }
 
-/** `rdsh host serve`（join 模式）的 CLI 封装：spawn dsh + 信号退出 + startJoin(role:cli)。 */
+/** `rdsh serve`（join 模式）的 CLI 封装：spawn dsh + 信号退出 + startJoin(role:cli)。 */
 export async function join(opts: JoinOptions): Promise<void> {
   const foundDsh = findDsh(opts.dshPath);
   if (foundDsh === null) {

@@ -1997,7 +1997,7 @@ function AddHostPage(): React.JSX.Element {
     void run(async () => {
       const r = await api.createJoinToken(note.trim() || null, ttl);
       const hub = `https://${window.location.host}`;
-      setGenerated({ token: r.token, hub, command: `rdsh host join ${hub} --token ${r.token}` });
+      setGenerated({ token: r.token, hub, command: `rdsh join ${hub} --token ${r.token}` });
       load();
     });
   };
@@ -2097,8 +2097,8 @@ function AddHostPage(): React.JSX.Element {
             <button onClick={() => copy("command", generated.command)} style={btnStyle()}>{copiedKey === "command" ? `${t("已复制")} ✓` : t("复制命令")}</button>
             {copyErr !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13, margin: "8px 0 0" }}>{copyErr}</p>}
             <p style={{ color: "var(--rdsh-fg-muted)", fontSize: 12, margin: "10px 0 2px" }}>{t("接入后运行隧道：")}</p>
-            <p style={{ color: "var(--rdsh-fg-muted)", fontSize: 12, margin: "2px 0" }}>· {t("前台运行：rdsh host serve")}</p>
-            <p style={{ color: "var(--rdsh-fg-muted)", fontSize: 12, margin: "2px 0" }}>· {t("常驻服务（服务器 7×24）：rdsh host service install")}</p>
+            <p style={{ color: "var(--rdsh-fg-muted)", fontSize: 12, margin: "2px 0" }}>· {t("前台运行：rdsh serve")}</p>
+            <p style={{ color: "var(--rdsh-fg-muted)", fontSize: 12, margin: "2px 0" }}>· {t("常驻服务（服务器 7×24）：rdsh service install")}</p>
             <p style={{ color: "var(--rdsh-fg-muted)", fontSize: 12, margin: "10px 0 0" }}>{t("主机名默认取机器 hostname，可追加 --name 覆盖")}</p>
           </div>
         </div>
