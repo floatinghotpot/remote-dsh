@@ -398,7 +398,9 @@ async function handleHostJoin(args: string[], configPath?: string): Promise<void
   await saveConfig(target, config);
   console.log(`rdsh: host 已接入 ${hubUrl}（${config.name}）—— session 已保存`);
   console.log("rdsh: 运行 `rdsh serve` 前台启动，或 `rdsh service install` 常驻。");
-  if (joinedViaQr) await offerPostJoinActions(target, { auto: headless });
+  // --headless（盒子 boxd 调用）无论走扫码还是 --token，都要把常驻服务装好：
+  // boxd 拿到 0 退出码后会 `systemctl --user restart rdsh-join`，unit 必须已存在。
+  if (joinedViaQr || headless) await offerPostJoinActions(target, { auto: headless });
 }
 
 /**
