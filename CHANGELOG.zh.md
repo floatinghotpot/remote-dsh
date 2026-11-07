@@ -7,6 +7,18 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [remote-dsh 0.21.0 · rdsh-gateway 0.17.0 · dsh-web-remote 0.15.0] - 2026-11-07
+
+### 新增
+
+- **主机元数据文件**（gateway、cli、web-remote）：`rdsh-meta.json`，由外层写在 `host.json` 同目录——`rdsh join` / `rdsh serve`（CLI）、插件首次连接、盒子安装流程（`rdsh-boxd --write-meta`）。gateway 只**读**它并上报到 `POST /api/hosts/self/meta`，不再在 `rdsh/device.json`、`dsh --version`、`/run/rdsh-boxd/status.json` 之间探测。
+
+### 变更
+
+- **`versions` 的键改为 npm 包全名**（gateway）：`remote-dsh`、`rdsh-gateway`、`dsh-web-remote`、`@deepseek-ai/dsh`、`rdsh-boxd`。旧键名有误导——`rdsh` 实际是 gateway 包版本，`gateway` 是 `"gateway"` / `"plugin"` 角色字符串而不是版本，插件版本则从未上报。
+- **设备形态移入元数据文件**（gateway、cli）：`host.json` 不再带 `deviceKind`；`rdsh join --device-kind` 把它写进 `rdsh-meta.json`。
+- **插件显示名**（web-remote，承接未发布的 0.14.2）：DSH 插件卡片与设置区显示 `WhaleLink` / `鲸语通`。
+
 ## [dsh-web-remote 0.14.2] - 2026-11-07
 
 ### 变更

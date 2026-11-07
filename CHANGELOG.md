@@ -7,6 +7,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [remote-dsh 0.21.0 · rdsh-gateway 0.17.0 · dsh-web-remote 0.15.0] - 2026-11-07
+
+### Added
+
+- **Host metadata file** (gateway, cli, web-remote): `rdsh-meta.json`, written next to `host.json` by the launcher — `rdsh join` / `rdsh serve` (CLI), the plugin on first connect, and the box install flow (`rdsh-boxd --write-meta`). The gateway only **reads** it and reports it to `POST /api/hosts/self/meta`, so it no longer probes `/etc/rdsh/device.json`, spawns `dsh --version`, or reads `/run/rdsh-boxd/status.json` while reporting.
+
+### Changed
+
+- **`versions` keys are npm package names** (gateway): `remote-dsh`, `rdsh-gateway`, `dsh-web-remote`, `@deepseek-ai/dsh`, `rdsh-boxd`. The old keys were misleading — `rdsh` held the gateway package version and `gateway` held a role string (`"gateway"` / `"plugin"`) rather than a version, and the plugin version was never reported.
+- **Device form lives in the metadata file** (gateway, cli): `host.json` no longer carries `deviceKind`; `rdsh join --device-kind` seeds it into `rdsh-meta.json`.
+- **Plugin display name** (web-remote, carried over from the unpublished 0.14.2): the DSH Plugins card and settings section show `WhaleLink` / `鲸语通`.
+
 ## [dsh-web-remote 0.14.2] - 2026-11-07
 
 ### Changed

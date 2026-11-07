@@ -33,6 +33,7 @@ import type { JoinLockRole } from "./lock.ts";
 import { responderHandshake, Aead } from "./e2ee.ts";
 import type { KeyPair, E2eeKeys } from "./e2ee.ts";
 import { loadOrCreateDeviceId } from "./device-id.ts";
+import { defaultHostMetaPath, readHostMeta } from "./host-meta.ts";
 import { loadOrCreateE2eeKeyPair } from "./e2ee-key-store.ts";
 import { GATE_COOKIE, signGateCookie, verifyGateCookie, verifyGateCode } from "./access-gate.ts";
 import { startDirect, directBootstrapScript } from "./direct.ts";
@@ -129,8 +130,6 @@ export interface StartJoinOptions {
   };
   /** 主机名（challenge 页展示；缺省「本主机」） */
   name?: string;
-  /** 63-bind-agent-box：显式设备类型（盒子镜像用；缺省按 role 推 desktop/cli）。 */
-  deviceKind?: DeviceKind;
   /** 宿主代持的 dsh 浏览器会话 cookie（`dsh-auth-*`，0.1.2+）；有值时注入隧道→本地转发 */
   dshAuthCookieHeader?: string | null;
   /** 本机 hostId（REDIRECT 验签用）。 */
@@ -293,46 +292,7 @@ export async function selfRevoke(hubUrl: string, token: string, insecure: boolea
  *
  * 设备端**只报 direct**：转发（relay）计量归 Relay（否则 `usage_daily` 按天 SUM 会双计）。
  */
-/** 63-bind-agent-box：设备类型（与 hub 的 deviceKind 枚举对齐）。 */
-export type DeviceKind = "desktop" | "cli" | "box" | "unknown";
-
-/** 盒子镜像写入的设备声明；测试可用 RDSH_DEVICE_JSON 指向临时文件。 */
-const DEVICE_JSON_PATH = (): string => process.env.RDSH_DEVICE_JSON ?? "/etc/rdsh/device.json";
-/** boxd 的运行时状态（含 boxdVersion）；测试可用 RDSH_BOXD_STATUS 覆盖。 */
-const BOXD_STATUS_PATH = (): string => process.env.RDSH_BOXD_STATUS ?? "/run/rdsh-boxd/status.json";
 const META_INTERVAL_MS = 30 * 60 * 1000;
-const DSH_VERSION_TTL_MS = 10 * 60 * 1000;
-
-/** 本包版本：dist/join.js（或 src/join.ts）→ 上一级 package.json。 */
-function readOwnVersion(): string | null {
-  try {
-    const pkg = JSON.parse(readFileSync(joinPath(dirname(fileURLToPath(import.meta.url)), "..", "package.json"), "utf8")) as { version?: unknown };
-    return typeof pkg.version === "string" && pkg.version !== "" ? pkg.version : null;
-  } catch {
-    return null;
-  }
-}
-
-/** `/etc/rdsh/device.json` 的 kind（盒子镜像写入）；缺失/非法 → null。 */
-export function readDeviceKind(): DeviceKind | null {
-  try {
-    const raw = JSON.parse(readFileSync(DEVICE_JSON_PATH(), "utf8")) as { kind?: unknown };
-    const kind = typeof raw.kind === "string" ? raw.kind : "";
-    return kind === "desktop" || kind === "cli" || kind === "box" || kind === "unknown" ? kind : null;
-  } catch {
-    return null;
-  }
-}
-
-/** boxd 版本（只有盒子有）：读 `/run/rdsh-boxd/status.json` 的 boxdVersion。 */
-export function readBoxdVersion(): string | null {
-  try {
-    const raw = JSON.parse(readFileSync(BOXD_STATUS_PATH(), "utf8")) as { boxdVersion?: unknown };
-    return typeof raw.boxdVersion === "string" && raw.boxdVersion !== "" ? raw.boxdVersion : null;
-  } catch {
-    return null;
-  }
-}
 
 export class UsageReporter {
   readonly meter: UsageMeter;
@@ -349,14 +309,14 @@ export class UsageReporter {
   private inFlightTimeoutMs = 10_000;
 
   private readonly role: JoinLockRole;
-  private readonly deviceKindOverride: DeviceKind | null;
+  /** `rdsh-meta.json`：外层写的形态与版本快照，本类只读。 */
+  private readonly hostMetaPath: string;
   private readonly versionsOverride: Record<string, string> | null;
   private readonly metaIntervalMs: number;
   /** meta 上报的下次到期时刻（0 = 立即）；404/401/400 后置 metaDisabled。 */
   private metaDueAt = 0;
   private metaDisabled = false;
   private metaInFlight: Promise<void> | null = null;
-  private dshVersionCache: { at: number; value: string | null } | null = null;
 
   constructor(opts: {
     hubUrl: string;
@@ -366,9 +326,9 @@ export class UsageReporter {
     meter?: UsageMeter;
     /** 网关形态：cli（rdsh serve）/ plugin（dsh-web-remote）。缺省 cli。 */
     role?: JoinLockRole;
-    /** 显式设备类型；`/etc/rdsh/device.json` 的 kind 会覆盖它。 */
-    deviceKind?: DeviceKind;
-    /** 版本覆盖（测试注入，缺省真实采集）。 */
+    /** 元数据文件路径（缺省与 `~/.rdsh/host.json` 同目录）。 */
+    hostMetaPath?: string;
+    /** 版本覆盖（仅测试注入；缺省读 `hostMetaPath`）。 */
     versions?: Record<string, string>;
     /** meta 上报节流（缺省 30 分钟，测试可调小）。 */
     metaIntervalMs?: number;
@@ -379,40 +339,9 @@ export class UsageReporter {
     this.insecure = opts.insecure;
     this.instanceId = opts.instanceId ?? randomUUID();
     this.role = opts.role ?? "cli";
-    this.deviceKindOverride = opts.deviceKind ?? null;
+    this.hostMetaPath = opts.hostMetaPath ?? defaultHostMetaPath();
     this.versionsOverride = opts.versions ?? null;
     this.metaIntervalMs = opts.metaIntervalMs ?? META_INTERVAL_MS;
-  }
-
-  /** 采集要上报的版本；失败项直接不带该键。 */
-  private async collectVersions(): Promise<Record<string, string>> {
-    if (this.versionsOverride !== null) return this.versionsOverride;
-    const out: Record<string, string> = {};
-    const rdsh = readOwnVersion();
-    if (rdsh !== null) out.rdsh = rdsh;
-    const dsh = await this.dshVersion();
-    if (dsh !== null) out.dsh = dsh;
-    out.gateway = this.role === "plugin" ? "plugin" : "gateway";
-    const boxd = readBoxdVersion();
-    if (boxd !== null) out.boxd = boxd;
-    return out;
-  }
-
-  /** `dsh --version`（10 分钟内缓存，避免每 30 分钟都 spawn 一次）。 */
-  private async dshVersion(): Promise<string | null> {
-    const now = Date.now();
-    if (this.dshVersionCache !== null && now - this.dshVersionCache.at < DSH_VERSION_TTL_MS) {
-      return this.dshVersionCache.value;
-    }
-    let value: string | null = null;
-    try {
-      const dshPath = findDsh();
-      if (dshPath !== null) value = await detectDshVersion(dshPath);
-    } catch {
-      value = null;
-    }
-    this.dshVersionCache = { at: now, value };
-    return value;
   }
 
   /**
@@ -436,10 +365,13 @@ export class UsageReporter {
   }
 
   private async reportMetaOnce(): Promise<void> {
-    const deviceKind = readDeviceKind() ?? this.deviceKindOverride;
-    const versions = await this.collectVersions();
-    const body: Record<string, unknown> = { token: this.token, versions };
-    if (deviceKind !== null) body.deviceKind = deviceKind;
+    // 只读一个文件：形态与版本都由外层（CLI / 插件 / 盒子安装流程）写好，这里不探测、不猜。
+    const meta = readHostMeta(this.hostMetaPath);
+    const versions = this.versionsOverride ?? meta?.versions ?? {};
+    const body: Record<string, unknown> = { token: this.token };
+    if (Object.keys(versions).length > 0) body.versions = versions;
+    const deviceKind = meta?.deviceKind;
+    if (deviceKind !== undefined) body.deviceKind = deviceKind;
     const res = await hubRequest(this.hubUrl, "/api/hosts/self/meta", {
       method: "POST",
       insecure: this.insecure,
@@ -825,7 +757,6 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
     token: opts.token,
     insecure: opts.insecure,
     role: opts.role,
-    deviceKind: opts.deviceKind,
   });
   const meter = reporter.meter;
   if (ownsReporter) reporter.start();
@@ -1838,8 +1769,6 @@ export async function join(opts: JoinOptions): Promise<void> {
     hostCookiePubKey,
     target,
     role: "cli",
-    // 63-bind-agent-box R33：CLI 形态自报 cli；盒子镜像经 /etc/rdsh/device.json 覆盖为 box。
-    deviceKind: "cli",
     dshUiCompat: opts.dshUiCompat,
     gateway: opts.gateway,
     llm: opts.llm,

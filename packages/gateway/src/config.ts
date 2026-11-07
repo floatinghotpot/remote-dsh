@@ -14,6 +14,13 @@ import { randomBytes } from "node:crypto";
 export type AuthMode = "password" | "none";
 export type HostMode = "lan" | "cloud" | "join";
 
+/** 网关运行形态：CLI / 盒子 / DSH 插件；unknown 用于老数据。 */
+export type DeviceKind = "desktop" | "cli" | "box" | "unknown";
+export const DEVICE_KIND_VALUES: readonly DeviceKind[] = ["desktop", "cli", "box", "unknown"];
+export function isDeviceKind(value: unknown): value is DeviceKind {
+  return typeof value === "string" && (DEVICE_KIND_VALUES as readonly string[]).includes(value);
+}
+
 export interface TlsConfig {
   cert: string;
   key: string;

@@ -3,7 +3,7 @@
  * rdsh CLI 入口（用户侧，手写参数解析，零依赖）。
  *
  *   rdsh setup lan|cloud
- *   rdsh join [hub-url] [--token <t>] [--name <n>] [--dsh <p>] [--insecure]
+ *   rdsh join [hub-url] [--token <t>] [--name <n>] [--dsh <p>] [--insecure] [--device-kind <desktop|cli|box>]
  *   rdsh serve | service install|status|start|stop|restart|uninstall | leave | user ... | gate ...
  *   rdsh --version | --help
  *
@@ -30,6 +30,12 @@ import {
   resolveConfigPath,
   loadConfig,
   saveConfig,
+  isDeviceKind,
+  hostMetaPathFor,
+  writeHostMeta,
+  readPackageVersion,
+  gatewayVersion,
+  detectDshVersion,
   generateAccessCode,
   installService,
   uninstallService,
@@ -42,6 +48,7 @@ import {
   HOST_SERVICE_NAME,
   JOIN_SERVICE_NAME,
 } from "rdsh-gateway";
+import type { DeviceKind } from "rdsh-gateway";
 import qrcode from "qrcode-terminal";
 import type { JoinOptions } from "rdsh-gateway";
 import { VERSION } from "./index.js";
@@ -83,7 +90,7 @@ Commands:
 
 Options (setup lan):   --port <n>
 Options (setup cloud):  --tls-cert <path> --tls-key <path> [--port <n>] [--allow-from <cidr,...>]
-Options (join):         --token <t> --name <n> --dsh <path> --insecure --headless
+Options (join):         --token <t> --name <n> --dsh <path> --insecure --headless [--device-kind <desktop|cli|box>]
                         --headless: no TTY/QR; prints RDSH_BIND {bindId,expiresAt} and installs the service
 `,
 };
@@ -332,6 +339,25 @@ async function bindByQr(
   }
 }
 
+/**
+ * 写 `rdsh-meta.json` 的本机部分：形态 + 本机各包版本（由外层 CLI 探测，gateway 不猜）。
+ *
+ * `dsh` 版本探测失败时不写该键（`writeHostMeta` 按键合并，不覆盖别的组件写的值）。
+ */
+async function writeOwnMeta(configPath: string, deviceKind: "desktop" | "cli" | "box" | "unknown" | undefined, dshPath?: string): Promise<void> {
+  const versions: Record<string, string> = {};
+  const cliVersion = readPackageVersion(import.meta.url);
+  if (cliVersion !== null) versions["remote-dsh"] = cliVersion;
+  const gateway = gatewayVersion();
+  if (gateway !== null) versions["rdsh-gateway"] = gateway;
+  const found = dshPath ?? findDsh() ?? undefined;
+  if (found !== undefined) {
+    const dshVersion = await detectDshVersion(found).catch(() => null);
+    if (dshVersion !== null) versions["@deepseek-ai/dsh"] = dshVersion;
+  }
+  writeHostMeta({ ...(deviceKind !== undefined ? { deviceKind } : {}), versions }, hostMetaPathFor(configPath));
+}
+
 /** `rdsh join <hub>`：注册（join token）→ 写 host.json + session，配置完退出。 */
 async function handleHostJoin(args: string[], configPath?: string): Promise<void> {
   // hub 可省略：省略时用 DEFAULT_HUB_URL；首个不以 '-' 开头的参数视为 hub。
@@ -344,6 +370,7 @@ async function handleHostJoin(args: string[], configPath?: string): Promise<void
     first = 1;
   }
   const opts: JoinOptions = { hubUrl };
+  let deviceKind: DeviceKind | undefined;
   // 无头接入（盒子 boxd 调用）：不要求 TTY、不打印二维码、装服务与 linger 自动执行。
   let headless = false;
   for (let i = first; i < args.length; i++) {
@@ -359,6 +386,11 @@ async function handleHostJoin(args: string[], configPath?: string): Promise<void
     else if (flag === "--insecure") opts.insecure = true;
     else if (flag === "--reset") opts.reset = true;
     else if (flag === "--headless") headless = true;
+    else if (flag === "--device-kind") {
+      const v = value(flag);
+      if (!isDeviceKind(v)) throw new Error(`--device-kind must be desktop|cli|box|unknown, got '${v}'`);
+      deviceKind = v;
+    }
     else throw new Error(`unknown option '${flag}'`);
   }
   // --headless 是「首次绑定」的入口：已有持久化 session 时直接复用它不会建新会话，
@@ -396,6 +428,7 @@ async function handleHostJoin(args: string[], configPath?: string): Promise<void
   config.insecure = outcome.insecure;
   config.dshPath = opts.dshPath ?? findDsh() ?? config.dshPath;
   await saveConfig(target, config);
+  await writeOwnMeta(target, deviceKind ?? "cli", config.dshPath);
   console.log(`rdsh: host 已接入 ${hubUrl}（${config.name}）—— session 已保存`);
   console.log("rdsh: 运行 `rdsh serve` 前台启动，或 `rdsh service install` 常驻。");
   // --headless（盒子 boxd 调用）无论走扫码还是 --token，都要把常驻服务装好：
@@ -456,6 +489,8 @@ async function handleHostServe(_args: string[], configPath?: string): Promise<vo
   const config = await loadConfig(target);
   if (config.mode === "join") {
     if (config.hub === undefined) throw new Error("host.json 缺 hub（join 模式）；先 `rdsh join <hub>`");
+    // 启动时刷新本机版本（形态沿用上次 seed；盒子由安装流程写 box）。
+    await writeOwnMeta(target, undefined, config.dshPath);
     await join({ hubUrl: config.hub, name: config.name, insecure: config.insecure, dshPath: config.dshPath, dshUiCompat: config.dshUiCompat, gateway: config.gateway, llm: config.llm, direct: { host: config.host, port: config.port } });
     return;
   }
@@ -504,12 +539,18 @@ async function maybeRegisterForServiceInstall(args: string[], target: string): P
   const maybeHub = args[1];
   if (maybeHub === undefined || !/^https?:\/\//.test(maybeHub)) return; // 无 <hub>，走读 host.json 路径
   const joinOpts: JoinOptions = { hubUrl: maybeHub };
+  let deviceKind: DeviceKind | undefined;
   for (let i = 2; i < args.length; i++) {
     const flag = args[i];
     if (flag === "--token") joinOpts.token = args[++i];
     else if (flag === "--name") joinOpts.name = args[++i];
     else if (flag === "--dsh") joinOpts.dshPath = args[++i];
     else if (flag === "--insecure") joinOpts.insecure = true;
+    else if (flag === "--device-kind") {
+      const v = args[++i];
+      if (v === undefined || !isDeviceKind(v)) throw new Error(`--device-kind must be desktop|cli|box|unknown`);
+      deviceKind = v;
+    }
     else throw new Error(`unknown option '${flag}'`);
   }
   const outcome = await registerJoin(joinOpts);
@@ -520,6 +561,7 @@ async function maybeRegisterForServiceInstall(args: string[], target: string): P
   cfg.insecure = outcome.insecure;
   cfg.dshPath = joinOpts.dshPath ?? findDsh() ?? cfg.dshPath;
   await saveConfig(target, cfg);
+  await writeOwnMeta(target, deviceKind ?? "cli", cfg.dshPath);
 }
 
 /** `rdsh gate set|clear|status`：访问口令（gateway.accessCode）——隧道与直连两条通道共用的门禁。 */

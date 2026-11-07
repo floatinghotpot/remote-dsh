@@ -726,9 +726,14 @@ key 条目字段：`{ id, name, hostId, tokenHead4, tokenTail4, status, spentMic
 - `token`：主机自己的 host token（≥16 字符），否则 401 `UNAUTHORIZED`。
 - `deviceKind`：可选；非法枚举 → 400 `BAD_REQUEST`。**缺省不改动**已存的值。
 - `versions`：可选；序列化后 ≤ **4096 字节**，超出 → 400 `BAD_REQUEST`。**缺省不改动**。
+  **键 = npm 包全名**（`remote-dsh` / `rdsh-gateway` / `dsh-web-remote` / `@deepseek-ai/dsh` / `rdsh-boxd`），
+  值是版本字符串；服务端不解释内容，只存储与展示。
 - 语义：**覆盖写**（同 host 重复上报以最后一次为准）；未知字段忽略。
 
 响应：`{ "ok": true, "deviceKind": string|null, "versions": object|null }`
+
+数据来源（客户端约定）：gateway **不探测**本机版本，只读与 `host.json` 同目录的 `rdsh-meta.json`
+（外层写入：`rdsh join` / 插件启动 / 盒子安装流程）；文件缺失时只发 `token`，不编造字段。
 
 调用时机（客户端约定）：gateway **启动时一次**，之后**每 ≥30 分钟**一次（覆盖"只换 dsh 二进制、网关未重启"）；`dsh` 版本变化时可立即补报。老 hub 无此端点时返回 404，客户端应**只记一次日志后停用上报**，不影响主流程。
 

@@ -13,8 +13,10 @@ export { findDsh, spawnDsh, dshSpawnEnv, RDSH_REMOTE_TTY, checkRemotePickerGraph
 export type { SpawnedDsh } from "./spawn-dsh.ts";
 export { forwardHttp, createUpgradeProxy, rewriteHeadersForDsh } from "./proxy.ts";
 export type { ProxyTarget } from "./proxy.ts";
-export { loadConfig, normalizeConfig, resolveConfigPath, saveConfig, generateAccessCode, DEFAULT_HOST_CONFIG_PATH } from "./config.ts";
-export type { RdshConfig, AuthMode, AuthUser, AuthConfig, TlsConfig, HostMode } from "./config.ts";
+export { loadConfig, normalizeConfig, resolveConfigPath, saveConfig, generateAccessCode, DEFAULT_HOST_CONFIG_PATH, isDeviceKind, DEVICE_KIND_VALUES } from "./config.ts";
+export { HOST_META_FILE, HOST_META_SCHEMA, defaultHostMetaPath, hostMetaPathFor, readHostMeta, writeHostMeta, readPackageVersion, gatewayVersion } from "./host-meta.ts";
+export type { HostMeta } from "./host-meta.ts";
+export type { RdshConfig, AuthMode, AuthUser, AuthConfig, TlsConfig, HostMode, DeviceKind } from "./config.ts";
 export { hashPassword, verifyPassword, UserManager } from "./auth.ts";
 export { ipInCidrs, parseCidr, ipToInt } from "./cidr.ts";
 export { loadTls } from "./tls.ts";

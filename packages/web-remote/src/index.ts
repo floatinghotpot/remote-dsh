@@ -39,6 +39,8 @@ import {
   exchangeDshSessionCookie,
   DEFAULT_HOST_CONFIG_PATH,
   UsageReporter,
+  writeHostMeta,
+  gatewayVersion,
 } from "rdsh-gateway";
 import type { DirectHandle, DirectOptions, DirectTicketManager, JoinHandle, JoinState, RdshConfig, UsageMeter } from "rdsh-gateway";
 import { RPC_CHANNEL, handleRpcRoute } from "./rpc-route.ts";
@@ -358,6 +360,23 @@ export function apply(ctx: Ctx): void {
     }
   }
 
+  /**
+   * 写 `rdsh-meta.json`：插件形态 + 本插件 / gateway 版本（gateway 不猜，只读）。
+   *
+   * 只写一次（首次建 reporter 时）；重连不重复写，写失败也不影响隧道。
+   */
+  function writePluginMeta(): void {
+    const versions: Record<string, string> = {};
+    if (PLUGIN_META.version !== "") versions[PLUGIN_META.name] = PLUGIN_META.version;
+    const gateway = gatewayVersion();
+    if (gateway !== null) versions["rdsh-gateway"] = gateway;
+    try {
+      writeHostMeta({ deviceKind: "desktop", versions });
+    } catch {
+      // 写失败只影响 meta 上报（退化为不带 deviceKind/versions），不影响隧道。
+    }
+  }
+
   /** 起隧道并同步面板状态（connect / autoConnect 共用；转发到本进程 dsh）。 */
   function startTunnel(config: RdshConfig, hub: string, token: string, name: string, insecure: boolean): void {
     if (disposed) return;
@@ -371,7 +390,8 @@ export function apply(ctx: Ctx): void {
     directTicketManager = createDirectTicketManager(directSecret);
     // 进程级 reporter：首次建 + start，之后每次重连/换 hub 只更新上报目标。
     if (reporter === null) {
-      reporter = new UsageReporter({ hubUrl: hub, token, insecure });
+      writePluginMeta();
+      reporter = new UsageReporter({ hubUrl: hub, token, insecure, role: "plugin" });
       reporter.start();
     } else {
       reporter.setTarget(hub, token, insecure);
@@ -382,8 +402,6 @@ export function apply(ctx: Ctx): void {
       insecure,
       target: { host: "127.0.0.1", port: ctx.webServer.port },
       role: "plugin",
-      // 63-bind-agent-box R33：桌面插件自报 desktop。
-      deviceKind: "desktop",
       dshUiCompat: config.dshUiCompat,
       gateway: config.gateway,
       direct: { candidates: () => directHandle?.candidates() ?? [], mintTicket: () => directTicketManager!.mint() },
