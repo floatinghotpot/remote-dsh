@@ -18,7 +18,7 @@ window.__ModuleLoader__.load({
     const NS = "settings.remote-access";
 
     const zh = {
-      nav: "鲸语通 语音助手",
+      nav: "鲸语通",
       status_unconfigured: "未接入",
       status_disconnected: "未接入（已断开，配置保留）",
       status_connecting: "连接中…",
@@ -103,7 +103,7 @@ window.__ModuleLoader__.load({
     };
 
     const en = {
-      nav: "WhaleLink Voice",
+      nav: "WhaleLink",
       status_unconfigured: "Not joined",
       status_disconnected: "Disconnected (config kept)",
       status_connecting: "Connecting…",

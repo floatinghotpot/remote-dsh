@@ -7,6 +7,12 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [dsh-web-remote 0.14.2] - 2026-11-07
+
+### Changed
+
+- **Plugin display name**: the DSH Plugins card and settings section now show the brand alone — `WhaleLink` (English) / `鲸语通` (Chinese) — instead of `WhaleLink Voice` / `鲸语通 语音助手`. The guides, the plugin-mode blog and the app now use the same name.
+
 ## [rdsh-gateway 0.16.1 · dsh-web-remote 0.14.1] - 2026-11-04
 
 ### Fixed

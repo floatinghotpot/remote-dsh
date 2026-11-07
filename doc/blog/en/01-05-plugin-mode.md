@@ -29,7 +29,7 @@ Both paths offer the same capability; pick whichever fits you. This post covers 
 ### ① Install the plugin
 
 1. Open the **DSH desktop app** → "**Plugins**" in the top-left → **install a third-party plugin**;
-2. Enter the plugin name `dsh-web-remote`, then open the plugin panel — it appears in DSH as "WhaleLink Voice".
+2. Enter the plugin name `dsh-web-remote`, then open the plugin panel — it appears in DSH as "WhaleLink".
 
 ### ② Bind this computer
 

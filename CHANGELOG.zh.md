@@ -7,6 +7,12 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [dsh-web-remote 0.14.2] - 2026-11-07
+
+### 变更
+
+- **插件显示名**：DSH 的插件卡片与设置区只显示品牌名——英文 `WhaleLink`、中文 `鲸语通`，不再带 `Voice` / `语音助手`；指南、插件模式博客与 App 内引导同步。
+
 ## [rdsh-gateway 0.16.1 · dsh-web-remote 0.14.1] - 2026-11-04
 
 ### 修复
