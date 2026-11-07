@@ -52,6 +52,10 @@ export interface HostInfo {
   createdAt: string;
   role?: "owner" | "member";
   e2eePublicKey?: string | null;
+  /** 主机自报的形态：desktop / cli / box / unknown；老主机为 null。 */
+  deviceKind?: string | null;
+  /** 主机自报的版本对象（键为包名）；未上报为 null。 */
+  versions?: Record<string, unknown> | null;
 }
 
 export interface JoinTokenInfo {

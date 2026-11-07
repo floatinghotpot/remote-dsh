@@ -278,6 +278,7 @@ const EN: Record<string, string> = {
 
   // ---- 主机列表 ----
   "我的主机": "My Hosts",
+  "未上报": "Not reported",
   "添加主机接入": "Add host",
   "还没有接入主机 —— 用上面的「添加主机」接入你的第一台 DSH。":
     "No hosts yet — use “Add host” above to connect your first DSH.",

@@ -1616,6 +1616,98 @@ function ShieldIcon(): React.JSX.Element {
   );
 }
 
+/** 主机形态：服务端老数据没有 deviceKind，按 CLI 兜底（与 App 的语义一致）。 */
+type HostKind = "desktop" | "cli" | "box";
+
+function hostKind(raw: string | null | undefined): HostKind {
+  return raw === "desktop" || raw === "box" ? raw : "cli";
+}
+
+const HOST_KIND_LABEL: Record<HostKind, { zh: string; en: string }> = {
+  desktop: { zh: "桌面端", en: "Desktop" },
+  cli: { zh: "命令行", en: "Command line" },
+  box: { zh: "盒子", en: "Box" },
+};
+
+/** 主机形态图标：显示器 / 终端 / 盒子（对齐 App host list 的图标语义）。 */
+function HostKindIcon({ kind }: { kind: HostKind }): React.JSX.Element {
+  const { t } = useT();
+  const paths: Record<HostKind, React.ReactNode> = {
+    desktop: (
+      <>
+        <rect x="2" y="3" width="20" height="14" rx="2" />
+        <path d="M8 21h8" />
+        <path d="M12 17v4" />
+      </>
+    ),
+    cli: (
+      <>
+        <rect x="2" y="4" width="20" height="16" rx="2" />
+        <path d="m6 9 4 3-4 3" />
+        <path d="M12 15h6" />
+      </>
+    ),
+    box: (
+      <>
+        <path d="M21 8v8a2 2 0 0 1-1 1.73l-7 4a2 2 0 0 1-2 0l-7-4A2 2 0 0 1 3 16V8a2 2 0 0 1 1-1.73l7-4a2 2 0 0 1 2 0l7 4A2 2 0 0 1 21 8z" />
+        <path d="m3.3 7 8.7 5 8.7-5" />
+        <path d="M12 22V12" />
+      </>
+    ),
+  };
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      style={{ flexShrink: 0, color: "var(--rdsh-fg-muted)" }}
+    >
+      <title>{t(HOST_KIND_LABEL[kind].zh, { en: HOST_KIND_LABEL[kind].en })}</title>
+      {paths[kind]}
+    </svg>
+  );
+}
+
+/** 主机 meta（上报的 JSON）：菜单弹窗上半截，原样 key/value 展示。 */
+function HostMetaRows({ host }: { host: HostInfo }): React.JSX.Element {
+  const { t } = useT();
+  const kind = hostKind(host.deviceKind);
+  const versions = host.versions ?? {};
+  const entries = Object.entries(versions).filter(([, v]) => typeof v === "string" || typeof v === "number");
+  const rowStyle: React.CSSProperties = { display: "flex", justifyContent: "space-between", gap: 16, fontSize: 12, lineHeight: 1.6 };
+  const keyStyle: React.CSSProperties = { color: "var(--rdsh-fg-subtle)", whiteSpace: "nowrap", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 11 };
+  const valueStyle: React.CSSProperties = { color: "var(--rdsh-fg-muted)", textAlign: "right", wordBreak: "break-all", fontSize: 11 };
+  return (
+    <div style={{ padding: "8px 10px 7px", display: "grid", gap: 2 }}>
+      <div style={rowStyle}>
+        <span style={keyStyle}>deviceKind</span>
+        <span style={valueStyle}>
+          {host.deviceKind ?? "cli"}
+          {host.deviceKind === undefined || host.deviceKind === null ? ` · ${t("未上报")}` : ""}
+        </span>
+      </div>
+      {entries.length === 0 ? (
+        <div style={rowStyle}>
+          <span style={keyStyle}>versions</span>
+          <span style={valueStyle}>{t("未上报")}</span>
+        </div>
+      ) : (
+        entries.map(([k, v]) => (
+          <div key={k} style={rowStyle}>
+            <span style={keyStyle}>{k}</span>
+            <span style={valueStyle}>{String(v)}</span>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
 /** 用量页图标：语义对齐 App 端用量页（24x24 stroke，与全站 SVG 风格一致）。 */
 function UsageIcon({ name, color }: { name: "relay" | "direct" | "cloud" | "local" | "speaker" | "host"; color: string }): React.JSX.Element {
   const paths: Record<string, React.ReactNode> = {
@@ -1829,9 +1921,10 @@ function HostsPage(): React.JSX.Element {
             return (
               <div key={h.id} style={{ border: "1px solid var(--rdsh-border-soft)", borderRadius: 8, marginBottom: 8 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px" }}>
-                  <span style={{ fontWeight: 500 }}>
-                    {h.e2eePublicKey !== undefined && h.e2eePublicKey !== null && h.e2eePublicKey !== "" && <ShieldIcon />}
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontWeight: 500 }}>
+                    <HostKindIcon kind={hostKind(h.deviceKind)} />
                     {h.name}
+                    {h.e2eePublicKey !== undefined && h.e2eePublicKey !== null && h.e2eePublicKey !== "" && <ShieldIcon />}
                   </span>
                   <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
                     <span style={{ color: h.online ? "var(--rdsh-success)" : "var(--rdsh-fg-subtle)", fontSize: 14 }}>{h.online ? "●" : "○"}</span>
@@ -1848,7 +1941,9 @@ function HostsPage(): React.JSX.Element {
                       >⋯</button>
                     )}
                     {menuOpen && (
-                      <div style={{ position: "absolute", top: "100%", right: 0, marginTop: 4, background: "var(--rdsh-bg-surface)", border: "1px solid var(--rdsh-border-soft)", borderRadius: 8, boxShadow: "var(--rdsh-shadow)", zIndex: 20, minWidth: 140, padding: 4 }} onClick={(e) => e.stopPropagation()}>
+                      <div style={{ position: "absolute", top: "100%", right: 0, marginTop: 4, background: "var(--rdsh-bg-surface)", border: "1px solid var(--rdsh-border-soft)", borderRadius: 8, boxShadow: "var(--rdsh-shadow)", zIndex: 20, minWidth: 248, padding: 4 }} onClick={(e) => e.stopPropagation()}>
+                        <HostMetaRows host={h} />
+                        <div style={{ height: 1, background: "var(--rdsh-border-soft)", margin: "2px 4px 4px" }} />
                         <button style={menuItemStyle()} onClick={() => { setMenuHostId(null); setRenameId(h.id); setRenameName(h.name); }}>
                           <MenuIcon><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /></MenuIcon>
                           {t("改名")}
