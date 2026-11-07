@@ -8,7 +8,7 @@ import { execFile, spawn } from "node:child_process";
 import { accessSync, rmSync } from "node:fs";
 import { get } from "node:http";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import type { ChildProcess } from "node:child_process";
 
@@ -83,10 +83,27 @@ export const RDSH_REMOTE_TTY = "rdsh-remote";
  * ⚠️ 这是上游启发式的输入：上游若改变判定信号，本注入会静默失效（spawn 后自检见
  * `checkRemotePickerGraph` 与 the internal fix record §6）。
  */
+/**
+ * 复刻 dsh 的 home 解析（`resolveDshHome`：`$DSH_HOME` 展开 `~`/`~/`/`~\` 后绝对化，默认 `~/.dsh`）。
+ * 网关不依赖 dsh 的包，故就地重写这段小逻辑；只有解析结果与 dsh 完全一致，凭据锁才会落在同一处。
+ */
+function resolveDshHomeLike(): string {
+  const fromEnv = process.env.DSH_HOME;
+  const selected = fromEnv !== undefined && fromEnv.trim().length > 0 ? fromEnv : join(homedir(), ".dsh");
+  const expanded = selected === "~"
+    ? homedir()
+    : selected.startsWith("~/") || selected.startsWith("~\\")
+      ? join(homedir(), selected.slice(2))
+      : selected;
+  return resolve(expanded);
+}
+
 /** 52：spawn 前清理 DSH 凭据存储的陈旧锁（上次 DSH 被强杀遗留，会让新 DSH 启动卡死等锁）。 */
 function clearStaleDshLock(): void {
+  // dsh 凭据锁固定在 dsh 自己的 home 下；这里必须跟随同一解析（含 `~` 展开），
+  // 否则 DSH_HOME 指向别处/带 `~` 时会清错锁（探测测试、自定义 home）。
   try {
-    rmSync(join(homedir(), ".dsh", ".credentials.yaml.lock"), { force: true });
+    rmSync(join(resolveDshHomeLike(), ".credentials.yaml.lock"), { force: true });
   } catch {
     // 忽略：锁不存在/无权限都不阻断启动
   }
@@ -335,14 +352,17 @@ export function compareDshVersions(a: string, b: string): number {
  * 插入行的 id `remote-access` 撞名，导致 `remoteAccess` 服务不激活、`dsh web` 的 `/api` 请求失败；
  * 插件行 id 已改为 `dsh-web-remote`（见 the internal fix record）。
  * 证据：桌面版 0.2.1-rc.1（darwin x64）真机运行通过；0.2.1-rc.2 按发布提交逐项源码核对。
- * 完整 G1–G7 清单未在 0.2.x 重跑，CLI spawn 路径亦未单独验证——升级大版本前应补跑。
+ * 2026-11-07：MAX 扩到 `0.2.2-rc.1` —— 同一份 G1–G7 清单在真实 dsh 0.2.2-rc.1 上重跑通过
+ * （LAN 网关 + 真实插件安装：spawn / ready 行 token / 会话 cookie 换发 / `/api` 转发 / HTML 注入 /
+ * WS upgrade / `patchLoopbackJs` 命中），插件面板与 App WebView 契约另行核验。
+ * 未覆盖：设置面板的真机交互、`/api` 长会话业务、App 真机；见 the internal review record。
  */
 export const DSH_COMPAT_MIN = "0.1.1-rc.2";
-export const DSH_COMPAT_MAX = "0.2.1-rc.2";
+export const DSH_COMPAT_MAX = "0.2.2-rc.1";
 
 /**
  * 版本落在实测窗口外时的提示文案（零文档导向：直接给动作指令，用户不查表）。
- * - 比 max 新 → 升级 remote-dsh 或暂用旧 dsh；
+ * - 比 max 新 → 升级 remote-dsh 或暂用已实测的 dsh；
  * - 比 min 旧 → 升级 dsh；
  * - 在窗口内 / 探测失败（version=null）→ null（不提示）。
  */
@@ -351,7 +371,7 @@ export function dshVersionWarning(version: string | null): string | null {
   if (compareDshVersions(version, DSH_COMPAT_MAX) > 0) {
     return (
       `检测到 dsh ${version}：该版本超出 remote-dsh 已实测范围（≤${DSH_COMPAT_MAX}），远程访问可能不可用。` +
-      `升级 remote-dsh：npm i -g remote-dsh@latest；或暂用 dsh@${DSH_COMPAT_MIN}。`
+      `升级 remote-dsh：npm i -g remote-dsh@latest；或暂用 dsh@${DSH_COMPAT_MAX}。`
     );
   }
   if (compareDshVersions(version, DSH_COMPAT_MIN) < 0) {

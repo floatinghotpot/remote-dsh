@@ -63,7 +63,7 @@ export async function serve(opts: ServeOptions): Promise<void> {
         }
       }
       if (dshAuthCookieHeader === null) {
-        throw new Error("dsh 0.1.2+ 会话 cookie 换发失败——远程访问将返回 401（请确认 dsh web 已就绪或暂用 dsh@0.1.1-rc.2）");
+        throw new Error("dsh 0.1.2+ 会话 cookie 换发失败——远程访问将返回 401（请确认 dsh web 已就绪；仍失败时升级 remote-dsh：npm i -g remote-dsh@latest）");
       }
     } catch (err) {
       // fail-fast 之前先停掉已 spawn 的 dsh——否则泄漏孤儿 dsh（监听随机端口），

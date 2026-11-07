@@ -125,13 +125,14 @@ test("compareDshVersions：核心版本与 rc 后缀比较", () => {
 });
 
 test("dshVersionWarning：窗口内不提示，越界给动作指令", () => {  // 实测窗口 [DSH_COMPAT_MIN, DSH_COMPAT_MAX]：两端与中间版本均不提示
-  for (const version of [DSH_COMPAT_MIN, "0.1.2-rc.1", "0.1.7-rc.2", "0.2.0-rc.1", DSH_COMPAT_MAX]) {
+  for (const version of [DSH_COMPAT_MIN, "0.1.2-rc.1", "0.1.7-rc.2", "0.2.0-rc.1", "0.2.1-rc.3", DSH_COMPAT_MAX]) {
     assert.equal(dshVersionWarning(version), null, `${version} 应在窗口内`);
   }
-  // 比 MAX 新 → 提示升级 remote-dsh（含同 core 的后续 rc 与正式版）
-  for (const version of ["0.2.1-rc.3", "0.2.1", "0.3.0-rc.1"]) {
+  // 比 MAX 新 → 提示升级 remote-dsh（含同 core 的后续 rc 与正式版），并给出一个**已实测**的退路
+  for (const version of ["0.2.2-rc.2", "0.2.2", "0.3.0-rc.1"]) {
     const warn = dshVersionWarning(version);
     assert.ok(warn !== null && warn.includes("超出 remote-dsh 已实测范围"), `${version} 应提示超窗`);
+    assert.ok(warn.includes(`dsh@${DSH_COMPAT_MAX}`), `${version} 的退路应指向实测上界 ${DSH_COMPAT_MAX}`);
   }
   // 比 MIN 旧 → 提示升级 dsh
   const tooOld = dshVersionWarning("0.1.1-rc.1");
