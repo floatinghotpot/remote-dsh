@@ -146,6 +146,7 @@ version matrix. Smoke-tested dsh versions:
 - `0.1.5-rc.2` ✅
 - `0.1.7-rc.2` ✅
 - `0.2.1-rc.2` ✅
+- `0.2.2-rc.1` ✅
 
 (per-release history in [CHANGELOG](CHANGELOG.md)).
 

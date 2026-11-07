@@ -139,6 +139,7 @@ remote-dsh 跟随最新 DeepSeek Harness（dsh）。**一个 rdsh 版本实测�
 - `0.1.5-rc.2` ✅
 - `0.1.7-rc.2` ✅
 - `0.2.1-rc.2` ✅
+- `0.2.2-rc.1` ✅
 
 （逐版本历史见 [CHANGELOG](CHANGELOG.zh.md)。）
 
