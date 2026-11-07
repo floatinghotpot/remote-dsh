@@ -7,14 +7,16 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [remote-dsh 0.22.0 · rdsh-gateway 0.18.0 · rdsh-hub 0.21.0 · rdsh-portal 0.4.0] - 2026-11-07
+## [remote-dsh 0.22.0 · rdsh-gateway 0.18.0 · rdsh-hub 0.21.0 · rdsh-hub-cli 0.21.0 · rdsh-portal 0.4.0] - 2026-11-07
 
 ### 新增
 
+- **重绑去重**（gateway、cli、hub）：`rdsh` 持久化每台设备的 `device_id` 并在 join 时上送；hub 按 `(owner, device_id)` 复用已有主机行（含已吊销的），解绑后重新绑定不再每次新建一条。吊销会记录来源（`user` / `admin`），只有 `user` 吊销可被设备复活。
 - **主机启动状态**（gateway、hub、portal）：`POST /api/hosts/self/meta` 支持可选的 `status: "starting" | "ready"`。网关在进程启动时（`dsh` 启动之前）就报 `starting`，隧道连上后报 `ready`；hub 只存内存（5 分钟 TTL，隧道断开即清除），并由 `GET /api/hosts` 返回。门户在盒子 `dsh` 冷启动的约 30 秒里显示「启动中」而不是「离线」。
 
 ### 变更
 
+- **吊销改为软删除**（hub、hub-cli）：吊销保留行（供后续重绑复用）但清空凭证；管理员吊销不可被设备复活。
 - **`registerJoin` 提前到 `spawnDsh` 之前**（gateway）：首次状态上报不再等 `dsh` 就绪。
 
 ## [remote-dsh 0.21.0 · rdsh-gateway 0.17.0 · dsh-web-remote 0.15.0] - 2026-11-07

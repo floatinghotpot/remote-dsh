@@ -7,14 +7,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [remote-dsh 0.22.0 · rdsh-gateway 0.18.0 · rdsh-hub 0.21.0 · rdsh-portal 0.4.0] - 2026-11-07
+## [remote-dsh 0.22.0 · rdsh-gateway 0.18.0 · rdsh-hub 0.21.0 · rdsh-hub-cli 0.21.0 · rdsh-portal 0.4.0] - 2026-11-07
 
 ### Added
 
+- **Host rebind dedup** (gateway, cli, hub): `rdsh` persists a per-install `device_id` and sends it on join; the hub reuses the existing host row for the same `(owner, device_id)` (including revoked ones) instead of creating a new row on every unbind/rebind. Revocation records its source (`user` / `admin`); only `user` revocations can be revived.
 - **Host startup status** (gateway, hub, portal): `POST /api/hosts/self/meta` accepts an optional `status: "starting" | "ready"`. The gateway reports `starting` as soon as the process starts (before `dsh` boots) and `ready` once the tunnel is connected; the hub keeps it in memory (5-minute TTL, cleared when the tunnel drops) and returns it from `GET /api/hosts`. The portal shows “Starting…” instead of “Offline” during the box's ~30 s `dsh` cold start.
 
 ### Changed
 
+- **Host revoke is a soft delete** (hub, hub-cli): revoking keeps the row (so a later rebind can reuse it) but clears its credentials; admin revokes cannot be revived by the device.
 - **`registerJoin` runs before `spawnDsh`** (gateway): the first status report no longer waits for `dsh` to become ready.
 
 ## [remote-dsh 0.21.0 · rdsh-gateway 0.17.0 · dsh-web-remote 0.15.0] - 2026-11-07
