@@ -721,16 +721,21 @@ key 条目字段：`{ id, name, hostId, tokenHead4, tokenTail4, status, spentMic
 
 认证：**host token**（`body.token`，与 `/api/hosts/llm-key` 同一套；不是会话 cookie）。
 
-请求：`{ "token": string, "deviceKind"?: "desktop"|"cli"|"box"|"unknown", "versions"?: object }`
+请求：`{ "token": string, "deviceKind"?: "desktop"|"cli"|"box"|"unknown", "versions"?: object, "status"?: "starting"|"ready" }`
 
 - `token`：主机自己的 host token（≥16 字符），否则 401 `UNAUTHORIZED`。
 - `deviceKind`：可选；非法枚举 → 400 `BAD_REQUEST`。**缺省不改动**已存的值。
 - `versions`：可选；序列化后 ≤ **4096 字节**，超出 → 400 `BAD_REQUEST`。**缺省不改动**。
   **键 = npm 包全名**（`remote-dsh` / `rdsh-gateway` / `dsh-web-remote` / `@deepseek-ai/dsh` / `rdsh-boxd`），
   值是版本字符串；服务端不解释内容，只存储与展示。
+- `status`：可选，`"starting" | "ready"`；非法枚举 → 400 `BAD_REQUEST`。**缺省不改动**。
+  - 语义：启动过程的**提示状态**，不改变 `online`（在线仍由隧道是否注册决定）；
+    `starting` = 网关已启动、dsh 尚未就绪/隧道未连；`ready` = 可服务。
+  - 存储：hub 仅保存在**内存**（进程重启即丢失）；隧道断开时清除。
+  - `GET /api/hosts` 会返回 `status`（`"starting"` / `"ready"` / `null`），APP/门户可据此显示「启动中」。
 - 语义：**覆盖写**（同 host 重复上报以最后一次为准）；未知字段忽略。
 
-响应：`{ "ok": true, "deviceKind": string|null, "versions": object|null }`
+响应：`{ "ok": true, "deviceKind": string|null, "versions": object|null, "status": "starting"|"ready"|null }`
 
 数据来源（客户端约定）：gateway **不探测**本机版本，只读与 `host.json` 同目录的 `rdsh-meta.json`
 （外层写入：`rdsh join` / 插件启动 / 盒子安装流程）；文件缺失时只发 `token`，不编造字段。

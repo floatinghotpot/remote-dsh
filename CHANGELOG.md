@@ -7,6 +7,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [remote-dsh 0.22.0 · rdsh-gateway 0.18.0 · rdsh-hub 0.21.0 · rdsh-portal 0.4.0] - 2026-11-07
+
+### Added
+
+- **Host startup status** (gateway, hub, portal): `POST /api/hosts/self/meta` accepts an optional `status: "starting" | "ready"`. The gateway reports `starting` as soon as the process starts (before `dsh` boots) and `ready` once the tunnel is connected; the hub keeps it in memory (5-minute TTL, cleared when the tunnel drops) and returns it from `GET /api/hosts`. The portal shows “Starting…” instead of “Offline” during the box's ~30 s `dsh` cold start.
+
+### Changed
+
+- **`registerJoin` runs before `spawnDsh`** (gateway): the first status report no longer waits for `dsh` to become ready.
+
 ## [remote-dsh 0.21.0 · rdsh-gateway 0.17.0 · dsh-web-remote 0.15.0] - 2026-11-07
 
 ### Added

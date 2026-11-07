@@ -1918,6 +1918,7 @@ function HostsPage(): React.JSX.Element {
           {hosts.map((h) => {
             const isOwner = h.role !== "member";
             const menuOpen = menuHostId === h.id;
+            const starting = !h.online && h.status === "starting";
             return (
               <div key={h.id} style={{ border: "1px solid var(--rdsh-border-soft)", borderRadius: 8, marginBottom: 8 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px" }}>
@@ -1927,8 +1928,8 @@ function HostsPage(): React.JSX.Element {
                     {h.e2eePublicKey !== undefined && h.e2eePublicKey !== null && h.e2eePublicKey !== "" && <ShieldIcon />}
                   </span>
                   <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                    <span style={{ color: h.online ? "var(--rdsh-success)" : "var(--rdsh-fg-subtle)", fontSize: 14 }}>{h.online ? "●" : "○"}</span>
-                    <span style={{ color: "var(--rdsh-fg-muted)", fontSize: 12 }}>{h.online ? t("在线") : t("离线")}</span>
+                    <span style={{ color: h.online ? "var(--rdsh-success)" : starting ? "#F59E0B" : "var(--rdsh-fg-subtle)", fontSize: 14 }}>{h.online ? "●" : starting ? "◐" : "○"}</span>
+                    <span style={{ color: "var(--rdsh-fg-muted)", fontSize: 12 }}>{h.online ? t("在线") : starting ? t("启动中") : t("离线")}</span>
                   </span>
                   {!isOwner && <span style={{ color: "var(--rdsh-fg-subtle)", fontSize: 12, border: "1px solid var(--rdsh-border-soft)", borderRadius: 4, padding: "1px 6px" }}>{t("共享", { en: "Shared" })}</span>}
                   <div style={{ marginLeft: "auto", display: "flex", gap: 6, position: "relative" }}>

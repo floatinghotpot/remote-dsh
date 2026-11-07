@@ -56,6 +56,8 @@ export interface HostInfo {
   deviceKind?: string | null;
   /** 主机自报的版本对象（键为包名）；未上报为 null。 */
   versions?: Record<string, unknown> | null;
+  /** 主机自报的启动状态：starting = 网关已起、dsh 未就绪；ready = 可服务。 */
+  status?: "starting" | "ready" | null;
 }
 
 export interface JoinTokenInfo {

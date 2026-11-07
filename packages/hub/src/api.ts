@@ -78,6 +78,8 @@ export interface HubRuntime {
   usage: UsageAccumulator;
   presence: PresenceDirectory;
   metrics: HubMetrics;
+  /** 主机自报的启动状态（starting/ready；内存态，隧道断开或 hub 重启即丢）。 */
+  hostStatus?: Map<string, { status: HostStatus; at: number }>;
   /** host cookie 的 Ed25519 签名器（R17；迁移票据签发）。 */
   hostCookieSigner?: HostCookieSigner;
 }
@@ -2608,6 +2610,23 @@ function isHostOnline(h: HostRow, runtime: HubRuntime): boolean {
   return h.nodeId !== null ? runtime.presence.isOnline(h.id) : runtime.tunnels.isOnline(h.id);
 }
 
+/** 主机自报的启动状态：starting = 网关已起、dsh 未就绪；ready = 可服务。 */
+export type HostStatus = "starting" | "ready";
+const HOST_STATUSES = new Set<string>(["starting", "ready"]);
+
+/** 状态超过这个时间未刷新就丢弃：避免网关异常退出后永远显示「启动中」。 */
+const HOST_STATUS_TTL_MS = 5 * 60 * 1000;
+
+export function hostStatusOf(runtime: HubRuntime, hostId: string): HostStatus | null {
+  const entry = runtime.hostStatus?.get(hostId);
+  if (entry === undefined) return null;
+  if (Date.now() - entry.at > HOST_STATUS_TTL_MS) {
+    runtime.hostStatus?.delete(hostId);
+    return null;
+  }
+  return entry.status;
+}
+
 async function handleListHosts(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
   const auth = authenticate(req, runtime);
   if (auth === null) {
@@ -2622,6 +2641,7 @@ async function handleListHosts(req: IncomingMessage, res: ServerResponse, runtim
       name: h.name,
       // 节点路由用 N4 上报的 online；hub 路由（无节点）用 TunnelRegistry
       online: isHostOnline(h, runtime),
+      status: hostStatusOf(runtime, h.id),
       createdAt: h.createdAt,
       role: h.ownerId === auth.userId ? "owner" : "member",
       e2eePublicKey: h.e2eePublicKey,
@@ -3356,6 +3376,14 @@ async function handleHostMeta(req: IncomingMessage, res: ServerResponse, runtime
     }
     deviceKind = body.deviceKind;
   }
+  let status: HostStatus | null = null;
+  if (body.status !== undefined && body.status !== null) {
+    if (typeof body.status !== "string" || !HOST_STATUSES.has(body.status)) {
+      writeError(res, 400, "BAD_REQUEST", "status must be starting|ready");
+      return;
+    }
+    status = body.status as HostStatus;
+  }
   let versionsJson: string | null = null;
   if (body.versions !== undefined && body.versions !== null) {
     if (typeof body.versions !== "object" || Array.isArray(body.versions)) {
@@ -3372,12 +3400,16 @@ async function handleHostMeta(req: IncomingMessage, res: ServerResponse, runtime
   if (deviceKind !== null || versionsJson !== null) {
     await runtime.store.setHostMeta(host.id, deviceKind, versionsJson);
   }
+  if (status !== null) {
+    (runtime.hostStatus ??= new Map()).set(host.id, { status, at: Date.now() });
+  }
   const updated = await runtime.store.getHostById(host.id);
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({
     ok: true,
     deviceKind: updated?.deviceKind ?? null,
     versions: updated?.versionsJson != null ? safeJson(updated.versionsJson) : null,
+    status: hostStatusOf(runtime, host.id),
   }));
 }
 

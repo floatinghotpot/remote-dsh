@@ -481,6 +481,7 @@ async function handleTunnelUpgrade(req: IncomingMessage, socket: Duplex, head: B
       runtime.tunnels.unregister(hostId, conn);
       // 仅当确实已无活跃连接时才推 offline；已被新连接接管则保持在线状态。
       if (!runtime.tunnels.isOnline(hostId)) {
+        runtime.hostStatus?.delete(hostId);
         runtime.events.pushToUser(host.ownerId, { type: "host.offline", hostId });
       }
     }, runtime.tunnelTimings);

@@ -124,6 +124,7 @@ const EN: Record<string, string> = {
   "手机号（+86）": "Phone (+86)",
   "← 返回账户与安全": "← Back to account",
   "在线": "Online",
+  "启动中": "Starting…",
   "离线": "Offline",
   "端到端加密": "End-to-end encrypted",
   "进入": "Enter",

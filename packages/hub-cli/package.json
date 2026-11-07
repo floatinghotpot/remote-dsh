@@ -1,6 +1,6 @@
 {
   "name": "rdsh-hub-cli",
-  "version": "0.20.0",
+  "version": "0.21.0",
   "description": "Run and manage the rdsh hub server: rdsh-hub serve / user / audit / host / service",
   "license": "MIT",
   "type": "module",

@@ -141,6 +141,31 @@ test("鉴权与校验：缺 token 400 / 错 token 401 / 非法枚举 400 / 超�
   assert.equal((await post("/api/hosts/self/meta", { token: hostToken, versions: [1, 2] })).status, 400);
 });
 
+test("status：starting/ready 入库并在 GET /api/hosts 带出，缺省不改，非法 400", async () => {
+  const { hostId, hostToken, cookie } = await makeHost("frank");
+
+  const before = await get("/api/hosts", cookie);
+  const beforeHost = (before.json.hosts as Array<Record<string, unknown>>).find((h) => h.id === hostId)!;
+  assert.equal(beforeHost.status, null);
+
+  const starting = await post("/api/hosts/self/meta", { token: hostToken, status: "starting" });
+  assert.equal(starting.status, 200);
+  assert.equal(starting.json.status, "starting");
+  let host = ((await get("/api/hosts", cookie)).json.hosts as Array<Record<string, unknown>>).find((h) => h.id === hostId)!;
+  assert.equal(host.status, "starting");
+
+  // 只报 versions 不改变 status
+  const versionsOnly = await post("/api/hosts/self/meta", { token: hostToken, versions: { "remote-dsh": "0.21.0" } });
+  assert.equal(versionsOnly.json.status, "starting");
+
+  const ready = await post("/api/hosts/self/meta", { token: hostToken, status: "ready" });
+  assert.equal(ready.json.status, "ready");
+  host = ((await get("/api/hosts", cookie)).json.hosts as Array<Record<string, unknown>>).find((h) => h.id === hostId)!;
+  assert.equal(host.status, "ready");
+
+  assert.equal((await post("/api/hosts/self/meta", { token: hostToken, status: "bogus" })).status, 400);
+});
+
 test("未知字段被忽略，不影响已上报值", async () => {
   const { hostToken } = await makeHost("erin");
   const res = await post("/api/hosts/self/meta", {

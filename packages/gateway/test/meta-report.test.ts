@@ -12,7 +12,7 @@ import type { Server } from "node:http";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { UsageReporter } from "../src/join.ts";
+import { UsageReporter, reportHostStatus } from "../src/join.ts";
 import { writeHostMeta } from "../src/host-meta.ts";
 
 interface Captured {
@@ -77,6 +77,20 @@ test("reportMeta 把 token / deviceKind / versions 报给 /api/hosts/self/meta",
     assert.equal(hub.seen[0]!.body.token, "host-token-0123456789abcdef");
     assert.equal(hub.seen[0]!.body.deviceKind, "box");
     assert.deepEqual(hub.seen[0]!.body.versions, { "rdsh-boxd": "0.2.0", "remote-dsh": "0.20.0" });
+  } finally {
+    await hub.close();
+  }
+});
+
+test("reportHostStatus 把 status 报给 /api/hosts/self/meta", async () => {
+  const hub = await fakeHub();
+  try {
+    await reportHostStatus(hub.base, "host-token-0123456789abcdef", false, "starting");
+    assert.equal(hub.seen.length, 1);
+    assert.equal(hub.seen[0]!.path, "/api/hosts/self/meta");
+    assert.deepEqual(hub.seen[0]!.body, { token: "host-token-0123456789abcdef", status: "starting" });
+    await reportHostStatus(hub.base, "host-token-0123456789abcdef", false, "ready");
+    assert.equal(hub.seen[1]!.body.status, "ready");
   } finally {
     await hub.close();
   }

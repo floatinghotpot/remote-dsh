@@ -1716,12 +1716,36 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
   };
 }
 
+/** 启动状态（meta 上报的 `status`）：starting = 网关已起、dsh 未就绪；ready = 可服务。 */
+type HostStatus = "starting" | "ready";
+
+/** 上报启动状态（best effort；hub 无该端点/网络失败都忽略，不影响主流程）。 */
+export async function reportHostStatus(hubUrl: string, token: string, insecure: boolean, status: HostStatus): Promise<void> {
+  await hubRequest(hubUrl, "/api/hosts/self/meta", {
+    method: "POST",
+    insecure,
+    body: { token, status },
+  }).catch(() => null);
+}
+
 /** `rdsh serve`（join 模式）的 CLI 封装：spawn dsh + 信号退出 + startJoin(role:cli)。 */
 export async function join(opts: JoinOptions): Promise<void> {
   const foundDsh = findDsh(opts.dshPath);
   if (foundDsh === null) {
     throw new Error("cannot find 'dsh' in PATH. Install DeepSeek Harness first, or pass --dsh <path>.");
   }
+
+  // 先注册拿 host token：dsh 冷启动在盒子上要 ~30s，若等 spawn 完才上报，
+  // APP 主机列表会在这段时间显示「离线」而不是「启动中」。
+  const { token, insecure, name, hostId, hostCookiePubKey } = await registerJoin(opts);
+  let lastStatus: HostStatus | null = null;
+  const reportStatus = (status: HostStatus): void => {
+    if (lastStatus === status) return;
+    lastStatus = status;
+    void reportHostStatus(opts.hubUrl, token, insecure, status);
+  };
+  await reportHostStatus(opts.hubUrl, token, insecure, "starting");
+  lastStatus = "starting";
 
   // 版本窗口外 → warn（不硬拒）
   const dshVersion = await detectDshVersion(foundDsh);
@@ -1744,9 +1768,6 @@ export async function join(opts: JoinOptions): Promise<void> {
   if ((await checkRemotePickerGraph(dsh.port, dshAuthCookieHeader)) === false) {
     console.warn(`\n⚠  ${remotePickerWarning()}\n`);
   }
-
-  // 解析 host token（含证书自动检测 + 持久化）；进程重启后复用，避免重复配对。
-  const { token, insecure, name, hostId, hostCookiePubKey } = await registerJoin(opts);
 
   console.log(`rdsh join: dsh web on 127.0.0.1:${dsh.port}`);
   console.log(`rdsh join: connecting to ${opts.hubUrl}...`);
@@ -1783,6 +1804,8 @@ export async function join(opts: JoinOptions): Promise<void> {
         (level === "error" ? console.error : console.log)(`rdsh join: ${message}`);
       },
       onState: (state, detail) => {
+        if (state === "connected") reportStatus("ready");
+        else if (state === "connecting" || state === "reconnecting") reportStatus("starting");
         if (state === "rejected") {
           console.error(`rdsh join: ${detail?.message ?? "rejected"}`);
           // 权威拒绝 = 永久失败：非零退出交给 systemd/launchd 的 Restart=on-failure 重启。

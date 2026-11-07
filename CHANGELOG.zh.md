@@ -7,6 +7,16 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [remote-dsh 0.22.0 · rdsh-gateway 0.18.0 · rdsh-hub 0.21.0 · rdsh-portal 0.4.0] - 2026-11-07
+
+### 新增
+
+- **主机启动状态**（gateway、hub、portal）：`POST /api/hosts/self/meta` 支持可选的 `status: "starting" | "ready"`。网关在进程启动时（`dsh` 启动之前）就报 `starting`，隧道连上后报 `ready`；hub 只存内存（5 分钟 TTL，隧道断开即清除），并由 `GET /api/hosts` 返回。门户在盒子 `dsh` 冷启动的约 30 秒里显示「启动中」而不是「离线」。
+
+### 变更
+
+- **`registerJoin` 提前到 `spawnDsh` 之前**（gateway）：首次状态上报不再等 `dsh` 就绪。
+
 ## [remote-dsh 0.21.0 · rdsh-gateway 0.17.0 · dsh-web-remote 0.15.0] - 2026-11-07
 
 ### 新增
