@@ -30,7 +30,7 @@
 **Route 1 · DSH desktop app plugin (no CLI)**
 
 1. Open the DSH desktop app → "Plugins" in the top-left → install a third-party plugin;
-2. Enter the plugin name `dsh-web-remote`, then open the plugin panel;
+2. Enter the plugin name `dsh-web-remote`; after installing (or upgrading), **quit and reopen DSH** — the directory-picker pin only takes effect on the next start. Then open the plugin panel;
 3. Bind this machine: **recommended — pull out the WhaleLink App and scan the QR code** (faster); or paste the hub URL + join token in the panel.
 
 **Route 2 · CLI (for servers / headless embedded hosts)**

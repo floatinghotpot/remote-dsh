@@ -76,6 +76,7 @@
 
 ### 修复
 
+- **装/升级插件后需重启 DSH**（web-remote）：在 DSH 已运行时安装或升级插件，boot 期挂上的自适应选择器（`native`）无法被热补丁替换，`directory-picker-browse` 会报 `service "directoryPicker" has been registered at <NativeDirectoryPicker>`，直到重启 DSH。README 安装步骤、使用文档故障排查与面板「目录选择」提示现在都说明要先重启 DSH，并给出原因。
 - **管理台套餐文案**（portal）：管理台用户列表与用户详情页的「套餐」列现在本地化所有 `plan_status`（`internal` / `trial` / `grace` / `free` / `subscribed`）；此前只有 `internal` 有文案，其余直接显示英文枚举。未知值改为显示本地化占位，不再回显后端原值。
 - **管理台账号状态文案**（portal）：管理台用户列表与用户详情页的「状态」列现在本地化 `account_status`（`active` / `banned` / `deleted` / `pending`），不再直出英文枚举。
 - **卸载插件时直连口泄漏**（web-remote）：插件 `dispose` 只停了隧道、没停局域网直连口（8442），导致不重启 DSH 就重装插件时旧直连口仍占端口、`startDirect` 撞 `EADDRINUSE` 失败、直连候选为空。现在 `dispose` 会一并停掉直连口。_（0.14.1 更正：此修复挂在永不触发的 `ctx.on("dispose")` 上，实际未生效。）_

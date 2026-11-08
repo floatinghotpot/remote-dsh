@@ -7,6 +7,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { pickerDiagnostics } from "../src/index.ts";
 
 /** 构造只实现 `get` 的最小 ctx。 */
@@ -47,4 +48,14 @@ test("pickerDiagnostics：能力对象没有 capability() → none", () => {
   const d = pickerDiagnostics(ctxWith({}));
   assert.equal(d.pickerKind, "none");
   assert.equal(d.pickerOk, false);
+});
+
+test("面板文案：native 提示必须指向「重启 DSH」这个可执行动作", () => {
+  // 回归护栏：刚装/升级插件时 boot 期已挂上的 native 无法被热补丁替换，
+  // 用户唯一能做的动作是重启；提示丢掉这句话就等于只报错不给出路。
+  const client = readFileSync(new URL("../client.js", import.meta.url), "utf8");
+  const hints = [...client.matchAll(/pickerHint: "([^"]*)"/g)].map((m) => m[1] ?? "");
+  assert.ok(hints.length >= 2, "client.js 应至少含 zh/en 两条 pickerHint");
+  assert.ok(hints.some((hint) => hint.includes("重启")), "中文提示需说明先重启 DSH");
+  assert.ok(hints.some((hint) => /restart/i.test(hint)), "英文提示需说明 restart DSH");
 });

@@ -435,6 +435,7 @@ rdsh-hub service install|status|start|stop|restart|uninstall      # hub 服务�
 | `/api/...` 报 403 | Host/Origin 未改写（0.2.0 已修复） | 升级 |
 | 配对后目录选择失败 | 同上 | 升级 |
 | 远端点「添加工作区」时**原生对话框弹在宿主屏幕上**（远端看不到、点不了） | DSH 在启动时把目录选择器解析成了 `native`（宿主是 macOS/Windows/带显示器的 Linux，且不是从 SSH 会话启动） | 升级到当前版本：插件 `dsh plugin --profile web add dsh-web-remote@latest` 会把选择器固定为**浏览器内**形态；CLI 形态（`rdsh serve/join`）已在 spawn 时注入远端信号。仍出现时检查该 profile 的 `cordis.patch.yml` 是否被手工 patch 覆盖——**目录选择器只允许一个 pin 通道**，重复会让 dsh 启不来 |
+| 插件页显示 `directory-picker-browse` 组件 **Problem**，原因 `service "directoryPicker" has been registered at <NativeDirectoryPicker>` | 插件是在 DSH **已运行**时装/升级的：boot 期自适应选择器已挂上 `native`，插件补丁热应用时 browse 后端与它撞车（loader 先挂新条目、后卸旧条目的竞态）；磁盘上的组合配置本身是对的 | **退出并重新打开 DSH**：冷启动时自适应行被禁用、只挂 browse，三个组件都恢复 Running。重启后仍复现，才按下一节排查 pin 通道 |
 | 装了 `dsh-web-remote` 后，**宿主本机**浏览器里也变成浏览器内选目录 | 预期行为：目录选择器是 boot 级单一实现，插件按"远程优先"固定为浏览器内形态（远端够不到宿主 OS 对话框） | 无需处理；能力等价（浏览 + 新建目录都作用于宿主文件系统） |
 | 面板报「隧道被占用 / join lock held by …」，状态显示「由本机其它实例托管」 | 同机存在两份 `dsh-web-remote`（命令行 profile + 桌面版各一份），或本机 rdsh CLI/服务正在托管隧道 —— 机器级 `~/.rdsh/join.lock` 同一时刻只允许一条隧道 | 面板「诊断与修复」：按判定先退出另一个 DSH 再重试接入；死锁 / pid 复用可「强制清锁」；重复安装按提示卸载多余的一份 |
 | Ctrl+C 后 dsh 残留 | 0.2.0 已修复（SIGINT/SIGTERM/SIGHUP 优雅退出） | 升级 |
@@ -453,6 +454,8 @@ DSH 的目录选择器有两套实现，**在启动时二选一**、之后不再
 - `browse`：**浏览器内**目录浏览器 —— 列出宿主文件系统，可浏览、可新建目录。
 
 remote-dsh 的两条入口都把结果固定为 `browse`：插件 `dsh-web-remote` 在自己的 bundle patch 里禁用 DSH 的自适应行并直接组合 `browse`（无论隧道是否连接）；CLI（`rdsh serve` / `rdsh join`）在 spawn `dsh web` 时注入远端信号（上游据此判定 `browse`）。插件面板的「目录选择」一行可看到当前实际生效的形态 —— 显示 `native` 即为异常。
+
+> ⚠️ **装/升级插件后要重启 DSH**：bundle patch 在安装时是**热应用**的，而「禁用自适应行 + 挂 browse」这一对无法在已挂上 `native` 的进程里安全完成——browse 后端会撞上已注册的 `directoryPicker`，表现为组件 **Problem**、面板「目录选择」显示 `native`。退出后重开 DSH 即恢复（冷启动才会组合出 browse）。
 
 > ⚠️ **不要手工 pin**：`directory-picker` 是**单占用**的（一个后端服务 + 一个浏览器半）。任何"第二个插入者"（手工写 profile 的 `cordis.patch.yml`、或给 `dsh web` 传 `--patch`）都会让 dsh **启动失败**（`duplicate loader entry id` / 重复注册 `directoryPicker`）。装了插件就不要再手工加 patch。
 

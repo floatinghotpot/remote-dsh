@@ -98,7 +98,7 @@ window.__ModuleLoader__.load({
       pickerLabel: "目录选择",
       pickerOkText: "浏览器内（browse）",
       pickerBadText: "宿主原生对话框（native）——远端浏览器无法操作",
-      pickerHint: "插件已把目录选择器固定为浏览器内形态；若显示 native，通常是被其它 patch 层覆盖（目录选择器只允许一个 pin 通道）。",
+      pickerHint: "插件已把目录选择器固定为浏览器内形态。显示 native 时先退出并重新打开 DSH——刚装/升级完插件时，boot 期已挂上的选择器无法被热补丁替换，重启后才会生效；重启后仍然如此，说明被其它 patch 层覆盖（目录选择器只允许一个 pin 通道）。",
       pickerUnknownText: "未知",
     };
 
@@ -183,7 +183,7 @@ window.__ModuleLoader__.load({
       pickerLabel: "Directory picker",
       pickerOkText: "In-app browser (browse)",
       pickerBadText: "Host OS dialog (native) — unusable from a remote browser",
-      pickerHint: "The plugin pins the picker to the in-app browser. Seeing native usually means another patch layer overrode it (only one pin channel is allowed).",
+      pickerHint: "The plugin pins the picker to the in-app browser. Seeing native: quit and reopen DSH first — a picker mounted at boot cannot be replaced by a live patch, so a plugin just installed or upgraded only takes effect on the next start. If native persists after a restart, another patch layer overrode the pin (only one pin channel is allowed).",
       pickerUnknownText: "Unknown",
     };
 
