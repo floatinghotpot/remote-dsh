@@ -5194,7 +5194,7 @@ function UsagePage(): React.JSX.Element {
           )}
 
           <p style={{ fontSize: 12, color: "var(--rdsh-fg-subtle)", borderTop: "1px solid var(--rdsh-border-soft)", paddingTop: 8, margin: 0 }}>
-            {t("数据来源：中转/直连流量 = 网关（设备端）统计 · 本地/云端语音与朗读 = App（设备端）统计（本地朗读 = 离线模型；系统朗读与系统识别不计；字符按 Unicode 码点）")}
+            {t("数据来源：中转/直连流量 = 网关（设备端）统计 · 本地/云端语音与朗读 = App（设备端）统计（本地朗读 = 离线模型 + 系统朗读；系统识别不计；字符按 Unicode 码点）")}
           </p>
         </>
       )}

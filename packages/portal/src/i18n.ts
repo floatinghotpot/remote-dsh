@@ -462,8 +462,8 @@ const EN: Record<string, string> = {
   "日均": "Daily avg",
   "峰值": "Peak",
   "已省下 ≈{x} 中转流量": "Saved ≈{x} relay traffic",
-  "数据来源：中转/直连流量 = 网关（设备端）统计 · 本地/云端语音与朗读 = App（设备端）统计（本地朗读 = 离线模型；系统朗读与系统识别不计；字符按 Unicode 码点）":
-    "Data source: relay/direct = gateway (on-device) · speech/read-aloud = app (on-device). Local read-aloud = offline model; system read-aloud & ASR excluded; chars counted as Unicode code points",
+  "数据来源：中转/直连流量 = 网关（设备端）统计 · 本地/云端语音与朗读 = App（设备端）统计（本地朗读 = 离线模型 + 系统朗读；系统识别不计；字符按 Unicode 码点）":
+    "Data source: relay/direct = gateway (on-device) · speech/read-aloud = app (on-device). Local read-aloud = offline model + system voice; system ASR excluded; chars counted as Unicode code points",
   "暂无用量数据": "No usage data yet",
   "秒": "sec",
   "分钟": "min",
