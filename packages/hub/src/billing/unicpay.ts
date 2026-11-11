@@ -60,9 +60,10 @@ export interface InitiateParams {
 export interface StoreVerifyParams {
   /** 消费方用户标识；订阅必填，一次性商品可省 */
   userId?: string;
-  store: "apple" | "google";
+  /** 商店标识（apple/google/huawei/…），权威枚举由 unicpay 平台维护；hub 仅透传 */
+  store: string;
   storeProductId: string;
-  /** Apple：StoreKit 2 JWS；Google：purchaseToken */
+  /** Apple：StoreKit 2 JWS；Google：purchaseToken；Huawei：purchaseData JSON */
   receipt: string;
 }
 

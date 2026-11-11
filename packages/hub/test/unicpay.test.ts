@@ -549,6 +549,28 @@ test("H6a + H1: store/verify 转发用 users.id 且不带 environment", async ()
   assert.equal(capturedVerify.authorization, "UnicPay-App rdsh");
 });
 
+test("store/verify: store 透传 —— huawei 通过，非法格式 400", async () => {
+  const user = db.createUser("wh-huawei", await hashPassword("pw123456"));
+  const token = (await auth.issueTokens(user)).accessToken;
+  // 合法小写字母 store（huawei；未来 amazon 同理）透传成功
+  const ok = await fetch(base + "/api/billing/unicpay/store/verify", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    body: JSON.stringify({ store: "huawei", storeProductId: "plus_monthly", receipt: "purchaseData-json" }),
+  });
+  assert.equal(ok.status, 200);
+  assert.equal(capturedVerify?.body.store, "huawei");
+  // 非法格式（大写/数字/下划线/连字符/超长/空）在 hub 即拒绝，不透传
+  for (const bad of ["Huawei", "store1", "store_1", "store-1", "a".repeat(33), ""]) {
+    const r = await fetch(base + "/api/billing/unicpay/store/verify", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ store: bad, storeProductId: "plus_monthly", receipt: "r" }),
+    });
+    assert.equal(r.status, 400, `store=${JSON.stringify(bad)}`);
+  }
+});
+
 test("store.purchase.succeeded → 入账 purchased 桶（幂等去重）", async () => {
   const user = db.createUser("wh-store", await hashPassword("pw123456"));
   const evt = {

@@ -4354,8 +4354,11 @@ async function handleUnicpayStoreVerify(req: IncomingMessage, res: ServerRespons
   const store = typeof body.store === "string" ? body.store : "";
   const storeProductId = typeof body.storeProductId === "string" ? body.storeProductId : "";
   const receipt = typeof body.receipt === "string" ? body.receipt : "";
-  if (store !== "apple" && store !== "google") {
-    writeError(res, 400, "BAD_REQUEST", "unknown store");
+  // `store` is the unicpay platform's store identifier (apple/google/huawei/amazon/…);
+  // the authoritative set lives in the platform. The hub only enforces shape and
+  // passes it through, so adding a store on the platform needs no hub change.
+  if (!/^[a-z]{1,32}$/.test(store)) {
+    writeError(res, 400, "BAD_REQUEST", "invalid store");
     return;
   }
   if (storeProductId === "" || receipt === "") {

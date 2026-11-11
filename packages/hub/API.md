@@ -102,6 +102,12 @@ portal 后台充值页据此渲染档位（不再前端写死；与 `/api/billin
 - 两个列表都不命中 ⇒ `400 BAD_REQUEST`（`unknown goodsId`）。id 不会跨段重复（配置校验保证），故不会歧义。
 - `jsapi` 缺 openid ⇒ `400 JSAPI_OPENID_REQUIRED`；unicpay 未配置时 `404 NOT_CONFIGURED`。
 
+### POST /api/billing/unicpay/store/verify —— B 类（商店）收据校验代理
+认证：需要。请求 `{ "store", "storeProductId", "receipt" }` → hub 验登录态后补 HMAC 转发 unicpay `store/verify` → 返回 `{ "purchase", "goodsType" }`（`goodsType` 供客户端判定充值/订阅）。
+- `store` = 商店标识字符串，**只允许小写字母、1–32 字符（`^[a-z]{1,32}$`）**；权威枚举由 unicpay 平台维护（如 `apple` / `google` / `huawei`），hub 只做格式校验后**透传、不枚举**——平台新增渠道（如 amazon）时 hub 无需改。
+- `storeProductId`、`receipt` 非空；`receipt` 为商店回执（Apple StoreKit2 JWS / Google purchaseToken / Huawei purchaseData JSON）。
+- `store` 未在平台注册时由 unicpay 返回 `unsupported store`（透传为上游错误）；unicpay 未配置时 `404 NOT_CONFIGURED`。
+
 ### 点数档位配置：`config.billing.productsFile`
 ```json
 "billing": {
