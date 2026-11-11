@@ -23,7 +23,7 @@ const INTERNAL_ROUTES: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: /^\/api\/host\/usage\/report$/, reason: "gateway 以 host token 上报用量（§11）" },
   { pattern: /^\/api\/relay\/usage\/report$/, reason: "relay 转发侧批量上报（§12）" },
   { pattern: /^\/api\/internal\//, reason: "服务令牌内部接口（§14 有概览，字段不对外承诺）" },
-  { pattern: /^\/api\/billing\/unicpay\/(prepay|store\/verify|webhook)$/, reason: "支付渠道侧回调/预下单，非客户端调用" },
+  { pattern: /^\/api\/billing\/unicpay\/(prepay|webhook)$/, reason: "支付渠道侧回调/预下单，非客户端调用" },
   { pattern: /^\/api\/admin\/metrics$/, reason: "运维观测口，无 UI 消费方（探活用 /api/admin/health）" },
   { pattern: /^\/api\/events$/, reason: "portal SSE 在线推送（内部）" },
   { pattern: /^\/api\/hosts\/self-revoke$/, reason: "主机持 host token 自注销（`rdsh host leave`）" },
