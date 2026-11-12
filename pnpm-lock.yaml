@@ -128,8 +128,6 @@ importers:
         specifier: 4.0.5
         version: 4.0.5
 
-  packages/whale-link: {}
-
 packages:
 
   '@babel/code-frame@7.29.7':

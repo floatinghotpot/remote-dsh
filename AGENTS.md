@@ -144,7 +144,7 @@ plan.md 的强制格式见 **附录 E**。
   - `packages/hub` — `rdsh-hub`：服务器，控制面 + 数据面（含内置 relay；生产期 Go 版属商业版，私有仓）
   - `packages/portal` — `rdsh-portal`：Web 门户（Vite + React 18，与 DSH 前端同构）
   - `packages/cli` — `remote-dsh`：`rdsh` 用户侧 bin（setup/join/serve/service/leave/user/gate，短形式为主、`host` 兼容别名；不含 hub）
-  - `packages/hub-cli` — `rdsh-hub-cli`：`rdsh-hub` 服务端 bin（serve/user/audit/host/service）；其余 `packages/*`（`web-remote` / `agent-mesh` / `whale-link` 等）见目录本身
+  - `packages/hub-cli` — `rdsh-hub-cli`：`rdsh-hub` 服务端 bin（serve/user/audit/host/service）；其余 `packages/*`（`web-remote` / `agent-mesh` 等）见目录本身
   - **私有仓（不在本仓）** — Go 规模化组件；本仓不写其文件、路径或仓库名
   - `e2e/` — 公开 conformance fixtures 与最小 TS harness；Go 实现在私有仓跑同一套 fixtures
   - `media/` — logo 资产（品牌，不随 MIT，见 NOTICE）；`doc/` — **公开文档**（`blog/`、`overview/`；实施过程与内部文档在私有仓，见 §5）
