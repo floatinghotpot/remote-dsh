@@ -18,7 +18,7 @@ export interface UpstreamProviderSpec {
 
 export const UPSTREAM_PROVIDERS: UpstreamProviderSpec[] = [
   { provider: "deepseek", service: "llm", credentialType: "api_key", fields: ["apiKey"] },
-  { provider: "deepseek", service: "voice", credentialType: "api_key", fields: ["apiKey"], paramsFields: ["asrUrl", "ttsUrl", "asrModel", "ttsVoices"] },
+  { provider: "deepseek", service: "voice", credentialType: "api_key", fields: ["apiKey"], paramsFields: ["asrUrl", "ttsUrl", "asrModel", "ttsVoices", "maxConcurrency"] },
   { provider: "volcengine", service: "voice", credentialType: "api_key", fields: ["apiKey"], paramsFields: ["asrUrl", "asrResourceId", "ttsUrl", "ttsResourceId", "asrModel", "ttsVoices"] },
   { provider: "aliyun", service: "voice", credentialType: "api_key_workspace", fields: ["apiKey", "workspaceId"], paramsFields: ["region", "domain", "voices"] },
   { provider: "tencent", service: "voice", credentialType: "ak_sk", fields: ["appId", "secretId", "secretKey"], paramsFields: ["region", "engineModelType", "voices"] },

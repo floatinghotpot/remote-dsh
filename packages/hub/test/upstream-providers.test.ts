@@ -12,7 +12,7 @@ test("providerSpec is service-aware for deepseek", () => {
   const voice = providerSpec("deepseek", "voice");
   assert.equal(voice?.service, "voice");
   assert.deepEqual(voice?.fields, ["apiKey"]);
-  assert.deepEqual(voice?.paramsFields, ["asrUrl", "ttsUrl", "asrModel", "ttsVoices"]);
+  assert.deepEqual(voice?.paramsFields, ["asrUrl", "ttsUrl", "asrModel", "ttsVoices", "maxConcurrency"]);
 });
 
 test("volcengine voice params expose ttsVoices and asrModel", () => {

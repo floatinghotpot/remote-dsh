@@ -90,7 +90,18 @@ async function effectiveVoiceConfig(runtime: HubRuntime) {
     } catch {
       continue;
     }
-    upstreams[provider] = { credentialType: k.credentialType ?? "api_key", params, secrets };
+    // maxConcurrency is a provider-level non-secret param; surface it as a
+    // top-level field so the router can enforce it (deepseek defaults to 50).
+    const maxConcurrency =
+      typeof params.maxConcurrency === "number" && params.maxConcurrency > 0
+        ? Math.floor(params.maxConcurrency)
+        : undefined;
+    upstreams[provider] = {
+      credentialType: k.credentialType ?? "api_key",
+      params,
+      secrets,
+      ...(maxConcurrency !== undefined ? { maxConcurrency } : {}),
+    };
   }
   return {
     reportIntervalSeconds: v?.reportIntervalSeconds ?? VOICE_DEFAULTS.reportIntervalSeconds,
