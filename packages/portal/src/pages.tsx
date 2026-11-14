@@ -3468,60 +3468,93 @@ function AdminVoiceProviderConfigs({ isWrite }: { isWrite: boolean }): React.JSX
   const [configs, setConfigs] = useState<Array<{ provider: string; params: string; updatedAt: number }>>([]);
   const [msg, setMsg] = useState("");
   const [provider, setProvider] = useState("volcengine");
-  const [params, setParams] = useState<Record<string, string>>({ asrUrl: "", asrResourceId: "", ttsUrl: "", ttsResourceId: "", voices: "" });
+  const [params, setParams] = useState<Record<string, string>>({});
   const reload = (): void => { adminApi.llmUpstreamProviderConfigs().then((r) => setConfigs(r.configs)).catch(() => setConfigs([])); };
   useEffect(() => { reload(); adminApi.upstreamProviders().then((r) => setProviders(r.providers as unknown as UpstreamProviderSpec[])).catch(() => setProviders([])); }, []);
   const voiceProviders = providers.filter((p) => p.service === "voice");
   const spec = providers.find((p) => p.provider === provider);
+  const specFields = spec?.paramsFields ?? [];
+
+  const labelOf = (f: string): string => {
+    switch (f) {
+      case "asrUrl": return "ASR URL";
+      case "asrResourceId": return "ASR resourceId";
+      case "ttsUrl": return "TTS URL";
+      case "ttsResourceId": return "TTS resourceId";
+      case "asrModel": return t("ASR 模型");
+      case "ttsVoices": case "voices": return t("音色（逗号分隔）");
+      case "maxConcurrency": return t("并发上限");
+      default: return f;
+    }
+  };
+  const isTextarea = (f: string): boolean => f === "ttsVoices" || f === "voices";
+  const isNumber = (f: string): boolean => f === "maxConcurrency";
+
+  // 把已存 JSON 参数摊平成表单字符串；`ttsVoices` 数组逗号连接，数字转字符串。
+  const toForm = (raw: Record<string, unknown>): Record<string, string> => {
+    const out: Record<string, string> = {};
+    for (const f of specFields) {
+      let v = raw[f];
+      if ((v === null || v === undefined) && f === "ttsVoices") v = raw["voices"]; // 旧字段兼容
+      if (Array.isArray(v)) out[f] = v.map(String).join(",");
+      else if (v === null || v === undefined) out[f] = "";
+      else out[f] = String(v);
+    }
+    return out;
+  };
+
   const setP = (f: string, v: string): void => setParams({ ...params, [f]: v });
+  const selectProvider = (p: string): void => { setProvider(p); setParams({}); setMsg(""); };
+
   const startEdit = (c: { provider: string; params: string }): void => {
     setProvider(c.provider);
     try {
-      const obj = JSON.parse(c.params) as Record<string, unknown>;
-      setParams({
-        asrUrl: typeof obj.asrUrl === "string" ? obj.asrUrl : "",
-        asrResourceId: typeof obj.asrResourceId === "string" ? obj.asrResourceId : "",
-        ttsUrl: typeof obj.ttsUrl === "string" ? obj.ttsUrl : "",
-        ttsResourceId: typeof obj.ttsResourceId === "string" ? obj.ttsResourceId : "",
-        voices: Array.isArray(obj.voices) ? (obj.voices as unknown[]).filter((v): v is string => typeof v === "string").join(",") : "",
-      });
+      setParams(toForm(JSON.parse(c.params) as Record<string, unknown>));
     } catch {
-      setParams({ asrUrl: "", asrResourceId: "", ttsUrl: "", ttsResourceId: "", voices: "" });
+      setParams({});
     }
     setMsg("");
   };
+
   const save = (): void => {
     if (spec === undefined || spec.service !== "voice") { setMsg(t("请选择语音供应商")); return; }
-    const voices = (params.voices ?? "").split(/[,\n]+/).map((v) => v.trim()).filter((v) => v !== "");
-    const obj: Record<string, unknown> = { asrUrl: (params.asrUrl ?? "").trim(), asrResourceId: (params.asrResourceId ?? "").trim(), ttsUrl: (params.ttsUrl ?? "").trim(), ttsResourceId: (params.ttsResourceId ?? "").trim(), voices };
+    const obj: Record<string, unknown> = {};
+    for (const f of specFields) {
+      const raw = (params[f] ?? "").trim();
+      if (f === "ttsVoices" || f === "voices") {
+        obj[f] = raw === "" ? [] : raw.split(/[,\n]+/).map((v) => v.trim()).filter((v) => v !== "");
+      } else if (f === "maxConcurrency") {
+        const n = parseInt(raw, 10);
+        if (!Number.isNaN(n) && n > 0) obj[f] = n;
+      } else if (raw !== "") {
+        obj[f] = raw;
+      }
+    }
     adminApi.upsertLlmUpstreamProviderConfig(provider, { params: obj }).then(() => { setMsg("ok"); reload(); }).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed"));
   };
-  const field = (f: string, label: string, wide = false): React.JSX.Element => (
-    <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13 }}>
-      <span style={{ width: 110, color: "var(--rdsh-fg-subtle)" }}>{label}</span>
-      <input value={params[f] ?? ""} onChange={(e) => setP(f, e.target.value)} style={{ padding: "6px 8px", width: wide ? 420 : 260 }} />
-    </label>
-  );
+
   return (
     <div style={{ marginTop: 24 }}>
-      <h3 style={{ fontSize: 16, margin: "0 0 12px" }}>{t("语音供应商配置（URL / resourceId / 音色）")}</h3>
+      <h3 style={{ fontSize: 16, margin: "0 0 12px" }}>{t("语音供应商配置（URL / resourceId / 模型 / 音色）")}</h3>
       {msg !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{msg}</p>}
       {isWrite && (
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
           <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13 }}>
             <span style={{ width: 110, color: "var(--rdsh-fg-subtle)" }}>{t("供应商")}</span>
-            <select value={provider} onChange={(e) => setProvider(e.target.value)} style={{ padding: "6px 8px" }}>
+            <select value={provider} onChange={(e) => selectProvider(e.target.value)} style={{ padding: "6px 8px" }}>
               {voiceProviders.map((p) => <option key={p.provider} value={p.provider}>{p.provider}</option>)}
             </select>
           </label>
-          {field("asrUrl", "ASR URL")}
-          {field("asrResourceId", "ASR resourceId")}
-          {field("ttsUrl", "TTS URL")}
-          {field("ttsResourceId", "TTS resourceId")}
-          <label style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 13 }}>
-            <span style={{ width: 110, color: "var(--rdsh-fg-subtle)" }}>{t("音色（逗号分隔）")}</span>
-            <textarea value={params.voices} onChange={(e) => setP("voices", e.target.value)} style={{ padding: "6px 8px", width: 420, height: 64 }} />
-          </label>
+          {specFields.map((f) => (
+            <label key={f} style={{ display: "flex", gap: 8, alignItems: isTextarea(f) ? "flex-start" : "center", fontSize: 13 }}>
+              <span style={{ width: 110, color: "var(--rdsh-fg-subtle)" }}>{labelOf(f)}</span>
+              {isTextarea(f) ? (
+                <textarea value={params[f] ?? ""} onChange={(e) => setP(f, e.target.value)} style={{ padding: "6px 8px", width: 420, height: 64 }} />
+              ) : (
+                <input value={params[f] ?? ""} onChange={(e) => setP(f, e.target.value)} style={{ padding: "6px 8px", width: isNumber(f) ? 120 : 420 }} />
+              )}
+            </label>
+          ))}
           <div>
             <button onClick={save} style={adminBtnStyle("primary")}>{t("保存")}</button>
           </div>
