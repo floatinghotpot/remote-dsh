@@ -689,10 +689,16 @@ key 条目字段：`{ id, name, hostId, tokenHead4, tokenTail4, status, spentMic
 响应 `200`：
 
 ```json
-{ "providers": [ { "provider": "volcengine", "voices": ["volc.zh_female_vv_uranus_bigtts", "..."] } ] }
+{
+  "providers": [
+    { "provider": "volcengine", "asrModel": "volc.bigmodel", "ttsVoices": ["volc.zh_female_vv_uranus_bigtts", "..."] },
+    { "provider": "deepseek", "asrModel": "ds.asr", "ttsVoices": ["ds.stella", "ds.tide"] }
+  ]
+}
 ```
 
-- 来自供应商级配置（voice_provider_configs），不含机密；供设置页展示音色列表，音色按供应商分组。
+- 来自供应商级配置（voice_provider_configs），不含机密；`ttsVoices` 为 TTS 音色白名单，`asrModel` 为 ASR 模型 ID（可选，缺省省略）。
+- `voices` 已更名为 `ttsVoices`（2026-11，feature 67）；`asrModel` 为新增字段。
 
 ## 20. 主机、共享与 join token（2026-11-04 补齐）
 

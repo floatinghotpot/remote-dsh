@@ -83,6 +83,27 @@ export async function handleVoiceSession(req: IncomingMessage, res: ServerRespon
 }
 
 
+/** Pure mapping from stored provider params to the public voice config shape. */
+export function toVoiceProviders(cfgs: Array<{ provider: string; params: string }>): Array<Record<string, unknown>> {
+  return cfgs.map((c) => {
+    let ttsVoices: string[] = [];
+    let asrModel: string | undefined;
+    try {
+      const p = JSON.parse(c.params) as Record<string, unknown>;
+      // `voices` is the old name; during migration prefer `ttsVoices` and fall
+      // back to `voices` so a Hub deploy ahead of the row migration is safe.
+      const list = Array.isArray(p.ttsVoices) ? p.ttsVoices : p.voices;
+      if (Array.isArray(list)) ttsVoices = (list as unknown[]).filter((v): v is string => typeof v === "string");
+      if (typeof p.asrModel === "string" && p.asrModel !== "") asrModel = p.asrModel;
+    } catch {
+      // ignore malformed params
+    }
+    return asrModel === undefined
+      ? { provider: c.provider, ttsVoices }
+      : { provider: c.provider, asrModel, ttsVoices };
+  });
+}
+
 /** App 公开端点：返回供应商级语音配置里的音色白名单（供设置页展示，不含机密）。 */
 export async function handleVoiceConfig(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<boolean> {
   const url = new URL(req.url ?? "/", "http://rdsh.local");
@@ -90,16 +111,7 @@ export async function handleVoiceConfig(req: IncomingMessage, res: ServerRespons
   const auth = authenticate(req, runtime);
   if (auth === null) return void writeError(res, 401, "UNAUTHORIZED", "login required"), true;
   const cfgs = await runtime.store.listVoiceProviderConfigs();
-  const providers = cfgs.map((c) => {
-    let voices: string[] = [];
-    try {
-      const p = JSON.parse(c.params) as Record<string, unknown>;
-      if (Array.isArray(p.voices)) voices = (p.voices as unknown[]).filter((v): v is string => typeof v === "string");
-    } catch {
-      // ignore malformed params
-    }
-    return { provider: c.provider, voices };
-  });
+  const providers = toVoiceProviders(cfgs);
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({ providers }));
   return true;
