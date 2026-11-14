@@ -18,7 +18,8 @@ export interface UpstreamProviderSpec {
 
 export const UPSTREAM_PROVIDERS: UpstreamProviderSpec[] = [
   { provider: "deepseek", service: "llm", credentialType: "api_key", fields: ["apiKey"] },
-  { provider: "volcengine", service: "voice", credentialType: "api_key", fields: ["apiKey"], paramsFields: ["asrUrl", "asrResourceId", "ttsUrl", "ttsResourceId", "voices"] },
+  { provider: "deepseek", service: "voice", credentialType: "api_key", fields: ["apiKey"], paramsFields: ["asrUrl", "ttsUrl", "asrModel", "ttsVoices"] },
+  { provider: "volcengine", service: "voice", credentialType: "api_key", fields: ["apiKey"], paramsFields: ["asrUrl", "asrResourceId", "ttsUrl", "ttsResourceId", "asrModel", "ttsVoices"] },
   { provider: "aliyun", service: "voice", credentialType: "api_key_workspace", fields: ["apiKey", "workspaceId"], paramsFields: ["region", "domain", "voices"] },
   { provider: "tencent", service: "voice", credentialType: "ak_sk", fields: ["appId", "secretId", "secretKey"], paramsFields: ["region", "engineModelType", "voices"] },
   { provider: "iflytek", service: "voice", credentialType: "ak_sk", fields: ["appId", "apiKey", "apiSecret"], paramsFields: ["domain", "voices"] },
@@ -26,6 +27,13 @@ export const UPSTREAM_PROVIDERS: UpstreamProviderSpec[] = [
   { provider: "minimax", service: "voice", credentialType: "api_key_workspace", fields: ["apiKey", "groupId"], paramsFields: ["domain", "voices"] },
 ];
 
-export function providerSpec(provider: string): UpstreamProviderSpec | undefined {
-  return UPSTREAM_PROVIDERS.find((p) => p.provider === provider);
+// A provider name can map to more than one service (e.g. deepseek = llm + voice),
+// so lookups must be service-aware; the key-creation path passes `service` and
+// the config-upsert path only needs to know whether the name is known at all.
+export function providerSpec(provider: string, service?: UpstreamService): UpstreamProviderSpec | undefined {
+  return UPSTREAM_PROVIDERS.find((p) => p.provider === provider && (service === undefined || p.service === service));
+}
+
+export function providerExists(provider: string): boolean {
+  return UPSTREAM_PROVIDERS.some((p) => p.provider === provider);
 }

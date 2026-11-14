@@ -42,7 +42,7 @@ import { handleInternalHosts } from "./internal-hosts.ts";
 import { handleAccountLlm } from "./account-llm.ts";
 import { decryptUpstreamKey, encryptUpstreamKey, loadKek } from "./crypto-upstream-keys.ts";
 import { currentKekVersion, kekDir } from "./llm-upstream-keys.ts";
-import { providerSpec, UPSTREAM_PROVIDERS } from "./upstream-providers.ts";
+import { providerExists, providerSpec, UPSTREAM_PROVIDERS } from "./upstream-providers.ts";
 import type { HostCookieSigner } from "./hostcookie.ts";
 import type { AdminCtx, AdminCreateUserInput } from "./admin.ts";
 import * as admin from "./admin.ts";
@@ -899,7 +899,7 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
   if (pcfgEdit !== null && method === "PUT") {
     if (!isWrite) { writeError(res, 403, "FORBIDDEN", "operator or admin required"); return true; }
     const provider = decodeURIComponent(pcfgEdit[1]!);
-    if (providerSpec(provider) === undefined) { writeError(res, 400, "BAD_REQUEST", "unknown provider"); return true; }
+    if (!providerExists(provider)) { writeError(res, 400, "BAD_REQUEST", "unknown provider"); return true; }
     const body = await readJsonBody(req);
     const params = typeof body?.params === "string" && body.params.trim() !== ""
       ? body.params.trim()
@@ -921,10 +921,10 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
     const body = await readJsonBody(req);
     const label = typeof body?.label === "string" && body.label.trim() !== "" ? body.label.trim() : "key";
     const provider = typeof body?.provider === "string" && body.provider.trim() !== "" ? body.provider.trim() : "deepseek";
-    const spec = providerSpec(provider);
-    if (spec === undefined) { writeError(res, 400, "BAD_REQUEST", "unknown provider"); return true; }
-    const service = typeof body?.service === "string" && (body.service === "llm" || body.service === "voice") ? body.service : spec.service;
-    if (service !== spec.service) { writeError(res, 400, "BAD_REQUEST", "service/provider mismatch"); return true; }
+    const service = typeof body?.service === "string" && (body.service === "llm" || body.service === "voice") ? body.service : undefined;
+    const spec = providerSpec(provider, service);
+    if (spec === undefined) { writeError(res, 400, "BAD_REQUEST", "unknown provider or service"); return true; }
+    const svc = service ?? spec.service;
     const weight = typeof body?.weight === "number" && Number.isInteger(body.weight) && body.weight > 0 ? body.weight : 1;
     // secret：LLM 为 apiKey 字符串；语音为按 schema 校验的字段对象（组装成 JSON 加密）。
     let secretPlain: string;
@@ -948,8 +948,8 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
       const kekVersion = currentKekVersion(runtime);
       const kek = loadKek(kekDir(runtime), kekVersion);
       const { keyCipher, dekWrapped } = encryptUpstreamKey(secretPlain, kek, kekVersion, id, provider);
-      const row = await store.createLlmUpstreamKey({ id, provider, service, credentialType: spec.credentialType, label, keyCipher, dekWrapped, kekVersion, weight });
-      await auditAdmin("llm.upstream-key.create", { id, label, service, provider });
+      const row = await store.createLlmUpstreamKey({ id, provider, service: svc, credentialType: spec.credentialType, label, keyCipher, dekWrapped, kekVersion, weight });
+      await auditAdmin("llm.upstream-key.create", { id, label, service: svc, provider });
       res.end(JSON.stringify({ key: { id: row.id, provider: row.provider, service: row.service, credentialType: row.credentialType, label: row.label, weight: row.weight, enabled: row.enabled, kekVersion: row.kekVersion, createdAt: row.createdAt } }));
     } catch (err) {
       writeAdminError(res, err);
@@ -985,7 +985,7 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
     let keyCipher: string | undefined;
     let dekWrapped: string | undefined;
     if (body?.secret !== undefined) {
-      const spec = providerSpec(cur.provider);
+      const spec = providerSpec(cur.provider, cur.service as "llm" | "voice");
       let secretPlain: string;
       if (spec === undefined || spec.service === "llm") {
         if (typeof body.secret !== "string" || body.secret.trim() === "") { writeError(res, 400, "BAD_REQUEST", "apiKey required"); return true; }
