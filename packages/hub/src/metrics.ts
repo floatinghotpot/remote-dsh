@@ -5,9 +5,19 @@ import type { UsageStats } from "./relay-usage.ts";
 /** 42-hub-write-path P0：Hub 运行指标（admin 端点读取）。 */
 export class HubMetrics {
   private readonly loop = monitorEventLoopDelay({ resolution: 20 });
+  private readonly counters = new Map<string, number>();
 
   constructor() {
     this.loop.enable();
+  }
+
+  /** 自增命名计数器（refresh.ok / refresh.grace / refresh.invalid / refresh.suspectedReuse 等）。 */
+  inc(name: string): void {
+    this.counters.set(name, (this.counters.get(name) ?? 0) + 1);
+  }
+
+  private counter(name: string): number {
+    return this.counters.get(name) ?? 0;
   }
 
   snapshot(usage: UsageStats, presence: PresenceDirectory): Record<string, unknown> {
@@ -20,6 +30,12 @@ export class HubMetrics {
       },
       usage,
       presence: { hosts: presence.size() },
+      auth: {
+        refreshOk: this.counter("refresh.ok"),
+        refreshGrace: this.counter("refresh.grace"),
+        refreshInvalid: this.counter("refresh.invalid"),
+        refreshSuspectedReuse: this.counter("refresh.suspectedReuse"),
+      },
     };
   }
 

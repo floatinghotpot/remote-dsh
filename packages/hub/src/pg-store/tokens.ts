@@ -7,7 +7,7 @@
  */
 import type { Pool } from "pg";
 import { txDb } from "../pg.ts";
-import type { RefreshRow, JoinTokenRow, BindSessionRow } from "../db.ts";
+import type { RefreshRow, RefreshRevokeReason, JoinTokenRow, BindSessionRow } from "../db.ts";
 import type { HubStore } from "../store.ts";
 import { mapRefresh, mapJoinToken, mapBindSession, q, one } from "./mappers.ts";
 
@@ -16,6 +16,7 @@ export function tokens(pool: Pool): Pick<
   | "createRefreshToken"
   | "findRefreshByHash"
   | "revokeRefresh"
+  | "revokeRefreshIfActive"
   | "revokeAllRefreshForUser"
   | "pruneExpiredRefresh"
   | "createJoinToken"
@@ -47,17 +48,23 @@ export function tokens(pool: Pool): Pick<
       return row === null ? null : mapRefresh(row);
     },
 
-    revokeRefresh: async (id: number): Promise<void> => {
-      await txDb(pool).query("UPDATE refresh_tokens SET revoked = 1 WHERE id = $1", [id]);
+    revokeRefresh: async (id: number, reason: RefreshRevokeReason, now: number = Date.now()): Promise<void> => {
+      await txDb(pool).query("UPDATE refresh_tokens SET revoked = 1, revoked_at = $1, revoked_reason = $2 WHERE id = $3", [now, reason, id]);
     },
 
-    revokeAllRefreshForUser: async (userId: number): Promise<void> => {
-      await txDb(pool).query("UPDATE refresh_tokens SET revoked = 1 WHERE user_id = $1", [userId]);
+    revokeRefreshIfActive: async (id: number, reason: RefreshRevokeReason, now: number = Date.now()): Promise<boolean> => {
+      const r = await txDb(pool).query("UPDATE refresh_tokens SET revoked = 1, revoked_at = $1, revoked_reason = $2 WHERE id = $3 AND revoked = 0", [now, reason, id]);
+      return (r.rowCount ?? 0) > 0;
     },
 
-    /** 清理过期 refresh token。 */
+    revokeAllRefreshForUser: async (userId: number, reason: RefreshRevokeReason, now: number = Date.now()): Promise<void> => {
+      // 全踢：无条件覆盖（含已吊销行），不要加 AND revoked=0——否则 rotation 宽限中的行在改密/封禁后仍可复活。
+      await txDb(pool).query("UPDATE refresh_tokens SET revoked = 1, revoked_at = $1, revoked_reason = $2 WHERE user_id = $3", [now, reason, userId]);
+    },
+
+    /** 清理过期 refresh token（吊销行随 30d expires_at 自然过期；不按 revoked=1 删，以免破坏 60s 宽限判定）。 */
     pruneExpiredRefresh: async (now: number = Date.now()): Promise<void> => {
-      await txDb(pool).query("DELETE FROM refresh_tokens WHERE expires_at < $1 OR revoked = 1", [now]);
+      await txDb(pool).query("DELETE FROM refresh_tokens WHERE expires_at < $1", [now]);
     },
 
     // ---- join tokens（用户级注册凭证，05-join-easy）----

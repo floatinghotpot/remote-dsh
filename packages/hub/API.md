@@ -889,6 +889,8 @@ key 条目字段：`{ id, name, hostId, tokenHead4, tokenTail4, status, spentMic
 优先取 `rdsh_hub_refresh` cookie，其次 body `{ "refreshToken" }`（旧客户端回退）。
 
 成功 → `{ "accessToken", "refreshToken" }`（**轮换**：旧 refresh 吊销、发新，30 天滚动）。
+- **复用宽限 60s**：轮换后旧 refresh 在 60 秒内仍可兑换，命中时重新签发一对（仅限「上一次是正常轮换」）。登出、改密、管理端吊销即时失效，不在宽限内。
+- 可选请求头 `x-rdsh-client-id`：客户端实例标识，仅用于诊断日志，不参与鉴权；缺失等价于不提供。
 错误：401 `MISSING_REFRESH`（无令牌）/ `INVALID_REFRESH`（无效或已吊销）。
 
 ### POST /api/auth/totp —— 2FA 校验

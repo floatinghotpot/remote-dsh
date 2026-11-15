@@ -2725,17 +2725,25 @@ async function handleRefresh(req: IncomingMessage, res: ServerResponse, runtime:
     writeError(res, 401, "MISSING_REFRESH", "missing refresh token");
     return;
   }
-  const pair = await runtime.auth.refresh(token);
-  if (pair === null) {
+  const outcome = await runtime.auth.refresh(token);
+  runtime.metrics.inc(`refresh.${outcome.kind}`); // refresh.ok / refresh.grace / refresh.invalid
+  const meta = { ip: clientIp(req, runtime), userAgent: userAgentOf(req), clientId: clientIdOf(req) };
+  if (outcome.kind === "invalid") {
+    const suspected = outcome.reason === "grace-expired";
+    if (suspected) runtime.metrics.inc("refresh.suspectedReuse");
+    logRefresh(meta, { outcome: "invalid", reason: outcome.reason, userId: outcome.userId, token, suspectedReuse: suspected });
     writeError(res, 401, "INVALID_REFRESH", "refresh token invalid or revoked");
     return;
+  }
+  if (outcome.kind === "grace") {
+    logRefresh(meta, { outcome: "grace", userId: outcome.userId, token });
   }
   const domain = cookieDomain(req, runtime);
   res.writeHead(200, {
     "content-type": "application/json",
-    "set-cookie": [sessionCookie(pair.accessToken, domain), refreshCookie(pair.refreshToken, domain)],
+    "set-cookie": [sessionCookie(outcome.tokens.accessToken, domain), refreshCookie(outcome.tokens.refreshToken, domain)],
   });
-  res.end(JSON.stringify(pair));
+  res.end(JSON.stringify(outcome.tokens));
 }
 
 async function handleLogout(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
@@ -4071,6 +4079,29 @@ function userAgentOf(req: IncomingMessage): string {
   return String(req.headers["user-agent"] ?? "");
 }
 
+/** 客户端实例标识（诊断用，App 每 isolate 一个）。清洗 + 截断，防日志注入。 */
+function clientIdOf(req: IncomingMessage): string {
+  const cleaned = String(req.headers["x-rdsh-client-id"] ?? "").replace(/[^A-Za-z0-9._-]/g, "").slice(0, 32);
+  return cleaned === "" ? "-" : cleaned;
+}
+
+/** refresh 结果落日志（journalctl 按 `rdsh-hub refresh:` 筛）。只记 token 的 SHA-256 前 8 位 + 长度，绝不记明文。 */
+function logRefresh(
+  meta: { ip: string; userAgent: string; clientId: string },
+  info: { outcome: "invalid" | "grace"; reason?: string; userId: number | null; token: string; suspectedReuse?: boolean },
+): void {
+  const parts = [`route=refresh`, `outcome=${info.outcome}`, `ip=${meta.ip}`];
+  if (info.reason !== undefined) parts.push(`reason=${info.reason}`);
+  parts.push(`userId=${info.userId ?? "-"}`);
+  parts.push(`clientId=${meta.clientId}`);
+  parts.push(`token=${sha256(info.token).slice(0, 8)}/${info.token.length}`);
+  if (info.suspectedReuse !== undefined) parts.push(`suspectedReuse=${info.suspectedReuse}`);
+  if (meta.userAgent !== "") parts.push(`ua=${meta.userAgent.slice(0, 60)}`);
+  const line = `rdsh-hub refresh: ${parts.join(" ")}`;
+  if (info.outcome === "grace") console.log(line);
+  else console.warn(line);
+}
+
 async function handleTotpLogin(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
   const body = await readJsonBody(req);
   if (body === null || typeof body.pendingToken !== "string" || typeof body.code !== "string") {
@@ -4151,7 +4182,7 @@ async function handleResetConfirm(req: IncomingMessage, res: ServerResponse, run
     return;
   }
   await runtime.store.setPassword(user.id, await hashPassword(body.newPassword));
-  await runtime.store.revokeAllRefreshForUser(user.id);
+  await runtime.store.revokeAllRefreshForUser(user.id, "password_change");
   await runtime.store.recordAudit(user.id, "password.reset", {}, ip);
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({ ok: true, message: "password reset; all sessions revoked" }));

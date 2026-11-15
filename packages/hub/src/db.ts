@@ -137,8 +137,15 @@ export interface RefreshRow {
   tokenHash: string;
   expiresAt: number;
   revoked: number;
+  /** 吊销时间（毫秒 epoch，同 created_at）；未吊销为 NULL。 */
+  revokedAt: number | null;
+  /** 吊销原因；只有 "rotation" 可命中 refresh 宽限，其余（logout/password_change/admin）与存量 NULL 一律终态。 */
+  revokedReason: RefreshRevokeReason | null;
   createdAt: number;
 }
+
+/** refresh 吊销原因：rotation=轮换（可宽限）；其余=终态（不可宽限）。 */
+export type RefreshRevokeReason = "rotation" | "logout" | "password_change" | "admin";
 
 export interface JoinTokenRow {
   id: string;
@@ -1160,6 +1167,12 @@ export class HubDb {
     if (!hostCols.has("device_id")) this.db.exec(`ALTER TABLE hosts ADD COLUMN device_id TEXT`);
     // 吊销来源：user（可复活）/ admin（不可复活）；老数据 NULL → 视为不可复活（保守）
     if (!hostCols.has("revoked_by")) this.db.exec(`ALTER TABLE hosts ADD COLUMN revoked_by TEXT`);
+    // refresh 宽限：吊销时间 + 原因；只有 revoked_reason='rotation' 可宽限，存量行 NULL ⇒ 不可宽限（保守）
+    const refreshCols = new Set(
+      (this.db.prepare("PRAGMA table_info(refresh_tokens)").all() as unknown as Array<{ name: string }>).map((c) => c.name),
+    );
+    if (!refreshCols.has("revoked_at")) this.db.exec(`ALTER TABLE refresh_tokens ADD COLUMN revoked_at INTEGER`);
+    if (!refreshCols.has("revoked_reason")) this.db.exec(`ALTER TABLE refresh_tokens ADD COLUMN revoked_reason TEXT`);
     const nodeCols = new Set(
       (this.db.prepare("PRAGMA table_info(nodes)").all() as unknown as Array<{ name: string }>).map((c) => c.name),
     );
@@ -1321,6 +1334,10 @@ export class HubDb {
       tokenHash: String(row.token_hash),
       expiresAt: Number(row.expires_at),
       revoked: Number(row.revoked),
+      revokedAt: row.revoked_at === null || row.revoked_at === undefined ? null : Number(row.revoked_at),
+      // 写路径经 revokeRefresh(..., reason: RefreshRevokeReason) 类型收窄，只可能落这 4 个值或 NULL；
+      // 即便未来出现未知值，auth.refresh 也按「非 rotation ⇒ 终态」保守处理。
+      revokedReason: row.revoked_reason === null || row.revoked_reason === undefined ? null : String(row.revoked_reason) as RefreshRevokeReason,
       createdAt: Number(row.created_at),
     };
   }
@@ -1993,17 +2010,24 @@ export class HubDb {
     return row === undefined ? null : this.mapRefresh(row as unknown as Record<string, unknown>);
   }
 
-  revokeRefresh(id: number): void {
-    this.db.prepare("UPDATE refresh_tokens SET revoked = 1 WHERE id = ?").run(id);
+  revokeRefresh(id: number, reason: RefreshRevokeReason, now = Date.now()): void {
+    this.db.prepare("UPDATE refresh_tokens SET revoked = 1, revoked_at = ?, revoked_reason = ? WHERE id = ?").run(now, reason, id);
   }
 
-  revokeAllRefreshForUser(userId: number): void {
-    this.db.prepare("UPDATE refresh_tokens SET revoked = 1 WHERE user_id = ?").run(userId);
+  revokeAllRefreshForUser(userId: number, reason: RefreshRevokeReason, now = Date.now()): void {
+    // 全踢：无条件覆盖（含已吊销行），不要加 AND revoked=0——否则 rotation 宽限中的行在改密/封禁后仍可复活。
+    this.db.prepare("UPDATE refresh_tokens SET revoked = 1, revoked_at = ?, revoked_reason = ? WHERE user_id = ?").run(now, reason, userId);
   }
 
-  /** 清理过期 refresh token。 */
+  /** 仅当行仍未被吊销时吊销；返回是否由本次调用吊销（并发轮换的 CAS 点）。 */
+  revokeRefreshIfActive(id: number, reason: RefreshRevokeReason, now = Date.now()): boolean {
+    const info = this.db.prepare("UPDATE refresh_tokens SET revoked = 1, revoked_at = ?, revoked_reason = ? WHERE id = ? AND revoked = 0").run(now, reason, id);
+    return info.changes > 0;
+  }
+
+  /** 清理过期 refresh token（吊销行随 30d expires_at 自然过期；不按 revoked=1 删，以免破坏 60s 宽限判定）。 */
   pruneExpiredRefresh(now = Date.now()): void {
-    this.db.prepare("DELETE FROM refresh_tokens WHERE expires_at < ? OR revoked = 1").run(now);
+    this.db.prepare("DELETE FROM refresh_tokens WHERE expires_at < ?").run(now);
   }
 
   // ---- join tokens（用户级注册凭证，05-join-easy）----

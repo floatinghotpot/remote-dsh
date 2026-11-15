@@ -328,6 +328,16 @@ test("续期：body 回退（旧 portal 兼容）→ 200", async () => {
   assert.equal(res.status, 200);
 });
 
+test("续期：可选 x-rdsh-client-id 头被接受（不参与鉴权、不报错）", async () => {
+  const login = await loginRaw("dave", "pw123456");
+  const res = await fetch(base + "/api/auth/refresh", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-rdsh-client-id": "test-instance-001" },
+    body: JSON.stringify({ refreshToken: login.json.refreshToken }),
+  });
+  assert.equal(res.status, 200);
+});
+
 test("续期：cookie 与 body 皆无 → 401（门户据此判 invalid → 跳登录）", async () => {
   const res = await fetch(base + "/api/auth/refresh", { method: "POST" });
   assert.equal(res.status, 401);

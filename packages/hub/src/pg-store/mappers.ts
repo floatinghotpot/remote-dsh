@@ -6,7 +6,7 @@
  */
 import type { Pool, PoolClient } from "pg";
 import type {
-  UserRow, HostRow, NodeRow, RefreshRow, JoinTokenRow, BindSessionRow, HostShareRow,
+  UserRow, HostRow, NodeRow, RefreshRow, RefreshRevokeReason, JoinTokenRow, BindSessionRow, HostShareRow,
   AuditEventRow, EmailCodeRow, SmsCodeRow, SubscriptionRow, OrderRow, PaymentRow, CreditLedgerRow,
   CreditHoldRow, CreditHoldStatus, ServiceTokenRow, LlmKeyRow, LlmKeyStatus,
   LlmModelRow, LlmUpstreamKeyRow, LlmRouterJoinTokenRow, LlmRouterRow, LlmRouterStatus, LlmModelNameSource,
@@ -103,7 +103,11 @@ export function mapNode(row: Record<string, unknown>): NodeRow {
 export function mapRefresh(row: Record<string, unknown>): RefreshRow {
   return {
     id: Number(row.id), userId: Number(row.user_id), tokenHash: String(row.token_hash),
-    expiresAt: Number(row.expires_at), revoked: Number(row.revoked), createdAt: Number(row.created_at),
+    expiresAt: Number(row.expires_at), revoked: Number(row.revoked),
+    revokedAt: row.revoked_at === null || row.revoked_at === undefined ? null : Number(row.revoked_at),
+    // 写路径经 revokeRefresh(..., reason: RefreshRevokeReason) 类型收窄，只可能落这 4 个值或 NULL。
+    revokedReason: row.revoked_reason === null || row.revoked_reason === undefined ? null : String(row.revoked_reason) as RefreshRevokeReason,
+    createdAt: Number(row.created_at),
   };
 }
 

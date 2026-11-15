@@ -7,11 +7,15 @@ import { HubDb } from "../src/db.ts";
 import { HubAuth, hashPassword, verifyPassword, createLoginLimiter, ACCESS_TTL_MS } from "../src/auth.ts";
 import { createSqliteStore } from "../src/store.ts";
 import { Jwt, randomToken, sha256 } from "../src/jwt.ts";
+import type { SecurityConfig } from "../src/config.ts";
 
-function setup() {
+function setup(security?: Partial<SecurityConfig>) {
   const db = new HubDb(":memory:");
   const jwt = new Jwt(Buffer.from("test-secret-key-0123456789abcdef"));
-  const auth = new HubAuth(createSqliteStore(db), (id) => db.getUserById(id), jwt);
+  const auth = new HubAuth(createSqliteStore(db), (id) => db.getUserById(id), jwt, {
+    emailDailyLimit: 5, globalEmailDailyLimit: 200, loginLockThreshold: 10, loginLockMinutes: 15, auditRetentionDays: 90, refreshGraceSeconds: 60,
+    ...security,
+  });
   return { db, jwt, auth };
 }
 
@@ -51,23 +55,24 @@ test("access JWT 校验（签名 + ver）", async () => {
   assert.equal(auth.verifyAccess(tokens!.accessToken + "x"), null);
 });
 
-test("refresh 轮换：旧 refresh 立即失效", async () => {
+test("refresh 轮换：旧 refresh 落入宽限（grace），新 refresh 继续轮换", async () => {
   const { db, auth } = setup();
   const user = db.createUser("bob", "hash");
-  const pair = await auth.refresh("nope");
-  assert.equal(pair, null);
+  const bad = await auth.refresh("nope");
+  assert.equal(bad.kind, "invalid");
+  assert.equal(bad.reason, "unknown");
   // 先造一个合法 refresh
-  const login = { accessToken: "x", refreshToken: randomToken() };
-  void login;
   const r1 = randomToken();
   db.createRefreshToken(user.id, sha256(r1), Date.now() + 100000);
   const p1 = await auth.refresh(r1);
-  assert.ok(p1 !== null);
-  // 旧 refresh 已吊销
-  assert.equal(await auth.refresh(r1), null);
+  assert.equal(p1.kind, "ok");
+  // 旧 refresh 已被吊销，但落在 60s 宽限内 → grace（重新签发）
+  const g = await auth.refresh(r1);
+  assert.equal(g.kind, "grace");
+  if (g.kind === "grace") assert.ok(g.tokens.refreshToken.length > 0);
   // 新 refresh 可用（轮换链）
-  const p2 = await auth.refresh(p1!.refreshToken);
-  assert.ok(p2 !== null);
+  const p2 = await auth.refresh(p1.kind === "ok" ? p1.tokens.refreshToken : "");
+  assert.equal(p2.kind, "ok");
 });
 
 test("改密：旧 access 立即失效 + 全部 refresh 吊销", async () => {
@@ -82,7 +87,7 @@ test("改密：旧 access 立即失效 + 全部 refresh 吊销", async () => {
   // 旧 access 失效（ver+1）
   assert.equal(auth.verifyAccess(tokens.accessToken), null);
   // 旧 refresh 失效
-  assert.equal(await auth.refresh(tokens.refreshToken), null);
+  assert.equal((await auth.refresh(tokens.refreshToken)).kind, "invalid");
   // 新密码可登录
   assert.equal((await auth.login("carol", "new")).kind, "ok");
   // 当前密码错误 → 改密失败
@@ -95,7 +100,53 @@ test("登出：吊销 refresh", async () => {
   const r = randomToken();
   db.createRefreshToken(1, sha256(r), Date.now() + 100000);
   await auth.logout(r);
-  assert.equal(await auth.refresh(r), null);
+  assert.equal((await auth.refresh(r)).kind, "invalid");
+});
+
+test("宽限命中：rotation 吊销后 60s 内复用 ⇒ grace 且 reason=rotation 落库", async () => {
+  const { db, auth } = setup();
+  const user = db.createUser("bob", "hash");
+  const r = randomToken();
+  db.createRefreshToken(user.id, sha256(r), Date.now() + 100000);
+  const first = await auth.refresh(r);
+  assert.equal(first.kind, "ok");
+  const row = db.findRefreshByHash(sha256(r));
+  assert.equal(row!.revoked, 1);
+  assert.equal(row!.revokedReason, "rotation");
+  assert.ok(row!.revokedAt !== null);
+  const reuse = await auth.refresh(r);
+  assert.equal(reuse.kind, "grace");
+});
+
+test("宽限关断：refreshGraceSeconds=0 ⇒ 复用立即 invalid（reason=revoked，非 grace-expired）", async () => {
+  const { db, auth } = setup({ refreshGraceSeconds: 0 });
+  const user = db.createUser("bob", "hash");
+  const r = randomToken();
+  db.createRefreshToken(user.id, sha256(r), Date.now() + 100000);
+  const first = await auth.refresh(r);
+  assert.equal(first.kind, "ok");
+  const reuse = await auth.refresh(r);
+  assert.equal(reuse.kind, "invalid");
+  assert.equal(reuse.reason, "revoked");
+});
+
+test("并发：同一旧 token 同时 refresh ⇒ 一个 ok 一个 grace", async () => {
+  const { db, auth } = setup();
+  const user = db.createUser("bob", "hash");
+  const r = randomToken();
+  db.createRefreshToken(user.id, sha256(r), Date.now() + 100000);
+  const [a, b] = await Promise.all([auth.refresh(r), auth.refresh(r)]);
+  assert.deepEqual([a.kind, b.kind].sort(), ["grace", "ok"]);
+});
+
+test("pruneExpiredRefresh 不删「已吊销但未过期」的行（保护宽限判定）", () => {
+  const { db } = setup();
+  const user = db.createUser("bob", "hash");
+  const r = randomToken();
+  const created = db.createRefreshToken(user.id, sha256(r), Date.now() + 100000);
+  db.revokeRefresh(created.id, "rotation");
+  db.pruneExpiredRefresh();
+  assert.ok(db.findRefreshByHash(sha256(r)) !== null); // 未过期 → 保留
 });
 
 test("DB 安全：token 只存 SHA-256 摘要（无明文）", async () => {

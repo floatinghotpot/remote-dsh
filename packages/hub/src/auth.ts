@@ -72,6 +72,12 @@ export interface TokenPair {
   refreshToken: string;
 }
 
+/** 刷新结果：ok=正常轮换；grace=旧 token 落在轮换宽限内（重新签发）；invalid=终态拒绝。 */
+export type RefreshOutcome =
+  | { kind: "ok"; tokens: TokenPair; userId: number }
+  | { kind: "grace"; tokens: TokenPair; userId: number }
+  | { kind: "invalid"; userId: number | null; reason: "unknown" | "expired" | "revoked" | "grace-expired" | "user-inactive" };
+
 export interface LoginResult {
   tokens: TokenPair;
   /** 1 = 首次登录须设密码（--no-password 建号）；portal 应强制跳转设密页 */
@@ -94,7 +100,7 @@ export class HubAuth {
   /** 用户新鲜读回调（PG 后端把最新 UserRow 写回缓存，保证 verifyAccess 能命中）。 */
   private readonly syncUser: ((u: UserRow) => void) | undefined;
 
-  constructor(store: HubStore, lookupUser: SyncUserLookup, jwt: Jwt, security: SecurityConfig = { emailDailyLimit: 5, globalEmailDailyLimit: 200, loginLockThreshold: 10, loginLockMinutes: 15, auditRetentionDays: 90 }, hostCookieSigner?: HostCookieSigner, syncUser?: (u: UserRow) => void) {
+  constructor(store: HubStore, lookupUser: SyncUserLookup, jwt: Jwt, security: SecurityConfig = { emailDailyLimit: 5, globalEmailDailyLimit: 200, loginLockThreshold: 10, loginLockMinutes: 15, auditRetentionDays: 90, refreshGraceSeconds: 60 }, hostCookieSigner?: HostCookieSigner, syncUser?: (u: UserRow) => void) {
     this.store = store;
     this.lookupUser = lookupUser;
     this.jwt = jwt;
@@ -201,23 +207,47 @@ export class HubAuth {
   }
 
   /**
-   * 刷新：校验旧 refresh（未吊销/未过期）→ 吊销旧 → 发新对（轮换）。
-   * 失败返回 null（refresh 无效/过期/已吊销）。
+   * 刷新：校验旧 refresh → 轮换（先 CAS 吊销、再发新对）。
+   *
+   * 并发用同一旧 token 时：只有一方 CAS 成功（ok），另一方 CAS 失败后递归重读，
+   * 若旧 token 因轮换被吊销且仍在宽限内（revoked_reason=rotation），则命中宽限重新签发（grace），
+   * 从而「输的一方」不再拿到终态 401 → 客户端不会被误登出。
+   *
+   * 宽限只覆盖 rotation：logout / password_change / admin 与存量 NULL 一律终态（invalid）。
    */
-  async refresh(refreshToken: string): Promise<TokenPair | null> {
-    const row = await this.store.findRefreshByHash(sha256(refreshToken));
-    if (row === null || row.revoked === 1 || row.expiresAt <= Date.now()) return null;
+  async refresh(refreshToken: string): Promise<RefreshOutcome> {
+    const hash = sha256(refreshToken);
+    const row = await this.store.findRefreshByHash(hash);
+    if (row === null) return { kind: "invalid", userId: null, reason: "unknown" };
+    if (row.expiresAt <= Date.now()) return { kind: "invalid", userId: row.userId, reason: "expired" };
+    if (row.revoked === 1) {
+      const graceMs = this.security.refreshGraceSeconds * 1000;
+      const inGrace = graceMs > 0 && row.revokedReason === "rotation" && row.revokedAt !== null
+        && Date.now() - row.revokedAt < graceMs;   // graceMs=0 显式关断；< 为开区间（不含端点）
+      if (!inGrace) {
+        return {
+          kind: "invalid", userId: row.userId,
+          // grace-expired 只在宽限开着时才有意义：grace=0 时 rotation 竞态正常，不得报疑似盗用。
+          reason: graceMs > 0 && row.revokedReason === "rotation" ? "grace-expired" : "revoked",
+        };
+      }
+      const user = await this.store.getUserById(row.userId);
+      if (user === null || user.accountStatus !== "active") return { kind: "invalid", userId: row.userId, reason: "user-inactive" };
+      this.syncUser?.(user);
+      return { kind: "grace", tokens: await this.issueTokens(user), userId: user.id };
+    }
     const user = await this.store.getUserById(row.userId);
-    if (user === null || user.accountStatus !== "active") return null;
+    if (user === null || user.accountStatus !== "active") return { kind: "invalid", userId: row.userId, reason: "user-inactive" };
     this.syncUser?.(user);
-    await this.store.revokeRefresh(row.id);
-    return this.issueTokens(user);
+    // CAS：并发时只有一方真正轮换成功；输的一方回落到上面的宽限分支（递归深度 ≤ 2）。
+    if (!(await this.store.revokeRefreshIfActive(row.id, "rotation"))) return this.refresh(refreshToken);
+    return { kind: "ok", tokens: await this.issueTokens(user), userId: user.id };
   }
 
   /** 登出：吊销指定 refresh（access 短期自然过期）。 */
   async logout(refreshToken: string): Promise<void> {
     const row = await this.store.findRefreshByHash(sha256(refreshToken));
-    if (row !== null) await this.store.revokeRefresh(row.id);
+    if (row !== null) await this.store.revokeRefresh(row.id, "logout");
   }
 
   /** 自助改密：验证当前密码 → 更新（ver+1）→ 吊销该用户全部 refresh。 */
@@ -226,7 +256,7 @@ export class HubAuth {
     if (user === null) return false;
     if (!(await verifyPassword(currentPassword, user.passwordHash))) return false;
     await this.store.setPassword(userId, await hashPassword(newPassword));
-    await this.store.revokeAllRefreshForUser(userId);
+    await this.store.revokeAllRefreshForUser(userId, "password_change");
     return true;
   }
 

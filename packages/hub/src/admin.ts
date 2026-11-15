@@ -86,7 +86,7 @@ export async function banUser(store: HubStore, ctx: AdminCtx, userId: number, re
   const user = await store.getUserById(userId);
   if (user === null) throw new AdminError("NOT_FOUND", "user not found");
   await store.setAccountStatus(userId, "banned");
-  await store.revokeAllRefreshForUser(userId);
+  await store.revokeAllRefreshForUser(userId, "admin");
   await audit(store, ctx, userId, "admin.ban", { name: user.name }, reason);
 }
 
@@ -103,7 +103,7 @@ export async function resetUserPassword(store: HubStore, ctx: AdminCtx, userId: 
   const user = await store.getUserById(userId);
   if (user === null) throw new AdminError("NOT_FOUND", "user not found");
   await store.setPassword(userId, await hashPassword(newPassword));
-  await store.revokeAllRefreshForUser(userId);
+  await store.revokeAllRefreshForUser(userId, "admin");
   await audit(store, ctx, userId, "admin.reset-password", { name: user.name }, reason);
 }
 
@@ -179,7 +179,7 @@ export async function resetUser2fa(store: HubStore, ctx: AdminCtx, userId: numbe
   if (user === null) throw new AdminError("NOT_FOUND", "user not found");
   await store.clearTotpSecret(userId);
   await store.bumpVersion(userId);
-  await store.revokeAllRefreshForUser(userId);
+  await store.revokeAllRefreshForUser(userId, "admin");
   await audit(store, ctx, userId, "admin.reset-2fa", { name: user.name }, reason);
 }
 

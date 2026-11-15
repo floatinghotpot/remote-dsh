@@ -31,6 +31,8 @@ export interface SecurityConfig {
   loginLockMinutes: number;
   /** 审计事件保留天数（默认 90，到期自动清理） */
   auditRetentionDays: number;
+  /** refresh 轮换后的复用宽限（秒）；0 = 关闭宽限，退回严格轮换 */
+  refreshGraceSeconds: number;
 }
 
 /** 套餐规格（host 数 × 时长；价格 config 可配）。 */
@@ -502,7 +504,7 @@ function normalizeCaptcha(raw: unknown, source: string): CaptchaConfig {
 }
 
 function normalizeSecurity(raw: unknown, source: string): SecurityConfig {
-  const defaults: SecurityConfig = { emailDailyLimit: 5, globalEmailDailyLimit: 200, loginLockThreshold: 10, loginLockMinutes: 15, auditRetentionDays: 90 };
+  const defaults: SecurityConfig = { emailDailyLimit: 5, globalEmailDailyLimit: 200, loginLockThreshold: 10, loginLockMinutes: 15, auditRetentionDays: 90, refreshGraceSeconds: 60 };
   if (raw === undefined) return defaults;
   if (typeof raw !== "object" || raw === null) throw new Error(`${source}: "security" must be an object`);
   const s = raw as Record<string, unknown>;
@@ -511,6 +513,11 @@ function normalizeSecurity(raw: unknown, source: string): SecurityConfig {
       if (!Number.isInteger(s[key]) || (s[key] as number) < 1) throw new Error(`${source}: "security.${key}" must be a positive integer`);
       defaults[key] = s[key] as number;
     }
+  }
+  // refresh 宽限允许 0（关闭宽限，退回严格轮换）；其余 security 字段必须 >= 1。
+  if (s.refreshGraceSeconds !== undefined) {
+    if (!Number.isInteger(s.refreshGraceSeconds) || (s.refreshGraceSeconds as number) < 0) throw new Error(`${source}: "security.refreshGraceSeconds" must be a non-negative integer`);
+    defaults.refreshGraceSeconds = s.refreshGraceSeconds as number;
   }
   return defaults;
 }
