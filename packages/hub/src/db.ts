@@ -3981,7 +3981,7 @@ export class HubDb {
         tts: { url: "https://openspeech.bytedance.com/api/v3/tts/unidirectional", protocol: "volc-tts-unidirectional", models: ["seed-tts-2.0"], modelFamilies: { "seed-tts-2.0": "doubao" }, voices: [{ id: "zh_female_vv_uranus_bigtts", name: "Vivi 2.0", gender: "female" }] },
       })],
       ["aliyun", JSON.stringify({
-        llm: { models: ["deepseek-v4.1-flash-1017", "deepseek-v4-pro-0813"], modelFamilies: { "deepseek-v4.1-flash-1017": "deepseek", "deepseek-v4-pro-0813": "deepseek" }, protocols: { "anthropic-messages": { baseURL: "https://maas.qianwenaiapi.com/apps/anthropic" } } },
+        llm: { models: ["deepseek-v4.1-flash", "deepseek-v4-pro"], modelFamilies: { "deepseek-v4.1-flash": "deepseek", "deepseek-v4-pro": "deepseek" }, protocols: { "anthropic-messages": { baseURL: "https://maas.qianwenaiapi.com/apps/anthropic" } } },
       })],
     ];
     for (const [provider, params] of providers) {
@@ -3998,7 +3998,7 @@ export class HubDb {
     }
     const pool: Array<[string, string, string, string | null, string | null, number]> = [
       ["sp-deepseek-flash-deepseek", "deepseek-flash", "deepseek", "deepseek-flash", null, 1],
-      ["sp-deepseek-flash-aliyun", "deepseek-flash", "aliyun", "deepseek-v4.1-flash-1017", null, 0],
+      ["sp-deepseek-flash-aliyun", "deepseek-flash", "aliyun", "deepseek-v4.1-flash", null, 0],
       ["sp-deepseek-v4-pro-deepseek", "deepseek-v4-pro", "deepseek", "deepseek-v4-pro", null, 1],
       ["sp-deepseek-asr-deepseek", "deepseek-asr", "deepseek", "ds.asr", null, 1],
       ["sp-doubao-asr-volcengine", "doubao-asr", "volcengine", "volc.seedasr.sauc.duration", null, 1],
@@ -4022,11 +4022,11 @@ export class HubDb {
         peak: { input: 9000000, cacheRead: 300000, cacheWrite: 0, output: 27000000 },
         offPeak: { input: 4500000, cacheRead: 150000, cacheWrite: 0, output: 13500000 },
       })],
-      ["aliyun", "deepseek-v4.1-flash-1017", "per_mtok", JSON.stringify({
+      ["aliyun", "deepseek-v4.1-flash", "per_mtok", JSON.stringify({
         busy: { input: 2000000, cacheRead: 200000, cacheWrite: 0, output: 8000000 },
         idle: { input: 1000000, cacheRead: 100000, cacheWrite: 0, output: 4000000 },
       })],
-      ["aliyun", "deepseek-v4-pro-0813", "per_mtok", JSON.stringify({
+      ["aliyun", "deepseek-v4-pro", "per_mtok", JSON.stringify({
         busy: { input: 9000000, cacheRead: 900000, cacheWrite: 0, output: 27000000 },
         idle: { input: 4500000, cacheRead: 450000, cacheWrite: 0, output: 13500000 },
       })],
