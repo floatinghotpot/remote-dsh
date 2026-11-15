@@ -5901,26 +5901,6 @@ function UsagePage(): React.JSX.Element {
         </Card>
       )}
 
-      {/* LLM token 消费：按模型目录渲染卡片（标题=ID，小字=显示名；无数据也显示 0）*/}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 12, marginBottom: 12 }}>
-        {llmCardModels.map((m) => {
-          const data = llmUsage.find((x) => x.model === m.id);
-          const series = seriesFromDays(from, to, data?.byDay ?? [], (d) => d.inputTokens + d.outputTokens);
-          const total = sumSeries(series);
-          // 与「中转流量」同色（橙黄）：LLM token 也是计费的。
-          const color = orange;
-          return (
-            <Card key={m.id} title={m.id} badge={<span style={{ fontSize: 12, color: "var(--rdsh-fg-muted)" }}>{total.toLocaleString()} tokens</span>}>
-              <BarChart series={[series]} colors={[color]} />
-              <div style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", marginTop: 6 }}>
-                {t("输入")} {(data?.inputTokens ?? 0).toLocaleString()} · {t("输出")} {(data?.outputTokens ?? 0).toLocaleString()} · {t("请求")} {data?.requests ?? 0} {t("次")}
-              </div>
-            </Card>
-          );
-        })}
-      </div>
-
-
       {loading ? (
         <p style={{ color: "var(--rdsh-fg-muted)" }}>{t("加载中…")}</p>
       ) : !hasData ? (
@@ -5935,6 +5915,26 @@ function UsagePage(): React.JSX.Element {
             {metric("云端朗读", "speaker", "自费", orange, formatChars(cloudTtsTotal, t), cloudTtsAvg !== null ? formatChars(cloudTtsAvg, t) : null, cloudTtsSeries, orange, ttsMax)}
             {metric("本地朗读", "speaker", "免费", green, formatChars(localTtsTotal, t), localTtsAvg !== null ? formatChars(localTtsAvg, t) : null, localTtsSeries, green, ttsMax)}
           </div>
+
+          {/* 代理 LLM token 消费：按模型目录渲染卡片（标题=代理 + 显示名） */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 12, marginBottom: 12 }}>
+            {llmCardModels.map((m) => {
+              const data = llmUsage.find((x) => x.model === m.id);
+              const series = seriesFromDays(from, to, data?.byDay ?? [], (d) => d.inputTokens + d.outputTokens);
+              const total = sumSeries(series);
+              // 与「中转流量」同色（橙黄）：LLM token 也是计费的。
+              const color = orange;
+              return (
+                <Card key={m.id} title={`${t("代理", { en: "Proxy" })} ${m.displayName || m.id}`} badge={<span style={{ fontSize: 12, color: "var(--rdsh-fg-muted)" }}>{total.toLocaleString()} tokens</span>}>
+                  <BarChart series={[series]} colors={[color]} />
+                  <div style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", marginTop: 6 }}>
+                    {t("输入")} {(data?.inputTokens ?? 0).toLocaleString()} · {t("输出")} {(data?.outputTokens ?? 0).toLocaleString()} · {t("请求")} {data?.requests ?? 0} {t("次")}
+                  </div>
+                </Card>
+              );
+            })}
+          </div>
+
 
           {hostUsage.length > 0 && (
             <div style={{ border: "1px solid var(--rdsh-border-soft)", borderRadius: 8, padding: 12, marginBottom: 12 }}>
