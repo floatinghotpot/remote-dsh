@@ -3198,7 +3198,7 @@ function AdminApp({ path }: { path: string }): React.JSX.Element {  const { t } 
     { p: "/join-tokens", label: t("入网令牌", { en: "Join Tokens" }) },
     { p: "/provider-configs", label: t("供应商配置", { en: "Providers" }) },
     { p: "/services", label: t("模型代理", { en: "Model Proxies" }) },
-    { p: "/llm-routers", label: t("Router") },
+    { p: "/llm-routers", label: t("代理节点", { en: "Proxy Nodes" }) },
     { p: "/billing", label: t("账单") },
     { p: "/audit", label: t("审计") },
     { p: "/health", label: t("健康") },
@@ -4331,7 +4331,7 @@ function AdminLlmRouters({ isWrite }: { isWrite: boolean }): React.JSX.Element {
   const remove = (id: string): void => { adminApi.deleteLlmRouter(id).then(() => reload()).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed")); };
   return (
     <div>
-      <h3 style={{ fontSize: 16, margin: "0 0 12px" }}>{t("Router 注册 / 审批")}</h3>
+      <h3 style={{ fontSize: 16, margin: "0 0 12px" }}>{t("代理节点注册 / 审批", { en: "Proxy Node Registration / Approval" })}</h3>
       {msg !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{msg}</p>}
       {created !== null && (
         <p style={{ color: "#07c160", fontSize: 13, wordBreak: "break-all" }}>{t("join token（仅显示一次）")}：<code>{created.token}</code></p>
@@ -4345,7 +4345,7 @@ function AdminLlmRouters({ isWrite }: { isWrite: boolean }): React.JSX.Element {
           <button onClick={gen} style={adminBtnStyle("primary")}>{t("生成 join token")}</button>
         </>
       )}
-      <h4 style={{ fontSize: 14, margin: "16px 0 8px" }}>{t("Router 列表")}</h4>
+      <h4 style={{ fontSize: 14, margin: "16px 0 8px" }}>{t("代理节点列表", { en: "Proxy Nodes" })}</h4>
       {routers.map((r) => {
         const online = r.status === "active" && r.lastSeenAt !== null && Date.now() - r.lastSeenAt < 180_000;
         return (
