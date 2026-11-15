@@ -28,6 +28,7 @@ export function credits(
   | "getCreditHoldByRequestId"
   | "reserveCreditHold"
   | "settleCreditHold"
+  | "markUpstreamRecorded"
   | "releaseCreditHold"
   | "spendCredits"
   | "chargeRelayBytes"
@@ -323,6 +324,11 @@ export function credits(
     },
 
     /** 释放 hold：只解冻，不写账本；已释放幂等 true，已结算 false。 */
+    markUpstreamRecorded: async (holdId: string): Promise<boolean> => {
+      const r = await q(txDb(pool), "UPDATE credit_holds SET upstream_recorded = 1 WHERE id = $1 AND upstream_recorded = 0", [holdId]);
+      return r.rowCount > 0;
+    },
+
     releaseCreditHold: async (holdId: string): Promise<boolean> =>
       withTransaction(pool, async (c) => {
         const row = one(await q(c, "SELECT * FROM credit_holds WHERE id = $1 FOR UPDATE", [holdId]));
@@ -375,16 +381,16 @@ export function credits(
       }),
 
     /** 语音按天累计计费（55）：水位幂等 + 三桶扣减（不写 credits_ledger）。 */
-    chargeVoiceUsage: async (userId, date, kind, provider, cumulative, priceMicroPerUnit, overdraftFloorPoints = VOICE_OVERDRAFT_FLOOR_POINTS): Promise<{ chargedMicro: number; balance: CreditBalances; storedCumulative: number }> =>
+    chargeVoiceUsage: async (userId, date, kind, service, provider, cumulative, priceMicroPerUnit, overdraftFloorPoints = VOICE_OVERDRAFT_FLOOR_POINTS): Promise<{ chargedMicro: number; balance: CreditBalances; storedCumulative: number }> =>
       withTransaction(pool, async (c) => {
         if (!Number.isSafeInteger(cumulative) || cumulative < 0) throw new Error("voice cumulative must be a non-negative integer");
         if (!Number.isSafeInteger(priceMicroPerUnit) || priceMicroPerUnit < 0) throw new Error("voice priceMicroPerUnit must be a non-negative integer");
         // 先物化水位行再 FOR UPDATE：并发首报（行尚不存在）幻读会让两个事务都从 0 起算、重复扣费。
         await c.query(
-          "INSERT INTO voice_usage_daily (user_id, date, kind, provider, cumulative, charged_micro, updated_at) VALUES ($1, $2, $3, $4, 0, 0, $5) ON CONFLICT (user_id, date, kind) DO NOTHING",
-          [userId, date, kind, provider, Date.now()],
+          "INSERT INTO voice_usage_daily (user_id, date, kind, service, provider, cumulative, charged_micro, updated_at) VALUES ($1, $2, $3, $4, $5, 0, 0, $6) ON CONFLICT (user_id, date, kind, service) DO NOTHING",
+          [userId, date, kind, service, provider, Date.now()],
         );
-        const row = one(await q(c, "SELECT cumulative FROM voice_usage_daily WHERE user_id = $1 AND date = $2 AND kind = $3 FOR UPDATE", [userId, date, kind]));
+        const row = one(await q(c, "SELECT cumulative FROM voice_usage_daily WHERE user_id = $1 AND date = $2 AND kind = $3 AND service = $4 FOR UPDATE", [userId, date, kind, service]));
         const stored = row === null ? 0 : Number(row.cumulative);
         const deltaUnits = Math.max(0, cumulative - stored);
         const micro = deltaUnits * priceMicroPerUnit;
@@ -397,16 +403,16 @@ export function credits(
         }
         const newCumulative = Math.max(stored, cumulative);
         await c.query(
-          "UPDATE voice_usage_daily SET cumulative = GREATEST(cumulative, $1), charged_micro = voice_usage_daily.charged_micro + $2, provider = $3, updated_at = $4 WHERE user_id = $5 AND date = $6 AND kind = $7",
-          [newCumulative, charged, provider, Date.now(), userId, date, kind],
+          "UPDATE voice_usage_daily SET cumulative = GREATEST(cumulative, $1), charged_micro = voice_usage_daily.charged_micro + $2, provider = $3, updated_at = $4 WHERE user_id = $5 AND date = $6 AND kind = $7 AND service = $8",
+          [newCumulative, charged, provider, Date.now(), userId, date, kind, service],
         );
         return { chargedMicro: charged, balance: await getBalancesTx(c, userId), storedCumulative: newCumulative };
       }),
 
     /** 语音日累计查询（用量页 / 对账用；无逐笔明细）。 */
-    getVoiceUsageDaily: async (userId, from, to): Promise<Array<{ date: string; kind: string; provider: string; cumulative: number; chargedMicro: number }>> => {
-      const rows = (await q(txDb(pool), "SELECT date, kind, provider, cumulative, charged_micro FROM voice_usage_daily WHERE user_id = $1 AND date >= $2 AND date <= $3 ORDER BY date, kind", [userId, from, to])).rows;
-      return rows.map((r) => ({ date: String(r.date), kind: String(r.kind), provider: String(r.provider), cumulative: Number(r.cumulative), chargedMicro: Number(r.charged_micro) }));
+    getVoiceUsageDaily: async (userId, from, to): Promise<Array<{ date: string; kind: string; service: string; provider: string; cumulative: number; chargedMicro: number }>> => {
+      const rows = (await q(txDb(pool), "SELECT date, kind, service, provider, cumulative, charged_micro FROM voice_usage_daily WHERE user_id = $1 AND date >= $2 AND date <= $3 ORDER BY date, kind, service", [userId, from, to])).rows;
+      return rows.map((r) => ({ date: String(r.date), kind: String(r.kind), service: String(r.service ?? ""), provider: String(r.provider), cumulative: Number(r.cumulative), chargedMicro: Number(r.charged_micro) }));
     },
 
     /** relay 消耗查询（31 R5）：累计已扣微单位 + 按日序列。 */

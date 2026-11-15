@@ -6,6 +6,7 @@
  */
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
+import { computeCostFromRates } from "./pricing/index.ts";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
@@ -476,6 +477,10 @@ export interface LlmUpstreamKeyRow {
   kekVersion: number;
   weight: number;
   enabled: boolean;
+  /** JSON array of capabilities this key may serve (["llm","asr","tts"]); null/empty = all. */
+  capabilities: string | null;
+  /** Per-key concurrency cap; 0 = unlimited. */
+  maxConcurrency: number;
   createdAt: number;
   lastAssignedAt: number | null;
   revokedAt: number | null;
@@ -512,6 +517,33 @@ export interface LlmRouterRow {
 export interface VoiceProviderConfigRow {
   provider: string;
   params: string; // JSON: asrUrl/asrResourceId/ttsUrl/ttsResourceId/voices
+  updatedAt: number;
+}
+
+export interface ProviderConfigRow {
+  provider: string;
+  params: string; // JSON
+  updatedAt: number;
+}
+
+export interface ServiceRow {
+  service: string;
+  capability: string; // llm | asr | tts | ocr | search
+  displayName: string | null;
+  params: string | null; // JSON: voices etc.
+  unit: string; // per_mtok | per_second | per_char
+  prices: string; // JSON
+  enabled: boolean;
+  updatedAt: number;
+}
+
+export interface ServicePoolRow {
+  id: string;
+  service: string;
+  provider: string;
+  upstreamModel: string | null;
+  params: string | null; // JSON: voiceMap / resourceId etc.
+  enabled: boolean;
   updatedAt: number;
 }
 
@@ -732,6 +764,7 @@ export class HubDb {
         amount_micro INTEGER NOT NULL,
         settled_micro INTEGER NOT NULL DEFAULT 0,
         status TEXT NOT NULL,
+        upstream_recorded INTEGER NOT NULL DEFAULT 0,
         expires_at INTEGER NOT NULL,
         created_at INTEGER NOT NULL
       );
@@ -835,6 +868,31 @@ export class HubDb {
         params TEXT NOT NULL,
         updated_at INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS provider_configs (
+        provider TEXT PRIMARY KEY,
+        params TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS services (
+        service TEXT PRIMARY KEY,
+        capability TEXT NOT NULL,
+        display_name TEXT,
+        params TEXT,
+        unit TEXT NOT NULL,
+        prices TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS service_pool (
+        id TEXT PRIMARY KEY,
+        service TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        upstream_model TEXT,
+        params TEXT,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        updated_at INTEGER NOT NULL,
+        UNIQUE (service, provider)
+      );
       CREATE TABLE IF NOT EXISTS meta (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -865,13 +923,48 @@ export class HubDb {
         user_id INTEGER NOT NULL,
         date TEXT NOT NULL,
         kind TEXT NOT NULL,
+        service TEXT NOT NULL DEFAULT '',
         provider TEXT NOT NULL DEFAULT 'volcengine',
         cumulative BIGINT NOT NULL DEFAULT 0,
         charged_micro BIGINT NOT NULL DEFAULT 0,
         updated_at INTEGER NOT NULL,
-        PRIMARY KEY (user_id, date, kind)
+        PRIMARY KEY (user_id, date, kind, service)
       );
 
+      CREATE TABLE IF NOT EXISTS upstream_prices (
+        provider TEXT NOT NULL,
+        upstream_model TEXT NOT NULL,
+        unit TEXT NOT NULL,
+        rates TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (provider, upstream_model)
+      );
+      CREATE TABLE IF NOT EXISTS upstream_usage_daily (
+        provider TEXT NOT NULL,
+        upstream_model TEXT NOT NULL,
+        model_alias TEXT NOT NULL DEFAULT '',
+        date TEXT NOT NULL,
+        input_tokens INTEGER NOT NULL DEFAULT 0,
+        output_tokens INTEGER NOT NULL DEFAULT 0,
+        cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+        cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+        reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+        requests INTEGER NOT NULL DEFAULT 0,
+        cost_micro INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (provider, upstream_model, model_alias, date)
+      );
+      CREATE TABLE IF NOT EXISTS voice_upstream_usage_daily (
+        provider TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        service TEXT NOT NULL,
+        date TEXT NOT NULL,
+        cumulative INTEGER NOT NULL DEFAULT 0,
+        cost_micro INTEGER NOT NULL DEFAULT 0,
+        unit_micro REAL NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (provider, kind, service, date)
+      );
       CREATE TABLE IF NOT EXISTS usage_daily (
         id INTEGER PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id),
@@ -940,8 +1033,49 @@ export class HubDb {
     const seedModel = this.db.prepare(
       "INSERT OR IGNORE INTO llm_models (id, display_name, provider, upstream_model, input_price_micro, output_price_micro, cache_read_price_micro, cache_write_price_micro, context_window, max_tokens, name_source, enabled, sort_order, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'upstream', 1, ?, 0)",
     );
-    seedModel.run("deepseek-flash", "DeepSeek-V4.1-Flash", "deepseek", "deepseek-flash", 3800000, 15200000, 80000, 0, 1048576, 393216, 0);
-    seedModel.run("deepseek-v4-pro", "DeepSeek-V4-Pro", "deepseek", "deepseek-v4-pro", 17100000, 51400000, 570000, 0, 1048576, 393216, 1);
+    seedModel.run("deepseek-flash", "DeepSeek-V4.1-Flash", "deepseek", "deepseek-flash", 4000000, 16000000, 80000, 0, 1048576, 393216, 0);
+    seedModel.run("deepseek-v4-pro", "DeepSeek-V4-Pro", "deepseek", "deepseek-v4-pro", 18000000, 54000000, 600000, 0, 1048576, 393216, 1);
+    const voiceUsageCols = new Set(
+      (this.db.prepare("PRAGMA table_info(voice_usage_daily)").all() as unknown as Array<{ name: string }>).map((c) => c.name),
+    );
+    const holdCols = new Set(
+      (this.db.prepare("PRAGMA table_info(credit_holds)").all() as unknown as Array<{ name: string }>).map((c) => c.name),
+    );
+    if (!holdCols.has("upstream_recorded")) this.db.exec("ALTER TABLE credit_holds ADD COLUMN upstream_recorded INTEGER NOT NULL DEFAULT 0");
+    if (!voiceUsageCols.has("service")) {
+      // 注意：node:sqlite 的 exec 每条语句各自提交，这段 RENAME→CREATE→INSERT→DROP
+      // 非原子；迁移中途崩溃会停在「旧表已改名、新表已建但未回填」。一次性迁移，
+      // 线上执行前已按 runbook 备份（staging-postgres / production-postgres）。
+      this.db.exec(`
+        ALTER TABLE voice_usage_daily RENAME TO voice_usage_daily_old;
+        CREATE TABLE voice_usage_daily (
+          user_id INTEGER NOT NULL,
+          date TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          service TEXT NOT NULL DEFAULT '',
+          provider TEXT NOT NULL DEFAULT 'volcengine',
+          cumulative BIGINT NOT NULL DEFAULT 0,
+          charged_micro BIGINT NOT NULL DEFAULT 0,
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY (user_id, date, kind, service)
+        );
+        INSERT INTO voice_usage_daily (user_id, date, kind, service, provider, cumulative, charged_micro, updated_at)
+          SELECT user_id, date, kind,
+            CASE
+              WHEN provider = 'deepseek' AND kind = 'asr' THEN 'deepseek-asr'
+              WHEN provider = 'deepseek' AND kind = 'tts' THEN 'deepseek-tts'
+              WHEN provider = 'volcengine' AND kind = 'asr' THEN 'doubao-asr'
+              WHEN provider = 'volcengine' AND kind = 'tts' THEN 'doubao-tts'
+              ELSE ''
+            END,
+            provider, cumulative, charged_micro, updated_at
+          FROM voice_usage_daily_old;
+        DROP TABLE voice_usage_daily_old;
+      `);
+    }
+    this.seedServiceProviders();
+    this.migrateLegacyToServiceProviders();
+    this.seedUpstreamPrices();
     // 51：既有 llm_keys 补 token_tail4 列
     const llmKeyCols = new Set(
       (this.db.prepare("PRAGMA table_info(llm_keys)").all() as unknown as Array<{ name: string }>).map((c) => c.name),
@@ -969,6 +1103,8 @@ export class HubDb {
     );
     if (!llmUpstreamKeyCols.has("service")) this.db.exec("ALTER TABLE llm_upstream_keys ADD COLUMN service TEXT NOT NULL DEFAULT 'llm'");
     if (!llmUpstreamKeyCols.has("credential_type")) this.db.exec("ALTER TABLE llm_upstream_keys ADD COLUMN credential_type TEXT");
+    if (!llmUpstreamKeyCols.has("capabilities")) this.db.exec("ALTER TABLE llm_upstream_keys ADD COLUMN capabilities TEXT");
+    if (!llmUpstreamKeyCols.has("max_concurrency")) this.db.exec("ALTER TABLE llm_upstream_keys ADD COLUMN max_concurrency INTEGER NOT NULL DEFAULT 0");
     // 迁移守卫：既有库补列（SQLite ALTER ADD COLUMN 不支持 UNIQUE，邮箱唯一用独立索引）
     const userCols = new Set(
       (this.db.prepare("PRAGMA table_info(users)").all() as unknown as Array<{ name: string }>).map((c) => c.name),
@@ -2866,7 +3002,7 @@ export class HubDb {
   settleLlmHold(
     holdId: string,
     actualMicro: number,
-    usage: { keyId: string; agentId: string; userId: number; modelAlias: string; date: string; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; reasoningTokens: number },
+    usage: { keyId: string; agentId: string; userId: number; modelAlias: string; date: string; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; reasoningTokens: number; provider?: string; upstreamModel?: string },
   ): CreditHoldSettleResult {
     this.db.exec("BEGIN");
     try {
@@ -2875,12 +3011,32 @@ export class HubDb {
         if (actualMicro > 0) this.addLlmKeySpent(usage.keyId, actualMicro);
         this.upsertLlmUsageDaily({ ...usage, chargedMicro: actualMicro, now: Date.now() });
       }
+      // 69：上游成本在「已结算」与「欠费未结」都要记（上游已消耗）；用 hold 级幂等防重试重复计。
+      if ((settle.status === "settled" || settle.status === "insufficient") && this.markUpstreamRecorded(holdId)) {
+        const now = Date.now();
+        if (usage.provider !== undefined && usage.provider !== "" && usage.upstreamModel !== undefined && usage.upstreamModel !== "") {
+          const price = this.getUpstreamPrice(usage.provider, usage.upstreamModel);
+          if (price === null) console.warn(`rdsh-hub: llm upstream price missing provider=${usage.provider} model=${usage.upstreamModel}`);
+          const costMicro = price === null ? 0 : computeCostFromRates(usage.provider, usage.upstreamModel, "llm", usage, new Date(now), price.rates);
+          this.upsertUpstreamUsageDaily({
+            provider: usage.provider, upstreamModel: usage.upstreamModel, modelAlias: usage.modelAlias, date: usage.date,
+            inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, cacheReadTokens: usage.cacheReadTokens,
+            cacheWriteTokens: usage.cacheWriteTokens, reasoningTokens: usage.reasoningTokens, costMicro, now,
+          });
+        }
+      }
       this.db.exec("COMMIT");
       return settle;
     } catch (err) {
       this.db.exec("ROLLBACK");
       throw err;
     }
+  }
+
+  /** 69：标记该 hold 的上游成本已记账（原子、幂等）；返回是否本次才标记。 */
+  markUpstreamRecorded(holdId: string): boolean {
+    const info = this.db.prepare("UPDATE credit_holds SET upstream_recorded = 1 WHERE id = ? AND upstream_recorded = 0").run(holdId);
+    return Number(info.changes) > 0;
   }
 
   /** 释放 hold：只解冻，不写账本；已释放幂等返回 true，已结算返回 false。 */
@@ -3050,6 +3206,7 @@ export class HubDb {
     userId: number,
     date: string,
     kind: string,
+    service: string,
     provider: string,
     cumulative: number,
     priceMicroPerUnit: number,
@@ -3060,8 +3217,8 @@ export class HubDb {
     this.db.exec("SAVEPOINT voice_charge");
     try {
       const row = this.db
-        .prepare("SELECT cumulative, charged_micro FROM voice_usage_daily WHERE user_id = ? AND date = ? AND kind = ?")
-        .get(userId, date, kind) as { cumulative: number; charged_micro: number } | undefined;
+        .prepare("SELECT cumulative, charged_micro FROM voice_usage_daily WHERE user_id = ? AND date = ? AND kind = ? AND service = ?")
+        .get(userId, date, kind, service) as { cumulative: number; charged_micro: number } | undefined;
       const stored = row === undefined ? 0 : Number(row.cumulative);
       const deltaUnits = Math.max(0, cumulative - stored);
       const micro = deltaUnits * priceMicroPerUnit;
@@ -3075,9 +3232,9 @@ export class HubDb {
       const newCumulative = Math.max(stored, cumulative);
       this.db
         .prepare(
-          "INSERT INTO voice_usage_daily (user_id, date, kind, provider, cumulative, charged_micro, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id, date, kind) DO UPDATE SET cumulative = MAX(cumulative, excluded.cumulative), charged_micro = voice_usage_daily.charged_micro + excluded.charged_micro, provider = excluded.provider, updated_at = excluded.updated_at",
+          "INSERT INTO voice_usage_daily (user_id, date, kind, service, provider, cumulative, charged_micro, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id, date, kind, service) DO UPDATE SET cumulative = MAX(cumulative, excluded.cumulative), charged_micro = voice_usage_daily.charged_micro + excluded.charged_micro, provider = excluded.provider, updated_at = excluded.updated_at",
         )
-        .run(userId, date, kind, provider, newCumulative, charged, Date.now());
+        .run(userId, date, kind, service, provider, newCumulative, charged, Date.now());
       this.db.exec("RELEASE voice_charge");
       return { chargedMicro: charged, balance: this.getCreditBalances(userId), storedCumulative: newCumulative };
     } catch (e) {
@@ -3088,11 +3245,11 @@ export class HubDb {
   }
 
   /** 语音日累计查询（用量页 / 对账用；不含任何逐笔明细）。 */
-  getVoiceUsageDaily(userId: number, from: string, to: string): Array<{ date: string; kind: string; provider: string; cumulative: number; chargedMicro: number }> {
+  getVoiceUsageDaily(userId: number, from: string, to: string): Array<{ date: string; kind: string; service: string; provider: string; cumulative: number; chargedMicro: number }> {
     const rows = this.db
-      .prepare("SELECT date, kind, provider, cumulative, charged_micro FROM voice_usage_daily WHERE user_id = ? AND date >= ? AND date <= ? ORDER BY date, kind")
-      .all(userId, from, to) as unknown as Array<{ date: string; kind: string; provider: string; cumulative: number; charged_micro: number }>;
-    return rows.map((r) => ({ date: String(r.date), kind: String(r.kind), provider: String(r.provider), cumulative: Number(r.cumulative), chargedMicro: Number(r.charged_micro) }));
+      .prepare("SELECT date, kind, service, provider, cumulative, charged_micro FROM voice_usage_daily WHERE user_id = ? AND date >= ? AND date <= ? ORDER BY date, kind, service")
+      .all(userId, from, to) as unknown as Array<{ date: string; kind: string; service: string; provider: string; cumulative: number; charged_micro: number }>;
+    return rows.map((r) => ({ date: String(r.date), kind: String(r.kind), service: String(r.service ?? ""), provider: String(r.provider), cumulative: Number(r.cumulative), chargedMicro: Number(r.charged_micro) }));
   }
 
   /** 三桶扣减但不写 credits_ledger（语音的日累计行本身就是账）。顺序与 debitBuckets 一致。 */
@@ -3346,6 +3503,81 @@ export class HubDb {
     ).run(r.userId, r.agentId, r.keyId, r.modelAlias, r.date, r.inputTokens, r.outputTokens, r.cacheReadTokens, r.cacheWriteTokens, r.reasoningTokens, r.chargedMicro, r.now);
   }
 
+  /** 69：上游成本价目表（provider × upstream_model）。 */
+  listUpstreamPrices(): Array<{ provider: string; upstreamModel: string; unit: string; rates: string; updatedAt: number }> {
+    const rows = this.db.prepare("SELECT * FROM upstream_prices ORDER BY provider, upstream_model").all() as unknown as Array<Record<string, unknown>>;
+    return rows.map((r) => ({ provider: String(r.provider), upstreamModel: String(r.upstream_model), unit: String(r.unit), rates: String(r.rates), updatedAt: Number(r.updated_at) }));
+  }
+
+  getUpstreamPrice(provider: string, upstreamModel: string): { provider: string; upstreamModel: string; unit: string; rates: string; updatedAt: number } | null {
+    const r = this.db.prepare("SELECT * FROM upstream_prices WHERE provider = ? AND upstream_model = ?").get(provider, upstreamModel) as unknown as Record<string, unknown> | undefined;
+    if (r === undefined) return null;
+    return { provider: String(r.provider), upstreamModel: String(r.upstream_model), unit: String(r.unit), rates: String(r.rates), updatedAt: Number(r.updated_at) };
+  }
+
+  upsertUpstreamPrice(input: { provider: string; upstreamModel: string; unit: string; rates: string; now?: number }): void {
+    this.db.prepare("INSERT INTO upstream_prices (provider, upstream_model, unit, rates, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(provider, upstream_model) DO UPDATE SET unit = excluded.unit, rates = excluded.rates, updated_at = excluded.updated_at").run(input.provider, input.upstreamModel, input.unit, input.rates, input.now ?? Date.now());
+  }
+
+  /** 69：LLM 上游用量（含成本），按 (provider, upstream_model, model_alias, date) 聚合。 */
+  upsertUpstreamUsageDaily(r: { provider: string; upstreamModel: string; modelAlias: string; date: string; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; reasoningTokens: number; costMicro: number; now: number }): void {
+    this.db.prepare(
+      "INSERT INTO upstream_usage_daily (provider, upstream_model, model_alias, date, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens, requests, cost_micro, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?) ON CONFLICT (provider, upstream_model, model_alias, date) DO UPDATE SET input_tokens = input_tokens + excluded.input_tokens, output_tokens = output_tokens + excluded.output_tokens, cache_read_tokens = cache_read_tokens + excluded.cache_read_tokens, cache_write_tokens = cache_write_tokens + excluded.cache_write_tokens, reasoning_tokens = reasoning_tokens + excluded.reasoning_tokens, requests = requests + 1, cost_micro = cost_micro + excluded.cost_micro, updated_at = excluded.updated_at",
+    ).run(r.provider, r.upstreamModel, r.modelAlias, r.date, r.inputTokens, r.outputTokens, r.cacheReadTokens, r.cacheWriteTokens, r.reasoningTokens, r.costMicro, r.now);
+  }
+
+  listUpstreamUsageDaily(opts: { provider?: string; upstreamModel?: string; modelAlias?: string; from?: string; to?: string } = {}): Array<{ provider: string; upstreamModel: string; modelAlias: string; date: string; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; reasoningTokens: number; requests: number; costMicro: number }> {
+    const conds: string[] = [];
+    const params: Array<string> = [];
+    if (opts.provider !== undefined) { conds.push("provider = ?"); params.push(opts.provider); }
+    if (opts.upstreamModel !== undefined) { conds.push("upstream_model = ?"); params.push(opts.upstreamModel); }
+    if (opts.modelAlias !== undefined) { conds.push("model_alias = ?"); params.push(opts.modelAlias); }
+    if (opts.from !== undefined) { conds.push("date >= ?"); params.push(opts.from); }
+    if (opts.to !== undefined) { conds.push("date <= ?"); params.push(opts.to); }
+    const where = conds.length > 0 ? `WHERE ${conds.join(" AND ")}` : "";
+    const rows = this.db.prepare(`SELECT * FROM upstream_usage_daily ${where} ORDER BY date ASC, provider ASC, upstream_model ASC`).all(...params) as unknown as Array<Record<string, unknown>>;
+    return rows.map((r) => ({ provider: String(r.provider), upstreamModel: String(r.upstream_model), modelAlias: String(r.model_alias ?? ""), date: String(r.date), inputTokens: Number(r.input_tokens), outputTokens: Number(r.output_tokens), cacheReadTokens: Number(r.cache_read_tokens), cacheWriteTokens: Number(r.cache_write_tokens), reasoningTokens: Number(r.reasoning_tokens), requests: Number(r.requests), costMicro: Number(r.cost_micro) }));
+  }
+
+  /** 69：语音上游用量（水位 + 成本），按 (provider, kind, service, date) 聚合。 */
+  upsertVoiceUpstreamUsageDaily(r: { provider: string; kind: string; service: string; date: string; cumulative: number; perUnitMicro: number; now: number }): { delta: number; costMicro: number; storedCumulative: number } {
+    const row = this.db.prepare("SELECT cumulative, cost_micro, unit_micro FROM voice_upstream_usage_daily WHERE provider = ? AND kind = ? AND service = ? AND date = ?").get(r.provider, r.kind, r.service, r.date) as unknown as { cumulative: number; cost_micro: number; unit_micro: number } | undefined;
+    const stored = row === undefined ? 0 : Number(row.cumulative);
+    const storedCost = row === undefined ? 0 : Number(row.cost_micro);
+    const storedUnit = row === undefined ? 0 : Number(row.unit_micro);
+    const delta = Math.max(0, r.cumulative - stored);
+    const newCumulative = Math.max(stored, r.cumulative);
+    // 单价为 0（缺价）时只推水位、不动成本，避免把已记成本清零（P2-1）。
+    let newCost = storedCost;
+    let unitMicro = storedUnit;
+    if (r.perUnitMicro > 0) {
+      if (storedUnit === r.perUnitMicro) {
+        // 同价：按累计水位整体取整，避免按 delta 分段取整的漂移（P3-3）。
+        newCost = Math.round(newCumulative * r.perUnitMicro);
+      } else {
+        // 改价：只对本次增量按新价计，保留历史成本。
+        newCost = storedCost + Math.round(delta * r.perUnitMicro);
+      }
+      unitMicro = r.perUnitMicro;
+    }
+    const costMicro = newCost - storedCost;
+    this.db.prepare("INSERT INTO voice_upstream_usage_daily (provider, kind, service, date, cumulative, cost_micro, unit_micro, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(provider, kind, service, date) DO UPDATE SET cumulative = MAX(cumulative, excluded.cumulative), cost_micro = excluded.cost_micro, unit_micro = excluded.unit_micro, updated_at = excluded.updated_at").run(r.provider, r.kind, r.service, r.date, newCumulative, newCost, unitMicro, r.now);
+    return { delta, costMicro: Math.max(0, costMicro), storedCumulative: newCumulative };
+  }
+
+  listVoiceUpstreamUsageDaily(opts: { provider?: string; kind?: string; service?: string; from?: string; to?: string } = {}): Array<{ provider: string; kind: string; service: string; date: string; cumulative: number; costMicro: number }> {
+    const conds: string[] = [];
+    const params: Array<string> = [];
+    if (opts.provider !== undefined) { conds.push("provider = ?"); params.push(opts.provider); }
+    if (opts.kind !== undefined) { conds.push("kind = ?"); params.push(opts.kind); }
+    if (opts.service !== undefined) { conds.push("service = ?"); params.push(opts.service); }
+    if (opts.from !== undefined) { conds.push("date >= ?"); params.push(opts.from); }
+    if (opts.to !== undefined) { conds.push("date <= ?"); params.push(opts.to); }
+    const where = conds.length > 0 ? `WHERE ${conds.join(" AND ")}` : "";
+    const rows = this.db.prepare(`SELECT * FROM voice_upstream_usage_daily ${where} ORDER BY date ASC, provider ASC`).all(...params) as unknown as Array<Record<string, unknown>>;
+    return rows.map((r) => ({ provider: String(r.provider), kind: String(r.kind), service: String(r.service), date: String(r.date), cumulative: Number(r.cumulative), costMicro: Number(r.cost_micro) }));
+  }
+
   listLlmUsageDaily(opts: { userId?: number; agentId?: string; keyId?: string; from?: string; to?: string } = {}): LlmUsageDailyRow[] {
     const conds: string[] = [];
     const params: Array<number | string> = [];
@@ -3408,6 +3640,8 @@ export class HubDb {
       kekVersion: Number(row.kek_version),
       weight: Number(row.weight ?? 1),
       enabled: Number(row.enabled ?? 1) === 1,
+      capabilities: row.capabilities === null || row.capabilities === undefined || row.capabilities === "" ? null : String(row.capabilities),
+      maxConcurrency: Number(row.max_concurrency ?? 0),
       createdAt: Number(row.created_at),
       lastAssignedAt: row.last_assigned_at === null || row.last_assigned_at === undefined ? null : Number(row.last_assigned_at),
       revokedAt: row.revoked_at === null || row.revoked_at === undefined ? null : Number(row.revoked_at),
@@ -3515,14 +3749,14 @@ export class HubDb {
     return row === undefined ? null : this.mapLlmUpstreamKey(row as unknown as Record<string, unknown>);
   }
 
-  createLlmUpstreamKey(input: { id: string; provider: string; label: string; keyCipher: string; dekWrapped: string; kekVersion: number; service?: string; credentialType?: string | null; weight?: number; now?: number }): LlmUpstreamKeyRow {
+  createLlmUpstreamKey(input: { id: string; provider: string; label: string; keyCipher: string; dekWrapped: string; kekVersion: number; service?: string; credentialType?: string | null; weight?: number; capabilities?: string | null; maxConcurrency?: number; now?: number }): LlmUpstreamKeyRow {
     const now = input.now ?? Date.now();
-    this.db.prepare("INSERT INTO llm_upstream_keys (id, provider, service, credential_type, label, key_cipher, dek_wrapped, kek_version, weight, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)").run(input.id, input.provider, input.service ?? "llm", input.credentialType ?? null, input.label, input.keyCipher, input.dekWrapped, input.kekVersion, input.weight ?? 1, now);
+    this.db.prepare("INSERT INTO llm_upstream_keys (id, provider, service, credential_type, label, key_cipher, dek_wrapped, kek_version, weight, enabled, capabilities, max_concurrency, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)").run(input.id, input.provider, input.service ?? "llm", input.credentialType ?? null, input.label, input.keyCipher, input.dekWrapped, input.kekVersion, input.weight ?? 1, input.capabilities ?? null, input.maxConcurrency ?? 0, now);
     const row = this.db.prepare("SELECT * FROM llm_upstream_keys WHERE id = ?").get(input.id);
     return this.mapLlmUpstreamKey(row as unknown as Record<string, unknown>);
   }
 
-  updateLlmUpstreamKey(id: string, patch: { enabled?: boolean; weight?: number; label?: string; keyCipher?: string; dekWrapped?: string }): LlmUpstreamKeyRow | null {
+  updateLlmUpstreamKey(id: string, patch: { enabled?: boolean; weight?: number; label?: string; keyCipher?: string; dekWrapped?: string; capabilities?: string | null; maxConcurrency?: number }): LlmUpstreamKeyRow | null {
     const cur = this.getLlmUpstreamKey(id);
     if (cur === null || cur.revokedAt !== null) return null;
     const enabled = patch.enabled === undefined ? cur.enabled : patch.enabled;
@@ -3530,7 +3764,9 @@ export class HubDb {
     const label = patch.label === undefined ? cur.label : patch.label;
     const keyCipher = patch.keyCipher === undefined ? cur.keyCipher : patch.keyCipher;
     const dekWrapped = patch.dekWrapped === undefined ? cur.dekWrapped : patch.dekWrapped;
-    this.db.prepare("UPDATE llm_upstream_keys SET enabled = ?, weight = ?, label = ?, key_cipher = ?, dek_wrapped = ? WHERE id = ?").run(enabled ? 1 : 0, weight, label, keyCipher, dekWrapped, id);
+    const capabilities = patch.capabilities === undefined ? cur.capabilities : patch.capabilities;
+    const maxConcurrency = patch.maxConcurrency === undefined ? cur.maxConcurrency : patch.maxConcurrency;
+    this.db.prepare("UPDATE llm_upstream_keys SET enabled = ?, weight = ?, label = ?, key_cipher = ?, dek_wrapped = ?, capabilities = ?, max_concurrency = ? WHERE id = ?").run(enabled ? 1 : 0, weight, label, keyCipher, dekWrapped, capabilities, maxConcurrency, id);
     return this.getLlmUpstreamKey(id);
   }
 
@@ -3634,6 +3870,217 @@ export class HubDb {
   upsertVoiceProviderConfig(provider: string, params: string, now = Date.now()): VoiceProviderConfigRow {
     this.db.prepare("INSERT INTO voice_provider_configs (provider, params, updated_at) VALUES (?, ?, ?) ON CONFLICT(provider) DO UPDATE SET params = excluded.params, updated_at = excluded.updated_at").run(provider, params, now);
     return this.getVoiceProviderConfig(provider)!;
+  }
+
+  // ---- 68 多服务提供商：provider_configs / services / service_pool ----
+
+  private mapProviderConfig(row: Record<string, unknown>): ProviderConfigRow {
+    return { provider: String(row.provider), params: String(row.params), updatedAt: Number(row.updated_at) };
+  }
+
+  listProviderConfigs(): ProviderConfigRow[] {
+    const rows = this.db.prepare("SELECT * FROM provider_configs ORDER BY provider").all() as unknown as Array<Record<string, unknown>>;
+    return rows.map((r) => this.mapProviderConfig(r));
+  }
+
+  getProviderConfig(provider: string): ProviderConfigRow | null {
+    const row = this.db.prepare("SELECT * FROM provider_configs WHERE provider = ?").get(provider);
+    return row === undefined ? null : this.mapProviderConfig(row as unknown as Record<string, unknown>);
+  }
+
+  upsertProviderConfig(provider: string, params: string, now = Date.now()): ProviderConfigRow {
+    this.db.prepare("INSERT INTO provider_configs (provider, params, updated_at) VALUES (?, ?, ?) ON CONFLICT(provider) DO UPDATE SET params = excluded.params, updated_at = excluded.updated_at").run(provider, params, now);
+    return this.getProviderConfig(provider)!;
+  }
+
+  private mapService(row: Record<string, unknown>): ServiceRow {
+    return {
+      service: String(row.service),
+      capability: String(row.capability),
+      displayName: row.display_name === null || row.display_name === undefined ? null : String(row.display_name),
+      params: row.params === null || row.params === undefined ? null : String(row.params),
+      unit: String(row.unit),
+      prices: String(row.prices),
+      enabled: Number(row.enabled ?? 1) === 1,
+      updatedAt: Number(row.updated_at),
+    };
+  }
+
+  listServices(): ServiceRow[] {
+    const rows = this.db.prepare("SELECT * FROM services ORDER BY capability, service").all() as unknown as Array<Record<string, unknown>>;
+    return rows.map((r) => this.mapService(r));
+  }
+
+  getService(service: string): ServiceRow | null {
+    const row = this.db.prepare("SELECT * FROM services WHERE service = ?").get(service);
+    return row === undefined ? null : this.mapService(row as unknown as Record<string, unknown>);
+  }
+
+  upsertService(input: { service: string; capability: string; displayName?: string | null; params?: string | null; unit: string; prices: string; enabled?: boolean; now?: number }): ServiceRow {
+    const now = input.now ?? Date.now();
+    this.db.prepare("INSERT INTO services (service, capability, display_name, params, unit, prices, enabled, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(service) DO UPDATE SET capability = excluded.capability, display_name = excluded.display_name, params = excluded.params, unit = excluded.unit, prices = excluded.prices, enabled = excluded.enabled, updated_at = excluded.updated_at").run(input.service, input.capability, input.displayName ?? null, input.params ?? null, input.unit, input.prices, input.enabled === false ? 0 : 1, now);
+    return this.getService(input.service)!;
+  }
+
+  deleteService(service: string, now = Date.now()): boolean {
+    const info = this.db.prepare("UPDATE services SET enabled = 0, updated_at = ? WHERE service = ?").run(now, service);
+    return info.changes > 0;
+  }
+
+  private mapServicePool(row: Record<string, unknown>): ServicePoolRow {
+    return {
+      id: String(row.id),
+      service: String(row.service),
+      provider: String(row.provider),
+      upstreamModel: row.upstream_model === null || row.upstream_model === undefined ? null : String(row.upstream_model),
+      params: row.params === null || row.params === undefined ? null : String(row.params),
+      enabled: Number(row.enabled ?? 1) === 1,
+      updatedAt: Number(row.updated_at),
+    };
+  }
+
+  listServicePool(): ServicePoolRow[] {
+    const rows = this.db.prepare("SELECT * FROM service_pool ORDER BY service, provider").all() as unknown as Array<Record<string, unknown>>;
+    return rows.map((r) => this.mapServicePool(r));
+  }
+
+  listServicePoolByService(service: string): ServicePoolRow[] {
+    const rows = this.db.prepare("SELECT * FROM service_pool WHERE service = ? ORDER BY provider").all(service) as unknown as Array<Record<string, unknown>>;
+    return rows.map((r) => this.mapServicePool(r));
+  }
+
+  getServicePoolEntry(id: string): ServicePoolRow | null {
+    const row = this.db.prepare("SELECT * FROM service_pool WHERE id = ?").get(id);
+    return row === undefined ? null : this.mapServicePool(row as unknown as Record<string, unknown>);
+  }
+
+  /** 幂等 upsert：按 (service, provider) 唯一，原子 ON CONFLICT（并发安全）。 */
+  upsertServicePoolEntry(input: { id: string; service: string; provider: string; upstreamModel?: string | null; params?: string | null; enabled?: boolean; now?: number }): ServicePoolRow {
+    const now = input.now ?? Date.now();
+    this.db.prepare("INSERT INTO service_pool (id, service, provider, upstream_model, params, enabled, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(service, provider) DO UPDATE SET upstream_model = excluded.upstream_model, params = excluded.params, enabled = excluded.enabled, updated_at = excluded.updated_at").run(input.id, input.service, input.provider, input.upstreamModel ?? null, input.params ?? null, input.enabled === false ? 0 : 1, now);
+    const row = this.db.prepare("SELECT * FROM service_pool WHERE service = ? AND provider = ?").get(input.service, input.provider) as unknown as Record<string, unknown>;
+    return this.mapServicePool(row);
+  }
+
+  deleteServicePoolEntry(id: string): boolean {
+    const info = this.db.prepare("DELETE FROM service_pool WHERE id = ?").run(id);
+    return info.changes > 0;
+  }
+
+  /** 68：初始数据（idempotent，不覆盖管理员已改过的行）。Key 不在 seed 内（加密走应用层）。 */
+  private seedServiceProviders(): void {
+    const now = Date.now();
+    const providers: Array<[string, string]> = [
+      ["deepseek", JSON.stringify({
+        llm: { models: ["deepseek-flash", "deepseek-v4-pro"], modelFamilies: { "deepseek-flash": "deepseek", "deepseek-v4-pro": "deepseek" }, protocols: { "anthropic-messages": { baseURL: "https://api.deepseek.com/anthropic" } } },
+        asr: { url: "", protocol: "deepseek-asr-multipart", modelFamilies: { "ds.asr": "deepseek" } },
+        tts: { url: "", protocol: "deepseek-tts-json" },
+      })],
+      ["volcengine", JSON.stringify({
+        asr: { url: "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel", protocol: "volc-sauc-ws", models: ["volc.seedasr.sauc.duration"], modelFamilies: { "volc.seedasr.sauc.duration": "doubao" } },
+        tts: { url: "https://openspeech.bytedance.com/api/v3/tts/unidirectional", protocol: "volc-tts-unidirectional", models: ["seed-tts-2.0"], modelFamilies: { "seed-tts-2.0": "doubao" }, voices: [{ id: "zh_female_vv_uranus_bigtts", name: "Vivi 2.0", gender: "female" }] },
+      })],
+      ["aliyun", JSON.stringify({
+        llm: { models: ["deepseek-v4.1-flash-1017", "deepseek-v4-pro-0813"], modelFamilies: { "deepseek-v4.1-flash-1017": "deepseek", "deepseek-v4-pro-0813": "deepseek" }, protocols: { "anthropic-messages": { baseURL: "https://maas.qianwenaiapi.com/apps/anthropic" } } },
+      })],
+    ];
+    for (const [provider, params] of providers) {
+      this.db.prepare("INSERT INTO provider_configs (provider, params, updated_at) VALUES (?, ?, ?) ON CONFLICT(provider) DO NOTHING").run(provider, params, now);
+    }
+    const services: Array<[string, string, string, string, string, string | null, number]> = [
+      ["deepseek-asr", "asr", "DeepSeek ASR", "per_second", JSON.stringify({ price: 2000 }), JSON.stringify({ family: "deepseek", aliases: ["ds.asr"] }), 1],
+      ["doubao-asr", "asr", "豆包 ASR", "per_second", JSON.stringify({ price: 2000 }), JSON.stringify({ family: "doubao", aliases: ["volc.bigmodel"] }), 1],
+      ["deepseek-tts", "tts", "DeepSeek TTS", "per_char", JSON.stringify({ price: 1200 }), JSON.stringify({ family: "deepseek", voices: ["ds.stella", "ds.tide"] }), 1],
+      ["doubao-tts", "tts", "豆包 TTS", "per_char", JSON.stringify({ price: 1200 }), JSON.stringify({ family: "doubao", voices: ["volc.zh_female_vv_uranus_bigtts"] }), 1],
+    ];
+    for (const [service, capability, displayName, unit, prices, params, enabled] of services) {
+      this.db.prepare("INSERT INTO services (service, capability, display_name, params, unit, prices, enabled, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(service) DO NOTHING").run(service, capability, displayName, params, unit, prices, enabled, now);
+    }
+    const pool: Array<[string, string, string, string | null, string | null, number]> = [
+      ["sp-deepseek-flash-deepseek", "deepseek-flash", "deepseek", "deepseek-flash", null, 1],
+      ["sp-deepseek-flash-aliyun", "deepseek-flash", "aliyun", "deepseek-v4.1-flash-1017", null, 0],
+      ["sp-deepseek-v4-pro-deepseek", "deepseek-v4-pro", "deepseek", "deepseek-v4-pro", null, 1],
+      ["sp-deepseek-asr-deepseek", "deepseek-asr", "deepseek", "ds.asr", null, 1],
+      ["sp-doubao-asr-volcengine", "doubao-asr", "volcengine", "volc.seedasr.sauc.duration", null, 1],
+      ["sp-deepseek-tts-deepseek", "deepseek-tts", "deepseek", null, JSON.stringify({ voiceMap: { "ds.stella": "stella", "ds.tide": "tide" } }), 1],
+      ["sp-doubao-tts-volcengine", "doubao-tts", "volcengine", null, JSON.stringify({ voiceMap: { "volc.zh_female_vv_uranus_bigtts": "zh_female_vv_uranus_bigtts" } }), 1],
+    ];
+    for (const [id, service, provider, upstreamModel, params, enabled] of pool) {
+      this.db.prepare("INSERT INTO service_pool (id, service, provider, upstream_model, params, enabled, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(service, provider) DO NOTHING").run(id, service, provider, upstreamModel, params, enabled, now);
+    }
+  }
+
+  /** 69：上游成本价目表 seed（micro：1 元 = 1,000,000）。ON CONFLICT DO NOTHING，管理员可改。 */
+  private seedUpstreamPrices(): void {
+    const now = Date.now();
+    const rows: Array<[string, string, string, string]> = [
+      ["deepseek", "deepseek-flash", "per_mtok", JSON.stringify({
+        peak: { input: 2000000, cacheRead: 40000, cacheWrite: 0, output: 8000000 },
+        offPeak: { input: 1000000, cacheRead: 20000, cacheWrite: 0, output: 4000000 },
+      })],
+      ["deepseek", "deepseek-v4-pro", "per_mtok", JSON.stringify({
+        peak: { input: 9000000, cacheRead: 300000, cacheWrite: 0, output: 27000000 },
+        offPeak: { input: 4500000, cacheRead: 150000, cacheWrite: 0, output: 13500000 },
+      })],
+      ["aliyun", "deepseek-v4.1-flash-1017", "per_mtok", JSON.stringify({
+        busy: { input: 2000000, cacheRead: 200000, cacheWrite: 0, output: 8000000 },
+        idle: { input: 1000000, cacheRead: 100000, cacheWrite: 0, output: 4000000 },
+      })],
+      ["aliyun", "deepseek-v4-pro-0813", "per_mtok", JSON.stringify({
+        busy: { input: 9000000, cacheRead: 900000, cacheWrite: 0, output: 27000000 },
+        idle: { input: 4500000, cacheRead: 450000, cacheWrite: 0, output: 13500000 },
+      })],
+      ["deepseek", "ds.asr", "per_second", JSON.stringify({ perSecond: 216.6667 })],
+      ["volcengine", "volc.seedasr.sauc.duration", "per_second", JSON.stringify({ perSecond: 277.7778 })],
+      ["deepseek", "deepseek-tts", "per_char", JSON.stringify({ perChar: 300 })],
+      ["volcengine", "seed-tts-2.0", "per_char", JSON.stringify({ perChar: 280 })],
+    ];
+    const stmt = this.db.prepare("INSERT INTO upstream_prices (provider, upstream_model, unit, rates, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(provider, upstream_model) DO NOTHING");
+    for (const [provider, model, unit, rates] of rows) stmt.run(provider, model, unit, rates, now);
+  }
+
+  /** 68：一次性迁移（meta 标记防重跑）：旧语音参数 → provider_configs；llm_models 价格 → services。 */
+  private migrateLegacyToServiceProviders(): void {
+    const done = this.db.prepare("SELECT value FROM meta WHERE key = ?").get("68_service_providers_migrated");
+    if (done !== undefined) return;
+    const now = Date.now();
+
+    // (a) voice_provider_configs 的 url/resourceId 合并进 provider_configs（协议由 seed 提供，不迁移）。
+    const vcs = this.db.prepare("SELECT provider, params FROM voice_provider_configs").all() as unknown as Array<{ provider: string; params: string }>;
+    for (const vc of vcs) {
+      let vp: Record<string, unknown>;
+      try { vp = JSON.parse(vc.params) as Record<string, unknown>; } catch { continue; }
+      const pcfg = this.getProviderConfig(vc.provider);
+      if (pcfg === null) continue;
+      let pp: Record<string, unknown>;
+      try { pp = JSON.parse(pcfg.params) as Record<string, unknown>; } catch { pp = {}; }
+      const asr = (pp.asr ?? {}) as Record<string, unknown>;
+      const tts = (pp.tts ?? {}) as Record<string, unknown>;
+      if (typeof vp.asrUrl === "string" && vp.asrUrl !== "") asr.url = vp.asrUrl;
+      if (typeof vp.ttsUrl === "string" && vp.ttsUrl !== "") tts.url = vp.ttsUrl;
+      if (typeof vp.ttsResourceId === "string" && vp.ttsResourceId !== "") tts.resourceId = vp.ttsResourceId;
+      if (Object.keys(asr).length) pp.asr = asr;
+      if (Object.keys(tts).length) pp.tts = tts;
+      this.upsertProviderConfig(vc.provider, JSON.stringify(pp), now);
+    }
+
+    // (b) llm_models → services（LLM 模型代理：价格/显示/容量；family 取 provider）。
+    const models = this.db.prepare("SELECT * FROM llm_models").all() as unknown as Array<Record<string, unknown>>;
+    for (const m of models) {
+      const id = String(m.id);
+      if (this.db.prepare("SELECT 1 FROM services WHERE service = ?").get(id) !== undefined) continue;
+      const prices = JSON.stringify({
+        input: Number(m.input_price_micro), output: Number(m.output_price_micro),
+        cacheRead: Number(m.cache_read_price_micro), cacheWrite: Number(m.cache_write_price_micro),
+      });
+      this.upsertService({
+        service: id, capability: "llm", displayName: String(m.display_name),
+        params: JSON.stringify({ family: String(m.provider || "deepseek") }),
+        unit: "per_mtok", prices, enabled: Number(m.enabled ?? 1) === 1, now,
+      });
+    }
+
+    this.db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING").run("68_service_providers_migrated", "1");
   }
 
   // ---- 账号删除（R7：墓碑化，保留 orders/payments 账务 + audit 留痕）----

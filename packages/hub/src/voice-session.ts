@@ -83,35 +83,42 @@ export async function handleVoiceSession(req: IncomingMessage, res: ServerRespon
 }
 
 
-/** Pure mapping from stored provider params to the public voice config shape. */
-export function toVoiceProviders(cfgs: Array<{ provider: string; params: string }>): Array<Record<string, unknown>> {
-  return cfgs.map((c) => {
-    let ttsVoices: string[] = [];
-    let asrModel: string | undefined;
-    try {
-      const p = JSON.parse(c.params) as Record<string, unknown>;
-      // `voices` is the old name; during migration prefer `ttsVoices` and fall
-      // back to `voices` so a Hub deploy ahead of the row migration is safe.
-      const list = Array.isArray(p.ttsVoices) ? p.ttsVoices : p.voices;
-      if (Array.isArray(list)) ttsVoices = (list as unknown[]).filter((v): v is string => typeof v === "string");
-      if (typeof p.asrModel === "string" && p.asrModel !== "") asrModel = p.asrModel;
-    } catch {
-      // ignore malformed params
+/** 68：把 services/service_pool 投影成 App 公开形状 `{provider, asrModel?, ttsVoices}`。 */
+export function toVoiceProvidersFromServices(
+  services: Array<{ service: string; capability: string; enabled: boolean; params: string | null }>,
+  pool: Array<{ service: string; provider: string; enabled: boolean }>,
+): Array<Record<string, unknown>> {
+  const byProvider = new Map<string, { asrModel?: string; ttsVoices: string[] }>();
+  for (const s of services) {
+    if (!s.enabled || (s.capability !== "asr" && s.capability !== "tts")) continue;
+    const candidate = pool.find((p) => p.service === s.service && p.enabled);
+    if (candidate === undefined) continue;
+    let params: Record<string, unknown> = {};
+    try { params = JSON.parse(s.params ?? "{}") as Record<string, unknown>; } catch { params = {}; }
+    const entry = byProvider.get(candidate.provider) ?? { ttsVoices: [] };
+    if (s.capability === "asr") {
+      const alias = Array.isArray(params.aliases) ? (params.aliases as unknown[]).find((x): x is string => typeof x === "string" && x !== "") : undefined;
+      entry.asrModel = alias ?? s.service;
+    } else {
+      const raw = Array.isArray(params.voices) ? (params.voices as unknown[]) : [];
+      entry.ttsVoices = raw.map((v) => (typeof v === "string" ? v : typeof (v as Record<string, unknown>)?.id === "string" ? String((v as Record<string, unknown>).id) : "")).filter((v) => v !== "");
     }
-    return asrModel === undefined
-      ? { provider: c.provider, ttsVoices }
-      : { provider: c.provider, asrModel, ttsVoices };
-  });
+    byProvider.set(candidate.provider, entry);
+  }
+  return [...byProvider.entries()].map(([provider, e]) => (
+    e.asrModel === undefined ? { provider, ttsVoices: e.ttsVoices } : { provider, asrModel: e.asrModel, ttsVoices: e.ttsVoices }
+  ));
 }
 
-/** App 公开端点：返回供应商级语音配置里的音色白名单（供设置页展示，不含机密）。 */
 export async function handleVoiceConfig(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<boolean> {
   const url = new URL(req.url ?? "/", "http://rdsh.local");
   if (url.pathname !== "/api/voice/config" || (req.method ?? "GET") !== "GET") return false;
   const auth = authenticate(req, runtime);
   if (auth === null) return void writeError(res, 401, "UNAUTHORIZED", "login required"), true;
-  const cfgs = await runtime.store.listVoiceProviderConfigs();
-  const providers = toVoiceProviders(cfgs);
+
+  const services = await runtime.store.listServices();
+  const pool = await runtime.store.listServicePool();
+  const providers = toVoiceProvidersFromServices(services, pool);
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({ providers }));
   return true;

@@ -276,6 +276,8 @@ export function mapLlmUpstreamKey(row: Record<string, unknown>): LlmUpstreamKeyR
     kekVersion: Number(row.kek_version),
     weight: Number(row.weight ?? 1),
     enabled: Number(row.enabled ?? 1) === 1,
+    capabilities: row.capabilities === null || row.capabilities === undefined || row.capabilities === "" ? null : String(row.capabilities),
+    maxConcurrency: Number(row.max_concurrency ?? 0),
     createdAt: Number(row.created_at),
     lastAssignedAt: row.last_assigned_at === null || row.last_assigned_at === undefined ? null : Number(row.last_assigned_at),
     revokedAt: row.revoked_at === null || row.revoked_at === undefined ? null : Number(row.revoked_at),

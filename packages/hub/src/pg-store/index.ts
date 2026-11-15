@@ -3,6 +3,7 @@
  */
 import type { Pool } from "pg";
 import { withTransaction } from "../pg.ts";
+import { computeCostFromRates } from "../pricing/index.ts";
 import type { HubStore } from "../store.ts";
 import { users } from "./users.ts";
 import { hosts } from "./hosts.ts";
@@ -14,6 +15,8 @@ import { usage } from "./usage.ts";
 import { nodes } from "./nodes.ts";
 import { internalLlm } from "./internal-llm.ts";
 import { llmCatalog } from "./llm-catalog.ts";
+import { serviceProviders } from "./service-providers.ts";
+import { upstreamCost } from "./upstream-cost.ts";
 import { analytics } from "./analytics.ts";
 
 /** 由连接池构造 PostgreSQL 版 `HubStore`（供 `startHubServer` 在 `db.driver=postgres` 时使用）。 */
@@ -29,6 +32,8 @@ export function createPgStore(pool: Pool): HubStore {
     ...nodes(pool),
     ...internalLlm(pool),
     ...llmCatalog(pool),
+    ...serviceProviders(pool),
+    ...upstreamCost(pool),
     ...analytics(pool),
   };
   return {
@@ -40,6 +45,20 @@ export function createPgStore(pool: Pool): HubStore {
         if (settle.status === "settled") {
           if (actualMicro > 0) await parts.addLlmKeySpent(u.keyId, actualMicro);
           await parts.upsertLlmUsageDaily({ ...u, chargedMicro: actualMicro, now: Date.now() });
+        }
+        // 69：上游成本在「已结算」与「欠费未结」都要记（上游已消耗）；hold 级幂等防重试重复计。
+        if ((settle.status === "settled" || settle.status === "insufficient") && await parts.markUpstreamRecorded(holdId)) {
+          const now = Date.now();
+          if (u.provider !== undefined && u.provider !== "" && u.upstreamModel !== undefined && u.upstreamModel !== "") {
+            const price = await parts.getUpstreamPrice(u.provider, u.upstreamModel);
+            if (price === null) console.warn(`rdsh-hub: llm upstream price missing provider=${u.provider} model=${u.upstreamModel}`);
+            const costMicro = price === null ? 0 : computeCostFromRates(u.provider, u.upstreamModel, "llm", u, new Date(now), price.rates);
+            await parts.upsertUpstreamUsageDaily({
+              provider: u.provider, upstreamModel: u.upstreamModel, modelAlias: u.modelAlias, date: u.date,
+              inputTokens: u.inputTokens, outputTokens: u.outputTokens, cacheReadTokens: u.cacheReadTokens,
+              cacheWriteTokens: u.cacheWriteTokens, reasoningTokens: u.reasoningTokens, costMicro, now,
+            });
+          }
         }
         return settle;
       }),

@@ -91,13 +91,13 @@ export function llmCatalog(
       return row === null ? null : mapLlmUpstreamKey(row);
     },
 
-    createLlmUpstreamKey: async (input: { id: string; provider: string; label: string; keyCipher: string; dekWrapped: string; kekVersion: number; service?: string; credentialType?: string | null; weight?: number; now?: number }): Promise<LlmUpstreamKeyRow> => {
+    createLlmUpstreamKey: async (input: { id: string; provider: string; label: string; keyCipher: string; dekWrapped: string; kekVersion: number; service?: string; credentialType?: string | null; weight?: number; capabilities?: string | null; maxConcurrency?: number; now?: number }): Promise<LlmUpstreamKeyRow> => {
       const now = input.now ?? Date.now();
-      await q(txDb(pool), "INSERT INTO llm_upstream_keys (id, provider, service, credential_type, label, key_cipher, dek_wrapped, kek_version, weight, enabled, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1, $10)", [input.id, input.provider, input.service ?? "llm", input.credentialType ?? null, input.label, input.keyCipher, input.dekWrapped, input.kekVersion, input.weight ?? 1, now]);
+      await q(txDb(pool), "INSERT INTO llm_upstream_keys (id, provider, service, credential_type, label, key_cipher, dek_wrapped, kek_version, weight, enabled, capabilities, max_concurrency, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1, $10, $11, $12)", [input.id, input.provider, input.service ?? "llm", input.credentialType ?? null, input.label, input.keyCipher, input.dekWrapped, input.kekVersion, input.weight ?? 1, input.capabilities ?? null, input.maxConcurrency ?? 0, now]);
       return mapLlmUpstreamKey(one(await q(txDb(pool), "SELECT * FROM llm_upstream_keys WHERE id = $1", [input.id]))!);
     },
 
-    updateLlmUpstreamKey: async (id: string, patch: { enabled?: boolean; weight?: number; label?: string; keyCipher?: string; dekWrapped?: string }): Promise<LlmUpstreamKeyRow | null> => {
+    updateLlmUpstreamKey: async (id: string, patch: { enabled?: boolean; weight?: number; label?: string; keyCipher?: string; dekWrapped?: string; capabilities?: string | null; maxConcurrency?: number }): Promise<LlmUpstreamKeyRow | null> => {
       const cur = one(await q(txDb(pool), "SELECT * FROM llm_upstream_keys WHERE id = $1", [id]));
       if (cur === null) return null;
       const c = mapLlmUpstreamKey(cur);
@@ -107,7 +107,9 @@ export function llmCatalog(
       const label = patch.label === undefined ? c.label : patch.label;
       const keyCipher = patch.keyCipher === undefined ? c.keyCipher : patch.keyCipher;
       const dekWrapped = patch.dekWrapped === undefined ? c.dekWrapped : patch.dekWrapped;
-      await q(txDb(pool), "UPDATE llm_upstream_keys SET enabled = $1, weight = $2, label = $3, key_cipher = $4, dek_wrapped = $5 WHERE id = $6", [enabled ? 1 : 0, weight, label, keyCipher, dekWrapped, id]);
+      const capabilities = patch.capabilities === undefined ? c.capabilities : patch.capabilities;
+      const maxConcurrency = patch.maxConcurrency === undefined ? c.maxConcurrency : patch.maxConcurrency;
+      await q(txDb(pool), "UPDATE llm_upstream_keys SET enabled = $1, weight = $2, label = $3, key_cipher = $4, dek_wrapped = $5, capabilities = $6, max_concurrency = $7 WHERE id = $8", [enabled ? 1 : 0, weight, label, keyCipher, dekWrapped, capabilities, maxConcurrency, id]);
       const row = one(await q(txDb(pool), "SELECT * FROM llm_upstream_keys WHERE id = $1", [id]));
       return row === null ? null : mapLlmUpstreamKey(row);
     },

@@ -9,12 +9,14 @@
 import { createCipheriv, hkdfSync, randomBytes, randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { clientIp, writeError, type HubRuntime } from "./api.ts";
+import { parseParams } from "./service-families.ts";
+import { beijingDate, voiceUnitRate } from "./pricing/index.ts";
 import { VOICE_DEFAULTS } from "./config.ts";
-import { authenticateService, readJson } from "./internal-llm.ts";
+import { authenticateService, parseCapabilities, readJson } from "./internal-llm.ts";
 import { randomToken, sha256 } from "./jwt.ts";
 import { decryptKeyRow, listEnabledKeys } from "./llm-upstream-keys.ts";
 import type { LlmUpstreamKeyRow } from "./db.ts";
-import { localDate } from "./relay-usage.ts";
+
 
 /** 封签 info 前缀（与 Go 路由的解密侧一致）。 */
 const VOICE_SEAL_INFO = "rdsh-voice-config-v1";
@@ -43,71 +45,79 @@ export function sealVoiceConfig(plainJson: string, token: string, routerId: stri
   return Buffer.concat([Buffer.from([VOICE_SEAL_VERSION]), salt, iv, ct, tag]).toString("base64");
 }
 
-// voiceKeyRR 是语音 key 的加权轮询游标（同 llm-upstream-keys.pickUpstreamKey 的核心
-// 逻辑，但不做粘性：语音每 60s 重选即可；禁用的 key 从池里消失后自然切到备用）。
-let voiceKeyRR = 0;
-
-function pickVoiceKey(rows: LlmUpstreamKeyRow[]): LlmUpstreamKeyRow {
-  const total = rows.reduce((sum, k) => sum + Math.max(1, k.weight), 0);
-  const target = ((voiceKeyRR % total) + total) % total;
-  voiceKeyRR++;
-  let acc = 0;
-  for (const k of rows) {
-    acc += Math.max(1, k.weight);
-    if (target < acc) return k;
-  }
-  return rows[rows.length - 1]!;
-}
-
 async function effectiveVoiceConfig(runtime: HubRuntime) {
   const v = runtime.config.billing?.voice;
-  // 上游凭据来自 key 池（service='voice'），不在 hub.json 明文；按 provider 分组，
-  // 每 provider 加权选一把下发（同 provider 多把 key 不再静默覆盖；坏 key 禁用后
-  // 下一轮 config 拉取（≤60s）即切到备用 key）。
-  const byProvider = new Map<string, LlmUpstreamKeyRow[]>();
+  // providers：enabled 的 voice key 按 provider 分组；capabilities 过滤 asr/tts。
+  const providers: Record<string, {
+    credentialType: string;
+    keys: Array<{ id: string; secrets: Record<string, string>; capabilities: string[] | null; weight: number; maxConcurrency: number }>;
+    asr?: { url: string; protocol: string };
+    tts?: { url: string; protocol: string; resourceId?: string };
+  }> = {};
   for (const k of await listEnabledKeys(runtime, "voice")) {
-    const list = byProvider.get(k.provider) ?? [];
-    list.push(k);
-    byProvider.set(k.provider, list);
-  }
-  const upstreams: Record<string, { credentialType: string; params: Record<string, unknown>; secrets: Record<string, string> }> = {};
-  for (const [provider, rows] of byProvider) {
-    const k = pickVoiceKey(rows);
-    const plain = decryptKeyRow(runtime, k);
-    let secrets: Record<string, string>;
-    try {
-      secrets = JSON.parse(plain) as Record<string, string>;
-    } catch {
-      secrets = { apiKey: plain }; // 兜底：非 JSON 明文按单 Key 处理
-    }
-    // 非机密参数来自供应商级配置（voice_provider_configs）；无配置或配置损坏则跳过该 provider，
-    // 由外层「无任何 upstream → 503 NO_UPSTREAM_KEY」fail-fast。
-    const pcfg = await runtime.store.getVoiceProviderConfig(provider);
+    const caps = parseCapabilities(k.capabilities);
+    if (caps !== null && !caps.includes("asr") && !caps.includes("tts")) continue;
+    const pcfg = await runtime.store.getProviderConfig(k.provider);
     if (pcfg === null) continue;
     let params: Record<string, unknown>;
+    try { params = JSON.parse(pcfg.params) as Record<string, unknown>; } catch { continue; }
+    const asr = params.asr as Record<string, unknown> | undefined;
+    const tts = params.tts as Record<string, unknown> | undefined;
+    if (asr === undefined && tts === undefined) continue;
+    let plain: string;
     try {
-      params = JSON.parse(pcfg.params) as Record<string, unknown>;
-    } catch {
+      plain = decryptKeyRow(runtime, k);
+    } catch (err) {
+      console.warn(`rdsh-hub: skip voice key ${k.id} (provider=${k.provider}): decrypt failed: ${err instanceof Error ? err.message : String(err)}`);
       continue;
     }
-    // maxConcurrency is a provider-level non-secret param; surface it as a
-    // top-level field so the router can enforce it (deepseek defaults to 50).
-    const maxConcurrency =
-      typeof params.maxConcurrency === "number" && params.maxConcurrency > 0
-        ? Math.floor(params.maxConcurrency)
-        : undefined;
-    upstreams[provider] = {
-      credentialType: k.credentialType ?? "api_key",
-      params,
-      secrets,
-      ...(maxConcurrency !== undefined ? { maxConcurrency } : {}),
-    };
+    let secrets: Record<string, string>;
+    try { secrets = JSON.parse(plain) as Record<string, string>; } catch { secrets = { apiKey: plain }; }
+    const entry = providers[k.provider] ?? (providers[k.provider] = { credentialType: k.credentialType ?? "api_key", keys: [] });
+    if (asr !== undefined && typeof asr.url === "string" && typeof asr.protocol === "string") {
+      entry.asr = { url: asr.url, protocol: asr.protocol };
+    }
+    if (tts !== undefined && typeof tts.url === "string" && typeof tts.protocol === "string") {
+      const models = Array.isArray(tts.models) ? (tts.models as unknown[]).filter((x): x is string => typeof x === "string") : [];
+      const resourceId = typeof tts.resourceId === "string" && tts.resourceId !== "" ? tts.resourceId : models[0];
+      entry.tts = resourceId === undefined ? { url: tts.url, protocol: tts.protocol } : { url: tts.url, protocol: tts.protocol, resourceId };
+    }
+    entry.keys.push({ id: k.id, secrets, capabilities: caps, weight: k.weight, maxConcurrency: k.maxConcurrency });
   }
+  // 丢掉没有任何可用 endpoint 的 provider（配置残缺时不把无效候选发给 Router）。
+  for (const [name, p] of Object.entries(providers)) {
+    if (p.asr === undefined && p.tts === undefined) delete providers[name];
+  }
+  if (Object.keys(providers).length === 0) return { providers, models: {}, ticketSecret: "", session: {}, globalConcurrency: 0, bufferMaxSeconds: 0, reportIntervalSeconds: 0 };
+
+  // models：enabled 的 asr/tts 模型代理 + 有效上游（enabled 池条目 + provider 有 key）。
+  const pool = await runtime.store.listServicePool();
+  const models: Record<string, { capability: string; aliases: string[]; voices: string[]; pool: Record<string, string | Record<string, string>> }> = {};
+  for (const s of await runtime.store.listServices()) {
+    if (!s.enabled || (s.capability !== "asr" && s.capability !== "tts")) continue;
+    const candidates = pool.filter((p) => p.service === s.service && p.enabled && providers[p.provider] !== undefined);
+    if (candidates.length === 0) continue;
+    let sparams: Record<string, unknown> = {};
+    try { sparams = JSON.parse(s.params ?? "{}") as Record<string, unknown>; } catch { sparams = {}; }
+    const aliases = Array.isArray(sparams.aliases) ? (sparams.aliases as unknown[]).filter((x): x is string => typeof x === "string") : [];
+    const rawVoices = Array.isArray(sparams.voices) ? (sparams.voices as unknown[]) : [];
+    const voices = rawVoices.map((x) => (typeof x === "string" ? x : typeof (x as Record<string, unknown>)?.id === "string" ? String((x as Record<string, unknown>).id) : "")).filter((x) => x !== "");
+    const poolMap: Record<string, string | Record<string, string>> = {};
+    for (const c of candidates) {
+      let cparams: Record<string, unknown> = {};
+      try { cparams = JSON.parse(c.params ?? "{}") as Record<string, unknown>; } catch { cparams = {}; }
+      const voiceMap = cparams.voiceMap;
+      if (s.capability === "tts" && voiceMap !== undefined && typeof voiceMap === "object" && voiceMap !== null) {
+        poolMap[c.provider] = voiceMap as Record<string, string>;
+      } else {
+        poolMap[c.provider] = c.upstreamModel ?? s.service;
+      }
+    }
+    models[s.service] = { capability: s.capability, aliases, voices, pool: poolMap };
+  }
+
   return {
     reportIntervalSeconds: v?.reportIntervalSeconds ?? VOICE_DEFAULTS.reportIntervalSeconds,
-    overdraftFloorPoints: v?.overdraftFloor ?? VOICE_DEFAULTS.overdraftFloor,
-    asrPriceMicroPerSecond: v?.asrPriceMicroPerSecond ?? VOICE_DEFAULTS.asrPriceMicroPerSecond,
-    ttsPriceMicroPerChar: v?.ttsPriceMicroPerChar ?? VOICE_DEFAULTS.ttsPriceMicroPerChar,
     session: {
       maxSeconds: v?.sessionMaxSeconds ?? VOICE_DEFAULTS.sessionMaxSeconds,
       idleTimeoutSeconds: v?.idleTimeoutSeconds ?? VOICE_DEFAULTS.idleTimeoutSeconds,
@@ -115,10 +125,21 @@ async function effectiveVoiceConfig(runtime: HubRuntime) {
     },
     globalConcurrency: v?.globalConcurrency ?? VOICE_DEFAULTS.globalConcurrency,
     bufferMaxSeconds: v?.bufferMaxSeconds ?? VOICE_DEFAULTS.bufferMaxSeconds,
+    schemaVersion: 2,
     ticketSecret: v?.ticketSecret ?? "",
-    wsUrl: v?.wsUrl ?? "",
-    upstreams,
+    providers,
+    models,
   };
+}
+
+/** 69：解析语音服务的上游模型 id（ASR 取池 upstream；TTS 取 provider 配置 models[0]，否则用 service）。 */
+async function resolveVoiceUpstreamModel(store: HubRuntime["store"], service: string, provider: string, kind: string): Promise<string> {
+  const pool = (await store.listServicePoolByService(service)).find((p) => p.provider === provider && p.enabled);
+  if (pool !== undefined && pool.upstreamModel !== null && pool.upstreamModel !== "") return pool.upstreamModel;
+  const pcfg = await store.getProviderConfig(provider);
+  const cap = parseParams(pcfg?.params ?? null)[kind] as Record<string, unknown> | undefined;
+  const models = Array.isArray(cap?.models) ? (cap.models as unknown[]).filter((x): x is string => typeof x === "string") : [];
+  return models.length > 0 ? models[0]! : service;
 }
 
 export async function handleInternalVoice(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<boolean> {
@@ -137,9 +158,11 @@ export async function handleInternalVoice(req: IncomingMessage, res: ServerRespo
     if (router === null || router.status !== "active" || router.service !== "voice") return void writeError(res, 403, "ROUTER_NOT_APPROVED", "router not approved"), true;
     await runtime.store.touchLlmRouterSeen(router.id, clientIp(req, runtime));
     const cfg = await effectiveVoiceConfig(runtime);
-    if (Object.keys(cfg.upstreams).length === 0) return void writeError(res, 503, "NO_UPSTREAM_KEY", "no enabled voice upstream key"), true;
+    if (Object.keys(cfg.providers).length === 0 || Object.keys(cfg.models).length === 0) {
+      return void writeError(res, 503, "NO_UPSTREAM_KEY", "no enabled voice upstream key"), true;
+    }
     const payload = sealVoiceConfig(JSON.stringify(cfg), rawToken, router.id);
-    return void json(res, 200, { v: 1, payload }), true;
+    return void json(res, 200, { v: 2, payload }), true;
   }
 
   // POST /api/internal/voice/routers/join（一次性 voice join token → 唯一 token + pending router）
@@ -167,20 +190,47 @@ export async function handleInternalVoice(req: IncomingMessage, res: ServerRespo
     if (body === null) return void writeError(res, 400, "BAD_REQUEST", "invalid json"), true;
     const userId = Number(body.userId);
     const kind = typeof body.kind === "string" ? body.kind.trim() : "";
+    const service = typeof body.service === "string" ? body.service.trim() : "";
     const provider = typeof body.provider === "string" && body.provider.trim() !== "" ? body.provider.trim() : "volcengine";
     const cumulative = body.cumulative === undefined ? -1 : Number(body.cumulative);
     if (!Number.isSafeInteger(userId) || userId <= 0) return void writeError(res, 400, "BAD_REQUEST", "userId required"), true;
     if (kind !== "asr" && kind !== "tts") return void writeError(res, 400, "BAD_REQUEST", "kind must be asr|tts"), true;
     if (!Number.isSafeInteger(cumulative) || cumulative < 0) return void writeError(res, 400, "BAD_REQUEST", "invalid cumulative"), true;
     // 日期由服务端归日（不信任客户端；与 relay 的 localDate 同一口径）。
-    const date = localDate();
+    const date = beijingDate();
     const v = runtime.config.billing?.voice;
-    const price = kind === "asr"
+    const globalPrice = kind === "asr"
       ? (v?.asrPriceMicroPerSecond ?? VOICE_DEFAULTS.asrPriceMicroPerSecond)
       : (v?.ttsPriceMicroPerChar ?? VOICE_DEFAULTS.ttsPriceMicroPerChar);
+    // 68：优先按售卖服务（services.prices.price）计价；service 缺失/查不到才回退全局价。
+    let price = globalPrice;
+    if (service !== "") {
+      const svc = await runtime.store.getService(service);
+      if (svc !== null) {
+        let prices: Record<string, unknown> = {};
+        try { prices = JSON.parse(svc.prices) as Record<string, unknown>; } catch { prices = {}; }
+        if (typeof prices.price === "number" && prices.price >= 0) price = prices.price;
+      }
+    }
     const floor = v?.overdraftFloor ?? VOICE_DEFAULTS.overdraftFloor;
-    const out = await runtime.store.chargeVoiceUsage(userId, date, kind, provider, cumulative, price, floor);
-    return void json(res, 200, { balance: out.balance.total, storedCumulative: out.storedCumulative, chargedMicro: out.chargedMicro }), true;
+    const out = await runtime.store.chargeVoiceUsage(userId, date, kind, service, provider, cumulative, price, floor);
+
+    // 69：按供应商记录上游用量并换算成本（旧 Router 无 perProvider 时跳过）。
+    const perProviderStored: Record<string, number> = {};
+    const pp = body.perProvider;
+    if (pp !== null && typeof pp === "object" && !Array.isArray(pp)) {
+      const now = Date.now();
+      for (const [prov, raw] of Object.entries(pp as Record<string, unknown>)) {
+        if (prov === "" || !Number.isSafeInteger(raw) || (raw as number) < 0) continue;
+        const upstreamModel = await resolveVoiceUpstreamModel(runtime.store, service, prov, kind);
+        const up = await runtime.store.getUpstreamPrice(prov, upstreamModel);
+        if (up === null) console.warn(`rdsh-hub: voice upstream price missing provider=${prov} model=${upstreamModel} kind=${kind}`);
+        const perUnitMicro = up === null ? 0 : voiceUnitRate(up.rates, kind);
+        const r = await runtime.store.upsertVoiceUpstreamUsageDaily({ provider: prov, kind, service, date, cumulative: raw as number, perUnitMicro, now });
+        perProviderStored[prov] = r.storedCumulative;
+      }
+    }
+    return void json(res, 200, { balance: out.balance.total, storedCumulative: out.storedCumulative, chargedMicro: out.chargedMicro, perProviderStored }), true;
   }
 
   return false;

@@ -9,7 +9,8 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { randomToken, sha256 } from "./jwt.ts";
 import { clientIp, writeError, type HubRuntime } from "./api.ts";
 import { sealConfig } from "./crypto-upstream-keys.ts";
-import { pickUpstreamKey } from "./llm-upstream-keys.ts";
+import { decryptKeyRow } from "./llm-upstream-keys.ts";
+import { beijingDate } from "./pricing/index.ts";
 import type { ServiceTokenRow } from "./db.ts";
 
 const LLM_KEY_PREFIX = "sk-";
@@ -54,6 +55,16 @@ export async function authenticateService(req: IncomingMessage, runtime: HubRunt
   if (row === null || row.revokedAt !== null) return null;
   if (!scopesOf(row).has(scope)) return null;
   return row;
+}
+
+export function parseCapabilities(raw: string | null): string[] | null {
+  if (raw === null || raw.trim() === "") return null;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : null;
+  } catch {
+    return null;
+  }
 }
 
 /** 判定模型是否在 key 白名单内；allowlist 为 null/空 = 全部允许。 */
@@ -158,8 +169,7 @@ export async function handleInternalApi(req: IncomingMessage, res: ServerRespons
     // 按天聚合（不写逐条明细）：存储量 = 用户 × key × 模型 × 天，而非请求数。
     const usage = (body.usage ?? {}) as Record<string, unknown>;
     const created = Date.now();
-    const day = new Date(created);
-    const date = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
+    const date = beijingDate(new Date(created));
     // 扣费 + 加 spent + 写用量 同一事务（失败整体回滚，Router 重试整段重做）。
     const settle = await runtime.store.settleLlmHold(decodeURIComponent(settleMatch[1]!), actualMicro, {
       keyId: key.id,
@@ -172,6 +182,8 @@ export async function handleInternalApi(req: IncomingMessage, res: ServerRespons
       cacheReadTokens: Number(usage.cacheReadTokens ?? 0),
       cacheWriteTokens: Number(usage.cacheWriteTokens ?? 0),
       reasoningTokens: Number(usage.reasoningTokens ?? 0),
+      provider: typeof body.provider === "string" ? body.provider.trim() : "",
+      upstreamModel: typeof body.upstreamModel === "string" ? body.upstreamModel.trim() : "",
     });
     if (settle.status === "not_found") return void writeError(res, 404, "NOT_FOUND", "hold not found"), true;
     if (settle.status === "released") return void writeError(res, 409, "CONFLICT", "hold already released"), true;
@@ -226,6 +238,7 @@ export async function handleInternalApi(req: IncomingMessage, res: ServerRespons
   }
 
   // GET /api/internal/llm/config（唯一 token + active 才返回整段配置，密文密封）
+  // 68：下发 v2 —— providers（keys + protocols）+ models（目录 + 内嵌 pool）。
   if (path === "/api/internal/llm/config" && method === "GET") {
     const rawToken = bearerToken(req);
     if (rawToken === null || rawToken.length < 16) return void writeError(res, 401, "UNAUTHORIZED", "missing or invalid service token"), true;
@@ -235,29 +248,68 @@ export async function handleInternalApi(req: IncomingMessage, res: ServerRespons
     if (router === null || router.status !== "active") return void writeError(res, 403, "ROUTER_NOT_APPROVED", "router not approved"), true;
     await runtime.store.touchLlmRouterSeen(router.id, clientIp(req, runtime));
 
-    const upstream = await pickUpstreamKey(runtime, row.id);
-    if (upstream === null) return void writeError(res, 503, "NO_UPSTREAM_KEY", "no enabled upstream key"), true;
+    // providers：enabled 的 llm key，按 provider 分组；capabilities 过滤 llm。
+    const providers: Record<string, { keys: Array<{ id: string; apiKey: string; capabilities: string[] | null; weight: number; maxConcurrency: number }>; protocols: Record<string, { baseURL: string }> }> = {};
+    for (const k of await runtime.store.listLlmUpstreamKeys()) {
+      if (!k.enabled || k.revokedAt !== null || k.service !== "llm") continue;
+      const caps = parseCapabilities(k.capabilities);
+      if (caps !== null && !caps.includes("llm")) continue;
+      const pcfg = await runtime.store.getProviderConfig(k.provider);
+      if (pcfg === null) continue;
+      let params: Record<string, unknown>;
+      try { params = JSON.parse(pcfg.params) as Record<string, unknown>; } catch { continue; }
+      const llm = (params.llm ?? {}) as Record<string, unknown>;
+      const protocols = (llm.protocols ?? {}) as Record<string, { baseURL?: string }>;
+      const cleaned: Record<string, { baseURL: string }> = {};
+      for (const [name, cfg] of Object.entries(protocols)) {
+        if (typeof cfg?.baseURL === "string" && cfg.baseURL !== "") cleaned[name] = { baseURL: cfg.baseURL };
+      }
+      if (Object.keys(cleaned).length === 0) continue;
+      let apiKey: string;
+      try {
+        apiKey = decryptKeyRow(runtime, k);
+      } catch (err) {
+        console.warn(`rdsh-hub: skip llm key ${k.id} (provider=${k.provider}): decrypt failed: ${err instanceof Error ? err.message : String(err)}`);
+        continue;
+      }
+      const entry = providers[k.provider] ?? (providers[k.provider] = { keys: [], protocols: cleaned });
+      entry.keys.push({ id: k.id, apiKey, capabilities: caps, weight: k.weight, maxConcurrency: k.maxConcurrency });
+    }
+    if (Object.keys(providers).length === 0) return void writeError(res, 503, "NO_UPSTREAM_KEY", "no enabled upstream key"), true;
 
-    const models = (await runtime.store.listLlmModels({ enabledOnly: true })).map((m) => ({
-      id: m.id,
-      upstream: m.upstreamModel,
-      displayName: m.displayName,
-      inputPriceMicro: m.inputPriceMicro,
-      outputPriceMicro: m.outputPriceMicro,
-      cacheReadPriceMicro: m.cacheReadPriceMicro,
-      cacheWritePriceMicro: m.cacheWritePriceMicro,
-      contextWindow: m.contextWindow,
-      maxTokens: m.maxTokens,
-    }));
-    const provider = {
-      name: runtime.config.llm?.provider?.name ?? "deepseek",
-      baseURL: runtime.config.llm?.provider?.baseURL ?? "https://api.deepseek.com/anthropic",
-      apiKey: upstream.apiKey,
-      keyId: upstream.keyId,
-      protocol: runtime.config.llm?.provider?.protocol ?? "anthropic-messages",
-    };
-    const payload = sealConfig(JSON.stringify({ provider, models }), rawToken, router.id);
-    return void json(res, 200, { v: 1, payload }), true;
+    // models：enabled 的 llm 模型代理 + 有效上游（enabled 池条目 + provider 有 key）。
+    // 目录元数据（displayName/context/maxTokens）沿用 llm_models；价格优先 services.prices。
+    const llmModels = new Map((await runtime.store.listLlmModels({ enabledOnly: true })).map((m) => [m.id, m]));
+    const pool = await runtime.store.listServicePool();
+    const models: Record<string, {
+      displayName: string; inputPriceMicro: number; outputPriceMicro: number;
+      cacheReadPriceMicro: number; cacheWritePriceMicro: number;
+      contextWindow: number; maxTokens: number;
+      pool: Record<string, string>;
+    }> = {};
+    for (const s of await runtime.store.listServices()) {
+      if (!s.enabled || s.capability !== "llm") continue;
+      const meta = llmModels.get(s.service);
+      const candidates = pool.filter((p) => p.service === s.service && p.enabled && providers[p.provider] !== undefined);
+      if (candidates.length === 0) continue;
+      let prices: Record<string, number> = {};
+      try { prices = JSON.parse(s.prices) as Record<string, number>; } catch { prices = {}; }
+      // P2-1：llm_models 缺失（UI 新增的模型代理）时用 services 自身 + 默认容量，仍可路由。
+      models[s.service] = {
+        displayName: s.displayName ?? meta?.displayName ?? s.service,
+        inputPriceMicro: prices.input ?? meta?.inputPriceMicro ?? 0,
+        outputPriceMicro: prices.output ?? meta?.outputPriceMicro ?? 0,
+        cacheReadPriceMicro: prices.cacheRead ?? meta?.cacheReadPriceMicro ?? 0,
+        cacheWritePriceMicro: prices.cacheWrite ?? meta?.cacheWritePriceMicro ?? 0,
+        contextWindow: meta?.contextWindow ?? 1_048_576,
+        maxTokens: meta?.maxTokens ?? 393_216,
+        pool: Object.fromEntries(candidates.map((c) => [c.provider, c.upstreamModel ?? s.service])),
+      };
+    }
+    if (Object.keys(models).length === 0) return void writeError(res, 503, "NO_UPSTREAM_KEY", "no configured model"), true;
+
+    const payload = sealConfig(JSON.stringify({ schemaVersion: 2, providers, models }), rawToken, router.id);
+    return void json(res, 200, { v: 2, payload }), true;
   }
 
   return false;

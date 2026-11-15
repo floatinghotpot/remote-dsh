@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
 import { api, ApiError, subscribeEvents, adminApi } from "./api.ts";
-import type { HostInfo, JoinTokenInfo, CaptchaPayload, AccountInfo, Capabilities, UsageDay, WechatPayInfo, AdminMe, AdminUserRow, AdminHostRow, AdminNodeRow, AdminOrderRow, AdminPaymentRow, AdminAuditRow, AdminSubscriptionRow, AdminUserDetail, AdminUserCredits, AdminDashboard, AdminAnalytics, AdminConfig, LlmKeyInfo, LlmUsageModel, LlmCatalogModel } from "./api.ts";
+import type { HostInfo, JoinTokenInfo, CaptchaPayload, AccountInfo, Capabilities, UsageDay, WechatPayInfo, AdminMe, AdminUserRow, AdminHostRow, AdminNodeRow, AdminOrderRow, AdminPaymentRow, AdminAuditRow, AdminSubscriptionRow, AdminUserDetail, AdminUserCredits, AdminDashboard, AdminAnalytics, AdminConfig, LlmKeyInfo, LlmUsageModel, LlmCatalogModel, AdminProviderConfigRow, AdminServiceRow, AdminServicePoolRow, AdminUpstreamKeyRow } from "./api.ts";
 import { fingerprint } from "./e2ee.ts";
 import { useT, getLang } from "./i18n.ts";
 import type { T } from "./i18n.ts";
@@ -3181,6 +3181,11 @@ function AdminApp({ path }: { path: string }): React.JSX.Element {  const { t } 
       alive = false;
     };
   }, [reload]);
+  // 68：旧入口 301 式重定向到新页面（保留书签/历史可用）。
+  useEffect(() => {
+    if (path === "/llm-models") navigate("/admin/services");
+    else if (path === "/llm-keys") navigate("/admin/provider-configs");
+  }, [path]);
   if (me === undefined) return <div style={{ padding: 40, fontFamily: "system-ui, sans-serif" }}>{t("加载中…")}</div>;
   if (me === null) return <AdminLogin onSuccess={() => setReload((r) => r + 1)} />;
 
@@ -3191,8 +3196,8 @@ function AdminApp({ path }: { path: string }): React.JSX.Element {  const { t } 
     { p: "/hosts", label: t("主机") },
     { p: "/nodes", label: t("中继节点", { en: "Relay Nodes" }) },
     { p: "/join-tokens", label: t("入网令牌", { en: "Join Tokens" }) },
-    { p: "/llm-models", label: t("模型目录") },
-    { p: "/llm-keys", label: t("上游 Key") },
+    { p: "/provider-configs", label: t("供应商配置", { en: "Providers" }) },
+    { p: "/services", label: t("模型代理", { en: "Model Proxies" }) },
     { p: "/llm-routers", label: t("Router") },
     { p: "/billing", label: t("账单") },
     { p: "/audit", label: t("审计") },
@@ -3231,13 +3236,10 @@ function AdminApp({ path }: { path: string }): React.JSX.Element {  const { t } 
         <AdminNodeDetail nodeId={path.slice("/nodes/".length)} isWrite={isWrite} />
       ) : path === "/join-tokens" ? (
         <AdminJoinTokens isWrite={isWrite} />
-      ) : path === "/llm-models" ? (
-        <AdminLlmModels isWrite={isWrite} />
-      ) : path === "/llm-keys" ? (
-        <>
-          <AdminLlmKeys isWrite={isWrite} />
-          <AdminVoiceProviderConfigs isWrite={isWrite} />
-        </>
+      ) : path === "/provider-configs" ? (
+        <AdminProviderConfigs isWrite={isWrite} />
+      ) : path === "/services" ? (
+        <AdminServices isWrite={isWrite} />
       ) : path === "/llm-routers" ? (
         <AdminLlmRouters isWrite={isWrite} />
       ) : path === "/billing" ? (
@@ -3257,317 +3259,1053 @@ function AdminApp({ path }: { path: string }): React.JSX.Element {  const { t } 
   );
 }
 
-type LlmModelRow = {
-  id: string; displayName: string; provider: string; upstreamModel: string; enabled: boolean; nameSource: string;
-  inputPriceMicro: number; outputPriceMicro: number; cacheReadPriceMicro: number; cacheWritePriceMicro: number;
-  contextWindow: number; maxTokens: number; sortOrder: number; nameSyncedAt: number | null;
-};
-type LlmUpstreamKeyRow = { id: string; provider: string; service: string; credentialType: string | null; label: string; weight: number; enabled: boolean; kekVersion: number; createdAt: number; revokedAt: number | null };
+type UpstreamProviderSpec = { provider: string; service: string; credentialType: string; fields: string[]; paramsFields?: string[] };
 type LlmRouterRow = { id: string; service: string; name: string; tokenId: string; status: string; lastIp: string | null; publicBaseUrl: string | null; createdAt: number; approvedAt: number | null; lastSeenAt: number | null };
 
-function AdminLlmModels({ isWrite }: { isWrite: boolean }): React.JSX.Element {
+type AdminNotice = { kind: "ok" | "err"; text: string };
+
+/** 「默认值」按钮的内置供应商模板（与 68 discussion §7.3 的 seed 示例一致）。 */
+const PROVIDER_DEFAULT_PARAMS: Record<string, Record<string, unknown>> = {
+  deepseek: {
+    llm: {
+      models: ["deepseek-flash", "deepseek-v4-pro"],
+      protocols: { "anthropic-messages": { baseURL: "https://api.deepseek.com/anthropic" } },
+    },
+    asr: { url: "", protocol: "deepseek-asr-multipart", auth: "bearer", models: ["ds.asr"] },
+    tts: {
+      url: "",
+      protocol: "deepseek-tts-json",
+      auth: "bearer",
+      voices: [
+        { id: "stella", name: "Stella", gender: "female" },
+        { id: "tide", name: "Tide", gender: "male" },
+      ],
+    },
+  },
+  aliyun: {
+    llm: {
+      models: ["deepseek-v4.1-flash-1017", "deepseek-v4-pro-0813"],
+      protocols: { "anthropic-messages": { baseURL: "https://maas.qianwenaiapi.com/apps/anthropic" } },
+    },
+  },
+  volcengine: {
+    asr: {
+      url: "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel",
+      protocol: "volc-sauc-ws",
+      auth: "x-api-key",
+      models: ["volc.seedasr.sauc.duration"],
+    },
+    tts: {
+      url: "https://openspeech.bytedance.com/api/v3/tts/unidirectional",
+      protocol: "volc-tts-unidirectional",
+      auth: "x-api-key",
+      models: ["seed-tts-2.0"],
+      voices: [
+        { id: "zh_female_vv_uranus_bigtts", name: "Vivi 2.0", gender: "female" },
+        { id: "zh_male_taocheng_uranus_bigtts", name: "小天 2.0", gender: "male" },
+      ],
+    },
+  },
+};
+
+/** 弹窗统一：禁止 ESC 关闭（统一规则：只有「取消 / 保存」）。 */
+function useBlockEscape(): void {
+  useEffect(() => {
+    const block = (e: KeyboardEvent): void => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+    document.addEventListener("keydown", block, true);
+    return () => document.removeEventListener("keydown", block, true);
+  }, []);
+}
+
+function adminModalScrimStyle(): React.CSSProperties {
+  return { position: "fixed", inset: 0, background: "var(--rdsh-scrim-soft)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 16, boxSizing: "border-box" };
+}
+function adminModalCardStyle(): React.CSSProperties {
+  return { background: "var(--rdsh-bg-surface)", borderRadius: 12, padding: 20, width: 480, maxWidth: "100%", maxHeight: "90vh", overflowY: "auto", fontFamily: "system-ui, sans-serif" };
+}
+function adminFormInputStyle(): React.CSSProperties {
+  return { width: "100%", padding: "8px 10px", boxSizing: "border-box" };
+}
+/** 弹窗字段：左侧 label、右侧输入框。 */
+function AdminFormRow({ label, children }: { label: string; children: React.ReactNode }): React.JSX.Element {
+  return (
+    <div style={{ display: "flex", gap: 12, alignItems: "flex-start", marginBottom: 10 }}>
+      <span style={{ width: 92, flexShrink: 0, paddingTop: 8, fontSize: 12, color: "var(--rdsh-fg-muted)" }}>{label}</span>
+      <div style={{ flex: 1, minWidth: 0 }}>{children}</div>
+    </div>
+  );
+}
+
+function adminParseJsonObject(raw: string | null | undefined): Record<string, unknown> | null {
+  if (raw === null || raw === undefined || raw.trim() === "") return null;
+  try {
+    const v = JSON.parse(raw) as unknown;
+    return typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+function adminJsonPretty(raw: string | null | undefined): string {
+  const obj = adminParseJsonObject(raw);
+  return obj === null ? (raw ?? "") : JSON.stringify(obj, null, 2);
+}
+function adminDate(ms: number): string {
+  const d = new Date(ms);
+  const pad = (n: number): string => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+function adminCapabilityOrder(caps: string[]): string[] {
+  const ordered = ["llm", "asr", "tts"].filter((c) => caps.includes(c));
+  return [...ordered, ...caps.filter((c) => !ordered.includes(c))];
+}
+function adminCapabilityLabel(t: T, cap: string): string {
+  switch (cap) {
+    case "llm": return t("大模型", { en: "LLM" });
+    case "asr": return "ASR";
+    case "tts": return "TTS";
+    case "ocr": return "OCR";
+    case "search": return t("搜索", { en: "Search" });
+    default: return cap;
+  }
+}
+function adminProtocols(params: Record<string, unknown> | null): string[] {
+  if (params === null) return [];
+  const llm = params.llm;
+  if (typeof llm !== "object" || llm === null || Array.isArray(llm)) return [];
+  const protocols = (llm as Record<string, unknown>).protocols;
+  if (typeof protocols !== "object" || protocols === null || Array.isArray(protocols)) return [];
+  return Object.keys(protocols);
+}
+function adminVoiceCapabilities(params: Record<string, unknown> | null): string[] {
+  if (params === null) return [];
+  const caps: string[] = [];
+  if (params.asr !== undefined) caps.push("ASR");
+  if (params.tts !== undefined) caps.push("TTS");
+  return caps;
+}
+/** 供应商可承载的能力：优先看 params（llm/asr/tts 段），缺失时按凭据 spec 推导。 */
+function adminProviderCapabilities(provider: string, specs: UpstreamProviderSpec[], configs: AdminProviderConfigRow[]): string[] {
+  const cfg = configs.find((c) => c.provider === provider);
+  const params = adminParseJsonObject(cfg?.params ?? null);
+  const caps: string[] = [];
+  if (params !== null) {
+    for (const cap of ["llm", "asr", "tts"]) {
+      if (params[cap] !== undefined) caps.push(cap);
+    }
+  }
+  if (caps.length === 0) {
+    for (const spec of specs) {
+      if (spec.service === "llm") caps.push("llm");
+      else caps.push("asr", "tts");
+    }
+  }
+  return adminCapabilityOrder([...new Set(caps)]);
+}
+/** Key 弹窗默认「服务」：按供应商配置的能力推导（llm 优先），再无 spec 时回落到第一条。 */
+function adminPreferredService(provider: string, specs: UpstreamProviderSpec[], configs: AdminProviderConfigRow[]): string {
+  const caps = adminProviderCapabilities(provider, specs, configs);
+  if (caps.includes("llm") && specs.some((s) => s.service === "llm")) return "llm";
+  if ((caps.includes("asr") || caps.includes("tts")) && specs.some((s) => s.service === "voice")) return "voice";
+  return specs[0]?.service ?? "llm";
+}
+function adminKeyCapabilities(raw: string | null): string[] | null {
+  if (raw === null || raw.trim() === "") return null;
+  try {
+    const v = JSON.parse(raw) as unknown;
+    if (!Array.isArray(v)) return null;
+    return adminCapabilityOrder(v.filter((x): x is string => typeof x === "string"));
+  } catch {
+    return null;
+  }
+}
+function adminProviderHasCapabilityKey(keys: AdminUpstreamKeyRow[], provider: string, capability: string): boolean {
+  const service = capability === "llm" ? "llm" : "voice";
+  return keys.some((k) => {
+    if (k.provider !== provider || !k.enabled || k.revokedAt !== null) return false;
+    if (k.service !== service) return false;
+    const caps = adminKeyCapabilities(k.capabilities);
+    return caps === null || caps.includes(capability);
+  });
+}
+function adminUpstreamModels(configs: AdminProviderConfigRow[], provider: string, capability: string): string[] {
+  const cfg = configs.find((c) => c.provider === provider);
+  const params = adminParseJsonObject(cfg?.params ?? null);
+  if (params === null) return [];
+  const sectionName = capability === "llm" ? "llm" : capability === "asr" ? "asr" : capability === "tts" ? "tts" : null;
+  if (sectionName === null) return [];
+  const section = params[sectionName];
+  if (typeof section !== "object" || section === null || Array.isArray(section)) return [];
+  const models = (section as Record<string, unknown>).models;
+  if (!Array.isArray(models)) return [];
+  return models.filter((m): m is string => typeof m === "string" && m.trim() !== "");
+}
+function adminCredentialFieldLabel(field: string): string {
+  switch (field) {
+    case "apiKey": return "API Key";
+    case "workspaceId": return "Workspace ID";
+    case "appId": return "App ID";
+    case "secretId": return "Secret ID";
+    case "secretKey": return "Secret Key";
+    case "apiSecret": return "API Secret";
+    case "groupId": return "Group ID";
+    default: return field;
+  }
+}
+function adminCredentialFieldType(field: string): "text" | "password" {
+  return field === "apiKey" || field === "secretKey" || field === "apiSecret" ? "password" : "text";
+}
+function adminPriceLabel(t: T, s: AdminServiceRow): string {
+  let prices: Record<string, unknown> = {};
+  try {
+    const v = JSON.parse(s.prices) as unknown;
+    if (typeof v === "object" && v !== null && !Array.isArray(v)) prices = v as Record<string, unknown>;
+  } catch {
+    return s.prices;
+  }
+  const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  if (s.capability === "llm") {
+    const input = num(prices.input);
+    const output = num(prices.output);
+    if (input === null && output === null) return s.prices;
+    return `${t("入")} ${adminYuan(input ?? 0)} / ${t("出")} ${adminYuan(output ?? 0)} (¥/M)`;
+  }
+  const price = num(prices.price);
+  if (price === null) return s.prices;
+  if (s.capability === "asr") return `${formatPoints(price * 60)} ${t("点/分钟")}`;
+  if (s.capability === "tts") return `${formatPoints(price * 100)} ${t("点/百字")}`;
+  return s.prices;
+}
+function adminYuan(micro: number): string {
+  return (micro / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 4 });
+}
+function defaultServicePrices(capability: string): Record<string, unknown> {
+  return capability === "llm"
+    ? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+    : { price: 0 };
+}
+function adminFriendlyError(t: T, e: unknown): string {
+  const msg = e instanceof Error ? e.message : String(e);
+  if (msg.includes("enabled pool entries")) return t("该模型代理仍有启用的上游服务，请先停用或删除上游");
+  if (msg.includes("unknown service")) return t("模型代理不存在");
+  if (msg.includes("unknown provider")) return t("供应商不存在");
+  return msg;
+}
+/** 校验供应商配置参数（轻量 schema；只覆盖运行时真正用到的字段）。 */
+function validateProviderParams(obj: unknown): string | null {
+  if (typeof obj !== "object" || obj === null || Array.isArray(obj)) return "配置参数必须是 JSON 对象";
+  const root = obj as Record<string, unknown>;
+  if (root.llm === undefined && root.asr === undefined && root.tts === undefined) return "至少需要配置 llm / asr / tts 之一";
+  if (root.llm !== undefined) {
+    const llm = root.llm;
+    if (typeof llm !== "object" || llm === null || Array.isArray(llm)) return "llm 必须是对象";
+    const l = llm as Record<string, unknown>;
+    if (l.models !== undefined && (!Array.isArray(l.models) || l.models.some((x) => typeof x !== "string"))) return "llm.models 必须是字符串数组";
+    if (typeof l.protocols !== "object" || l.protocols === null || Array.isArray(l.protocols)) return "llm.protocols 必须是对象";
+    const protos = l.protocols as Record<string, unknown>;
+    if (Object.keys(protos).length === 0) return "llm.protocols 至少需要一个协议";
+    for (const [name, proto] of Object.entries(protos)) {
+      if (typeof proto !== "object" || proto === null || Array.isArray(proto)) return `llm.protocols.${name} 必须是对象`;
+      const baseURL = (proto as Record<string, unknown>).baseURL;
+      if (typeof baseURL !== "string" || baseURL.trim() === "") return `llm.protocols.${name}.baseURL 必填`;
+    }
+  }
+  for (const cap of ["asr", "tts"]) {
+    const section = root[cap];
+    if (section === undefined) continue;
+    if (typeof section !== "object" || section === null || Array.isArray(section)) return `${cap} 必须是对象`;
+    const c = section as Record<string, unknown>;
+    if (typeof c.url !== "string") return `${cap}.url 必须是字符串`;
+    if (typeof c.protocol !== "string" || c.protocol.trim() === "") return `${cap}.protocol 必填`;
+    if (c.models !== undefined && (!Array.isArray(c.models) || c.models.some((x) => typeof x !== "string"))) return `${cap}.models 必须是字符串数组`;
+    if (c.voices !== undefined && (!Array.isArray(c.voices) || c.voices.some((x) => typeof x !== "object" || x === null || Array.isArray(x)))) return `${cap}.voices 必须是对象数组`;
+  }
+  return null;
+}
+
+/** 供应商配置：只读列表 + 列表下方内联详情（配置参数 + API Keys）。 */
+function AdminProviderConfigs({ isWrite }: { isWrite: boolean }): React.JSX.Element {
   const { t } = useT();
-  const [models, setModels] = useState<LlmModelRow[]>([]);
-  const [msg, setMsg] = useState("");
-  const [form, setForm] = useState({ id: "", displayName: "", provider: "deepseek", upstreamModel: "" });
-  const [editId, setEditId] = useState<string | null>(null);
-  const [edit, setEdit] = useState({ displayName: "", inputPriceMicro: "", outputPriceMicro: "", contextWindow: "", maxTokens: "", sortOrder: "", nameSource: "manual" });
-  const reload = (): void => { adminApi.llmModels().then((r) => setModels(r.models as unknown as LlmModelRow[])).catch(() => setModels([])); };
-  useEffect(() => { reload(); }, []);
-  const create = (): void => {
-    adminApi.createLlmModel({ ...form, upstreamModel: form.upstreamModel || form.id }).then(() => { setMsg("ok"); setForm({ id: "", displayName: "", provider: "deepseek", upstreamModel: "" }); reload(); }).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed"));
+  const [configs, setConfigs] = useState<AdminProviderConfigRow[]>([]);
+  const [keys, setKeys] = useState<AdminUpstreamKeyRow[]>([]);
+  const [specs, setSpecs] = useState<UpstreamProviderSpec[]>([]);
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [formErr, setFormErr] = useState("");
+  const [notice, setNotice] = useState<AdminNotice | null>(null);
+  const [keyDialog, setKeyDialog] = useState<{ provider: string; key: AdminUpstreamKeyRow | null } | null>(null);
+  const [revealed, setRevealed] = useState<{ id: string; secret: string } | null>(null);
+  const reload = (): void => {
+    adminApi.providerConfigs().then((r) => setConfigs(r.configs)).catch(() => setConfigs([]));
+    adminApi.llmUpstreamKeys().then((r) => setKeys(r.keys)).catch(() => setKeys([]));
   };
-  const toggle = (m: LlmModelRow): void => {
-    adminApi.updateLlmModel(m.id, { enabled: !m.enabled }).then(() => reload()).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed"));
+  useEffect(() => {
+    reload();
+    adminApi.upstreamProviders().then((r) => setSpecs(r.providers)).catch(() => setSpecs([]));
+  }, []);
+  const current = expanded === null ? undefined : configs.find((c) => c.provider === expanded);
+  const providerKeys = current === undefined ? [] : keys.filter((k) => k.provider === current.provider);
+  const usableKeyCount = providerKeys.filter((k) => k.enabled && k.revokedAt === null).length;
+
+  const toggleDetail = (provider: string): void => {
+    setEditing(false);
+    setFormErr("");
+    setRevealed(null);
+    setExpanded((prev) => (prev === provider ? null : provider));
   };
-  const del = (m: LlmModelRow): void => {
-    adminApi.deleteLlmModel(m.id).then(() => reload()).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed"));
+  const startEdit = (): void => {
+    if (current === undefined) return;
+    setDraft(adminJsonPretty(current.params));
+    setFormErr("");
+    setEditing(true);
   };
-  const startEdit = (m: LlmModelRow): void => {
-    setEditId(m.id);
-    setEdit({ displayName: m.displayName, inputPriceMicro: String(m.inputPriceMicro), outputPriceMicro: String(m.outputPriceMicro), contextWindow: String(m.contextWindow), maxTokens: String(m.maxTokens), sortOrder: String(m.sortOrder), nameSource: m.nameSource });
+  const saveParams = (): void => {
+    if (current === undefined) return;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(draft) as unknown;
+    } catch {
+      setFormErr(t("JSON 解析失败，请检查括号 / 引号 / 逗号"));
+      return;
+    }
+    const verr = validateProviderParams(parsed);
+    if (verr !== null) {
+      setFormErr(verr);
+      return;
+    }
+    adminApi.updateProviderConfig(current.provider, { params: parsed })
+      .then(() => { setEditing(false); setFormErr(""); setNotice({ kind: "ok", text: t("配置参数已保存") }); reload(); })
+      .catch((e: unknown) => setFormErr(adminFriendlyError(t, e)));
   };
-  const num = (s: string): number => { const n = Number(s); return Number.isFinite(n) && n >= 0 ? n : 0; };
-  const saveEdit = (): void => {
-    if (editId === null) return;
-    adminApi.updateLlmModel(editId, {
-      displayName: edit.displayName, inputPriceMicro: num(edit.inputPriceMicro), outputPriceMicro: num(edit.outputPriceMicro),
-      contextWindow: num(edit.contextWindow), maxTokens: num(edit.maxTokens), sortOrder: num(edit.sortOrder),
-      nameSource: edit.nameSource,
-    }).then(() => { setMsg("ok"); setEditId(null); reload(); }).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed"));
+  const toggleKey = (k: AdminUpstreamKeyRow): void => {
+    adminApi.updateLlmUpstreamKey(k.id, { enabled: !k.enabled })
+      .then(() => reload())
+      .catch((e: unknown) => setNotice({ kind: "err", text: adminFriendlyError(t, e) }));
   };
+  const revokeKey = (k: AdminUpstreamKeyRow): void => {
+    adminApi.revokeLlmUpstreamKey(k.id)
+      .then(() => { setNotice({ kind: "ok", text: t("Key 已吊销") }); reload(); })
+      .catch((e: unknown) => setNotice({ kind: "err", text: adminFriendlyError(t, e) }));
+  };
+  const revealKey = (k: AdminUpstreamKeyRow): void => {
+    adminApi.revealLlmUpstreamKey(k.id)
+      .then((r) => setRevealed({ id: k.id, secret: r.secret }))
+      .catch((e: unknown) => setNotice({ kind: "err", text: adminFriendlyError(t, e) }));
+  };
+
   return (
     <div>
-      <h3 style={{ fontSize: 16, margin: "0 0 12px" }}>{t("模型目录")}</h3>
-      {msg !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{msg}</p>}
-      {isWrite && (
-        <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
-          <input placeholder="id" value={form.id} onChange={(e) => setForm({ ...form, id: e.target.value })} style={{ padding: "6px 8px" }} />
-          <input placeholder={t("显示名")} value={form.displayName} onChange={(e) => setForm({ ...form, displayName: e.target.value })} style={{ padding: "6px 8px" }} />
-          <input placeholder="upstream" value={form.upstreamModel} onChange={(e) => setForm({ ...form, upstreamModel: e.target.value })} style={{ padding: "6px 8px" }} />
-          <button onClick={create} style={adminBtnStyle("primary")}>{t("新增")}</button>
-        </div>
+      <h3 style={{ fontSize: 16, margin: "0 0 12px" }}>{t("供应商配置", { en: "Providers" })}</h3>
+      <p style={{ margin: "0 0 12px", fontSize: 12, color: "var(--rdsh-fg-muted)" }}>
+        {t("供应商由种子数据写入，不可新增 / 删除；这里只维护连接参数与 API Keys。")}
+      </p>
+      {notice !== null && (
+        <p style={{ color: notice.kind === "ok" ? "#07c160" : "var(--rdsh-danger)", fontSize: 13, margin: "0 0 8px" }}>{notice.text}</p>
       )}
-      {models.map((m) => (
-        <div key={m.id} style={{ borderTop: "1px solid var(--rdsh-border-soft)", padding: "8px 0" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ fontFamily: "monospace" }}>{m.id}</span>
-            <span style={{ color: "var(--rdsh-fg-muted)" }}>{m.displayName}</span>
-            <span style={{ fontSize: 12, color: "var(--rdsh-fg-subtle)" }}>{m.nameSource === "upstream" ? "sync" : "manual"}</span>
-            <span style={{ marginLeft: "auto", fontSize: 12, color: m.enabled ? "#07c160" : "var(--rdsh-fg-muted)" }}>{m.enabled ? t("启用") : t("停用")}</span>
-            {isWrite && <button onClick={() => startEdit(m)} style={adminBtnStyle("ghost")}>{t("编辑")}</button>}
-            {isWrite && <button onClick={() => toggle(m)} style={adminBtnStyle("ghost")}>{m.enabled ? t("停用") : t("启用")}</button>}
-            {isWrite && <button onClick={() => del(m)} style={adminBtnStyle("danger")}>{t("删除")}</button>}
+      <table className="admintbl" style={adminTableStyle()}>
+        <thead>
+          <tr>
+            {adminTh(t("供应商", { en: "Provider" }))}
+            {adminTh(t("大模型", { en: "LLM" }))}
+            {adminTh(t("语音"))}
+            {adminTh(t("更新时间"))}
+            {adminTh(t("操作"))}
+          </tr>
+        </thead>
+        <tbody>
+          {configs.map((c) => {
+            const params = adminParseJsonObject(c.params);
+            const protocols = adminProtocols(params);
+            const voice = adminVoiceCapabilities(params);
+            return (
+              <tr key={c.provider} style={{ borderTop: "1px solid var(--rdsh-border-soft)" }}>
+                {adminTd(t("供应商", { en: "Provider" }), <span style={{ fontFamily: "monospace", fontWeight: 600 }}>{c.provider}</span>)}
+                {adminTd(t("大模型", { en: "LLM" }), protocols.length === 0 ? "—" : protocols.join(" · "))}
+                {adminTd(t("语音"), voice.length === 0 ? "—" : voice.join(" · "))}
+                {adminTd(t("更新时间"), adminDate(c.updatedAt))}
+                {adminTd(null, (
+                  <button onClick={() => toggleDetail(c.provider)} style={adminBtnStyle("ghost")}>
+                    {expanded === c.provider ? t("收起") : t("详情")}
+                  </button>
+                ))}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {configs.length === 0 && <p style={{ fontSize: 13, color: "var(--rdsh-fg-muted)" }}>{t("暂无供应商配置（请先执行 seed migration）")}</p>}
+
+      {current !== undefined && (
+        <div style={{ marginTop: 16, border: "1px solid var(--rdsh-border)", borderRadius: 10, padding: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+            <h4 style={{ margin: 0, fontSize: 14, fontFamily: "monospace" }}>{t("供应商", { en: "Provider" })} · {current.provider}</h4>
+            <button onClick={() => toggleDetail(current.provider)} style={{ ...adminBtnStyle("ghost"), marginLeft: "auto" }}>{t("收起")}</button>
           </div>
-          {editId === m.id && (
-            <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap", alignItems: "center" }}>
-              <input placeholder={t("显示名")} value={edit.displayName} onChange={(e) => setEdit({ ...edit, displayName: e.target.value })} style={{ padding: "4px 6px", width: 180 }} />
-              <input placeholder="in" value={edit.inputPriceMicro} onChange={(e) => setEdit({ ...edit, inputPriceMicro: e.target.value })} style={{ padding: "4px 6px", width: 90 }} />
-              <input placeholder="out" value={edit.outputPriceMicro} onChange={(e) => setEdit({ ...edit, outputPriceMicro: e.target.value })} style={{ padding: "4px 6px", width: 90 }} />
-              <input placeholder="ctx" value={edit.contextWindow} onChange={(e) => setEdit({ ...edit, contextWindow: e.target.value })} style={{ padding: "4px 6px", width: 90 }} />
-              <input placeholder="max" value={edit.maxTokens} onChange={(e) => setEdit({ ...edit, maxTokens: e.target.value })} style={{ padding: "4px 6px", width: 90 }} />
-              <input placeholder="sort" value={edit.sortOrder} onChange={(e) => setEdit({ ...edit, sortOrder: e.target.value })} style={{ padding: "4px 6px", width: 60 }} />
-              <button onClick={() => setEdit({ ...edit, nameSource: edit.nameSource === "upstream" ? "manual" : "upstream" })} style={adminBtnStyle("ghost")}>{edit.nameSource}</button>
-              <button onClick={saveEdit} style={adminBtnStyle("primary")}>{t("保存")}</button>
-              <button onClick={() => setEditId(null)} style={adminBtnStyle("ghost")}>{t("取消")}</button>
+
+          <h5 style={{ margin: "0 0 8px", fontSize: 13 }}>{t("配置参数")}</h5>
+          {!editing ? (
+            <>
+              <pre style={{ margin: 0, padding: 12, background: "var(--rdsh-bg-soft, var(--rdsh-bg-surface))", border: "1px solid var(--rdsh-border-soft)", borderRadius: 6, fontSize: 12, lineHeight: 1.5, maxHeight: 260, overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                {adminJsonPretty(current.params)}
+              </pre>
+              {isWrite && (
+                <button onClick={startEdit} style={{ ...adminBtnStyle("ghost"), marginTop: 8 }}>{t("修改")}</button>
+              )}
+            </>
+          ) : (
+            <>
+              <textarea
+                value={draft}
+                onChange={(e) => { setDraft(e.target.value); if (formErr !== "") setFormErr(""); }}
+                rows={14}
+                spellCheck={false}
+                style={{ width: "100%", boxSizing: "border-box", padding: 10, fontFamily: "monospace", lineHeight: 1.5, background: "var(--rdsh-bg-surface)" }}
+              />
+              {formErr !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 12, margin: "6px 0 0" }}>⚠ {formErr}</p>}
+              <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                <button
+                  onClick={() => {
+                    const tpl = PROVIDER_DEFAULT_PARAMS[current.provider];
+                    setDraft(tpl !== undefined ? JSON.stringify(tpl, null, 2) : adminJsonPretty(current.params));
+                    setFormErr("");
+                  }}
+                  style={adminBtnStyle("ghost")}
+                >
+                  {t("默认值")}
+                </button>
+                <button onClick={saveParams} style={adminBtnStyle("primary")}>{t("保存")}</button>
+                <button onClick={() => { setEditing(false); setFormErr(""); }} style={adminBtnStyle("ghost")}>{t("取消")}</button>
+              </div>
+            </>
+          )}
+
+          <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "18px 0 8px", flexWrap: "wrap" }}>
+            <h5 style={{ margin: 0, fontSize: 13 }}>{t("API Keys")}</h5>
+            {usableKeyCount === 0 && <span style={{ fontSize: 12, color: "#f59e0b" }}>⚠ {t("该供应商暂无可用 Key，模型代理无法路由到它")}</span>}
+            <span style={{ marginLeft: "auto" }} />
+            {isWrite && (
+              <button onClick={() => setKeyDialog({ provider: current.provider, key: null })} style={adminBtnStyle("primary")}>{t("+ 新增 Key")}</button>
+            )}
+          </div>
+          {revealed !== null && (
+            <div style={{ marginBottom: 10, padding: 8, border: "1px solid var(--rdsh-border-soft)", borderRadius: 6 }}>
+              <span style={{ fontSize: 12, color: "var(--rdsh-fg-muted)" }}>{t("明文密钥：")}</span>
+              <SecretText secret={revealed.secret} />
+              <button onClick={() => setRevealed(null)} style={{ ...adminBtnStyle("ghost"), marginLeft: 8 }}>{t("隐藏")}</button>
             </div>
           )}
+          <table className="admintbl" style={adminTableStyle()}>
+            <thead>
+              <tr>
+                {adminTh(t("备注"))}
+                {adminTh(t("能力"))}
+                {adminTh(t("权重"))}
+                {adminTh(t("并发"))}
+                {adminTh(t("状态"))}
+                {adminTh(t("操作"))}
+              </tr>
+            </thead>
+            <tbody>
+              {providerKeys.map((k) => {
+                const caps = adminKeyCapabilities(k.capabilities);
+                return (
+                  <tr key={k.id} style={{ borderTop: "1px solid var(--rdsh-border-soft)" }}>
+                    {adminTd(t("备注"), k.label)}
+                    {adminTd(t("能力"), caps === null ? t("全部") : caps.map((c) => adminCapabilityLabel(t, c)).join(" · "))}
+                    {adminTd(t("权重"), String(k.weight))}
+                    {adminTd(t("并发"), k.maxConcurrency === 0 ? t("不限") : String(k.maxConcurrency))}
+                    {adminTd(t("状态"), (
+                      <span style={{ fontSize: 12, color: k.revokedAt !== null ? "var(--rdsh-danger)" : k.enabled ? "#07c160" : "var(--rdsh-fg-muted)" }}>
+                        {k.revokedAt !== null ? t("已吊销") : k.enabled ? t("启用") : t("停用")}
+                      </span>
+                    ))}
+                    {adminTd(null, (
+                      <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap" }}>
+                        {isWrite && k.revokedAt === null && <button onClick={() => setKeyDialog({ provider: current.provider, key: k })} style={adminBtnStyle("ghost")}>{t("修改")}</button>}
+                        {isWrite && k.revokedAt === null && <button onClick={() => revealKey(k)} style={adminBtnStyle("ghost")}>{t("查看密钥")}</button>}
+                        {isWrite && k.revokedAt === null && <button onClick={() => toggleKey(k)} style={adminBtnStyle("ghost")}>{k.enabled ? t("停用") : t("启用")}</button>}
+                        {isWrite && k.revokedAt === null && <button onClick={() => revokeKey(k)} style={adminBtnStyle("danger")}>{t("吊销")}</button>}
+                      </div>
+                    ))}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {providerKeys.length === 0 && <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--rdsh-fg-muted)" }}>{t("暂无 Key")}</p>}
         </div>
-      ))}
+      )}
+
+      {keyDialog !== null && (
+        <AdminProviderKeyDialog
+          provider={keyDialog.provider}
+          initial={keyDialog.key}
+          specs={specs}
+          configs={configs}
+          onClose={() => setKeyDialog(null)}
+          onSaved={(text) => { setKeyDialog(null); setNotice({ kind: "ok", text }); reload(); }}
+        />
+      )}
     </div>
   );
 }
 
-type UpstreamProviderSpec = { provider: string; service: string; credentialType: string; fields: string[]; paramsFields?: string[] };
+/** 明文密钥展示：语音 Key 是 JSON 对象，逐字段展示；LLM Key 原样展示。 */
+function SecretText({ secret }: { secret: string }): React.JSX.Element {
+  const obj = adminParseJsonObject(secret);
+  if (obj === null) return <code style={{ fontSize: 12, wordBreak: "break-all" }}>{secret}</code>;
+  return (
+    <span style={{ marginLeft: 8 }}>
+      {Object.entries(obj).map(([k, v]) => (
+        <span key={k} style={{ display: "block", fontSize: 12 }}><code>{k}: {String(v)}</code></span>
+      ))}
+    </span>
+  );
+}
 
-function AdminLlmKeys({ isWrite }: { isWrite: boolean }): React.JSX.Element {
+/** 新增 / 修改上游 Key 弹窗（能力多选默认全选；供应商有多套凭据形态时显示「服务」）。 */
+function AdminProviderKeyDialog(props: {
+  provider: string;
+  initial: AdminUpstreamKeyRow | null;
+  specs: UpstreamProviderSpec[];
+  configs: AdminProviderConfigRow[];
+  onClose: () => void;
+  onSaved: (text: string) => void;
+}): React.JSX.Element {
+  useBlockEscape();
   const { t } = useT();
-  const [keys, setKeys] = useState<LlmUpstreamKeyRow[]>([]);
-  const [providers, setProviders] = useState<UpstreamProviderSpec[]>([]);
-  const [msg, setMsg] = useState("");
-  const [form, setForm] = useState({ service: "llm", provider: "deepseek", label: "", weight: 1, secretFields: {} as Record<string, string> });
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [revealed, setRevealed] = useState<string | null>(null);
-  const reload = (): void => { adminApi.llmUpstreamKeys().then((r) => setKeys(r.keys as unknown as LlmUpstreamKeyRow[])).catch(() => setKeys([])); };
-  useEffect(() => { reload(); adminApi.upstreamProviders().then((r) => setProviders(r.providers as unknown as UpstreamProviderSpec[])).catch(() => setProviders([])); }, []);
-  const spec = providers.find((p) => p.provider === form.provider);
-  const setService = (service: string): void => {
-    const first = providers.find((p) => p.service === service);
-    setForm({ ...form, service, provider: first?.provider ?? "deepseek", secretFields: {} });
+  const editing = props.initial !== null;
+  const specsOf = (p: string): UpstreamProviderSpec[] => props.specs.filter((s) => s.provider === p);
+  const initialSpecs = specsOf(props.initial?.provider ?? props.provider);
+  const [provider, setProvider] = useState(props.initial?.provider ?? props.provider);
+  const [service, setService] = useState(props.initial?.service ?? adminPreferredService(props.initial?.provider ?? props.provider, initialSpecs, props.configs));
+  const [label, setLabel] = useState(props.initial?.label ?? "");
+  const [secrets, setSecrets] = useState<Record<string, string>>({});
+  const [weight, setWeight] = useState(String(props.initial?.weight ?? 1));
+  const [concurrency, setConcurrency] = useState(String(props.initial?.maxConcurrency ?? 0));
+  const [enabled, setEnabled] = useState(props.initial?.enabled ?? true);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [caps, setCaps] = useState<string[]>(() => {
+    const available = adminProviderCapabilities(props.initial?.provider ?? props.provider, initialSpecs, props.configs);
+    const current = adminKeyCapabilities(props.initial?.capabilities ?? null);
+    return current === null ? available : adminCapabilityOrder([...new Set([...available, ...current])]);
+  });
+  const providerSpecs = specsOf(provider);
+  const spec = providerSpecs.find((s) => s.service === service) ?? providerSpecs[0];
+  const availableCaps = adminProviderCapabilities(provider, providerSpecs, props.configs);
+  const capOptions = adminCapabilityOrder([...new Set([...availableCaps, ...caps])]);
+  const providerOptions = [...new Set([props.provider, ...props.configs.map((c) => c.provider)])];
+
+  const selectProvider = (next: string): void => {
+    const nextSpecs = specsOf(next);
+    setProvider(next);
+    setService(adminPreferredService(next, nextSpecs, props.configs));
+    setSecrets({});
+    setCaps(adminProviderCapabilities(next, nextSpecs, props.configs));
+    setErr("");
   };
-  const setProvider = (provider: string): void => setForm({ ...form, provider, secretFields: {} });
-  const setField = (f: string, v: string): void => setForm({ ...form, secretFields: { ...form.secretFields, [f]: v } });
-  const startEdit = (k: LlmUpstreamKeyRow): void => {
-    setEditingId(k.id);
-    setForm({ service: k.service, provider: k.provider, label: k.label, weight: k.weight, secretFields: {} });
-    setMsg("");
+  const toggleCap = (cap: string): void => {
+    setCaps((prev) => (prev.includes(cap) ? prev.filter((c) => c !== cap) : [...prev, cap]));
   };
-  const reveal = (k: LlmUpstreamKeyRow): void => {
-    adminApi.revealLlmUpstreamKey(k.id).then((r) => setRevealed(r.secret)).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed"));
+  const buildSecret = (): unknown => {
+    if (spec === undefined) return undefined;
+    if (spec.service === "llm") return (secrets["apiKey"] ?? "").trim();
+    const obj: Record<string, string> = {};
+    for (const f of spec.fields) obj[f] = (secrets[f] ?? "").trim();
+    return obj;
   };
   const save = (): void => {
-    if (spec === undefined) { setMsg(t("请选择供应商")); return; }
-    let secret: unknown;
-    const hasAny = spec.service === "llm" ? (form.secretFields.apiKey ?? "").trim() !== "" : spec.fields.some((f) => (form.secretFields[f] ?? "").trim() !== "");
-    if (hasAny) {
+    setErr("");
+    const weightNum = Number(weight);
+    if (!Number.isInteger(weightNum) || weightNum <= 0) { setErr(t("权重必须是正整数")); return; }
+    const concNum = Number(concurrency);
+    if (!Number.isInteger(concNum) || concNum < 0) { setErr(t("并发上限必须是非负整数（0 = 不限）")); return; }
+    const selected = adminCapabilityOrder(caps);
+    if (selected.length === 0) { setErr(t("至少选择一项能力")); return; }
+    if (label.trim() === "") { setErr(t("请填写备注")); return; }
+    if (spec === undefined && !editing) { setErr(t("该供应商没有可用的凭据模板")); return; }
+    if (!editing) {
+      if (spec === undefined) return;
       if (spec.service === "llm") {
-        secret = (form.secretFields.apiKey ?? "").trim();
-        if (secret === "") { setMsg(t("请填写 API Key")); return; }
+        if ((secrets["apiKey"] ?? "").trim() === "") { setErr(t("请填写 API Key")); return; }
       } else {
-        const obj: Record<string, string> = {};
         for (const f of spec.fields) {
-          const v = (form.secretFields[f] ?? "").trim();
-          if (v === "") { setMsg(f + " " + t("必填")); return; }
-          obj[f] = v;
+          if ((secrets[f] ?? "").trim() === "") { setErr(`${adminCredentialFieldLabel(f)} ${t("必填")}`); return; }
         }
-        secret = obj;
       }
-    } else if (editingId === null) {
-      setMsg(t("请填写密钥")); return;
     }
-    const payload: Record<string, unknown> = { service: form.service, provider: form.provider, label: form.label, weight: form.weight };
-    if (secret !== undefined) payload.secret = secret;
-    const done = (): void => { setMsg("ok"); setEditingId(null); setForm({ ...form, label: "", secretFields: {} }); reload(); };
-    const fail = (e: unknown): void => setMsg(e instanceof Error ? e.message : "failed");
-    if (editingId === null) adminApi.createLlmUpstreamKey(payload).then(done).catch(fail);
-    else adminApi.updateLlmUpstreamKey(editingId, payload).then(done).catch(fail);
+    setBusy(true);
+    const done = (text: string): void => { props.onSaved(text); };
+    const fail = (e: unknown): void => { setErr(adminFriendlyError(t, e)); setBusy(false); };
+    if (!editing) {
+      if (spec === undefined) { setBusy(false); return; }
+      adminApi.createLlmUpstreamKey({
+        provider,
+        service: spec.service,
+        label: label.trim(),
+        secret: buildSecret(),
+        weight: weightNum,
+        capabilities: selected,
+        maxConcurrency: concNum,
+      })
+        .then(async (created) => {
+          if (!enabled) await adminApi.updateLlmUpstreamKey(created.key.id, { enabled: false });
+          done(t("Key 已新增"));
+        })
+        .catch(fail);
+      return;
+    }
+    if (props.initial === null) { setBusy(false); return; }
+    const payload: Record<string, unknown> = { label: label.trim(), weight: weightNum, capabilities: selected, maxConcurrency: concNum, enabled };
+    if (spec !== undefined) {
+      const hasAny = spec.fields.some((f) => (secrets[f] ?? "").trim() !== "");
+      if (hasAny) {
+        if (spec.service === "llm") {
+          if ((secrets["apiKey"] ?? "").trim() === "") { setErr(t("请填写 API Key")); setBusy(false); return; }
+        } else {
+          for (const f of spec.fields) {
+            if ((secrets[f] ?? "").trim() === "") { setErr(`${adminCredentialFieldLabel(f)} ${t("必填")}`); setBusy(false); return; }
+          }
+        }
+        payload.secret = buildSecret();
+      }
+    }
+    adminApi.updateLlmUpstreamKey(props.initial.id, payload).then(() => done(t("Key 已保存"))).catch(fail);
   };
-  const toggle = (k: LlmUpstreamKeyRow): void => { adminApi.updateLlmUpstreamKey(k.id, { enabled: !k.enabled }).then(() => reload()).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed")); };
-  const revoke = (k: LlmUpstreamKeyRow): void => { adminApi.revokeLlmUpstreamKey(k.id).then(() => reload()).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed")); };
+
+  return (
+    <div style={adminModalScrimStyle()}>
+      <div role="dialog" aria-modal="true" aria-label={editing ? t("修改上游 Key") : t("新增上游 Key")} style={adminModalCardStyle()}>
+        <h3 style={{ margin: "0 0 14px", fontSize: 16 }}>{editing ? t("修改上游 Key") : t("新增上游 Key")}</h3>
+        <AdminFormRow label={t("供应商", { en: "Provider" })}>
+          <select value={provider} disabled={editing} onChange={(e) => selectProvider(e.target.value)} style={adminFormInputStyle()}>
+            {providerOptions.map((p) => <option key={p} value={p}>{p}</option>)}
+          </select>
+        </AdminFormRow>
+        {providerSpecs.length > 1 && (
+          <AdminFormRow label={t("服务")}>
+            <select value={spec?.service ?? service} disabled={editing} onChange={(e) => setService(e.target.value)} style={adminFormInputStyle()}>
+              {providerSpecs.map((s) => <option key={s.service} value={s.service}>{s.service === "llm" ? t("大模型", { en: "LLM" }) : t("语音")}</option>)}
+            </select>
+          </AdminFormRow>
+        )}
+        <AdminFormRow label={t("备注")}>
+          <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={t("如 main / backup")} style={adminFormInputStyle()} />
+        </AdminFormRow>
+        {spec === undefined ? (
+          <p style={{ margin: "0 0 10px", fontSize: 12, color: "#f59e0b" }}>⚠ {t("该供应商没有可用的凭据模板，仅能修改备注 / 能力 / 权重 / 并发")}</p>
+        ) : (
+          spec.fields.map((f) => (
+            <AdminFormRow key={f} label={adminCredentialFieldLabel(f)}>
+              <input
+                type={adminCredentialFieldType(f)}
+                value={secrets[f] ?? ""}
+                onChange={(e) => setSecrets((prev) => ({ ...prev, [f]: e.target.value }))}
+                placeholder={editing ? t("留空则不修改") : ""}
+                style={adminFormInputStyle()}
+              />
+            </AdminFormRow>
+          ))
+        )}
+        <AdminFormRow label={t("可用能力")}>
+          <div style={{ display: "flex", gap: 14, flexWrap: "wrap", paddingTop: 8 }}>
+            {capOptions.map((cap) => (
+              <label key={cap} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 13 }}>
+                <input type="checkbox" checked={caps.includes(cap)} onChange={() => toggleCap(cap)} />
+                {adminCapabilityLabel(t, cap)}
+              </label>
+            ))}
+          </div>
+        </AdminFormRow>
+        <AdminFormRow label={t("权重")}>
+          <input type="number" min={1} value={weight} onChange={(e) => setWeight(e.target.value)} style={adminFormInputStyle()} />
+        </AdminFormRow>
+        <AdminFormRow label={t("并发上限")}>
+          <input type="number" min={0} value={concurrency} onChange={(e) => setConcurrency(e.target.value)} placeholder={t("0 = 不限")} style={adminFormInputStyle()} />
+        </AdminFormRow>
+        <AdminFormRow label={t("状态")}>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, paddingTop: 8 }}>
+            <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+            {t("启用")}
+          </label>
+        </AdminFormRow>
+        {err !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 12, margin: "8px 0 0" }}>⚠ {err}</p>}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+          <button onClick={props.onClose} disabled={busy} style={{ ...adminBtnStyle("ghost"), opacity: busy ? 0.5 : 1 }}>{t("取消")}</button>
+          <button onClick={save} disabled={busy} style={{ ...adminBtnStyle("primary"), opacity: busy ? 0.5 : 1 }}>{t("保存")}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** 模型代理：列表（ID/能力/价格/状态）+ 每行「上游服务」。 */
+function AdminServices({ isWrite }: { isWrite: boolean }): React.JSX.Element {
+  const { t } = useT();
+  const [services, setServices] = useState<AdminServiceRow[]>([]);
+  const [pool, setPool] = useState<AdminServicePoolRow[]>([]);
+  const [configs, setConfigs] = useState<AdminProviderConfigRow[]>([]);
+  const [keys, setKeys] = useState<AdminUpstreamKeyRow[]>([]);
+  const [capFilter, setCapFilter] = useState("all");
+  const [search, setSearch] = useState("");
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  const [notice, setNotice] = useState<AdminNotice | null>(null);
+  const [serviceDialog, setServiceDialog] = useState<{ initial: AdminServiceRow | null } | null>(null);
+  const [poolDialog, setPoolDialog] = useState<AdminServiceRow | null>(null);
+  const reload = (): void => {
+    adminApi.services().then((r) => setServices(r.services)).catch(() => setServices([]));
+    adminApi.servicePool().then((r) => setPool(r.pool)).catch(() => setPool([]));
+    adminApi.providerConfigs().then((r) => setConfigs(r.configs)).catch(() => setConfigs([]));
+    adminApi.llmUpstreamKeys().then((r) => setKeys(r.keys)).catch(() => setKeys([]));
+  };
+  useEffect(() => { reload(); }, []);
+  const fail = (e: unknown): void => setNotice({ kind: "err", text: adminFriendlyError(t, e) });
+  const ok = (text: string): void => { setNotice({ kind: "ok", text }); reload(); };
+  const toggleCollapse = (service: string): void => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(service)) next.delete(service);
+      else next.add(service);
+      return next;
+    });
+  };
+  const toggleService = (s: AdminServiceRow): void => {
+    adminApi.updateService(s.service, {
+      capability: s.capability,
+      unit: s.unit,
+      prices: adminParseJsonObject(s.prices) ?? s.prices,
+      params: adminParseJsonObject(s.params) ?? {},
+      displayName: s.displayName ?? s.service,
+      enabled: !s.enabled,
+    }).then(() => ok(s.enabled ? t("模型代理已停用") : t("模型代理已启用"))).catch(fail);
+  };
+  const removeService = (s: AdminServiceRow): void => {
+    adminApi.deleteService(s.service).then(() => ok(t("模型代理已删除"))).catch(fail);
+  };
+  const togglePool = (entry: AdminServicePoolRow): void => {
+    adminApi.upsertServicePool({
+      id: entry.id,
+      service: entry.service,
+      provider: entry.provider,
+      upstreamModel: entry.upstreamModel,
+      params: adminParseJsonObject(entry.params) ?? undefined,
+      enabled: !entry.enabled,
+    }).then(() => ok(entry.enabled ? t("上游已停用") : t("上游已启用"))).catch(fail);
+  };
+  const removePool = (entry: AdminServicePoolRow): void => {
+    adminApi.deleteServicePool(entry.id).then(() => ok(t("上游已删除"))).catch(fail);
+  };
+  const keyword = search.trim().toLowerCase();
+  const filtered = services.filter((s) => (capFilter === "all" || s.capability === capFilter) && (keyword === "" || s.service.toLowerCase().includes(keyword)));
+
   return (
     <div>
-      <h3 style={{ fontSize: 16, margin: "0 0 12px" }}>{t("上游 Key 池")}</h3>
-      {msg !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{msg}</p>}
-      {isWrite && (
-        <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
-          {editingId !== null && <span style={{ fontSize: 12, color: "var(--rdsh-accent)" }}>{t("正在修改：")}{editingId.slice(0, 8)}…</span>}
-          <select value={form.service} onChange={(e) => setService(e.target.value)} style={{ padding: "6px 8px" }} disabled={editingId !== null}>
-            <option value="llm">{t("大模型")}</option>
-            <option value="voice">{t("语音")}</option>
-          </select>
-          <select value={form.provider} onChange={(e) => setProvider(e.target.value)} style={{ padding: "6px 8px" }} disabled={editingId !== null}>
-            {providers.filter((p) => p.service === form.service).map((p) => <option key={p.provider} value={p.provider}>{p.provider}</option>)}
-          </select>
-          {spec?.service === "llm" ? (
-            <input placeholder={editingId === null ? t("API Key（明文，仅本次输入）") : t("新 API Key（留空则不修改）")} value={form.secretFields.apiKey ?? ""} onChange={(e) => setField("apiKey", e.target.value)} style={{ padding: "6px 8px", width: 260 }} />
-          ) : (
-            spec?.fields.map((f) => (
-              <input key={f} placeholder={editingId === null ? f : `${f}（留空不改）`} value={form.secretFields[f] ?? ""} onChange={(e) => setField(f, e.target.value)} style={{ padding: "6px 8px", width: 150 }} />
-            ))
-          )}
-          <input placeholder={t("备注")} value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} style={{ padding: "6px 8px" }} />
-          <input type="number" placeholder="weight" value={form.weight} onChange={(e) => setForm({ ...form, weight: Number(e.target.value) || 1 })} style={{ padding: "6px 8px", width: 70 }} />
-          <button onClick={save} style={adminBtnStyle("primary")}>{editingId === null ? t("新增") : t("保存")}</button>
-          {editingId !== null && <button onClick={() => { setEditingId(null); setForm({ ...form, label: "", secretFields: {} }); }} style={adminBtnStyle("ghost")}>{t("取消")}</button>}
-        </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+        <h3 style={{ fontSize: 16, margin: 0 }}>{t("模型代理", { en: "Model Proxies" })}</h3>
+        <span style={{ marginLeft: "auto" }} />
+        {isWrite && <button onClick={() => setServiceDialog({ initial: null })} style={adminBtnStyle("primary")}>{t("+ 新增模型代理")}</button>}
+      </div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
+        <select value={capFilter} onChange={(e) => setCapFilter(e.target.value)} style={adminFilterStyle()}>
+          <option value="all">{t("全部")}</option>
+          <option value="llm">{t("大模型", { en: "LLM" })}</option>
+          <option value="asr">ASR</option>
+          <option value="tts">TTS</option>
+        </select>
+        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t("搜索模型代理 ID")} style={{ ...adminFilterStyle(), minWidth: 200 }} />
+      </div>
+      {notice !== null && (
+        <p style={{ color: notice.kind === "ok" ? "#07c160" : "var(--rdsh-danger)", fontSize: 13, margin: "0 0 8px" }}>{notice.text}</p>
       )}
-      {revealed !== null && (
-        <div style={{ marginBottom: 12, padding: 8, border: "1px solid var(--rdsh-border-soft)", borderRadius: 4 }}>
-          <span style={{ fontSize: 12, color: "var(--rdsh-fg-subtle)" }}>{t("明文密钥：")}</span>
-          {(() => {
-            try {
-              const obj = JSON.parse(revealed);
-              if (typeof obj === "object" && obj !== null && !Array.isArray(obj)) {
-                return (
-                  <div style={{ marginLeft: 8 }}>
-                    {Object.entries(obj).map(([k, v]) => (
-                      <div key={k}><code style={{ fontSize: 12 }}>{k}: {String(v)}</code></div>
-                    ))}
-                  </div>
-                );
-              }
-            } catch {
-              // 非 JSON 明文按原样显示
-            }
-            return <code style={{ fontSize: 12, wordBreak: "break-all" }}>{revealed}</code>;
-          })()}
-          <button onClick={() => setRevealed(null)} style={{ ...adminBtnStyle("ghost"), marginLeft: 8 }}>{t("隐藏")}</button>
-        </div>
+
+      {filtered.map((s) => {
+        const entries = pool.filter((p) => p.service === s.service);
+        const isCollapsed = collapsed.has(s.service);
+        return (
+          <div key={s.service} style={{ borderTop: "1px solid var(--rdsh-border-soft)", padding: "10px 0" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <button onClick={() => toggleCollapse(s.service)} title={isCollapsed ? t("展开") : t("收起")} style={{ ...adminBtnStyle("ghost"), padding: "4px 8px" }}>
+                {isCollapsed ? "▸" : "▾"}
+              </button>
+              <span style={{ fontFamily: "monospace", fontWeight: 600 }}>{s.service}</span>
+              <span style={{ fontSize: 12, color: "var(--rdsh-fg-muted)" }}>{adminCapabilityLabel(t, s.capability)}</span>
+              <span style={{ fontSize: 12, color: "var(--rdsh-fg-subtle)" }}>{adminPriceLabel(t, s)}</span>
+              <span style={{ fontSize: 12, color: s.enabled ? "#07c160" : "var(--rdsh-fg-muted)" }}>{s.enabled ? t("启用") : t("停用")}</span>
+              <span style={{ marginLeft: "auto" }} />
+              {isWrite && <button onClick={() => setServiceDialog({ initial: s })} style={adminBtnStyle("ghost")}>{t("编辑")}</button>}
+              {isWrite && <button onClick={() => toggleService(s)} style={adminBtnStyle("ghost")}>{s.enabled ? t("停用") : t("启用")}</button>}
+              {isWrite && <button onClick={() => removeService(s)} style={adminBtnStyle("danger")}>{t("删除")}</button>}
+            </div>
+
+            {!isCollapsed && (
+              <div style={{ marginLeft: 34, marginTop: 8 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 12, color: "var(--rdsh-fg-muted)" }}>└ {t("上游服务")}</span>
+                  {isWrite && <button onClick={() => setPoolDialog(s)} style={{ ...adminBtnStyle("ghost"), padding: "3px 8px", fontSize: 12 }}>{t("+ 加上游")}</button>}
+                </div>
+                {entries.length === 0 ? (
+                  <p style={{ margin: "6px 0 0", fontSize: 12, color: "var(--rdsh-fg-muted)" }}>{t("暂无上游服务")}</p>
+                ) : (
+                  <table className="admintbl" style={{ ...adminTableStyle(), marginTop: 6 }}>
+                    <thead>
+                      <tr>
+                        {adminTh(t("供应商", { en: "Provider" }))}
+                        {adminTh(t("上游模型"))}
+                        {adminTh(t("状态"))}
+                        {adminTh(t("操作"))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {entries.map((entry) => (
+                        <tr key={entry.id} style={{ borderTop: "1px solid var(--rdsh-border-soft)" }}>
+                          {adminTd(t("供应商", { en: "Provider" }), <span style={{ fontFamily: "monospace" }}>{entry.provider}</span>)}
+                          {adminTd(t("上游模型"), <span style={{ fontFamily: "monospace" }}>{entry.upstreamModel ?? "—"}</span>)}
+                          {adminTd(t("状态"), (
+                            <span style={{ fontSize: 12, color: entry.enabled ? "#07c160" : "var(--rdsh-fg-muted)" }}>{entry.enabled ? t("启用") : t("停用")}</span>
+                          ))}
+                          {adminTd(null, (
+                            <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap" }}>
+                              {isWrite && <button onClick={() => togglePool(entry)} style={adminBtnStyle("ghost")}>{entry.enabled ? t("停用") : t("启用")}</button>}
+                              {isWrite && <button onClick={() => removePool(entry)} style={adminBtnStyle("danger")}>{t("删除")}</button>}
+                            </div>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+      {filtered.length === 0 && <p style={{ fontSize: 13, color: "var(--rdsh-fg-muted)" }}>{t("暂无模型代理")}</p>}
+
+      {serviceDialog !== null && (
+        <AdminServiceDialog
+          initial={serviceDialog.initial}
+          existingIds={services.map((s) => s.service)}
+          onClose={() => setServiceDialog(null)}
+          onSaved={(text) => { setServiceDialog(null); ok(text); }}
+        />
       )}
-      {keys.map((k) => (
-        <div key={k.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderTop: "1px solid var(--rdsh-border-soft)" }}>
-          <span style={{ fontFamily: "monospace" }}>[{k.service}]</span>
-          <span style={{ fontFamily: "monospace" }}>{k.provider}</span>
-          <span>{k.label}</span>
-          <span style={{ fontSize: 12, color: "var(--rdsh-fg-subtle)" }}>weight {k.weight}</span>
-          <span style={{ fontSize: 12, color: k.revokedAt !== null ? "var(--rdsh-danger)" : k.enabled ? "#07c160" : "var(--rdsh-fg-muted)" }}>{k.revokedAt !== null ? t("已吊销") : k.enabled ? t("启用") : t("停用")}</span>
-          <span style={{ marginLeft: "auto" }} />
-          {isWrite && k.revokedAt === null && <button onClick={() => startEdit(k)} style={adminBtnStyle("ghost")}>{t("修改")}</button>}
-          {isWrite && k.revokedAt === null && <button onClick={() => reveal(k)} style={adminBtnStyle("ghost")}>{t("查看密钥")}</button>}
-          {isWrite && k.revokedAt === null && <button onClick={() => toggle(k)} style={adminBtnStyle("ghost")}>{k.enabled ? t("停用") : t("启用")}</button>}
-          {isWrite && k.revokedAt === null && <button onClick={() => revoke(k)} style={adminBtnStyle("danger")}>{t("吊销")}</button>}
-        </div>
-      ))}
+      {poolDialog !== null && (
+        <AdminPoolDialog
+          service={poolDialog}
+          configs={configs}
+          keys={keys}
+          existing={pool.filter((p) => p.service === poolDialog.service)}
+          onClose={() => setPoolDialog(null)}
+          onSaved={(text) => { setPoolDialog(null); ok(text); }}
+        />
+      )}
     </div>
   );
 }
 
-function AdminVoiceProviderConfigs({ isWrite }: { isWrite: boolean }): React.JSX.Element {
+/** 新增 / 修改模型代理弹窗（ID / 能力 / 价格 / 状态）。 */
+function AdminServiceDialog(props: {
+  initial: AdminServiceRow | null;
+  existingIds: string[];
+  onClose: () => void;
+  onSaved: (text: string) => void;
+}): React.JSX.Element {
+  useBlockEscape();
   const { t } = useT();
-  const [providers, setProviders] = useState<UpstreamProviderSpec[]>([]);
-  const [configs, setConfigs] = useState<Array<{ provider: string; params: string; updatedAt: number }>>([]);
-  const [msg, setMsg] = useState("");
-  const [provider, setProvider] = useState("volcengine");
-  const [params, setParams] = useState<Record<string, string>>({});
-  const reload = (): void => { adminApi.llmUpstreamProviderConfigs().then((r) => setConfigs(r.configs)).catch(() => setConfigs([])); };
-  useEffect(() => { reload(); adminApi.upstreamProviders().then((r) => setProviders(r.providers as unknown as UpstreamProviderSpec[])).catch(() => setProviders([])); }, []);
-  const voiceProviders = providers.filter((p) => p.service === "voice");
-  const spec = providers.find((p) => p.provider === provider);
-  const specFields = spec?.paramsFields ?? [];
-
-  const labelOf = (f: string): string => {
-    switch (f) {
-      case "asrUrl": return "ASR URL";
-      case "asrResourceId": return "ASR resourceId";
-      case "ttsUrl": return "TTS URL";
-      case "ttsResourceId": return "TTS resourceId";
-      case "asrModel": return t("ASR 模型");
-      case "ttsVoices": case "voices": return t("音色（逗号分隔）");
-      case "maxConcurrency": return t("并发上限");
-      default: return f;
-    }
+  const editing = props.initial !== null;
+  const [service, setService] = useState(props.initial?.service ?? "");
+  const [capability, setCapability] = useState(props.initial?.capability ?? "llm");
+  const initialPrices = props.initial === null ? JSON.stringify(defaultServicePrices("llm"), null, 2) : adminJsonPretty(props.initial.prices);
+  const [prices, setPrices] = useState(initialPrices);
+  const initialParams = props.initial?.params ?? "{}";
+  const [paramsText, setParamsText] = useState(initialParams);
+  const [enabled, setEnabled] = useState(props.initial?.enabled ?? true);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const selectCapability = (cap: string): void => {
+    setCapability(cap);
+    if (!editing) setPrices(JSON.stringify(defaultServicePrices(cap), null, 2));
   };
-  const isTextarea = (f: string): boolean => f === "ttsVoices" || f === "voices";
-  const isNumber = (f: string): boolean => f === "maxConcurrency";
-
-  // 把已存 JSON 参数摊平成表单字符串；`ttsVoices` 数组逗号连接，数字转字符串。
-  const toForm = (raw: Record<string, unknown>): Record<string, string> => {
-    const out: Record<string, string> = {};
-    for (const f of specFields) {
-      let v = raw[f];
-      if ((v === null || v === undefined) && f === "ttsVoices") v = raw["voices"]; // 旧字段兼容
-      if (Array.isArray(v)) out[f] = v.map(String).join(",");
-      else if (v === null || v === undefined) out[f] = "";
-      else out[f] = String(v);
-    }
-    return out;
-  };
-
-  const setP = (f: string, v: string): void => setParams({ ...params, [f]: v });
-  const selectProvider = (p: string): void => { setProvider(p); setParams({}); setMsg(""); };
-
-  const startEdit = (c: { provider: string; params: string }): void => {
-    setProvider(c.provider);
-    try {
-      setParams(toForm(JSON.parse(c.params) as Record<string, unknown>));
-    } catch {
-      setParams({});
-    }
-    setMsg("");
-  };
-
   const save = (): void => {
-    if (spec === undefined || spec.service !== "voice") { setMsg(t("请选择语音供应商")); return; }
-    const obj: Record<string, unknown> = {};
-    for (const f of specFields) {
-      const raw = (params[f] ?? "").trim();
-      if (f === "ttsVoices" || f === "voices") {
-        obj[f] = raw === "" ? [] : raw.split(/[,\n]+/).map((v) => v.trim()).filter((v) => v !== "");
-      } else if (f === "maxConcurrency") {
-        const n = parseInt(raw, 10);
-        if (!Number.isNaN(n) && n > 0) obj[f] = n;
-      } else if (raw !== "") {
-        obj[f] = raw;
-      }
+    setErr("");
+    const id = service.trim();
+    if (id === "") { setErr(t("请填写模型代理 ID")); return; }
+    if (!/^[a-z0-9][a-z0-9._-]*$/.test(id)) { setErr(t("模型代理 ID 只能包含小写字母、数字、点、下划线和短横线")); return; }
+    if (!editing && props.existingIds.includes(id)) { setErr(t("模型代理 ID 已存在")); return; }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(prices) as unknown;
+    } catch {
+      setErr(t("价格必须是合法 JSON"));
+      return;
     }
-    adminApi.upsertLlmUpstreamProviderConfig(provider, { params: obj }).then(() => { setMsg("ok"); reload(); }).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed"));
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) { setErr(t("价格必须是 JSON 对象")); return; }
+    let parsedParams: unknown = {};
+    try {
+      parsedParams = JSON.parse(paramsText) as unknown;
+    } catch {
+      setErr(t("参数必须是合法 JSON"));
+      return;
+    }
+    if (typeof parsedParams !== "object" || parsedParams === null || Array.isArray(parsedParams)) { setErr(t("参数必须是 JSON 对象")); return; }
+    const unit = props.initial !== null && props.initial.capability === capability
+      ? props.initial.unit
+      : capability === "llm" ? "per_mtok" : capability === "asr" ? "per_second" : capability === "tts" ? "per_char" : props.initial?.unit ?? "per_mtok";
+    setBusy(true);
+    adminApi.updateService(id, {
+      capability,
+      unit,
+      prices: parsed,
+      params: parsedParams,
+      displayName: props.initial?.displayName ?? id,
+      enabled,
+    })
+      .then(() => props.onSaved(editing ? t("模型代理已保存") : t("模型代理已新增")))
+      .catch((e: unknown) => { setErr(adminFriendlyError(t, e)); setBusy(false); });
   };
-
   return (
-    <div style={{ marginTop: 24 }}>
-      <h3 style={{ fontSize: 16, margin: "0 0 12px" }}>{t("语音供应商配置（URL / resourceId / 模型 / 音色）")}</h3>
-      {msg !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{msg}</p>}
-      {isWrite && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
-          <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13 }}>
-            <span style={{ width: 110, color: "var(--rdsh-fg-subtle)" }}>{t("供应商")}</span>
-            <select value={provider} onChange={(e) => selectProvider(e.target.value)} style={{ padding: "6px 8px" }}>
-              {voiceProviders.map((p) => <option key={p.provider} value={p.provider}>{p.provider}</option>)}
-            </select>
+    <div style={adminModalScrimStyle()}>
+      <div role="dialog" aria-modal="true" aria-label={editing ? t("修改模型代理") : t("新增模型代理")} style={adminModalCardStyle()}>
+        <h3 style={{ margin: "0 0 14px", fontSize: 16 }}>{editing ? t("修改模型代理") : t("新增模型代理")}</h3>
+        <AdminFormRow label={t("模型代理 ID")}>
+          <input value={service} disabled={editing} onChange={(e) => setService(e.target.value)} placeholder="deepseek-v4-pro" style={adminFormInputStyle()} />
+        </AdminFormRow>
+        <AdminFormRow label={t("能力")}>
+          <select value={capability} onChange={(e) => selectCapability(e.target.value)} style={adminFormInputStyle()}>
+            <option value="llm">{t("大模型", { en: "LLM" })}</option>
+            <option value="asr">ASR</option>
+            <option value="tts">TTS</option>
+            <option value="ocr">OCR</option>
+            <option value="search">{t("搜索", { en: "Search" })}</option>
+          </select>
+        </AdminFormRow>
+        <AdminFormRow label={t("价格")}>
+          <textarea
+            value={prices}
+            onChange={(e) => setPrices(e.target.value)}
+            rows={6}
+            spellCheck={false}
+            style={{ ...adminFormInputStyle(), fontFamily: "monospace", lineHeight: 1.5 }}
+          />
+          <p style={{ margin: "4px 0 0", fontSize: 11, color: "var(--rdsh-fg-subtle)" }}>
+            {t("LLM: {input, output, ...}（micro/百万 token）；语音: {price}（micro/秒 或 micro/字）")}
+          </p>
+        </AdminFormRow>
+        <AdminFormRow label={t("参数（aliases / voices / family）")}>
+          <textarea
+            value={paramsText}
+            onChange={(e) => setParamsText(e.target.value)}
+            rows={4}
+            spellCheck={false}
+            style={{ ...adminFormInputStyle(), fontFamily: "monospace", lineHeight: 1.5 }}
+          />
+          <p style={{ margin: "4px 0 0", fontSize: 11, color: "var(--rdsh-fg-subtle)" }}>
+            {t("ASR: aliases=ds.asr, family=deepseek；TTS: voices=ds.stella；LLM: family=deepseek")}
+          </p>
+        </AdminFormRow>
+        <AdminFormRow label={t("状态")}>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, paddingTop: 8 }}>
+            <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+            {t("启用")}
           </label>
-          {specFields.map((f) => (
-            <label key={f} style={{ display: "flex", gap: 8, alignItems: isTextarea(f) ? "flex-start" : "center", fontSize: 13 }}>
-              <span style={{ width: 110, color: "var(--rdsh-fg-subtle)" }}>{labelOf(f)}</span>
-              {isTextarea(f) ? (
-                <textarea value={params[f] ?? ""} onChange={(e) => setP(f, e.target.value)} style={{ padding: "6px 8px", width: 420, height: 64 }} />
-              ) : (
-                <input value={params[f] ?? ""} onChange={(e) => setP(f, e.target.value)} style={{ padding: "6px 8px", width: isNumber(f) ? 120 : 420 }} />
-              )}
-            </label>
-          ))}
-          <div>
-            <button onClick={save} style={adminBtnStyle("primary")}>{t("保存")}</button>
-          </div>
+        </AdminFormRow>
+        {err !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 12, margin: "8px 0 0" }}>⚠ {err}</p>}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+          <button onClick={props.onClose} disabled={busy} style={{ ...adminBtnStyle("ghost"), opacity: busy ? 0.5 : 1 }}>{t("取消")}</button>
+          <button onClick={save} disabled={busy} style={{ ...adminBtnStyle("primary"), opacity: busy ? 0.5 : 1 }}>{t("保存")}</button>
         </div>
-      )}
-      {configs.map((c) => (
-        <div key={c.provider} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderTop: "1px solid var(--rdsh-border-soft)" }}>
-          <span style={{ fontFamily: "monospace" }}>{c.provider}</span>
-          <span style={{ fontSize: 12, color: "var(--rdsh-fg-subtle)", maxWidth: 420, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.params}</span>
-          <span style={{ marginLeft: "auto" }} />
-          {isWrite && <button onClick={() => startEdit(c)} style={adminBtnStyle("ghost")}>{t("修改")}</button>}
+      </div>
+    </div>
+  );
+}
+
+/** 添加上游（池条目）弹窗：供应商 → upstream_model（来自该供应商 models 下拉）。 */
+function AdminPoolDialog(props: {
+  service: AdminServiceRow;
+  configs: AdminProviderConfigRow[];
+  keys: AdminUpstreamKeyRow[];
+  existing: AdminServicePoolRow[];
+  onClose: () => void;
+  onSaved: (text: string) => void;
+}): React.JSX.Element {
+  useBlockEscape();
+  const { t } = useT();
+  const providers = props.configs.map((c) => c.provider);
+  const unused = providers.filter((p) => !props.existing.some((e) => e.provider === p));
+  const [provider, setProvider] = useState(unused[0] ?? providers[0] ?? "");
+  const [model, setModel] = useState(() => adminUpstreamModels(props.configs, unused[0] ?? providers[0] ?? "", props.service.capability)[0] ?? "");
+  const [enabled, setEnabled] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const models = adminUpstreamModels(props.configs, provider, props.service.capability);
+  const hasKey = provider !== "" && adminProviderHasCapabilityKey(props.keys, provider, props.service.capability);
+  const overwrite = props.existing.some((e) => e.provider === provider);
+  const selectProvider = (next: string): void => {
+    setProvider(next);
+    setModel(adminUpstreamModels(props.configs, next, props.service.capability)[0] ?? "");
+    setErr("");
+  };
+  const save = (): void => {
+    setErr("");
+    if (provider === "") { setErr(t("请选择供应商")); return; }
+    if (props.service.capability === "llm" && model === "") { setErr(t("请选择上游模型")); return; }
+    const current = props.existing.find((e) => e.provider === provider);
+    setBusy(true);
+    adminApi.upsertServicePool({
+      id: current?.id,
+      service: props.service.service,
+      provider,
+      upstreamModel: model === "" ? null : model,
+      params: adminParseJsonObject(current?.params ?? null) ?? undefined,
+      enabled,
+    })
+      .then(() => props.onSaved(overwrite ? t("上游已更新") : t("上游已添加")))
+      .catch((e: unknown) => { setErr(adminFriendlyError(t, e)); setBusy(false); });
+  };
+  return (
+    <div style={adminModalScrimStyle()}>
+      <div role="dialog" aria-modal="true" aria-label={`${t("添加上游")} · ${props.service.service}`} style={adminModalCardStyle()}>
+        <h3 style={{ margin: "0 0 14px", fontSize: 16 }}>{t("添加上游")} · <span style={{ fontFamily: "monospace" }}>{props.service.service}</span></h3>
+        <AdminFormRow label={t("供应商", { en: "Provider" })}>
+          <select value={provider} onChange={(e) => selectProvider(e.target.value)} style={adminFormInputStyle()}>
+            {providers.map((p) => <option key={p} value={p}>{p}</option>)}
+          </select>
+          {!hasKey && provider !== "" && (
+            <p style={{ margin: "6px 0 0", fontSize: 12, color: "#f59e0b" }}>⚠ {t("该供应商当前无可用 Key（可先保存，后补 Key）")}</p>
+          )}
+          {overwrite && (
+            <p style={{ margin: "6px 0 0", fontSize: 12, color: "var(--rdsh-fg-muted)" }}>{t("该供应商已有上游，保存将覆盖它")}</p>
+          )}
+          <p style={{ margin: "6px 0 0", fontSize: 11, color: "var(--rdsh-fg-subtle)" }}>{t("同一模型代理的上游应指向同一模型；不同模型请拆成不同模型代理。")}</p>
+        </AdminFormRow>
+        <AdminFormRow label={t("上游模型")}>
+          <select value={model} disabled={models.length === 0 && props.service.capability === "llm"} onChange={(e) => setModel(e.target.value)} style={adminFormInputStyle()}>
+            {props.service.capability !== "llm" && <option value="">{t("（不指定）")}</option>}
+            {models.length === 0 && props.service.capability === "llm" && <option value="">{t("（该供应商未配置 models 列表）")}</option>}
+            {models.map((m) => <option key={m} value={m}>{m}</option>)}
+          </select>
+          {models.length === 0 && (
+            <p style={{ margin: "6px 0 0", fontSize: 12, color: "var(--rdsh-fg-muted)" }}>{t("请先在供应商配置的 {section} 里补充 models", { params: { section: props.service.capability } })}</p>
+          )}
+        </AdminFormRow>
+        <AdminFormRow label={t("状态")}>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, paddingTop: 8 }}>
+            <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+            {t("启用")}
+          </label>
+        </AdminFormRow>
+        {err !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 12, margin: "8px 0 0" }}>⚠ {err}</p>}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+          <button onClick={props.onClose} disabled={busy} style={{ ...adminBtnStyle("ghost"), opacity: busy ? 0.5 : 1 }}>{t("取消")}</button>
+          <button onClick={save} disabled={busy || providers.length === 0} style={{ ...adminBtnStyle("primary"), opacity: busy || providers.length === 0 ? 0.5 : 1 }}>{t("保存")}</button>
         </div>
-      ))}
+      </div>
     </div>
   );
 }

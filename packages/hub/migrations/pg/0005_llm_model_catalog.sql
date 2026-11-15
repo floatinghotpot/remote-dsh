@@ -34,6 +34,6 @@ CREATE TABLE IF NOT EXISTS llm_upstream_keys (
 INSERT INTO llm_models
   (id, display_name, provider, upstream_model, input_price_micro, output_price_micro, cache_read_price_micro, cache_write_price_micro, context_window, max_tokens, name_source, enabled, sort_order, updated_at)
 VALUES
-  ('deepseek-flash',  'DeepSeek-V4.1-Flash', 'deepseek', 'deepseek-flash',  2000000, 8000000,  40000,  0, 1048576, 393216, 'upstream', 1, 0, 0),
-  ('deepseek-v4-pro', 'DeepSeek-V4-Pro',     'deepseek', 'deepseek-v4-pro', 9000000, 27000000, 300000, 0, 1048576, 393216, 'upstream', 1, 1, 0)
+  ('deepseek-flash',  'DeepSeek-V4.1-Flash', 'deepseek', 'deepseek-flash',  4000000, 16000000,  80000,  0, 1048576, 393216, 'upstream', 1, 0, 0),
+  ('deepseek-v4-pro', 'DeepSeek-V4-Pro',     'deepseek', 'deepseek-v4-pro', 18000000, 54000000, 600000, 0, 1048576, 393216, 'upstream', 1, 1, 0)
 ON CONFLICT (id) DO NOTHING;

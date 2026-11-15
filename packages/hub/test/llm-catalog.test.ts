@@ -40,7 +40,7 @@ test("51：模型目录种子 + CRUD", async () => {
     assert.equal(seeded.length, 2);
     assert.deepEqual(seeded.map((m) => m.id), ["deepseek-flash", "deepseek-v4-pro"]);
     assert.equal(seeded[0]!.displayName, "DeepSeek-V4.1-Flash");
-    assert.equal(seeded[1]!.inputPriceMicro, 17100000);
+    assert.equal(seeded[1]!.inputPriceMicro, 18000000);
 
     const created = ctx.db.createLlmModel({ id: "deepseek-v4-x", displayName: "X", provider: "deepseek", upstreamModel: "deepseek-v4-x" });
     assert.equal(created.nameSource, "manual");
@@ -98,12 +98,12 @@ test("51：Router join → approve → config（密文可解）", async () => {
     assert.equal(cfgRes.status, 200);
     const { payload } = (await cfgRes.json()) as { payload: string };
     const plain = JSON.parse(unsealConfig(payload, token, routerId)) as {
-      provider: { name: string; apiKey: string; keyId: string };
-      models: Array<{ id: string }>;
+      providers: Record<string, { keys: Array<{ id: string; apiKey: string }> }>;
+      models: Record<string, unknown>;
     };
-    assert.equal(plain.provider.apiKey, "sk-upstream-secret");
-    assert.equal(plain.provider.keyId, "uk1");
-    assert.deepEqual(plain.models.map((m) => m.id), ["deepseek-flash", "deepseek-v4-pro"]);
+    assert.equal(plain.providers.deepseek!.keys[0]!.apiKey, "sk-upstream-secret");
+    assert.equal(plain.providers.deepseek!.keys[0]!.id, "uk1");
+    assert.deepEqual(Object.keys(plain.models).sort(), ["deepseek-flash", "deepseek-v4-pro"]);
 
     // 7) sealConfig 对称
     assert.equal(unsealConfig(sealConfig("hello", token, routerId), token, routerId), "hello");

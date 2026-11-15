@@ -561,8 +561,8 @@ key 条目字段：`{ id, name, hostId, tokenHead4, tokenTail4, status, spentMic
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/api/admin/llm/models` | 模型目录列表（含 `enabled`/`nameSource`/价格/容量） |
-| POST | `/api/admin/llm/models` | 新增，`{id, displayName, provider?, upstreamModel?, 价格?, 容量?, sortOrder?}` |
+| GET | `/api/admin/llm/models` | ⚠️ 已废弃（68 后模型代理改走 `/api/admin/services`；此端点只读旧 `llm_models`，不再产生可售模型） |
+| POST | `/api/admin/llm/models` | ⚠️ 已废弃（只写旧 `llm_models`，不会同步 `services`/`service_pool`，v2 下发不可售；请用 `PUT /api/admin/services/{id}`） |
 | PUT | `/api/admin/llm/models/{id}` | 编辑（含 `enabled`/`nameSource`） |
 | DELETE | `/api/admin/llm/models/{id}` | 软删（`enabled=0`） |
 | GET | `/api/admin/llm/upstream-providers` | 供应商枚举 + 凭据 schema：`{providers:[{provider, service, credentialType, fields, paramsFields?}]}`；Portal 依此渲染表单，写接口依此校验 |
@@ -571,8 +571,19 @@ key 条目字段：`{ id, name, hostId, tokenHead4, tokenTail4, status, spentMic
 | PUT | `/api/admin/llm/upstream-keys/{id}` | 改 `label` / `weight` / `enabled`；带 `secret` 时按原 provider 重加密（语音同 POST 的对象形态） |
 | GET | `/api/admin/llm/upstream-keys/{id}/reveal` | 解密返回 `{secret}`（其中语音为 JSON 字符串）；需 `operator`/`admin`，记审计 `llm.upstream-key.reveal` |
 | DELETE | `/api/admin/llm/upstream-keys/{id}` | 吊销（`revoked_at` + `enabled=0`） |
-| GET | `/api/admin/llm/upstream-provider-configs` | 语音供应商级参数（`voice_provider_configs`，不含机密） |
-| PUT | `/api/admin/llm/upstream-provider-configs/{provider}` | 写入供应商级参数，`{params}`（JSON 对象或字符串）；`provider` 必须在枚举内，否则 400 |
+| GET | `/api/admin/llm/upstream-provider-configs` | ⚠️ 已废弃（68 后语音参数走 `/api/admin/provider-configs`；此端点读旧 `voice_provider_configs`） |
+| PUT | `/api/admin/llm/upstream-provider-configs/{provider}` | ⚠️ 已废弃（请用 `PUT /api/admin/provider-configs/{provider}`） |
+| GET | `/api/admin/provider-configs` | 68：供应商调用参数列表（`provider_configs`，JSON 字符串） |
+| PUT | `/api/admin/provider-configs/{provider}` | 68：写入供应商调用参数，`{params}`（JSON 对象或字符串），记审计 `llm.provider-config.upsert` |
+| GET | `/api/admin/services` | 68：模型代理列表（`services`：ID/能力/价格/音色参数/enabled） |
+| PUT | `/api/admin/services/{service}` | 68：新增或更新模型代理，`{capability, unit, prices, params?, displayName?, enabled?}`，记审计 `llm.service.upsert` |
+| DELETE | `/api/admin/services/{service}` | 68：软删模型代理（`enabled=0`）；仍有 enabled 上游服务条目时 409，记审计 `llm.service.delete` |
+| GET | `/api/admin/service-pool?service=` | 68：上游服务（池）列表，可按 `service` 过滤 |
+| POST | `/api/admin/service-pool` | 68：新增/更新上游服务条目，`{id?, service, provider, upstreamModel?, params?, enabled?}`，按 `(service, provider)` 幂等，记审计 `llm.service-pool.upsert` |
+| DELETE | `/api/admin/service-pool/{id}` | 68：删除上游服务条目，记审计 `llm.service-pool.delete` |
+| GET | `/api/admin/upstream-cost?from=&to=&provider=&capability=` | 69：上游成本核算，按天/供应商/模型返回用量与 `costMicro`（micro），含 `totalCostMicro` |
+| GET | `/api/admin/upstream-prices` | 69：上游成本价目表（`provider` / `upstream_model` / `unit` / `rates`） |
+| PUT | `/api/admin/upstream-prices/{provider}/{model}` | 69：写入上游成本价，`{unit, rates}`（`unit` ∈ `per_mtok`/`per_second`/`per_char`），记审计 `llm.upstream-price.upsert` |
 | GET | `/api/admin/llm/router-join-tokens` | join token 列表（含 `service`） |
 | POST | `/api/admin/llm/router-join-tokens` | 生成一次性 join token，`{label?, ttlMs?, service?}` → `{id, token, label, expiresAt}`；`service` ∈ `llm`/`voice`（缺省 `llm`），`ttlMs` 缺省 600000、范围 1 分钟–24 小时 |
 | GET | `/api/admin/llm/routers` | Router 列表（`pending`/`active`/`disabled`/`revoked`，含 `service` 区分 LLM / 语音） |
@@ -588,22 +599,22 @@ key 条目字段：`{ id, name, hostId, tokenHead4, tokenTail4, status, spentMic
 | 方法 | 路径 | 鉴权 | 说明 |
 |---|---|---|---|
 | POST | `/api/internal/llm/routers/join` | join token（`Bearer`） | 一次性注册 → `{routerId, token}`（唯一 token，只此一次） |
-| GET | `/api/internal/llm/config` | 唯一 token + scope `llm:config:read` | 返回 `{v, payload}`（整段配置密文密封；`status=active` 才 200） |
+| GET | `/api/internal/llm/config` | 唯一 token + scope `llm:config:read` | 返回 `{v:2, payload}`（整段配置密文密封；`status=active` 才 200） |
 
 - join token 一次性、短 TTL；已用/过期 401；
 - config 未启用 Router → 403 `ROUTER_NOT_APPROVED`；
-- config 响应体用该 Router 唯一 token 派生密钥（HKDF-SHA256 + AES-256-GCM）加密；解密后为 `{provider:{name,baseURL,apiKey,keyId,protocol}, models:[...]}`。
+- config 响应体用该 Router 唯一 token 派生密钥（HKDF-SHA256 + AES-256-GCM）加密；信封 `{v:2, payload}`，解密后 payload 为 v2：`{schemaVersion:2, providers:{<provider>:{keys:[{id,apiKey,capabilities,weight,maxConcurrency}], protocols:{<proto>:{baseURL}}}}, models:{<service>:{displayName, inputPriceMicro, outputPriceMicro, cacheReadPriceMicro, cacheWritePriceMicro, contextWindow, maxTokens, pool:{<provider>:<upstreamModel>}}}}`。
 
 ### 17.3 内部（语音 Router，服务令牌）
 
 | 方法 | 路径 | 鉴权 | 说明 |
 |---|---|---|---|
 | POST | `/api/internal/voice/routers/join` | voice join token（`Bearer`） | 一次性注册 → `{routerId, token}`；body `{name?, publicBaseURL?}`；token 为 `rdsh-vt-…`，scope `voice:config:read,voice:usage:write`；非 voice 的 join token 401 |
-| GET | `/api/internal/voice/config` | 服务令牌 + scope `voice:config:read` | 返回 `{v:1, payload}`（封签；`status=active` 且 `service=voice` 才 200） |
-| POST | `/api/internal/voice/usage` | 服务令牌 + scope `voice:usage:write` | 按天累计上报，body `{userId, kind:'asr'\|'tts', provider?, cumulative}` → `{balance, storedCumulative, chargedMicro}` |
+| GET | `/api/internal/voice/config` | 服务令牌 + scope `voice:config:read` | 返回 `{v:2, payload}`（封签；`status=active` 且 `service=voice` 才 200） |
+| POST | `/api/internal/voice/usage` | 服务令牌 + scope `voice:usage:write` | 按天累计上报（日期由 Hub 服务端 `beijingDate()`（UTC+8）归日，body 的 `date` 不参与）。body `{userId, kind:'asr'\|'tts', service?, provider?, cumulative, perProvider?: {provider: cumulative}}`（`perProvider` 为 69 的上游成本分桶）→ `{balance, storedCumulative, chargedMicro, perProviderStored: {provider: cumulative}}` |
 
 - config 未启用/非语音 Router → 403 `ROUTER_NOT_APPROVED`；无启用的语音上游 key → 503 `NO_UPSTREAM_KEY`；
-- config 封签 AAD = `routerId`；解密后为 `{reportIntervalSeconds, overdraftFloorPoints, asrPriceMicroPerSecond, ttsPriceMicroPerChar, session:{maxSeconds, idleTimeoutSeconds, maxPerUser}, globalConcurrency, bufferMaxSeconds, ticketSecret, wsUrl, upstreams:{<provider>:{credentialType, params, secrets}}}` —— `params` 来自 `voice_provider_configs`，`secrets` 来自 `llm_upstream_keys`（同 provider 多把 key 按权重轮换一把），无配置行的供应商被跳过；
+- config 封签 AAD = `routerId`；解密后 payload 为 v2：`{schemaVersion:2, providers:{<provider>:{credentialType, keys:[{id,secrets,capabilities,weight,maxConcurrency}], asr:{url,protocol}, tts:{url,protocol,resourceId}}}, models:{<service>:{capability, aliases, voices, pool:{<provider>:<upstreamModel>|<{clientVoice:upstreamVoice}>}}}, ticketSecret, session:{maxSeconds, idleTimeoutSeconds, maxPerUser}, globalConcurrency, bufferMaxSeconds, reportIntervalSeconds}` —— 价格/wsUrl/overdraftFloorPoints 已不下发（Router 只上报 units，Hub 按 `services.prices`/`upstream_prices` 计价）；
 - usage 的日期由服务端归日（不信任客户端）；`cumulative` 为当日累计值，按幂等水位只对增量计费；只落 `voice_usage_daily`，不产生逐笔账本。
 
 ### 17.4 用户（会话）
@@ -697,7 +708,7 @@ key 条目字段：`{ id, name, hostId, tokenHead4, tokenTail4, status, spentMic
 }
 ```
 
-- 来自供应商级配置（voice_provider_configs），不含机密；`ttsVoices` 为 TTS 音色白名单，`asrModel` 为 ASR 模型 ID（可选，缺省省略）。
+- 来自 `services` + `service_pool`（68 新模型）投影，不含机密；`ttsVoices` 为 TTS 音色白名单，`asrModel` 取 `aliases[0]`（旧 ID，可选）。
 - `voices` 已更名为 `ttsVoices`（2026-11，feature 67）；`asrModel` 为新增字段。
 
 ## 20. 主机、共享与 join token（2026-11-04 补齐）

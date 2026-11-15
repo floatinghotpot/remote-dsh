@@ -43,6 +43,7 @@ import { handleAccountLlm } from "./account-llm.ts";
 import { decryptUpstreamKey, encryptUpstreamKey, loadKek } from "./crypto-upstream-keys.ts";
 import { currentKekVersion, kekDir } from "./llm-upstream-keys.ts";
 import { providerExists, providerSpec, UPSTREAM_PROVIDERS } from "./upstream-providers.ts";
+import { familyMismatch, parseParams } from "./service-families.ts";
 import type { HostCookieSigner } from "./hostcookie.ts";
 import type { AdminCtx, AdminCreateUserInput } from "./admin.ts";
 import * as admin from "./admin.ts";
@@ -911,9 +912,182 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
     res.end(JSON.stringify({ config: row }));
     return true;
   }
+
+  // ---- 68：多服务提供商（provider_configs / services / service_pool）----
+  const asJsonString = (v: unknown): string | null => {
+    if (typeof v === "string" && v.trim() !== "") return v.trim();
+    if (typeof v === "object" && v !== null && !Array.isArray(v)) return JSON.stringify(v);
+    return null;
+  };
+  if (path === "/api/admin/provider-configs" && method === "GET") {
+    res.end(JSON.stringify({ configs: await store.listProviderConfigs() }));
+    return true;
+  }
+  if (path === "/api/admin/upstream-cost" && method === "GET") {
+    const costUrl = new URL(req.url ?? "/", "http://rdsh.local");
+    const from = costUrl.searchParams.get("from") ?? undefined;
+    const to = costUrl.searchParams.get("to") ?? undefined;
+    const provider = costUrl.searchParams.get("provider") ?? undefined;
+    const capability = costUrl.searchParams.get("capability") ?? undefined;
+    if ((from !== undefined && !isDateString(from)) || (to !== undefined && !isDateString(to)) || (from !== undefined && to !== undefined && from > to)) {
+      writeError(res, 400, "BAD_REQUEST", "invalid from/to");
+      return true;
+    }
+    if (capability !== undefined && capability !== "llm" && capability !== "asr" && capability !== "tts") {
+      writeError(res, 400, "BAD_REQUEST", "capability must be llm|asr|tts");
+      return true;
+    }
+    const rows: Array<Record<string, unknown>> = [];
+    if (capability === undefined || capability === "llm") {
+      for (const r of await store.listUpstreamUsageDaily({ from, to, provider })) rows.push({ capability: "llm", ...r });
+    }
+    if (capability === undefined || capability === "asr" || capability === "tts") {
+      for (const r of await store.listVoiceUpstreamUsageDaily({ from, to, provider, kind: capability })) rows.push({ capability: r.kind, ...r });
+    }
+    const totalCostMicro = rows.reduce((a, r) => a + Number((r as { costMicro?: number }).costMicro ?? 0), 0);
+    res.end(JSON.stringify({ rows, totalCostMicro }));
+    return true;
+  }
+  if (path === "/api/admin/upstream-prices" && method === "GET") {
+    res.end(JSON.stringify({ prices: await store.listUpstreamPrices() }));
+    return true;
+  }
+  const upstreamPriceEdit = /^\/api\/admin\/upstream-prices\/([^/]+)\/([^/]+)$/.exec(path);
+  if (upstreamPriceEdit !== null && method === "PUT") {
+    if (!isWrite) { writeError(res, 403, "FORBIDDEN", "operator or admin required"); return true; }
+    const provider = decodeURIComponent(upstreamPriceEdit[1]!);
+    const upstreamModel = decodeURIComponent(upstreamPriceEdit[2]!);
+    if (!providerExists(provider)) { writeError(res, 400, "BAD_REQUEST", "unknown provider"); return true; }
+    const body = await readJsonBody(req);
+    const unit = typeof body?.unit === "string" ? body.unit.trim() : "";
+    if (unit !== "per_mtok" && unit !== "per_second" && unit !== "per_char") { writeError(res, 400, "BAD_REQUEST", "unit must be per_mtok|per_second|per_char"); return true; }
+    const rates = asJsonString(body?.rates);
+    if (rates === null) { writeError(res, 400, "BAD_REQUEST", "rates required"); return true; }
+    let parsed: unknown;
+    try { parsed = JSON.parse(rates); } catch { writeError(res, 400, "BAD_REQUEST", "rates must be valid JSON"); return true; }
+    // 入表校验：LLM 必须含双窗口，语音必须含对应单价，避免运行时静默回退。
+    if (unit === "per_mtok") {
+      const o = parsed as Record<string, unknown>;
+      const peakOff = typeof o.peak === "object" && typeof o.offPeak === "object";
+      const busyIdle = typeof o.busy === "object" && typeof o.idle === "object";
+      if (!peakOff && !busyIdle) { writeError(res, 400, "BAD_REQUEST", "per_mtok rates need peak+offPeak or busy+idle"); return true; }
+    } else if (unit === "per_second" && typeof (parsed as Record<string, unknown>).perSecond !== "number") {
+      writeError(res, 400, "BAD_REQUEST", "per_second rates need numeric perSecond");
+      return true;
+    } else if (unit === "per_char" && typeof (parsed as Record<string, unknown>).perChar !== "number") {
+      writeError(res, 400, "BAD_REQUEST", "per_char rates need numeric perChar");
+      return true;
+    }
+    await store.upsertUpstreamPrice({ provider, upstreamModel, unit, rates });
+    await auditAdmin("llm.upstream-price.upsert", { provider, upstreamModel });
+    res.end(JSON.stringify({ ok: true }));
+    return true;
+  }
+  const providerCfgEdit = /^\/api\/admin\/provider-configs\/([^/]+)$/.exec(path);
+  if (providerCfgEdit !== null && method === "PUT") {
+    if (!isWrite) { writeError(res, 403, "FORBIDDEN", "operator or admin required"); return true; }
+    const provider = decodeURIComponent(providerCfgEdit[1]!);
+    if (provider === "") { writeError(res, 400, "BAD_REQUEST", "provider required"); return true; }
+    if (!providerExists(provider)) { writeError(res, 400, "BAD_REQUEST", "unknown provider"); return true; }
+    const body = await readJsonBody(req);
+    const params = asJsonString(body?.params);
+    if (params === null) { writeError(res, 400, "BAD_REQUEST", "params required"); return true; }
+    try { JSON.parse(params); } catch { writeError(res, 400, "BAD_REQUEST", "params must be valid JSON"); return true; }
+    const row = await store.upsertProviderConfig(provider, params);
+    await auditAdmin("llm.provider-config.upsert", { provider });
+    res.end(JSON.stringify({ config: row }));
+    return true;
+  }
+
+  if (path === "/api/admin/services" && method === "GET") {
+    res.end(JSON.stringify({ services: await store.listServices() }));
+    return true;
+  }
+  const serviceEdit = /^\/api\/admin\/services\/([^/]+)$/.exec(path);
+  if (serviceEdit !== null && method === "PUT") {
+    if (!isWrite) { writeError(res, 403, "FORBIDDEN", "operator or admin required"); return true; }
+    const service = decodeURIComponent(serviceEdit[1]!);
+    const body = await readJsonBody(req);
+    const capability = typeof body?.capability === "string" ? body.capability.trim() : "";
+    const unit = typeof body?.unit === "string" ? body.unit.trim() : "";
+    if (service === "" || !["llm", "asr", "tts", "ocr", "search"].includes(capability) || unit === "") {
+      writeError(res, 400, "BAD_REQUEST", "service + capability + unit required"); return true;
+    }
+    const prices = asJsonString(body?.prices);
+    if (prices === null) { writeError(res, 400, "BAD_REQUEST", "prices required"); return true; }
+    try { JSON.parse(prices); } catch { writeError(res, 400, "BAD_REQUEST", "prices must be valid JSON"); return true; }
+    const params = asJsonString(body?.params);
+    const row = await store.upsertService({
+      service, capability, unit, prices, params,
+      displayName: typeof body?.displayName === "string" && body.displayName.trim() !== "" ? body.displayName.trim() : null,
+      enabled: body?.enabled === undefined ? true : body.enabled === true,
+    });
+    await auditAdmin("llm.service.upsert", { service });
+    res.end(JSON.stringify({ service: row }));
+    return true;
+  }
+  if (serviceEdit !== null && method === "DELETE") {
+    if (!isWrite) { writeError(res, 403, "FORBIDDEN", "operator or admin required"); return true; }
+    const service = decodeURIComponent(serviceEdit[1]!);
+    const pool = await store.listServicePoolByService(service);
+    if (pool.some((p) => p.enabled)) { writeError(res, 409, "CONFLICT", "service still has enabled pool entries"); return true; }
+    for (const p of pool) await store.deleteServicePoolEntry(p.id); // 清理 disabled 孤儿
+    const ok = await store.deleteService(service);
+    if (!ok) { writeError(res, 404, "NOT_FOUND", "service not found"); return true; }
+    await auditAdmin("llm.service.delete", { service });
+    res.end(JSON.stringify({ ok: true }));
+    return true;
+  }
+
+  if (path === "/api/admin/service-pool" && method === "GET") {
+    const service = url.searchParams.get("service");
+    const rows = service === null ? await store.listServicePool() : await store.listServicePoolByService(service);
+    res.end(JSON.stringify({ pool: rows }));
+    return true;
+  }
+  if (path === "/api/admin/service-pool" && method === "POST") {
+    if (!isWrite) { writeError(res, 403, "FORBIDDEN", "operator or admin required"); return true; }
+    const body = await readJsonBody(req);
+    const service = typeof body?.service === "string" ? body.service.trim() : "";
+    const provider = typeof body?.provider === "string" ? body.provider.trim() : "";
+    if (service === "" || provider === "") { writeError(res, 400, "BAD_REQUEST", "service + provider required"); return true; }
+    const svc = await store.getService(service);
+    if (svc === null) { writeError(res, 400, "BAD_REQUEST", "unknown service"); return true; }
+    const pcfg = await store.getProviderConfig(provider);
+    if (pcfg === null) { writeError(res, 400, "BAD_REQUEST", "unknown provider"); return true; }
+    if (parseParams(pcfg.params)[svc.capability] === undefined) {
+      writeError(res, 400, "BAD_REQUEST", `provider does not support capability ${svc.capability}`);
+      return true;
+    }
+    const upstreamModel = typeof body?.upstreamModel === "string" && body.upstreamModel.trim() !== "" ? body.upstreamModel.trim() : null;
+    // R6：同一模型代理的上游必须同模型（family 元数据两侧都有时才校验，旧数据放行）。
+    if (familyMismatch(svc.params, pcfg.params, svc.capability, upstreamModel)) {
+      writeError(res, 400, "BAD_REQUEST", "model family mismatch between service and upstream");
+      return true;
+    }
+    const params = asJsonString(body?.params);
+    const row = await store.upsertServicePoolEntry({
+      id: typeof body?.id === "string" && body.id.trim() !== "" ? body.id.trim() : randomUUID(),
+      service, provider, upstreamModel, params,
+      enabled: body?.enabled === undefined ? true : body.enabled === true,
+    });
+    await auditAdmin("llm.service-pool.upsert", { service, provider });
+    res.end(JSON.stringify({ entry: row }));
+    return true;
+  }
+  const poolEdit = /^\/api\/admin\/service-pool\/([^/]+)$/.exec(path);
+  if (poolEdit !== null && method === "DELETE") {
+    if (!isWrite) { writeError(res, 403, "FORBIDDEN", "operator or admin required"); return true; }
+    const id = decodeURIComponent(poolEdit[1]!);
+    const ok = await store.deleteServicePoolEntry(id);
+    if (!ok) { writeError(res, 404, "NOT_FOUND", "entry not found"); return true; }
+    await auditAdmin("llm.service-pool.delete", { id });
+    res.end(JSON.stringify({ ok: true }));
+    return true;
+  }
   if (path === "/api/admin/llm/upstream-keys" && method === "GET") {
     const rows = await store.listLlmUpstreamKeys();
-    res.end(JSON.stringify({ keys: rows.map((k) => ({ id: k.id, provider: k.provider, service: k.service, credentialType: k.credentialType, label: k.label, weight: k.weight, enabled: k.enabled, kekVersion: k.kekVersion, createdAt: k.createdAt, lastAssignedAt: k.lastAssignedAt, revokedAt: k.revokedAt })) }));
+    res.end(JSON.stringify({ keys: rows.map((k) => ({ id: k.id, provider: k.provider, service: k.service, credentialType: k.credentialType, label: k.label, weight: k.weight, enabled: k.enabled, capabilities: k.capabilities, maxConcurrency: k.maxConcurrency, kekVersion: k.kekVersion, createdAt: k.createdAt, lastAssignedAt: k.lastAssignedAt, revokedAt: k.revokedAt })) }));
     return true;
   }
   if (path === "/api/admin/llm/upstream-keys" && method === "POST") {
@@ -926,6 +1100,10 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
     if (spec === undefined) { writeError(res, 400, "BAD_REQUEST", "unknown provider or service"); return true; }
     const svc = service ?? spec.service;
     const weight = typeof body?.weight === "number" && Number.isInteger(body.weight) && body.weight > 0 ? body.weight : 1;
+    const CAPS = ["llm", "asr", "tts"];
+    const capsRaw = Array.isArray(body?.capabilities) ? (body.capabilities as unknown[]).filter((x): x is string => typeof x === "string" && CAPS.includes(x)) : [];
+    const capabilities = capsRaw.length > 0 ? JSON.stringify(capsRaw) : null;
+    const maxConcurrency = typeof body?.maxConcurrency === "number" && Number.isInteger(body.maxConcurrency) && body.maxConcurrency >= 0 ? body.maxConcurrency : 0;
     // secret：LLM 为 apiKey 字符串；语音为按 schema 校验的字段对象（组装成 JSON 加密）。
     let secretPlain: string;
     if (spec.service === "llm") {
@@ -948,7 +1126,7 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
       const kekVersion = currentKekVersion(runtime);
       const kek = loadKek(kekDir(runtime), kekVersion);
       const { keyCipher, dekWrapped } = encryptUpstreamKey(secretPlain, kek, kekVersion, id, provider);
-      const row = await store.createLlmUpstreamKey({ id, provider, service: svc, credentialType: spec.credentialType, label, keyCipher, dekWrapped, kekVersion, weight });
+      const row = await store.createLlmUpstreamKey({ id, provider, service: svc, credentialType: spec.credentialType, label, keyCipher, dekWrapped, kekVersion, weight, capabilities, maxConcurrency });
       await auditAdmin("llm.upstream-key.create", { id, label, service: svc, provider });
       res.end(JSON.stringify({ key: { id: row.id, provider: row.provider, service: row.service, credentialType: row.credentialType, label: row.label, weight: row.weight, enabled: row.enabled, kekVersion: row.kekVersion, createdAt: row.createdAt } }));
     } catch (err) {
@@ -1010,10 +1188,16 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
         return true;
       }
     }
-    const row = await store.updateLlmUpstreamKey(id, { enabled, weight, label, keyCipher, dekWrapped });
+    const CAPS = ["llm", "asr", "tts"];
+    const capsRaw = Array.isArray(body?.capabilities) ? (body.capabilities as unknown[]).filter((x): x is string => typeof x === "string" && CAPS.includes(x)) : [];
+    const capabilities = body?.capabilities === undefined
+      ? undefined
+      : capsRaw.length > 0 ? JSON.stringify(capsRaw) : null;
+    const maxConcurrency = typeof body?.maxConcurrency === "number" && Number.isInteger(body.maxConcurrency) && body.maxConcurrency >= 0 ? body.maxConcurrency : undefined;
+    const row = await store.updateLlmUpstreamKey(id, { enabled, weight, label, keyCipher, dekWrapped, capabilities, maxConcurrency });
     if (row === null) { writeError(res, 404, "NOT_FOUND", "key not found"); return true; }
     await auditAdmin("llm.upstream-key.update", { id });
-    res.end(JSON.stringify({ key: { id: row.id, provider: row.provider, service: row.service, credentialType: row.credentialType, label: row.label, weight: row.weight, enabled: row.enabled, kekVersion: row.kekVersion, createdAt: row.createdAt, revokedAt: row.revokedAt } }));
+    res.end(JSON.stringify({ key: { id: row.id, provider: row.provider, service: row.service, credentialType: row.credentialType, label: row.label, weight: row.weight, enabled: row.enabled, capabilities: row.capabilities, maxConcurrency: row.maxConcurrency, kekVersion: row.kekVersion, createdAt: row.createdAt, revokedAt: row.revokedAt } }));
     return true;
   }
   if (keyEdit !== null && method === "DELETE") {

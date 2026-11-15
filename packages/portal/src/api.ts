@@ -548,6 +548,52 @@ export interface AdminConfig {
   site: Record<string, unknown>;
 }
 
+/** 68：供应商配置（provider_configs，params 为 JSON 字符串）。 */
+export interface AdminProviderConfigRow {
+  provider: string;
+  params: string;
+  updatedAt: number;
+}
+
+/** 68：模型代理（services，prices/params 为 JSON 字符串）。 */
+export interface AdminServiceRow {
+  service: string;
+  capability: string;
+  displayName: string | null;
+  params: string | null;
+  unit: string;
+  prices: string;
+  enabled: boolean;
+  updatedAt: number;
+}
+
+/** 68：上游服务（service_pool，一条 = service + provider + upstream_model）。 */
+export interface AdminServicePoolRow {
+  id: string;
+  service: string;
+  provider: string;
+  upstreamModel: string | null;
+  params: string | null;
+  enabled: boolean;
+  updatedAt: number;
+}
+
+/** 68：上游 Key（service = 凭据形态 llm/voice；capabilities = 可用能力，NULL/空 = 全部）。 */
+export interface AdminUpstreamKeyRow {
+  id: string;
+  provider: string;
+  service: string;
+  credentialType: string | null;
+  label: string;
+  weight: number;
+  enabled: boolean;
+  capabilities: string | null;
+  maxConcurrency: number;
+  kekVersion: number;
+  createdAt: number;
+  revokedAt: number | null;
+}
+
 async function adminJson<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     credentials: "include",
@@ -712,25 +758,13 @@ export const adminApi = {
   removeAdmin(id: number, reason: string): Promise<{ ok: boolean }> {
     return adminJson(`/api/admin/admins/${id}/remove`, { method: "POST", body: JSON.stringify({ reason }) });
   },
-  llmModels(): Promise<{ models: Array<{ id: string; displayName: string; provider: string; upstreamModel: string; enabled: boolean; nameSource: string; inputPriceMicro: number; outputPriceMicro: number; cacheReadPriceMicro: number; cacheWritePriceMicro: number; contextWindow: number; maxTokens: number; sortOrder: number; nameSyncedAt: number | null }> }> {
-    return adminJson("/api/admin/llm/models");
-  },
-  createLlmModel(input: Record<string, unknown>): Promise<{ model: unknown }> {
-    return adminJson("/api/admin/llm/models", { method: "POST", body: JSON.stringify(input) });
-  },
-  updateLlmModel(id: string, input: Record<string, unknown>): Promise<{ model: unknown }> {
-    return adminJson(`/api/admin/llm/models/${id}`, { method: "PUT", body: JSON.stringify(input) });
-  },
-  deleteLlmModel(id: string): Promise<{ ok: boolean }> {
-    return adminJson(`/api/admin/llm/models/${id}`, { method: "DELETE", body: "{}" });
-  },
   upstreamProviders(): Promise<{ providers: Array<{ provider: string; service: string; credentialType: string; fields: string[]; paramsFields?: string[] }> }> {
     return adminJson("/api/admin/llm/upstream-providers");
   },
-  llmUpstreamKeys(): Promise<{ keys: Array<{ id: string; provider: string; service: string; credentialType: string | null; label: string; weight: number; enabled: boolean; kekVersion: number; createdAt: number; revokedAt: number | null }> }> {
+  llmUpstreamKeys(): Promise<{ keys: AdminUpstreamKeyRow[] }> {
     return adminJson("/api/admin/llm/upstream-keys");
   },
-  createLlmUpstreamKey(input: Record<string, unknown>): Promise<{ key: unknown }> {
+  createLlmUpstreamKey(input: Record<string, unknown>): Promise<{ key: { id: string } }> {
     return adminJson("/api/admin/llm/upstream-keys", { method: "POST", body: JSON.stringify(input) });
   },
   updateLlmUpstreamKey(id: string, input: Record<string, unknown>): Promise<{ key: unknown }> {
@@ -742,11 +776,31 @@ export const adminApi = {
   revealLlmUpstreamKey(id: string): Promise<{ secret: string }> {
     return adminJson(`/api/admin/llm/upstream-keys/${id}/reveal`);
   },
-  llmUpstreamProviderConfigs(): Promise<{ configs: Array<{ provider: string; params: string; updatedAt: number }> }> {
-    return adminJson("/api/admin/llm/upstream-provider-configs");
+  // ---- 68：供应商配置 / 模型代理 / 上游服务 ----
+  providerConfigs(): Promise<{ configs: AdminProviderConfigRow[] }> {
+    return adminJson("/api/admin/provider-configs");
   },
-  upsertLlmUpstreamProviderConfig(provider: string, input: Record<string, unknown>): Promise<{ config: unknown }> {
-    return adminJson(`/api/admin/llm/upstream-provider-configs/${encodeURIComponent(provider)}`, { method: "PUT", body: JSON.stringify(input) });
+  updateProviderConfig(provider: string, input: { params: unknown }): Promise<{ config: AdminProviderConfigRow }> {
+    return adminJson(`/api/admin/provider-configs/${encodeURIComponent(provider)}`, { method: "PUT", body: JSON.stringify(input) });
+  },
+  services(): Promise<{ services: AdminServiceRow[] }> {
+    return adminJson("/api/admin/services");
+  },
+  updateService(service: string, input: { capability: string; unit: string; prices: unknown; params?: unknown; displayName?: string; enabled: boolean }): Promise<{ service: AdminServiceRow }> {
+    return adminJson(`/api/admin/services/${encodeURIComponent(service)}`, { method: "PUT", body: JSON.stringify(input) });
+  },
+  deleteService(service: string): Promise<{ ok: boolean }> {
+    return adminJson(`/api/admin/services/${encodeURIComponent(service)}`, { method: "DELETE", body: "{}" });
+  },
+  servicePool(service?: string): Promise<{ pool: AdminServicePoolRow[] }> {
+    const qs = service === undefined ? "" : `?service=${encodeURIComponent(service)}`;
+    return adminJson(`/api/admin/service-pool${qs}`);
+  },
+  upsertServicePool(input: { id?: string; service: string; provider: string; upstreamModel?: string | null; params?: unknown; enabled: boolean }): Promise<{ entry: AdminServicePoolRow }> {
+    return adminJson("/api/admin/service-pool", { method: "POST", body: JSON.stringify(input) });
+  },
+  deleteServicePool(id: string): Promise<{ ok: boolean }> {
+    return adminJson(`/api/admin/service-pool/${encodeURIComponent(id)}`, { method: "DELETE", body: "{}" });
   },
   llmRouters(): Promise<{ routers: Array<{ id: string; service: string; name: string; tokenId: string; status: string; lastIp: string | null; publicBaseUrl: string | null; createdAt: number; approvedAt: number | null; lastSeenAt: number | null }> }> {
     return adminJson("/api/admin/llm/routers");
