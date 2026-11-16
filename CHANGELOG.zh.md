@@ -7,6 +7,12 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [remote-dsh 0.22.1 · rdsh-gateway 0.18.1] - 2026-11-16
+
+### 变更
+
+- **实测窗口扩到 `0.2.2-rc.3`**（gateway、cli）：真实主机在 dsh `0.2.2-rc.3` 上远程访问正常，spawn / cookie / `/api` / picker / loopback 契约探针通过。`0.2.2-rc.2` 仍未实测。无协议或运行时行为变更。
+
 ## [remote-dsh 0.22.0 · rdsh-gateway 0.18.0 · rdsh-hub 0.21.0 · rdsh-hub-cli 0.21.0 · rdsh-portal 0.4.0] - 2026-11-07
 
 ### 新增
