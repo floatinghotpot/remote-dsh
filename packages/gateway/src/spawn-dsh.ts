@@ -353,12 +353,14 @@ export function compareDshVersions(a: string, b: string): number {
  * 插件行 id 已改为 `dsh-web-remote`（见 the internal fix record）。
  * 证据：桌面版 0.2.1-rc.1（darwin x64）真机运行通过；0.2.1-rc.2 按发布提交逐项源码核对。
  * 2026-11-07：MAX 扩到 `0.2.2-rc.1` —— 同一份 G1–G7 清单在真实 dsh 0.2.2-rc.1 上重跑通过
+ * 2026-11-16：MAX 扩到 `0.2.2-rc.3` —— 真实主机（dsh 0.2.2-rc.3）从远端访问正常；
+ * 契约探针 6/6（ready 行 token / 会话 cookie / `/api` / browse picker / loopback 字面量）。未覆盖 `0.2.2-rc.2`。
  * （LAN 网关 + 真实插件安装：spawn / ready 行 token / 会话 cookie 换发 / `/api` 转发 / HTML 注入 /
  * WS upgrade / `patchLoopbackJs` 命中），插件面板与 App WebView 契约另行核验。
  * 未覆盖：设置面板的真机交互、`/api` 长会话业务、App 真机；见 the internal review record。
  */
 export const DSH_COMPAT_MIN = "0.1.1-rc.2";
-export const DSH_COMPAT_MAX = "0.2.2-rc.1";
+export const DSH_COMPAT_MAX = "0.2.2-rc.3";
 
 /**
  * 版本落在实测窗口外时的提示文案（零文档导向：直接给动作指令，用户不查表）。
