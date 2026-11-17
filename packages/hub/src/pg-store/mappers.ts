@@ -59,6 +59,7 @@ export function mapUser(row: Record<string, unknown>): UserRow {
     appleSub: row.apple_sub === null || row.apple_sub === undefined ? null : String(row.apple_sub),
     appleEmail: row.apple_email === null || row.apple_email === undefined ? null : String(row.apple_email),
     appleFullName: row.apple_full_name === null || row.apple_full_name === undefined ? null : String(row.apple_full_name),
+    changeSeq: Number(row.change_seq ?? 0),
   };
 }
 

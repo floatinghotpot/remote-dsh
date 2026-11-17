@@ -26,8 +26,9 @@ import { loadKek } from "./crypto-upstream-keys.ts";
 /**
  * Q9：用户缓存同步失效——包装用户写方法，写后回读最新 UserRow 写回缓存。
  * verifyAccess 只依赖 ver + accountStatus，故改密/封禁/解锁/删除即时生效。
+ * 封号/删除时额外关闭该用户的事件订阅（A3 §7：events 鉴权只在 upgrade 一次）。
  */
-function wrapUserMutations(store: HubStore, cache: Map<number, UserRow>): HubStore {
+function wrapUserMutations(store: HubStore, cache: Map<number, UserRow>, closeUser: (id: number) => void): HubStore {
   const MUTATE: Array<keyof HubStore> = [
     "setPassword", "bumpVersion", "setAccountStatus", "deleteAccount", "removeUser",
     "setTotpSecret", "clearTotpSecret", "setRole", "lockAccount", "unlockAccount",
@@ -46,6 +47,8 @@ function wrapUserMutations(store: HubStore, cache: Map<number, UserRow>): HubSto
         const fresh = await store.getUserById(id);
         if (fresh !== null) cache.set(id, fresh);
         else cache.delete(id);
+        // 硬删（fresh=null）/ 软删（deleted）/ 封号（banned）→ 关闭事件订阅。
+        if (fresh === null || fresh.accountStatus === "deleted" || fresh.accountStatus === "banned") closeUser(id);
       }
       return result;
     };
@@ -90,19 +93,35 @@ export async function serveHub(opts: HubServeOptions): Promise<void> {
   let lookupUser: (id: number) => UserRow | null;
   let dbLabel: string;
   let dbSize: (() => Promise<number>) | undefined;
+  const events = new EventHub();
   if (driver === "postgres") {
     const pool = createPgPool(config.db?.dsn ?? "");
     await migratePg(pool, "serve");
     dbSize = async () => Number((await pool.query("SELECT pg_database_size(current_database()) AS s")).rows[0]!.s);
-    // Q9：用户缓存（预加载 + 5s 刷新 + 写路径同步失效）。
+    // Q9：用户缓存（预加载 + 5s 增量刷新 + 写路径同步失效）。
+    // 70 A1：reload 从全表改增量（change_seq > lastSeq），CPU/GC 从 O(注册数) 降为 O(变化量)。
     cache = new Map<number, UserRow>();
     const cacheRef = cache;
-    store = wrapUserMutations(createPgStore(pool), cacheRef);
+    store = wrapUserMutations(createPgStore(pool), cacheRef, (id) => events.closeUser(id));
+    let lastSeq = 0;
     const reload = async (): Promise<void> => {
-      for (const u of await store.listUsers()) cacheRef.set(u.id, u);
+      const changed = await store.listUsersSince(lastSeq);
+      const deleted = await store.listUserDeletionsSince(lastSeq);
+      if (changed.length === 0 && deleted.length === 0) return;
+      let maxSeq = lastSeq;
+      for (const u of changed) {
+        cacheRef.set(u.id, u);
+        if (u.changeSeq > maxSeq) maxSeq = u.changeSeq;
+      }
+      for (const d of deleted) {
+        cacheRef.delete(d.userId);
+        if (d.changeSeq > maxSeq) maxSeq = d.changeSeq;
+      }
+      lastSeq = maxSeq;
     };
     await reload();
-    setInterval(() => void reload(), 5000).unref();
+    // 定时刷新失败不能变成 unhandled rejection 崩进程（PG 瞬时错误）；只记日志，下轮重试。
+    setInterval(() => void reload().catch((err) => console.error("[hub] user cache reload failed:", err instanceof Error ? err.message : err)), 5000).unref();
     lookupUser = (id) => cacheRef.get(id) ?? null;
     dbLabel = config.db?.dsn?.replace(/(\/\/[^:]+:)[^@]*@/, "$1***@") ?? "";
   } else {
@@ -157,7 +176,6 @@ export async function serveHub(opts: HubServeOptions): Promise<void> {
   config.hostCookiePubKey = hostCookieSigner.publicKeyHex;
   const auth = new HubAuth(store, lookupUser, jwt, config.security, hostCookieSigner, driver === "postgres" ? (u) => cache?.set(u.id, u) : undefined);
   const tunnels = new TunnelRegistry();
-  const events = new EventHub();
 
   const portalDir = defaultPortalDir();
   const { server, actualPort } = await startHubServer({
@@ -168,6 +186,7 @@ export async function serveHub(opts: HubServeOptions): Promise<void> {
     db,
     store,
     dbSize,
+    userCacheSize: () => cache?.size ?? 0,
     auth,
     tunnels,
     events,

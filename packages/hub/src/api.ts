@@ -83,6 +83,10 @@ export interface HubRuntime {
   hostStatus?: Map<string, { status: HostStatus; at: number }>;
   /** host cookie 的 Ed25519 签名器（R17；迁移票据签发）。 */
   hostCookieSigner?: HostCookieSigner;
+  /** 每节点 N2 心跳序号水位（70 A4 增量心跳；进程内存，hub 重启归零）。 */
+  nodeSeqs?: Map<string, number>;
+  /** 用户缓存条目数（70 U6 健康指标；SQLite 模式无缓存 → undefined）。 */
+  userCacheSize?: () => number;
 }
 
 export interface AuthResult {
@@ -460,6 +464,11 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
       /* 忽略 */
     }
     const backupDir = runtime.config.backup?.dir;
+    // 70 U6：容量指标分项（events 订阅 / 用户缓存 / 用量 / N2 心跳 / relay 连接）。
+    const nodes = await store.listNodes();
+    let relayConnections = 0;
+    for (const n of nodes) relayConnections += n.connections;
+    const usageStats = runtime.usage.stats();
     res.end(
       JSON.stringify({
         uptimeSeconds: Math.floor(process.uptime()),
@@ -468,6 +477,11 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
         dbSize,
         version: HUB_VERSION,
         lastBackupAt: backupDir !== undefined ? lastBackupAt(backupDir) : null,
+        events: { subscriptions: runtime.events.size() },
+        userCache: { size: runtime.userCacheSize?.() ?? -1 },
+        usage: { flushRows: usageStats.lastFlushRows, flushMs: usageStats.lastFlushMs, dirty: usageStats.dirty },
+        n2: { lastBodyBytes: runtime.metrics.gaugeValue("node.heartbeat.lastBodyBytes") },
+        relay: { nodes: nodes.length, connections: relayConnections },
       }),
     );
     return true;

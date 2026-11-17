@@ -14,6 +14,8 @@ never depend on the private one.
 ## Contents
 
 - `fixtures/frames.json` — language-agnostic frame vectors (encode/decode).
+- `fixtures/node-heartbeat.json` — language-agnostic N2 heartbeat vectors (70 A4 delta:
+  full / added-removed / gap → `needFull` / legacy no-seq), see `packages/hub/NODE-PROTOCOL.md`.
 - `fixtures/README.md` — schema and consumer obligations.
 - `../packages/tunnel/test/conformance.test.ts` — public TS harness.
 

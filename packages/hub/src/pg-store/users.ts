@@ -23,6 +23,8 @@ export function users(pool: Pool): Pick<
   | "getUserByName"
   | "getUserById"
   | "listUsers"
+  | "listUsersSince"
+  | "listUserDeletionsSince"
   | "countUsers"
   | "countUsersActive"
   | "countUsersCreatedSince"
@@ -122,6 +124,21 @@ export function users(pool: Pool): Pick<
 
     listUsers: async (): Promise<UserRow[]> => {
       return (await q<Record<string, unknown>>(txDb(pool), "SELECT * FROM users ORDER BY id")).rows.map(mapUser);
+    },
+
+    /** 增量拉取（`change_seq > since`）：70 A1 缓存刷新用，O(变化量)。 */
+    listUsersSince: async (since: number): Promise<UserRow[]> => {
+      return (await q<Record<string, unknown>>(txDb(pool), "SELECT * FROM users WHERE change_seq > $1 ORDER BY change_seq", [since])).rows.map(mapUser);
+    },
+
+    /** 70 A1：硬删墓碑增量（`users_delete_log`），用于从缓存删除已删用户。 */
+    listUserDeletionsSince: async (since: number): Promise<Array<{ userId: number; changeSeq: number }>> => {
+      const rows = (await q<{ user_id: string | number; change_seq: string | number }>(
+        txDb(pool),
+        "SELECT user_id, change_seq FROM users_delete_log WHERE change_seq > $1 ORDER BY change_seq",
+        [since],
+      )).rows;
+      return rows.map((r) => ({ userId: Number(r.user_id), changeSeq: Number(r.change_seq) }));
     },
 
     /** 全库用户总数（含 pending；注册总量上限用）。 */

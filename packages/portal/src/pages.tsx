@@ -5476,25 +5476,31 @@ function AdminAudit(): React.JSX.Element {
 
 function AdminHealth(): React.JSX.Element {
   const { t } = useT();
-  const [h, setH] = useState<{ uptimeSeconds: number; tunnelCount: number; onlineHosts: number; dbSize: number; version: string; lastBackupAt: number | null } | null>(null);
+  const [h, setH] = useState<Awaited<ReturnType<typeof adminApi.health>> | null>(null);
   useEffect(() => {
     adminApi.health().then(setH).catch(() => undefined);
   }, []);
   if (h === null) return <p>{t("加载中…")}</p>;
-  const rows: Array<[string, string]> = [
+  // 70 U6：容量指标分项 + 阈值高亮（阈值见 discussion §6：2 万订阅 / 2s flush / 3MB N2 body）。
+  const rows: Array<[string, string, boolean?]> = [
     [t("uptime"), `${Math.floor(h.uptimeSeconds / 3600)}h ${Math.floor((h.uptimeSeconds % 3600) / 60)}m`],
     [t("隧道连接"), String(h.tunnelCount)],
     [t("在线主机"), String(h.onlineHosts)],
     [t("DB 大小"), h.dbSize < 0 ? "—" : `${(h.dbSize / 1024 / 1024).toFixed(1)} MB`],
     [t("版本"), h.version],
     [t("最近备份"), h.lastBackupAt === null ? t("未配置") : new Date(h.lastBackupAt).toLocaleString()],
+    [t("events 订阅"), h.events.subscriptions >= 20_000 ? `${h.events.subscriptions} ⚠` : String(h.events.subscriptions), h.events.subscriptions >= 20_000],
+    [t("用户缓存"), h.userCache.size < 0 ? "—" : String(h.userCache.size)],
+    [t("用量 flush"), `${h.usage.flushRows} 行 / ${h.usage.flushMs}ms`, h.usage.flushMs > 2000],
+    [t("N2 心跳"), `${(h.n2.lastBodyBytes / 1024).toFixed(1)} KB / 3 MB`, h.n2.lastBodyBytes > 3 * 1024 * 1024],
+    [t("中继"), `${h.relay.nodes} 节点 / ${h.relay.connections} 连接`],
   ];
   return (
     <div>
-      {rows.map(([k, v]) => (
+      {rows.map(([k, v, warn]) => (
         <div key={k} style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "10px 0", borderBottom: "1px solid var(--rdsh-bg-subtle)", flexWrap: "wrap" }}>
           <span style={{ color: "var(--rdsh-fg-muted)" }}>{k}</span>
-          <span style={{ fontWeight: 500 }}>{v}</span>
+          <span style={{ fontWeight: 500, color: warn === true ? "var(--rdsh-danger, #d9534f)" : undefined }}>{v}</span>
         </div>
       ))}
     </div>

@@ -13,21 +13,27 @@ import { clientIp, writeError } from "./api.ts";
 import type { HubRuntime } from "./api.ts";
 import { RELAY_OVERDRAFT_FLOOR_POINTS, isRelayFreeUser, relayFreePolicy, type NodeRow } from "./db.ts";
 
-/** 读 JSON 请求体（非 JSON / 超大 → null）。 */
-async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown> | null> {
+/** 请求体读取结果：区分「超限」与「坏 JSON」（70 A4：超限不再静默）。 */
+type BodyResult =
+  | { ok: true; body: Record<string, unknown>; bytes: number }
+  | { ok: false; reason: "too_large" | "bad_json" };
+
+/** 读 JSON 请求体（超 4 MiB / 非 JSON 分别返回原因）。 */
+async function readJsonBody(req: IncomingMessage): Promise<BodyResult> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req) {
     const buf = chunk as Buffer;
     size += buf.length;
-    if (size > 4 << 20) return null; // 4 MiB 上限（N2 心跳可携带数万 hostId；42 P0）
+    if (size > 4 << 20) return { ok: false, reason: "too_large" }; // 4 MiB 上限（N2 心跳可携带数万 hostId；42 P0）
     chunks.push(buf);
   }
   try {
     const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
-    return typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>) : null;
+    if (typeof parsed !== "object" || parsed === null) return { ok: false, reason: "bad_json" };
+    return { ok: true, body: parsed as Record<string, unknown>, bytes: size };
   } catch {
-    return null;
+    return { ok: false, reason: "bad_json" };
   }
 }
 
@@ -64,11 +70,13 @@ export async function handleNodeRegister(req: IncomingMessage, res: ServerRespon
     writeError(res, 401, "UNAUTHORIZED", "invalid token");
     return;
   }
-  const body = await readJsonBody(req);
-  if (body === null || typeof body.advertiseUrl !== "string") {
+  const r = await readJsonBody(req);
+  if (!r.ok || typeof r.body.advertiseUrl !== "string") {
     writeError(res, 400, "BAD_REQUEST", "advertiseUrl required");
     return;
   }
+  const body = r.body;
+  const advertiseUrl = body.advertiseUrl as string;
   const srcIp = clientIp(req, runtime);
 
   // ① joinToken：新节点自助入网（默认 disabled，等管理员 enable）。
@@ -81,7 +89,7 @@ export async function handleNodeRegister(req: IncomingMessage, res: ServerRespon
     const nodeId = randomUUID();
     const nodeToken = randomToken();
     const name = typeof body.name === "string" ? body.name : "";
-    await runtime.store.createNode(nodeId, name, body.advertiseUrl, sha256(nodeToken), "", 0, 100, false, srcIp);
+    await runtime.store.createNode(nodeId, name, advertiseUrl, sha256(nodeToken), "", 0, 100, false, srcIp);
     await runtime.store.recordRelayJoinEvent(randomUUID(), joinTok.id, nodeId, srcIp);
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify({ nodeId, nodeToken }));
@@ -94,7 +102,7 @@ export async function handleNodeRegister(req: IncomingMessage, res: ServerRespon
     writeError(res, 401, "UNAUTHORIZED", "invalid token");
     return;
   }
-  if (hostOf(body.advertiseUrl) !== hostOf(node.advertiseUrl)) {
+  if (hostOf(advertiseUrl) !== hostOf(node.advertiseUrl)) {
     writeError(res, 403, "DOMAIN_MISMATCH", "advertiseUrl does not match the pre-registered domain");
     return;
   }
@@ -104,42 +112,94 @@ export async function handleNodeRegister(req: IncomingMessage, res: ServerRespon
   res.end(JSON.stringify({ nodeId: node.id, nodeToken: "" }));
 }
 
-/** N2：心跳 + 负载（P1 只记心跳时间；负载字段留待 P2 调度）。 */
+/** N2：心跳 + 负载 + 在线 host 上报（70 A4：支持 seq + full + added/removed 增量）。 */
 export async function handleNodeHeartbeat(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
   const node = await authenticateNode(req, runtime);
   if (node === null) {
     writeError(res, 401, "UNAUTHORIZED", "invalid node token");
     return;
   }
-  const body = await readJsonBody(req);
   const now = Date.now();
-  // 心跳即存活证明：先写 last_heartbeat / online / presence，再写指标。
+  // 心跳即存活证明：先写 last_heartbeat / online / IP，再解析 body。
+  // 即便 body 超限/坏 JSON，节点仍是活的（旧行为如此；且 4 MiB 超限正是 A4 要修的场景，
+  // 不能因为解析失败就把节点判离线——否则 10 万 host 的全量心跳会误杀节点）。
   // 指标表任何异常都不能把节点判离线（2026-10-21 生产事故：bytes_out 超 int4，
   // recordNodeMetric 抛错 → markNodeAlive 未执行 → relay 正常但节点被判定 offline）。
   await runtime.store.updateNodeHeartbeat(node.id, now);
   await runtime.store.markNodeAlive(node.id);
   await runtime.store.updateNodeLastIp(node.id, clientIp(req, runtime)); // R23：源 IP 随心跳更新（反代走 XFF）
-  // N2 携带本节点在线 host 列表（42 P0）：替换该节点 presence，不写 DB。
-  // 只接受分配给本节点的 host，防伪造/串节点（节点 token 已认证，这里做归属校验）。
-  const hosts = body?.hosts;
-  if (Array.isArray(hosts)) {
-    const reported = hosts.filter((h): h is string => typeof h === "string");
-    const assigned = new Set((await runtime.store.listHostsByNode(node.id)).map((h) => h.id));
-    runtime.presence.setNodeHosts(node.id, reported.filter((id) => assigned.has(id)));
+
+  const r = await readJsonBody(req);
+  if (!r.ok) {
+    if (r.reason === "too_large") {
+      // 70 A4：超限不再静默（旧行为是 presence 不更新、无日志）。
+      console.error(`[hub] node heartbeat body too large (>4MiB) from node ${node.id}`);
+      runtime.metrics.inc("node.heartbeat.tooLarge");
+      writeError(res, 413, "PAYLOAD_TOO_LARGE", "heartbeat body exceeds 4 MiB");
+      return;
+    }
+    writeError(res, 400, "BAD_REQUEST", "invalid JSON body");
+    return;
   }
+  const body = r.body;
+  runtime.metrics.gauge("node.heartbeat.lastBodyBytes", r.bytes);
+
+  // 70 A4：在线 host 上报 —— 全量（full / hosts 兼容）或增量（seq + added/removed）。
+  const seq = typeof body.seq === "number" && Number.isInteger(body.seq) ? body.seq : undefined;
+  const isFull = body.full === true || seq === undefined;
+  const seqs = (runtime.nodeSeqs ??= new Map<string, number>());
+  const lastSeq = seqs.get(node.id);
+  let needFull = false;
+
+  if (isFull) {
+    // 全量：以 hosts 为准替换 presence；只接受分配给本节点的 host（防伪造/串节点）。
+    const hosts = body.hosts;
+    if (Array.isArray(hosts)) {
+      const reported = hosts.filter((h): h is string => typeof h === "string");
+      const assigned = new Set((await runtime.store.listHostsByNode(node.id)).map((h) => h.id));
+      runtime.presence.setNodeHosts(node.id, reported.filter((id) => assigned.has(id)));
+    }
+    if (seq !== undefined) seqs.set(node.id, seq);
+  } else if (seq !== undefined && lastSeq !== undefined && seq === lastSeq + 1) {
+    // 增量：added 逐个校验归属（批量并发查，避免串行 N 次 RTT；超上限回退全量）。
+    const addedRaw: unknown[] = Array.isArray(body.added) ? body.added : [];
+    const removedRaw: unknown[] = Array.isArray(body.removed) ? body.removed : [];
+    const candidate = addedRaw.filter((x): x is string => typeof x === "string");
+    // added 应是 30s 内的小批量新上线；超上限说明状态漂移/异常 → 要求全量（防串行 DB 放大）。
+    if (candidate.length > 1000) {
+      needFull = true;
+    } else {
+      const added: string[] = [];
+      const CONCURRENCY = 50; // 与 N5 一致的并发上限
+      for (let i = 0; i < candidate.length; i += CONCURRENCY) {
+        const batch = candidate.slice(i, i + CONCURRENCY);
+        const pairs = await Promise.all(batch.map(async (id) => ({ id, host: await runtime.store.getHostById(id) })));
+        for (const { id, host } of pairs) {
+          if (host !== null && host.nodeId === node.id) added.push(id); // 只接受已归属本节点（与全量路径一致，不静默补归属）
+        }
+      }
+      const removed = removedRaw.filter((x): x is string => typeof x === "string");
+      runtime.presence.applyDelta(node.id, added, removed, now);
+      seqs.set(node.id, seq);
+    }
+  } else {
+    // gap / 重复 / 无基线（节点重启 seq 归零）→ 不应用增量，要求全量。
+    needFull = true;
+  }
+
   try {
     await runtime.store.recordNodeMetric(node.id, {
-      connections: Number(body?.connections ?? 0),
-      activeStreams: Number(body?.activeStreams ?? 0),
-      bytesIn: Number(body?.bytesIn ?? 0),
-      bytesOut: Number(body?.bytesOut ?? 0),
+      connections: Number(body.connections ?? 0),
+      activeStreams: Number(body.activeStreams ?? 0),
+      bytesIn: Number(body.bytesIn ?? 0),
+      bytesOut: Number(body.bytesOut ?? 0),
     }, now);
   } catch (err) {
     // 指标写失败只记日志：不能让监控数据问题影响节点存活与主机路由。
     console.error(`[hub] node metric write failed for ${node.id}: ${err instanceof Error ? err.message : String(err)}`);
   }
   res.writeHead(200, { "content-type": "application/json" });
-  res.end("{}");
+  res.end(needFull ? JSON.stringify({ needFull: true }) : "{}");
 }
 
 /** N4：主机上线/下线登记（幂等；online → 该主机落在本节点）。 */
@@ -149,12 +209,15 @@ export async function handleNodeHosts(req: IncomingMessage, res: ServerResponse,
     writeError(res, 401, "UNAUTHORIZED", "invalid node token");
     return;
   }
-  const body = await readJsonBody(req);
-  if (body === null || typeof body.hostId !== "string" || typeof body.online !== "boolean") {
+  const r = await readJsonBody(req);
+  if (!r.ok || typeof r.body.hostId !== "string" || typeof r.body.online !== "boolean") {
     writeError(res, 400, "BAD_REQUEST", "hostId + online required");
     return;
   }
-  const host = await runtime.store.getHostById(body.hostId);
+  const body = r.body;
+  const hostId = body.hostId as string;
+  const online = body.online as boolean;
+  const host = await runtime.store.getHostById(hostId);
   if (host === null) {
     writeError(res, 404, "NOT_FOUND", "host not found");
     return;
@@ -165,8 +228,8 @@ export async function handleNodeHosts(req: IncomingMessage, res: ServerResponse,
     writeError(res, 409, "CONFLICT", "host not assigned to node");
     return;
   }
-  if (body.online && host.nodeId === null) await runtime.store.setHostNode(host.id, node.id);
-  runtime.presence.set(body.hostId, node.id, body.online);
+  if (online && host.nodeId === null) await runtime.store.setHostNode(host.id, node.id);
+  runtime.presence.set(hostId, node.id, online);
   res.writeHead(200, { "content-type": "application/json" });
   res.end("{}");
 }
@@ -244,6 +307,7 @@ export async function handleNodeLeave(req: IncomingMessage, res: ServerResponse,
   }
   for (const h of await runtime.store.listHostsByNode(node.id)) await runtime.store.setHostNode(h.id, null);
   await runtime.store.removeNode(node.id);
+  runtime.nodeSeqs?.delete(node.id); // 清理心跳序号水位（70 A4）
   res.writeHead(200, { "content-type": "application/json" });
   res.end("{}");
 }
@@ -259,12 +323,13 @@ export async function handleNodeAssign(req: IncomingMessage, res: ServerResponse
     writeError(res, 401, "UNAUTHORIZED", "invalid node token");
     return;
   }
-  const body = await readJsonBody(req);
-  if (body === null || typeof body.assign !== "string") {
+  const r = await readJsonBody(req);
+  if (!r.ok || typeof r.body.assign !== "string") {
     writeError(res, 400, "BAD_REQUEST", "assign required");
     return;
   }
-  const rec = runtime.auth.verifyAssignToken(body.assign);
+  const body = r.body;
+  const rec = runtime.auth.verifyAssignToken(body.assign as string);
   if (rec === null || rec.nodeId !== node.id) {
     writeError(res, 403, "FORBIDDEN", "assign token invalid, expired, or not for this node");
     return;

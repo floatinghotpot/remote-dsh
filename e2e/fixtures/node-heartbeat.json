@@ -1,0 +1,43 @@
+{
+  "protocol": "rdsh-node",
+  "version": 1,
+  "description": "Language-agnostic N2 heartbeat vectors (70 A4 delta). Both hub (TS) and relay (Go) must agree on resulting presence / lastSeq / needFull. Each case assumes all hostIds are assigned to the reporting node.",
+  "cases": [
+    {
+      "name": "full-initial",
+      "prevLastSeq": null,
+      "request": { "seq": 1, "full": true, "hosts": ["h1", "h2"] },
+      "expect": { "presence": ["h1", "h2"], "lastSeq": 1, "needFull": false }
+    },
+    {
+      "name": "delta-add-remove",
+      "prevLastSeq": 1,
+      "request": { "seq": 2, "added": ["h3"], "removed": ["h1"] },
+      "expect": { "presence": ["h2", "h3"], "lastSeq": 2, "needFull": false }
+    },
+    {
+      "name": "delta-gap",
+      "prevLastSeq": 2,
+      "request": { "seq": 5, "added": ["h4"] },
+      "expect": { "presence": ["h2", "h3"], "lastSeq": 2, "needFull": true }
+    },
+    {
+      "name": "delta-no-baseline",
+      "prevLastSeq": null,
+      "request": { "seq": 1, "added": ["h1"] },
+      "expect": { "presence": [], "lastSeq": null, "needFull": true }
+    },
+    {
+      "name": "legacy-no-seq",
+      "prevLastSeq": null,
+      "request": { "hosts": ["h1"] },
+      "expect": { "presence": ["h1"], "lastSeq": null, "needFull": false }
+    },
+    {
+      "name": "full-resets-seq",
+      "prevLastSeq": 9,
+      "request": { "seq": 3, "full": true, "hosts": ["h5"] },
+      "expect": { "presence": ["h5"], "lastSeq": 3, "needFull": false }
+    }
+  ]
+}

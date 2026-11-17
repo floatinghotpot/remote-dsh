@@ -743,7 +743,19 @@ export const adminApi = {
     const qs = q.toString();
     return adminJson(`/api/admin/audit${qs !== "" ? `?${qs}` : ""}`);
   },
-  health(): Promise<{ uptimeSeconds: number; tunnelCount: number; onlineHosts: number; dbSize: number; version: string; lastBackupAt: number | null }> {
+  health(): Promise<{
+    uptimeSeconds: number;
+    tunnelCount: number;
+    onlineHosts: number;
+    dbSize: number;
+    version: string;
+    lastBackupAt: number | null;
+    events: { subscriptions: number };
+    userCache: { size: number };
+    usage: { flushRows: number; flushMs: number; dirty: number };
+    n2: { lastBodyBytes: number };
+    relay: { nodes: number; connections: number };
+  }> {
     return adminJson("/api/admin/health");
   },
   config(): Promise<AdminConfig> {
@@ -825,16 +837,86 @@ export const adminApi = {
   },
 };
 
-/** 简易事件流订阅（host 在线/离线实时推送）。 */
+/**
+ * 简易事件流订阅（host 在线/离线实时推送）。
+ *
+ * 70 A3：
+ * - 断线指数退避重连（1s→2s→4s…封顶 30s）；
+ * - 响应服务端 ping（否则 60s 被判死）；
+ * - 客户端看门狗：距上次收到 ping 超过 60s → 主动弃用连接重连（半开 TCP 检测）；
+ * - 断开后静默续期一次：token 真过期 → 引导重新登录并停止重连。
+ */
 export function subscribeEvents(onEvent: (e: { type: string; hostId: string }) => void): () => void {
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const ws = new WebSocket(`${proto}//${window.location.host}/api/events`);
-  ws.onmessage = (msg) => {
-    try {
-      onEvent(JSON.parse(String(msg.data)) as { type: string; hostId: string });
-    } catch {
-      /* 忽略坏帧 */
-    }
+  const url = `${proto}//${window.location.host}/api/events`;
+  let closed = false;
+  let ws: WebSocket | null = null;
+  let retryMs = 1000;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  const connect = (): void => {
+    const sock = new WebSocket(url);
+    ws = sock;
+    let lastPingAt = Date.now();
+    let watchdog: ReturnType<typeof setInterval> | null = null;
+
+    const scheduleReconnect = (): void => {
+      if (closed) return;
+      timer = setTimeout(connect, retryMs);
+      retryMs = Math.min(retryMs * 2, 30_000);
+      // 并行静默续期：token 真过期 → 引导重新登录并停止重连（A3 验收 #4）。
+      void silentRefresh().then((r) => {
+        if (r === "invalid" && !closed) {
+          closed = true;
+          if (timer !== null) clearTimeout(timer);
+          redirectToLogin();
+        }
+      });
+    };
+
+    // 看门狗：60s 内没收到 ping → 半开连接，弃用旧 socket 直接重连（不等 close 握手）。
+    watchdog = setInterval(() => {
+      if (Date.now() - lastPingAt > 60_000) {
+        if (watchdog !== null) clearInterval(watchdog);
+        if (ws === sock) ws = null;
+        sock.onclose = null;
+        try {
+          sock.close();
+        } catch {
+          /* 忽略 */
+        }
+        scheduleReconnect();
+      }
+    }, 30_000);
+
+    sock.onmessage = (msg) => {
+      try {
+        const data = JSON.parse(String(msg.data)) as { type: string; hostId?: string };
+        if (data.type === "ping") {
+          lastPingAt = Date.now();
+          if (sock.readyState === WebSocket.OPEN) sock.send(JSON.stringify({ type: "pong" }));
+          return;
+        }
+        onEvent(data as { type: string; hostId: string });
+      } catch {
+        /* 忽略坏帧 */
+      }
+    };
+    sock.onopen = () => {
+      retryMs = 1000; // 连上即重置退避
+      lastPingAt = Date.now();
+    };
+    sock.onclose = () => {
+      if (watchdog !== null) clearInterval(watchdog);
+      if (ws === sock) ws = null;
+      scheduleReconnect();
+    };
   };
-  return () => ws.close();
+
+  connect();
+  return () => {
+    closed = true;
+    if (timer !== null) clearTimeout(timer);
+    ws?.close();
+  };
 }

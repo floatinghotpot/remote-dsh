@@ -49,6 +49,8 @@ export interface HubServerOptions {
   store?: HubStore;
   /** DB 大小来源（PG 由 serve 注入）；缺省走 db 文件 size。 */
   dbSize?: () => Promise<number>;
+  /** 用户缓存条目数（70 U6；serve.ts 注入，SQLite 模式不传）。 */
+  userCacheSize?: () => number;
   auth: HubAuth;
   tunnels: TunnelRegistry;
   events: EventHub;
@@ -196,6 +198,7 @@ export async function startHubServer(opts: HubServerOptions): Promise<RunningHub
     db: opts.db,
     store: opts.store ?? (opts.db !== undefined ? createSqliteStore(opts.db) : (() => { throw new Error("hub server requires db or store"); })()),
     dbSize: opts.dbSize,
+    userCacheSize: opts.userCacheSize,
     usage: new UsageAccumulator(opts.store ?? (opts.db !== undefined ? createSqliteStore(opts.db) : (() => { throw new Error("hub server requires db or store"); })()), opts.billing?.relay?.bytesPerCredit ?? RELAY_BYTES_PER_CREDIT, relayFreePolicy(opts.billing), opts.billing?.relay?.overdraftFloor ?? RELAY_OVERDRAFT_FLOOR_POINTS),
     auth: opts.auth,
     tunnels: opts.tunnels,

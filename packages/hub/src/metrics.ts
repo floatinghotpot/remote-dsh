@@ -6,6 +6,7 @@ import type { UsageStats } from "./relay-usage.ts";
 export class HubMetrics {
   private readonly loop = monitorEventLoopDelay({ resolution: 20 });
   private readonly counters = new Map<string, number>();
+  private readonly gauges = new Map<string, number>();
 
   constructor() {
     this.loop.enable();
@@ -18,6 +19,16 @@ export class HubMetrics {
 
   private counter(name: string): number {
     return this.counters.get(name) ?? 0;
+  }
+
+  /** 设置命名 gauge（如 `node.heartbeat.lastBodyBytes`）。 */
+  gauge(name: string, value: number): void {
+    this.gauges.set(name, value);
+  }
+
+  /** 读 gauge（缺省 0）。 */
+  gaugeValue(name: string): number {
+    return this.gauges.get(name) ?? 0;
   }
 
   snapshot(usage: UsageStats, presence: PresenceDirectory): Record<string, unknown> {

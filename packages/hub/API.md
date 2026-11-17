@@ -296,7 +296,7 @@ JSAPI 支付需用户 openid（公众号 OAuth2）。门户在微信内浏览器
 
 ### POST /api/admin/credit —— 手动补单入账（`admin` only）：`{ userId, planId, amountCny, expiresAtMs }` + `reason`。`planId` 必须在 `billing.plans`；重复补单会停用旧有效订阅（单有效订阅）。
 
-### GET /api/admin/health —— `{ uptimeSeconds, tunnelCount, onlineHosts, dbSize, version, lastBackupAt }`
+### GET /api/admin/health —— `{ uptimeSeconds, tunnelCount, onlineHosts, dbSize, version, lastBackupAt, events: { subscriptions }, userCache: { size }, usage: { flushRows, flushMs, dirty }, n2: { lastBodyBytes }, relay: { nodes, connections } }`（后 5 项为 70 U6 容量指标分项）
 
 ### GET /api/admin/config —— 脱敏后的运行时配置。
 

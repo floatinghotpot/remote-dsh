@@ -63,6 +63,8 @@ export interface UserRow {
   appleEmail: string | null;
   /** Apple 姓名（仅首次授权返回，展示用） */
   appleFullName: string | null;
+  /** 变更序列（单调递增）：70 A1 增量缓存的水位，由 DB trigger 维护 */
+  changeSeq: number;
 }
 
 export interface HostRow {
@@ -1286,6 +1288,7 @@ export class HubDb {
       appleSub: row.apple_sub === null || row.apple_sub === undefined ? null : String(row.apple_sub),
       appleEmail: row.apple_email === null || row.apple_email === undefined ? null : String(row.apple_email),
       appleFullName: row.apple_full_name === null || row.apple_full_name === undefined ? null : String(row.apple_full_name),
+      changeSeq: Number(row.change_seq ?? 0),
     };
   }
 
@@ -1539,6 +1542,22 @@ export class HubDb {
 
   listUsers(): UserRow[] {
     return (this.db.prepare("SELECT * FROM users ORDER BY id").all() as unknown as Array<Record<string, unknown>>).map((r) => this.mapUser(r));
+  }
+
+  /**
+   * 70 A1：增量拉取（`change_seq > since`）。
+   * SQLite 模式无用户缓存（`lookupUser` 直读库），`change_seq` 也不建列/触发器，恒返回空；PG 见 pg-store。
+   */
+  listUsersSince(_since: number): UserRow[] {
+    return [];
+  }
+
+  /**
+   * 70 A1：硬删墓碑增量（`users_delete_log`）。
+   * SQLite 模式无用户缓存（`lookupUser` 直读库），故恒返回空；PG 见 pg-store。
+   */
+  listUserDeletionsSince(_since: number): Array<{ userId: number; changeSeq: number }> {
+    return [];
   }
 
   /** 全库用户总数（含 pending；注册总量上限用）。 */

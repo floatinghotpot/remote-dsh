@@ -44,3 +44,25 @@ test("presence：不同节点集合互不误删", () => {
   assert.equal(p.isOnline("h1", 2_000), false);
   assert.equal(p.isOnline("h2", 2_000), true, "n2 的 h2 不受 n1 影响");
 });
+
+test("presence：增量心跳刷新未变主机的 liveness（70 A4 回归）", () => {
+  const p = new PresenceDirectory(90_000);
+  // 全量建立基线
+  p.setNodeHosts("n1", ["h1", "h2"], 0);
+  // 增量：只报变化（h3 上线、无下线）；未变主机 h1/h2 的 at 必须被刷新
+  p.applyDelta("n1", ["h3"], [], 30_000);
+  assert.equal(p.isOnline("h1", 30_000), true);
+  assert.equal(p.isOnline("h2", 30_000), true);
+  assert.equal(p.isOnline("h3", 30_000), true);
+  // 此后 90s 无任何心跳 → 全部 TTL 下线
+  assert.equal(p.isOnline("h1", 30_000 + 90_001), false);
+});
+
+test("presence：增量 removed 只摘本节点主机（迁移不误删）", () => {
+  const p = new PresenceDirectory();
+  p.setNodeHosts("n1", ["h1"], 1_000);
+  p.setNodeHosts("n2", ["h1"], 2_000); // h1 已迁移到 n2
+  p.applyDelta("n1", [], ["h1"], 3_000); // n1 报 h1 removed
+  assert.equal(p.isOnline("h1", 3_000), true, "h1 应仍在线（已属 n2）");
+  assert.equal(p.nodeIdOf("h1", 3_000), "n2");
+});
