@@ -81,6 +81,10 @@ export interface HostRow {
   deviceKind: string | null;
   /** 主机自报的版本对象（原始 JSON 字符串）；未上报为 null。 */
   versionsJson: string | null;
+  /** 主机启动状态（71 D3）：starting/ready，落库跨实例；未上报为 null。 */
+  status: string | null;
+  /** status 写入时间（ms epoch）；读时配合 TTL 防「启动中」永久残留。 */
+  statusAt: number | null;
   /** 设备标识（rdsh 安装期生成、随注册上送）：重绑时据此复用同一 host 记录；老客户端为 null。 */
   deviceId: string | null;
   /** 谁吊销的：`user`（解绑/用户删除，可被重绑复活）/ `admin`（管理员吊销，不可复活）；老数据为 null。 */
@@ -1200,6 +1204,9 @@ export class HubDb {
     // 63-bind-agent-box：主机自报设备类型与版本（未上报为 NULL）
     if (!hostCols.has("device_kind")) this.db.exec(`ALTER TABLE hosts ADD COLUMN device_kind TEXT`);
     if (!hostCols.has("versions_json")) this.db.exec(`ALTER TABLE hosts ADD COLUMN versions_json TEXT`);
+    // 71 D3：hostStatus（starting/ready）落库跨实例；status_at 供 TTL 判定。
+    if (!hostCols.has("status")) this.db.exec(`ALTER TABLE hosts ADD COLUMN status TEXT`);
+    if (!hostCols.has("status_at")) this.db.exec(`ALTER TABLE hosts ADD COLUMN status_at INTEGER`);
     // 重绑去重：设备标识（未上送为 NULL）
     if (!hostCols.has("device_id")) this.db.exec(`ALTER TABLE hosts ADD COLUMN device_id TEXT`);
     // 吊销来源：user（可复活）/ admin（不可复活）；老数据 NULL → 视为不可复活（保守）
@@ -1339,6 +1346,8 @@ export class HubDb {
       createdAt: String(row.created_at),
       deviceKind: row.device_kind === null || row.device_kind === undefined ? null : String(row.device_kind),
       versionsJson: row.versions_json === null || row.versions_json === undefined ? null : String(row.versions_json),
+      status: row.status === null || row.status === undefined ? null : String(row.status),
+      statusAt: row.status_at === null || row.status_at === undefined ? null : Number(row.status_at),
       deviceId: row.device_id === null || row.device_id === undefined ? null : String(row.device_id),
       revokedBy: row.revoked_by === null || row.revoked_by === undefined ? null : String(row.revoked_by),
     };
@@ -2340,6 +2349,14 @@ export class HubDb {
     const info = this.db
       .prepare(`UPDATE hosts SET ${sets.join(", ")} WHERE id = ? AND revoked_at IS NULL`)
       .run(...args, hostId);
+    return Number(info.changes) > 0;
+  }
+
+  /** 覆盖写主机启动状态（71 D3）：跨实例共享；调用方先做「值变了才写」去重。 */
+  setHostStatus(hostId: string, status: string, at: number): boolean {
+    const info = this.db
+      .prepare("UPDATE hosts SET status = ?, status_at = ? WHERE id = ? AND revoked_at IS NULL")
+      .run(status, at, hostId);
     return Number(info.changes) > 0;
   }
 

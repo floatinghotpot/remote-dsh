@@ -34,6 +34,7 @@ export function hosts(
   | "listHostsForUser"
   | "isHostOwner"
   | "setHostMeta"
+  | "setHostStatus"
   | "findHostByOwnerDeviceId"
   | "reissueHostToken"
 > {
@@ -258,6 +259,14 @@ export function hosts(
       const r = await q(txDb(pool),
         `UPDATE hosts SET ${sets.join(", ")} WHERE id = $${args.length} AND revoked_at IS NULL`,
         args,
+      );
+      return (r.rowCount ?? 0) > 0;
+    },
+
+    async setHostStatus(hostId: string, status: string, at: number): Promise<boolean> {
+      const r = await q(txDb(pool),
+        "UPDATE hosts SET status = $1, status_at = $2 WHERE id = $3 AND revoked_at IS NULL",
+        [status, at, hostId],
       );
       return (r.rowCount ?? 0) > 0;
     },

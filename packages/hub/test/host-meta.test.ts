@@ -166,6 +166,28 @@ test("status：starting/ready 入库并在 GET /api/hosts 带出，缺省不改�
   assert.equal((await post("/api/hosts/self/meta", { token: hostToken, status: "bogus" })).status, 400);
 });
 
+test("status：值不变不重写（幂等去重，防刷）", async () => {
+  const { hostId, hostToken } = await makeHost("grace");
+
+  await post("/api/hosts/self/meta", { token: hostToken, status: "starting" });
+  const first = db.getHostById(hostId)!;
+  assert.equal(first.status, "starting");
+  assert.ok(first.statusAt !== null);
+
+  // 同值重复上报：status_at 不刷新（「值变了才写」去重）
+  await new Promise((r) => setTimeout(r, 2));
+  await post("/api/hosts/self/meta", { token: hostToken, status: "starting" });
+  const second = db.getHostById(hostId)!;
+  assert.equal(second.statusAt, first.statusAt);
+
+  // 报新值：status_at 刷新
+  await new Promise((r) => setTimeout(r, 2));
+  await post("/api/hosts/self/meta", { token: hostToken, status: "ready" });
+  const third = db.getHostById(hostId)!;
+  assert.equal(third.status, "ready");
+  assert.ok(third.statusAt! > first.statusAt!);
+});
+
 test("未知字段被忽略，不影响已上报值", async () => {
   const { hostToken } = await makeHost("erin");
   const res = await post("/api/hosts/self/meta", {

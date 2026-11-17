@@ -84,8 +84,6 @@ export interface HubRuntime {
   usage: UsageAccumulator;
   presence: PresenceDirectory;
   metrics: HubMetrics;
-  /** 主机自报的启动状态（starting/ready；内存态，隧道断开或 hub 重启即丢）。 */
-  hostStatus?: Map<string, { status: HostStatus; at: number }>;
   /** host cookie 的 Ed25519 签名器（R17；迁移票据签发）。 */
   hostCookieSigner?: HostCookieSigner;
   /** 每节点 N2 心跳序号水位（70 A4 增量心跳；进程内存，hub 重启归零）。 */
@@ -2882,14 +2880,11 @@ const HOST_STATUSES = new Set<string>(["starting", "ready"]);
 /** 状态超过这个时间未刷新就丢弃：避免网关异常退出后永远显示「启动中」。 */
 const HOST_STATUS_TTL_MS = 5 * 60 * 1000;
 
-export function hostStatusOf(runtime: HubRuntime, hostId: string): HostStatus | null {
-  const entry = runtime.hostStatus?.get(hostId);
-  if (entry === undefined) return null;
-  if (Date.now() - entry.at > HOST_STATUS_TTL_MS) {
-    runtime.hostStatus?.delete(hostId);
-    return null;
-  }
-  return entry.status;
+export function hostStatusOf(host: { status: string | null; statusAt: number | null }): HostStatus | null {
+  if (host.status === null || host.statusAt === null) return null;
+  if (!HOST_STATUSES.has(host.status)) return null;
+  if (Date.now() - host.statusAt > HOST_STATUS_TTL_MS) return null;
+  return host.status as HostStatus;
 }
 
 async function handleListHosts(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
@@ -2906,7 +2901,7 @@ async function handleListHosts(req: IncomingMessage, res: ServerResponse, runtim
       name: h.name,
       // 节点路由用 N4 上报的 online；hub 路由（无节点）用 TunnelRegistry
       online: isHostOnline(h, runtime),
-      status: hostStatusOf(runtime, h.id),
+      status: hostStatusOf(h),
       createdAt: h.createdAt,
       role: h.ownerId === auth.userId ? "owner" : "member",
       e2eePublicKey: h.e2eePublicKey,
@@ -3671,7 +3666,10 @@ async function handleHostMeta(req: IncomingMessage, res: ServerResponse, runtime
     await runtime.store.setHostMeta(host.id, deviceKind, versionsJson);
   }
   if (status !== null) {
-    (runtime.hostStatus ??= new Map()).set(host.id, { status, at: Date.now() });
+    // 71 D3：落库跨实例；「值变了才写」去重——同值重复上报不写 DB（防刷）。
+    if (hostStatusOf(host) !== status) {
+      await runtime.store.setHostStatus(host.id, status, Date.now());
+    }
   }
   const updated = await runtime.store.getHostById(host.id);
   res.writeHead(200, { "content-type": "application/json" });
@@ -3679,7 +3677,7 @@ async function handleHostMeta(req: IncomingMessage, res: ServerResponse, runtime
     ok: true,
     deviceKind: updated?.deviceKind ?? null,
     versions: updated?.versionsJson != null ? safeJson(updated.versionsJson) : null,
-    status: hostStatusOf(runtime, host.id),
+    status: hostStatusOf(updated ?? host),
   }));
 }
 
