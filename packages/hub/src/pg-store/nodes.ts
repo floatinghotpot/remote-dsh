@@ -62,6 +62,7 @@ export function nodes(pool: Pool): Pick<
   | "markNodesOffline"
   | "markNodeAlive"
   | "recordNodeMetric"
+  | "pruneNodeMetrics"
   | "nodeBandwidth"
   | "removeNode"
   | "pickNode"
@@ -245,10 +246,16 @@ export function nodes(pool: Pool): Pick<
         "UPDATE nodes SET connections=$1, active_streams=$2, bytes_in=$3, bytes_out=$4, last_heartbeat=$5 WHERE id=$6",
         [m.connections, m.activeStreams, m.bytesIn, m.bytesOut, now, nodeId],
       );
+      // 71 B6：ts 分桶（30s）→ 多实例广播时同 PK 去重；last_heartbeat 仍用真实 now。
+      const bucket = now - (now % 30_000);
       await txDb(pool).query(
         "INSERT INTO node_metrics (node_id, ts, connections, active_streams, bytes_in, bytes_out) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (node_id, ts) DO UPDATE SET connections = excluded.connections, active_streams = excluded.active_streams, bytes_in = excluded.bytes_in, bytes_out = excluded.bytes_out",
-        [nodeId, now, m.connections, m.activeStreams, m.bytesIn, m.bytesOut],
+        [nodeId, bucket, m.connections, m.activeStreams, m.bytesIn, m.bytesOut],
       );
+    },
+
+    pruneNodeMetrics: async (beforeMs: number): Promise<void> => {
+      await q(txDb(pool), "DELETE FROM node_metrics WHERE ts < $1", [beforeMs]);
     },
 
     nodeBandwidth: async (nodeId: string, now: number = Date.now()): Promise<NodeBandwidth> => {

@@ -42,7 +42,7 @@ test("assign 令牌：签发/验证/篡改/过期 + 跨实例（重启）仍有�
 test("assign 令牌：Ed25519 签发/验证/篡改（与 host cookie 同源）", () => {
   const dir = mkdtempSync(join(tmpdir(), "rdsh-at-"));
   try {
-    const signer = loadHostCookieSigner(join(dir, "hostcookie.key"));
+    const signer = loadHostCookieSigner(join(dir, "hostcookie.key"), { allowCreate: true });
     const db = new HubDb(":memory:");
     const auth = new HubAuth(createSqliteStore(db), (id) => db.getUserById(id), new Jwt(SECRET), {}, signer);
     const token = auth.signAssignToken("host-abc", "node-123");

@@ -571,6 +571,9 @@ const USAGE_UPSERT_SQL = `INSERT INTO usage_daily (user_id, host_id, date, insta
            sessions = MAX(sessions, excluded.sessions),
            updated_at = excluded.updated_at`;
 
+/** 71 B6：node_metrics 的 ts 分桶粒度（与 N2 心跳 30s 对齐）。 */
+const NODE_METRIC_BUCKET_MS = 30_000;
+
 export class HubDb {
   readonly db: DatabaseSync;
   /** 数据库文件路径（:memory: 测试用） */
@@ -1021,6 +1024,38 @@ export class HubDb {
         bytes_out INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (node_id, ts)
       );
+      /* 71 B2：算术验证码跨实例（token 一次性；expires_at 过期即可由 prune 清理） */
+      CREATE TABLE IF NOT EXISTS captcha_challenges (
+        token TEXT PRIMARY KEY,
+        answer INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_captcha_challenges_exp ON captcha_challenges(expires_at);
+      /* 71 B3：微信 OAuth 流程态跨实例（kind = login|bind|app-login|app-bind|pending|handoff|bind_token） */
+      CREATE TABLE IF NOT EXISTS wechat_flows (
+        token TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        user_id INTEGER,
+        payload TEXT NOT NULL,
+        ip TEXT,
+        expires_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_wechat_flows_exp ON wechat_flows(kind, expires_at);
+      /* 71 B5：多实例下 hub 不持隧道——踢主机写吊销表，relay 经 N5（≤30s）断开（TTL 内幂等重发） */
+      CREATE TABLE IF NOT EXISTS host_revocations (
+        host_id TEXT PRIMARY KEY,
+        revoked_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_host_revocations_at ON host_revocations(revoked_at);
+      /* 71 B6：hub 实例自注册（relay 经 N5 拿到同区实例列表，逐个推 N2 心跳） */
+      CREATE TABLE IF NOT EXISTS hub_instances (
+        url TEXT PRIMARY KEY,
+        region TEXT NOT NULL DEFAULT 'cn',
+        version TEXT,
+        started_at INTEGER NOT NULL,
+        last_seen_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_hub_instances_seen ON hub_instances(last_seen_at);
       CREATE TABLE IF NOT EXISTS relay_join_tokens (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -1957,7 +1992,15 @@ export class HubDb {
   /** N2：落一次负载采样（最新计数器 + append-only 样本，供带宽口径 R32）。 */
   recordNodeMetric(nodeId: string, m: { connections: number; activeStreams: number; bytesIn: number; bytesOut: number }, now = Date.now()): void {
     this.db.prepare("UPDATE nodes SET connections=?, active_streams=?, bytes_in=?, bytes_out=?, last_heartbeat=? WHERE id=?").run(m.connections, m.activeStreams, m.bytesIn, m.bytesOut, now, nodeId);
-    this.db.prepare("INSERT OR REPLACE INTO node_metrics (node_id, ts, connections, active_streams, bytes_in, bytes_out) VALUES (?, ?, ?, ?, ?, ?)").run(nodeId, now, m.connections, m.activeStreams, m.bytesIn, m.bytesOut);
+    // 71 B6：ts 分桶（30s，与心跳同频）→ 多实例广播时同 PK 去重，避免 N× 行；
+    // last_heartbeat 仍用真实 now（存活判定不受影响）。
+    const bucket = now - (now % NODE_METRIC_BUCKET_MS);
+    this.db.prepare("INSERT OR REPLACE INTO node_metrics (node_id, ts, connections, active_streams, bytes_in, bytes_out) VALUES (?, ?, ?, ?, ?, ?)").run(nodeId, bucket, m.connections, m.activeStreams, m.bytesIn, m.bytesOut);
+  }
+
+  /** 71 B6：node_metrics 保留期清理（该表原本无 prune，广播会放大写入）。 */
+  pruneNodeMetrics(beforeMs: number): void {
+    this.db.prepare("DELETE FROM node_metrics WHERE ts < ?").run(beforeMs);
   }
 
   /** R32：节点带宽口径（当前=最近区间速率；平均=5m/1h/24h 滚动窗口，bps）。 */
@@ -2503,6 +2546,96 @@ export class HubDb {
 
   pruneAudit(beforeMs: number): void {
     this.db.prepare("DELETE FROM audit_events WHERE created_at < ?").run(beforeMs);
+  }
+
+  // ---- 算术验证码（71 B2：跨实例；与 captcha.ts 的 TTL/一次性语义对齐）----
+
+  createCaptchaChallenge(token: string, answer: number, expiresAt: number): void {
+    this.db.prepare("INSERT OR REPLACE INTO captcha_challenges (token, answer, expires_at) VALUES (?, ?, ?)").run(token, answer, expiresAt);
+  }
+
+  /** 原子 consume：删掉并返回答案（同一 token 只有一次成功）；过期/不存在 → null。 */
+  consumeCaptchaChallenge(token: string, now = Date.now()): { answer: number } | null {
+    const row = this.db
+      .prepare("DELETE FROM captcha_challenges WHERE token = ? AND expires_at > ? RETURNING answer")
+      .get(token, now) as { answer: number } | undefined;
+    return row === undefined ? null : { answer: Number(row.answer) };
+  }
+
+  pruneExpiredCaptchaChallenges(now = Date.now()): void {
+    this.db.prepare("DELETE FROM captcha_challenges WHERE expires_at <= ?").run(now);
+  }
+
+  // ---- 微信 OAuth 流程态（71 B3：跨实例；一次性由原子 consume 保证）----
+
+  setWechatFlow(token: string, kind: string, userId: number | null, payload: string, ip: string | null, expiresAt: number): void {
+    this.db
+      .prepare("INSERT OR REPLACE INTO wechat_flows (token, kind, user_id, payload, ip, expires_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(token, kind, userId, payload, ip, expiresAt);
+  }
+
+  /** 读取（不消费）；过期/不存在/kind 不符 → null。 */
+  getWechatFlow(token: string, kind: string, now = Date.now()): { payload: string; userId: number | null } | null {
+    const row = this.db
+      .prepare("SELECT payload, user_id FROM wechat_flows WHERE token = ? AND kind = ? AND expires_at > ?")
+      .get(token, kind, now) as { payload: string; user_id: number | null } | undefined;
+    return row === undefined ? null : { payload: String(row.payload), userId: row.user_id === null ? null : Number(row.user_id) };
+  }
+
+  /** 原子消费（一次性）：DELETE ... RETURNING；过期/不存在/kind 不符 → null。 */
+  consumeWechatFlow(token: string, kind: string, now = Date.now()): { payload: string; userId: number | null } | null {
+    const row = this.db
+      .prepare("DELETE FROM wechat_flows WHERE token = ? AND kind = ? AND expires_at > ? RETURNING payload, user_id")
+      .get(token, kind, now) as { payload: string; user_id: number | null } | undefined;
+    return row === undefined ? null : { payload: String(row.payload), userId: row.user_id === null ? null : Number(row.user_id) };
+  }
+
+  pruneExpiredWechatFlows(now = Date.now()): void {
+    this.db.prepare("DELETE FROM wechat_flows WHERE expires_at <= ?").run(now);
+  }
+
+  // ---- 主机吊销下行（71 B5：多实例 hub 不持隧道，relay 经 N5 断开）----
+
+  revokeHost(hostId: string, now = Date.now()): void {
+    this.db.prepare("INSERT OR REPLACE INTO host_revocations (host_id, revoked_at) VALUES (?, ?)").run(hostId, now);
+  }
+
+  /** 近期吊销（TTL 内幂等重发；广播到同区所有 relay，不按节点定向）。 */
+  listRecentRevocations(sinceMs: number): string[] {
+    return (this.db.prepare("SELECT host_id FROM host_revocations WHERE revoked_at >= ? ORDER BY revoked_at").all(sinceMs) as Array<{ host_id: string }>).map((r) => r.host_id);
+  }
+
+  pruneRevocations(beforeMs: number): void {
+    this.db.prepare("DELETE FROM host_revocations WHERE revoked_at < ?").run(beforeMs);
+  }
+
+  // ---- hub 实例自注册（71 B6：实例发现；relay 经 N5 拿到同区实例列表）----
+
+  upsertHubInstance(url: string, region: string, version: string | null, now = Date.now()): void {
+    this.db
+      .prepare("INSERT OR REPLACE INTO hub_instances (url, region, version, started_at, last_seen_at) VALUES (?, ?, ?, ?, ?)")
+      .run(url, region, version, now, now);
+  }
+
+  touchHubInstance(url: string, now = Date.now()): void {
+    this.db.prepare("UPDATE hub_instances SET last_seen_at = ? WHERE url = ?").run(now, url);
+  }
+
+  /** 活跃实例（last_seen_at > sinceMs）；按 region 过滤 + url 稳定排序（relay 游标不乱序）。 */
+  listHubInstances(sinceMs: number, region?: string): Array<{ url: string; region: string; version: string | null; lastSeenAt: number }> {
+    const rows = region === undefined
+      ? this.db.prepare("SELECT url, region, version, last_seen_at FROM hub_instances WHERE last_seen_at > ? ORDER BY url").all(sinceMs)
+      : this.db.prepare("SELECT url, region, version, last_seen_at FROM hub_instances WHERE last_seen_at > ? AND region = ? ORDER BY url").all(sinceMs, region);
+    return (rows as Array<Record<string, unknown>>).map((r) => ({
+      url: String(r.url),
+      region: String(r.region),
+      version: r.version === null || r.version === undefined ? null : String(r.version),
+      lastSeenAt: Number(r.last_seen_at),
+    }));
+  }
+
+  pruneHubInstances(beforeMs: number): void {
+    this.db.prepare("DELETE FROM hub_instances WHERE last_seen_at < ?").run(beforeMs);
   }
 
   // ---- 产品分析事件（57-retention-analytics，Phase 2）----

@@ -29,6 +29,7 @@ export { handleRelay, handleRelayUpgrade } from "./relay.ts";
 export { startHubServer, loadHubTls } from "./server.ts";
 export type { HubServerOptions, RunningHub } from "./server.ts";
 export { serveHub, loadJwtKey } from "./serve.ts";
+export { loadHostCookieSigner } from "./hostcookie.ts";
 export type { HubServeOptions } from "./serve.ts";
 export { servePortal, defaultPortalDir } from "./portal.ts";
 export { backupNow, pruneBackups, lastBackupAt } from "./backup.ts";

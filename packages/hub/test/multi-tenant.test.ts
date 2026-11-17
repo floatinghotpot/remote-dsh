@@ -62,12 +62,13 @@ test.before(start);
 test.after(stop);
 
 test("算术验证码：挑战 + 一次性校验", async () => {
-  const { token, question } = createChallenge();
+  const store = createSqliteStore(db);
+  const { token, question } = await createChallenge(store);
   assert.match(question, /\d \+ \d = \?/);
   const m = /(\d+) \+ (\d+) = \?/.exec(question)!;
   const answer = String(Number(m[1]) + Number(m[2]));
-  assert.equal(verifyChallenge(token, answer), true);
-  assert.equal(verifyChallenge(token, answer), false); // 一次性
+  assert.equal(await verifyChallenge(store, token, answer), true);
+  assert.equal(await verifyChallenge(store, token, answer), false); // 一次性
 });
 
 test("找回密码：不存在邮箱也返回 ok（反枚举）", async () => {

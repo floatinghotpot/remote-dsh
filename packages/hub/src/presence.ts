@@ -20,34 +20,47 @@ export class PresenceDirectory {
     this.ttlMs = ttlMs;
   }
 
-  /** 用节点上报的完整在线 host 集合替换该节点的 presence；集合外的主机下线。 */
-  setNodeHosts(nodeId: string, hostIds: string[], now = Date.now()): void {
+  /** 用节点上报的完整在线 host 集合替换该节点的 presence；返回**真实迁移**（71 B6 派生事件用）。 */
+  setNodeHosts(nodeId: string, hostIds: string[], now = Date.now()): { added: string[]; removed: string[] } {
     const next = new Set(hostIds);
-    const prev = this.byNode.get(nodeId);
-    if (prev !== undefined) {
-      for (const hostId of prev) {
-        if (!next.has(hostId) && this.byHost.get(hostId)?.nodeId === nodeId) this.byHost.delete(hostId);
+    const prev = this.byNode.get(nodeId) ?? new Set<string>();
+    const added: string[] = [];
+    const removed: string[] = [];
+    for (const hostId of prev) {
+      if (!next.has(hostId) && this.byHost.get(hostId)?.nodeId === nodeId) {
+        this.byHost.delete(hostId);
+        removed.push(hostId);
       }
     }
-    for (const hostId of next) this.byHost.set(hostId, { nodeId, at: now });
+    for (const hostId of next) {
+      if (!this.byHost.has(hostId)) added.push(hostId); // 迁移（已在别的节点）不算新上线
+      this.byHost.set(hostId, { nodeId, at: now });
+    }
     this.byNode.set(nodeId, next);
+    return { added, removed };
   }
 
   /**
    * 增量应用 N2 心跳（70 A4）：`added` 上线、`removed` 下线。
    * 只摘「本节点自己的」主机，避免误删已迁移到其它节点的主机。
    */
-  applyDelta(nodeId: string, added: readonly string[], removed: readonly string[], now = Date.now()): void {
+  applyDelta(nodeId: string, added: readonly string[], removed: readonly string[], now = Date.now()): { added: string[]; removed: string[] } {
     let hosts = this.byNode.get(nodeId);
     if (hosts === undefined) {
       hosts = new Set();
       this.byNode.set(nodeId, hosts);
     }
+    const actuallyRemoved: string[] = [];
+    const actuallyAdded: string[] = [];
     for (const hostId of removed) {
-      if (this.byHost.get(hostId)?.nodeId === nodeId) this.byHost.delete(hostId);
+      if (this.byHost.get(hostId)?.nodeId === nodeId) {
+        this.byHost.delete(hostId);
+        actuallyRemoved.push(hostId);
+      }
       hosts.delete(hostId);
     }
     for (const hostId of added) {
+      if (!this.byHost.has(hostId)) actuallyAdded.push(hostId);
       this.byHost.set(hostId, { nodeId, at: now });
       hosts.add(hostId);
     }
@@ -57,6 +70,7 @@ export class PresenceDirectory {
       const entry = this.byHost.get(hostId);
       if (entry !== undefined && entry.nodeId === nodeId) entry.at = now;
     }
+    return { added: actuallyAdded, removed: actuallyRemoved };
   }
 
   /** N4 兼容：单主机上线/下线（不写 DB）。 */

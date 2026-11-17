@@ -3195,6 +3195,7 @@ function AdminApp({ path }: { path: string }): React.JSX.Element {  const { t } 
     { p: "/users", label: t("用户") },
     { p: "/hosts", label: t("主机") },
     { p: "/nodes", label: t("中继节点", { en: "Relay Nodes" }) },
+    { p: "/cluster", label: t("集群", { en: "Cluster" }) },
     { p: "/join-tokens", label: t("入网令牌", { en: "Join Tokens" }) },
     { p: "/provider-configs", label: t("供应商配置", { en: "Providers" }) },
     { p: "/services", label: t("模型代理", { en: "Model Proxies" }) },
@@ -3234,6 +3235,8 @@ function AdminApp({ path }: { path: string }): React.JSX.Element {  const { t } 
         <AdminNodes isWrite={isWrite} />
       ) : path.startsWith("/nodes/") ? (
         <AdminNodeDetail nodeId={path.slice("/nodes/".length)} isWrite={isWrite} />
+      ) : path === "/cluster" ? (
+        <AdminCluster isWrite={isWrite} />
       ) : path === "/join-tokens" ? (
         <AdminJoinTokens isWrite={isWrite} />
       ) : path === "/provider-configs" ? (
@@ -5470,6 +5473,64 @@ function AdminAudit(): React.JSX.Element {
         </tbody>
       </table>
       <Pager page={page} total={total} pageSize={pageSize} onPage={setPage} onPageSize={(n) => { setPageSize(n); setPage(0); }} />
+    </div>
+  );
+}
+
+type HubInstanceRow = { url: string; region: string; version: string | null; lastSeenAt: number };
+
+/** 71 U5：集群页 —— 实例列表（url/region/version/last_seen）+ relay.builtin 开关。 */
+function AdminCluster({ isWrite }: { isWrite: boolean }): React.JSX.Element {
+  const { t } = useT();
+  const [data, setData] = useState<{ instances: HubInstanceRow[]; relayBuiltin: boolean } | null>(null);
+  const [msg, setMsg] = useState("");
+  const reload = (): void => {
+    adminApi.cluster().then(setData).catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed"));
+  };
+  useEffect(reload, []);
+  const toggle = (builtin: boolean): void => {
+    adminApi.setRelayBuiltin(builtin)
+      .then((r) => { setMsg(r.restartRequired ? t("已写入配置，需重启 hub 生效") : "ok"); reload(); })
+      .catch((e: unknown) => setMsg(e instanceof Error ? e.message : "failed"));
+  };
+  if (data === null) return <p>{t("加载中…")}</p>;
+  return (
+    <div>
+      {msg !== "" ? <div style={{ marginBottom: 8 }}>{msg}</div> : null}
+      <div style={{ marginBottom: 12 }}>
+        <b>{t("内置 relay")}</b>：{data.relayBuiltin ? t("开（单机模式）") : t("关（多实例模式）")}
+        {isWrite ? (
+          <button onClick={() => toggle(!data.relayBuiltin)} style={{ ...adminBtnStyle("primary"), marginLeft: 8 }}>
+            {data.relayBuiltin ? t("关闭（切多实例）") : t("开启（切单机）")}
+          </button>
+        ) : null}
+        {data.relayBuiltin ? null : (
+          <div style={{ color: "#b45309", marginTop: 6 }}>{t("⚠ 关闭后无 relay 节点时全部主机 503：请先确认 relay 节点在线。")}</div>
+        )}
+      </div>
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead>
+          <tr>
+            {adminTh(t("实例 URL", { en: "Instance URL" }))}
+            {adminTh(t("区域"))}
+            {adminTh(t("版本"))}
+            {adminTh(t("最后心跳"))}
+          </tr>
+        </thead>
+        <tbody>
+          {data.instances.map((i) => (
+            <tr key={i.url}>
+              {adminTd(null, i.url)}
+              {adminTd(null, i.region)}
+              {adminTd(null, i.version ?? "-")}
+              {adminTd(null, new Date(i.lastSeenAt).toLocaleString())}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {data.instances.length === 0 ? (
+        <div style={{ color: "#6b7280", marginTop: 8 }}>{t("尚未注册实例（单实例模式，或 instanceUrl 未配置）。")}</div>
+      ) : null}
     </div>
   );
 }

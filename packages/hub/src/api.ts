@@ -5,7 +5,7 @@
  * 无开放注册端点（账号由 `rdsh-hub user add` 创建，防 bot/垃圾注入）。
  */
 import { randomInt, randomUUID } from "node:crypto";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { HubConfig, PlanSpec, WechatLoginConfig, AppleLoginConfig } from "./config.ts";
 import { BILLING_DEFAULTS } from "./config.ts";
@@ -16,6 +16,7 @@ import type { TunnelRegistry, TunnelTimings } from "./tunnel.ts";
 import type { UsageAccumulator } from "./relay-usage.ts";
 import type { PresenceDirectory } from "./presence.ts";
 import type { HubStore } from "./store.ts";
+import type { Pool } from "pg";
 import type { HubMetrics } from "./metrics.ts";
 import type { EventHub } from "./events.ts";
 import { randomToken, sha256 } from "./jwt.ts";
@@ -70,6 +71,10 @@ export interface HubRuntime {
   tunnelTimings?: TunnelTimings;
   config: HubConfig;
   db?: HubDb;
+  /** PG 连接池（仅 PG 模式；多实例 advisory lock / 实例发现用）。 */
+  pgPool?: Pool;
+  /** hub.json 路径（U5 的 relay.builtin 写文件用；缺省 → 不可写）。 */
+  configPath?: string;
   store: HubStore;
   /** DB 大小来源（PG 由 serve 注入 pg_database_size；SQLite 走 runtime.db 文件 size）。 */
   dbSize?: () => Promise<number>;
@@ -625,9 +630,43 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse, 
       const conn = runtime.tunnels.get(hostId);
       if (conn !== null) conn.terminate(); // 即时断隧道（req R6）
       await admin.revokeHost(store, ctx, hostId, requireReason(body) ?? "no reason");
+      await revokeHostInMultiInstance(runtime, hostId); // 71 B5：多实例写吊销表（单实例 no-op）
       res.end(JSON.stringify({ ok: true }));
     } catch (err) {
       writeAdminError(res, err);
+    }
+    return true;
+  }
+
+  // ---- 集群（71 U5）：实例列表 + relay.builtin 开关 ----
+  if (path === "/api/admin/cluster" && method === "GET") {
+    const instances = await runtime.store.listHubInstances(Date.now() - 90_000);
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ instances, relayBuiltin: runtime.config.relay?.builtin !== false }));
+    return true;
+  }
+  if (path === "/api/admin/cluster/relay-builtin" && method === "POST") {
+    const body = await readJsonBody(req);
+    if (body === null || typeof body.builtin !== "boolean") {
+      writeError(res, 400, "BAD_REQUEST", "builtin (boolean) required");
+      return true;
+    }
+    const cp = runtime.configPath;
+    if (cp === undefined) {
+      writeError(res, 503, "CONFIG_PATH_UNKNOWN", "config path unavailable (sqlite/tests)");
+      return true;
+    }
+    try {
+      const raw = JSON.parse(readFileSync(cp, "utf8")) as Record<string, unknown>;
+      const relay = (typeof raw.relay === "object" && raw.relay !== null ? raw.relay : {}) as Record<string, unknown>;
+      raw.relay = { ...relay, builtin: body.builtin };
+      const tmp = `${cp}.tmp-${process.pid}`;
+      writeFileSync(tmp, JSON.stringify(raw, null, 2) + "\n", { mode: 0o600 });
+      renameSync(tmp, cp);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, builtin: body.builtin, restartRequired: true }));
+    } catch (err) {
+      writeError(res, 500, "CONFIG_WRITE_FAILED", err instanceof Error ? err.message : "write failed");
     }
     return true;
   }
@@ -1934,6 +1973,38 @@ async function handleAppleBind(req: IncomingMessage, res: ServerResponse, runtim
   res.end(JSON.stringify({ ok: true }));
 }
 
+/** 71 B3：微信流程态（4 个内存 Map → `wechat_flows` 表；跨实例）。 */
+async function setWechatFlow(
+  runtime: HubRuntime,
+  token: string,
+  kind: string,
+  payload: Record<string, unknown>,
+  userId: number | null,
+  ip: string | null,
+  ttlMs: number,
+): Promise<void> {
+  await runtime.store.setWechatFlow(token, kind, userId, JSON.stringify(payload), ip, Date.now() + ttlMs);
+}
+
+/** 原子消费（一次性）：把 payload 与 userId 摊平返回，调用点沿用旧 Map 条目的字段名。 */
+async function consumeWechatFlow<T extends Record<string, unknown>>(
+  runtime: HubRuntime,
+  token: string,
+  kind: string,
+): Promise<(T & { userId: number | null }) | null> {
+  const row = await runtime.store.consumeWechatFlow(token, kind, Date.now());
+  if (row === null) return null;
+  // 71 B3 加固：payload 脏数据（手动改库 / 未来写 bug）→ 当无效流程态，别让 JSON.parse 抛异常 500 整个请求。
+  // 注：原子 consume 已把行删掉——token 已被消费，返回 null 只是让调用方走「invalid state」分支。
+  let payload: T;
+  try {
+    payload = JSON.parse(row.payload) as T;
+  } catch {
+    return null;
+  }
+  return { ...payload, userId: row.userId };
+}
+
 /** 未认证用户登录：生成一次性 state（含回跳 next）→ 302 到 qrconnect（PC 扫码 / 微信内一键）。 */
 async function handleWechatLoginAuthorize(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
   const wl = wechatLoginConfig(runtime);
@@ -1945,11 +2016,7 @@ async function handleWechatLoginAuthorize(req: IncomingMessage, res: ServerRespo
   const next = safeRedirect(url.searchParams.get("next")) ?? "/portal/hosts";
   const ip = clientIp(req, runtime);
   const state = randomToken(24);
-  wechatLoginStates.set(state, { kind: "login", ip, next, expiresAt: Date.now() + WECHAT_STATE_TTL_MS });
-  // 惰性清理过期 state
-  for (const [s, v] of wechatLoginStates) {
-    if (v.expiresAt < Date.now()) wechatLoginStates.delete(s);
-  }
+  await setWechatFlow(runtime, state, "login", { next }, null, ip, WECHAT_STATE_TTL_MS);
   res.writeHead(302, { location: wechatLoginUrl(wl.appid, wl.redirectUri, state) });
   res.end();
 }
@@ -1969,14 +2036,13 @@ async function handleWechatLoginCallback(req: IncomingMessage, res: ServerRespon
     return;
   }
   const ip = clientIp(req, runtime);
-  const st = wechatLoginStates.get(state);
   // state = 随机 24 字符 + 一次性 + 10 分钟 TTL（标准 OAuth CSRF 防护）；
   // 不做 IP 绑定——国内宽带/移动 CGNAT 或 IP 轮换下回调 IP 会变，误伤正常登录
-  if (st === undefined || st.kind !== "login" || st.expiresAt < Date.now()) {
+  const st = await consumeWechatFlow<{ next?: string }>(runtime, state, "login");
+  if (st === null) {
     writeError(res, 400, "BAD_STATE", "invalid or expired state");
     return;
   }
-  wechatLoginStates.delete(state); // 一次性
 
   const id = await exchangeWechatLoginCode(wl.appid, wl.appSecret, code);
   if (id === null) {
@@ -2008,7 +2074,7 @@ async function handleWechatLoginCallback(req: IncomingMessage, res: ServerRespon
 
   // 未找到已绑定账号 → 暂存微信身份，跳登录页让用户确认是否新建（不静默建号）
   const pendingToken = randomToken(24);
-  wechatPending.set(pendingToken, { openid: id.openid, unionid: id.unionid, nickname: id.nickname, avatar: id.avatar, app: false, ip, expiresAt: Date.now() + WECHAT_STATE_TTL_MS });
+  await setWechatFlow(runtime, pendingToken, "pending", { openid: id.openid, unionid: id.unionid, nickname: id.nickname, avatar: id.avatar, app: false }, null, ip, WECHAT_STATE_TTL_MS);
   res.writeHead(302, { location: `/portal/login?wechat-new=${encodeURIComponent(pendingToken)}&next=${encodeURIComponent(st.next ?? "/portal/hosts")}` });
   res.end();
 }
@@ -2026,12 +2092,11 @@ async function handleWechatConfirm(req: IncomingMessage, res: ServerResponse, ru
     return;
   }
   const ip = clientIp(req, runtime);
-  const pending = wechatPending.get(token);
-  if (pending === undefined || pending.expiresAt < Date.now()) {
+  const pending = await consumeWechatFlow<{ openid: string; unionid: string | null; nickname: string | null; avatar: string | null; app: boolean }>(runtime, token, "pending");
+  if (pending === null) {
     writeError(res, 400, "BAD_STATE", "invalid or expired token");
     return;
   }
-  wechatPending.delete(token); // 一次性
 
   // 竞态兜底：确认前该微信已被绑（如另一窗口已建号）→ 直接登录
   const existing = (pending.unionid !== null ? await runtime.store.getUserByWechatUnionid(pending.unionid) : null) ?? await runtime.store.getUserByWxwebOpenid(pending.openid);
@@ -2089,7 +2154,7 @@ async function handleWechatBindAuthorize(req: IncomingMessage, res: ServerRespon
     return;
   }
   const state = randomToken(24);
-  wechatLoginStates.set(state, { kind: "bind", ip: clientIp(req, runtime), userId: auth.userId, expiresAt: Date.now() + WECHAT_STATE_TTL_MS });
+  await setWechatFlow(runtime, state, "bind", {}, auth.userId, clientIp(req, runtime), WECHAT_STATE_TTL_MS);
   // 绑定流程回调到 bind/callback（同域名换路径，微信校验的是授权回调域名而非路径）
   const bindUri = new URL(wl.redirectUri);
   bindUri.pathname = "/api/wechat/bind/callback";
@@ -2111,15 +2176,14 @@ async function handleWechatBindCallback(req: IncomingMessage, res: ServerRespons
     writeError(res, 400, "BAD_REQUEST", "missing code or state");
     return;
   }
-  const st = wechatLoginStates.get(state);
   // 不做 IP 绑定（同登录流程：CGNAT/IP 轮换下会误伤）
-  if (st === undefined || st.kind !== "bind" || st.expiresAt < Date.now()) {
+  const st = await consumeWechatFlow(runtime, state, "bind");
+  if (st === null) {
     writeError(res, 400, "BAD_STATE", "invalid or expired state");
     return;
   }
-  wechatLoginStates.delete(state);
   const userId = st.userId;
-  if (userId === undefined || !Number.isInteger(userId) || userId <= 0) {
+  if (userId === null || !Number.isInteger(userId) || userId <= 0) {
     writeError(res, 400, "BAD_STATE", "invalid state");
     return;
   }
@@ -2187,7 +2251,7 @@ async function handleAppWechatLogin(req: IncomingMessage, res: ServerResponse, r
   }
   // 新用户 → 不静默建号，返回 pendingToken 由 App 确认
   const pendingToken = randomToken(24);
-  wechatPending.set(pendingToken, { openid: id.openid, unionid: id.unionid, nickname: id.nickname, avatar: id.avatar, app: true, ip, expiresAt: Date.now() + WECHAT_STATE_TTL_MS });
+  await setWechatFlow(runtime, pendingToken, "pending", { openid: id.openid, unionid: id.unionid, nickname: id.nickname, avatar: id.avatar, app: true }, null, ip, WECHAT_STATE_TTL_MS);
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({ needConfirm: true, pendingToken }));
 }
@@ -2205,12 +2269,11 @@ async function handleAppWechatConfirm(req: IncomingMessage, res: ServerResponse,
     return;
   }
   const ip = clientIp(req, runtime);
-  const pending = wechatPending.get(token);
-  if (pending === undefined || pending.expiresAt < Date.now()) {
+  const pending = await consumeWechatFlow<{ openid: string; unionid: string | null; nickname: string | null; avatar: string | null; app: boolean }>(runtime, token, "pending");
+  if (pending === null) {
     writeError(res, 400, "BAD_STATE", "invalid or expired token");
     return;
   }
-  wechatPending.delete(token); // 一次性
   const existing = (pending.unionid !== null ? await runtime.store.getUserByWechatUnionid(pending.unionid) : null) ?? (pending.app ? await runtime.store.getUserByWxappOpenid(pending.openid) : await runtime.store.getUserByWxwebOpenid(pending.openid));
   let user = existing;
   if (user === null) {
@@ -2258,7 +2321,7 @@ async function handleAppWechatAuthorize(req: IncomingMessage, res: ServerRespons
     return;
   }
   const state = randomToken(24);
-  wechatLoginStates.set(state, { kind: "app-login", ip: clientIp(req, runtime), expiresAt: Date.now() + WECHAT_STATE_TTL_MS });
+  await setWechatFlow(runtime, state, "app-login", {}, null, clientIp(req, runtime), WECHAT_STATE_TTL_MS);
   const cb = new URL(wl.redirectUri);
   cb.pathname = "/api/app/wechat/callback";
   cb.search = "";
@@ -2290,12 +2353,11 @@ async function handleAppWechatCallback(req: IncomingMessage, res: ServerResponse
     redirect({ error: "BAD_REQUEST" });
     return;
   }
-  const st = wechatLoginStates.get(state);
-  if (st === undefined || st.kind !== "app-login" || st.expiresAt < Date.now()) {
+  const st = await consumeWechatFlow(runtime, state, "app-login");
+  if (st === null) {
     redirect({ error: "BAD_STATE" });
     return;
   }
-  wechatLoginStates.delete(state); // 一次性
   const ip = clientIp(req, runtime);
   const id = await exchangeWechatLoginCode(wl.appid, wl.appSecret, code);
   if (id === null) {
@@ -2314,12 +2376,12 @@ async function handleAppWechatCallback(req: IncomingMessage, res: ServerResponse
     await runtime.store.touchLastLogin(user.id);
     await runtime.store.recordAudit(user.id, "wechat.app.login.ok", {}, ip);
     const handoff = randomToken(24);
-    wechatHandoffs.set(handoff, { userId: user.id, expiresAt: Date.now() + 60 * 1000 });
+    await setWechatFlow(runtime, handoff, "handoff", {}, user.id, ip, 60 * 1000);
     redirect({ handoff });
     return;
   }
   const pendingToken = randomToken(24);
-  wechatPending.set(pendingToken, { openid: id.openid, unionid: id.unionid, nickname: id.nickname, avatar: id.avatar, app: false, ip, expiresAt: Date.now() + WECHAT_STATE_TTL_MS });
+  await setWechatFlow(runtime, pendingToken, "pending", { openid: id.openid, unionid: id.unionid, nickname: id.nickname, avatar: id.avatar, app: false }, null, ip, WECHAT_STATE_TTL_MS);
   redirect({ needConfirm: "1", pending: pendingToken });
 }
 
@@ -2331,12 +2393,11 @@ async function handleAppWechatHandoff(req: IncomingMessage, res: ServerResponse,
     writeError(res, 400, "BAD_REQUEST", "missing handoff");
     return;
   }
-  const h = wechatHandoffs.get(handoff);
-  if (h === undefined || h.expiresAt < Date.now()) {
+  const h = await consumeWechatFlow(runtime, handoff, "handoff");
+  if (h === null || h.userId === null) {
     writeError(res, 400, "BAD_STATE", "invalid or expired handoff");
     return;
   }
-  wechatHandoffs.delete(handoff); // 一次性
   const tokens = await runtime.auth.issueSession(h.userId);
   if (tokens === null) {
     writeError(res, 403, "FORBIDDEN", "account not active");
@@ -2389,7 +2450,7 @@ async function handleAppWechatBindInit(req: IncomingMessage, res: ServerResponse
     return;
   }
   const bindToken = randomToken(24);
-  wechatBindTokens.set(bindToken, { userId: auth.userId, expiresAt: Date.now() + WECHAT_STATE_TTL_MS });
+  await setWechatFlow(runtime, bindToken, "bind_token", {}, auth.userId, null, WECHAT_STATE_TTL_MS);
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({ bindToken }));
 }
@@ -2407,14 +2468,13 @@ async function handleAppWechatBindAuthorize(req: IncomingMessage, res: ServerRes
     writeError(res, 400, "BAD_STATE", "invalid or expired bind token");
     return;
   }
-  const bt = wechatBindTokens.get(bindToken);
-  if (bt === undefined || bt.expiresAt < Date.now()) {
+  const bt = await consumeWechatFlow(runtime, bindToken, "bind_token");
+  if (bt === null) {
     writeError(res, 400, "BAD_STATE", "invalid or expired bind token");
     return;
   }
-  wechatBindTokens.delete(bindToken); // 一次性
   const state = randomToken(24);
-  wechatLoginStates.set(state, { kind: "app-bind", ip: clientIp(req, runtime), userId: bt.userId, expiresAt: Date.now() + WECHAT_STATE_TTL_MS });
+  await setWechatFlow(runtime, state, "app-bind", {}, bt.userId, clientIp(req, runtime), WECHAT_STATE_TTL_MS);
   const cb = new URL(wl.redirectUri);
   cb.pathname = "/api/app/wechat/bind/callback";
   cb.search = "";
@@ -2446,14 +2506,13 @@ async function handleAppWechatBindCallback(req: IncomingMessage, res: ServerResp
     redirect({ error: "BAD_REQUEST" });
     return;
   }
-  const st = wechatLoginStates.get(state);
-  if (st === undefined || st.kind !== "app-bind" || st.expiresAt < Date.now()) {
+  const st = await consumeWechatFlow(runtime, state, "app-bind");
+  if (st === null) {
     redirect({ error: "BAD_STATE" });
     return;
   }
-  wechatLoginStates.delete(state);
   const userId = st.userId;
-  if (userId === undefined || !Number.isInteger(userId) || userId <= 0) {
+  if (userId === null || !Number.isInteger(userId) || userId <= 0) {
     redirect({ error: "BAD_STATE" });
     return;
   }
@@ -3290,11 +3349,7 @@ const SELF_REVOKE_RATE_LIMIT = { max: 10, windowMs: 60 * 1000 }; // 未认证端
 const selfRevokeRate = new Map<string, { count: number; windowStart: number }>();
 const registerRate = new Map<string, { count: number; windowStart: number }>();
 const accountRegisterRate = new Map<string, { count: number; windowStart: number }>();
-const wechatLoginStates = new Map<string, { kind: "login" | "bind" | "app-login" | "app-bind"; ip: string; userId?: number; next?: string; expiresAt: number }>();
 const wechatTrialRate = new Map<string, { count: number; windowStart: number }>();
-const wechatPending = new Map<string, { openid: string; unionid: string | null; nickname: string | null; avatar: string | null; app: boolean; ip: string; expiresAt: number }>();
-const wechatHandoffs = new Map<string, { userId: number; expiresAt: number }>();
-const wechatBindTokens = new Map<string, { userId: number; expiresAt: number }>();
 
 async function handleRenameHost(req: IncomingMessage, res: ServerResponse, runtime: HubRuntime, hostId: string): Promise<void> {
   const auth = authenticate(req, runtime);
@@ -3333,11 +3388,20 @@ async function handleRevokeHost(req: IncomingMessage, res: ServerResponse, runti
   res.end(JSON.stringify({ ok: true, revoked: hostId }));
 }
 
+/** 71 B5：多实例（relay.builtin=false）下 hub 不持隧道——踢主机写吊销表（relay 经 N5 ≤30s 断开）。
+ * 返回 true 表示已按多实例处理（无本地隧道可踢；offline 事件由 N2 广播派生，避免重复推送）。 */
+async function revokeHostInMultiInstance(runtime: HubRuntime, hostId: string): Promise<boolean> {
+  if (runtime.config.relay?.builtin !== false) return false;
+  await runtime.store.revokeHost(hostId, Date.now());
+  return true;
+}
+
 /** 删除 host + 断隧道 + 摘注册表 + 推送 offline（用户吊销 / host 自吊销共用）。 */
 async function revokeHost(runtime: HubRuntime, hostId: string, ownerId: number): Promise<void> {
   // 用户解绑/删除 → 标记 user：同一设备重绑时可复活这一行（hostId 稳定）。
   await runtime.store.revokeHostRecord(hostId, undefined, "user");
   await runtime.store.revokeLlmKeysByHost(hostId);
+  if (await revokeHostInMultiInstance(runtime, hostId)) return; // 多实例：offline 由 N2 广播派生
   const conn = runtime.tunnels.get(hostId);
   if (conn !== null) conn.terminate();
   runtime.tunnels.unregister(hostId);
@@ -4067,7 +4131,7 @@ async function verifyCaptchaBody(
     logCaptcha(meta, { outcome: "missing-param" });
     return false;
   }
-  const ok = verifyChallenge(body.captchaToken, body.captchaAnswer);
+  const ok = await verifyChallenge(runtime.store, body.captchaToken, body.captchaAnswer);
   logCaptcha(meta, { outcome: ok ? "verified" : "rejected", ticket: body.captchaToken });
   return ok;
 }
@@ -4137,8 +4201,8 @@ async function handleTotpLogin(req: IncomingMessage, res: ServerResponse, runtim
   res.end(JSON.stringify({ accessToken: result.tokens.accessToken, refreshToken: result.tokens.refreshToken, mustChangePassword: result.mustChangePassword }));
 }
 
-async function handleCaptchaChallenge(_req: IncomingMessage, res: ServerResponse, _runtime: HubRuntime): Promise<void> {
-  const { token, question } = createChallenge();
+async function handleCaptchaChallenge(_req: IncomingMessage, res: ServerResponse, runtime: HubRuntime): Promise<void> {
+  const { token, question } = await createChallenge(runtime.store);
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({ token, question }));
 }
@@ -5081,6 +5145,7 @@ async function handleDeleteAccount(req: IncomingMessage, res: ServerResponse, ru
     const conn = runtime.tunnels.get(host.id);
     if (conn !== null) conn.terminate();
     runtime.tunnels.unregister(host.id);
+    await revokeHostInMultiInstance(runtime, host.id); // 71 B5
   }
   // 吊销 Apple 令牌（尽力而为；失败仅记审计，不阻断删号）
   const appleCfg = appleLoginConfig(runtime);
@@ -5119,6 +5184,7 @@ export async function sweepBilling(runtime: HubRuntime, now = Date.now()): Promi
       const conn = runtime.tunnels.get(host.id);
       if (conn !== null) conn.terminate();
       runtime.tunnels.unregister(host.id);
+      await revokeHostInMultiInstance(runtime, host.id); // 71 B5
     }
   };
   for (const user of await runtime.store.listUsers()) {

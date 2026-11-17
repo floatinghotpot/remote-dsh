@@ -687,6 +687,13 @@ export const adminApi = {
   nodeDetail(id: string): Promise<{ node: AdminNodeRow; hosts: Array<{ id: string; name: string; ownerId: number; online: boolean }> }> {
     return adminJson(`/api/admin/nodes/${encodeURIComponent(id)}`);
   },
+  /** 71 U5：集群实例列表 + relay.builtin 当前值。 */
+  cluster(): Promise<{ instances: Array<{ url: string; region: string; version: string | null; lastSeenAt: number }>; relayBuiltin: boolean }> {
+    return adminJson("/api/admin/cluster");
+  },
+  setRelayBuiltin(builtin: boolean): Promise<{ ok: boolean; builtin: boolean; restartRequired: boolean }> {
+    return adminJson("/api/admin/cluster/relay-builtin", { method: "POST", body: JSON.stringify({ builtin }) });
+  },
   renameNode(id: string, name: string, reason: string): Promise<{ ok: boolean }> {
     return adminJson(`/api/admin/nodes/${encodeURIComponent(id)}/rename`, { method: "POST", body: JSON.stringify({ name, reason }) });
   },

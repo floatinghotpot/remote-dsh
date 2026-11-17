@@ -19,13 +19,15 @@ import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
 import { existsSync } from "node:fs";
 import { writeFile, rename, mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import {
   loadHubConfig,
   resolveHubConfigPath,
   HubDb,
   hashPassword,
   serveHub,
+  loadJwtKey,
+  loadHostCookieSigner,
   createPgPool,
   migratePg,
   createPgStore,
@@ -51,6 +53,7 @@ const HELP = `rdsh-hub — run and manage the rdsh hub server
 
 Usage:
   rdsh-hub setup              Configure this hub (db backend + TLS) and write hub.json
+  rdsh-hub init               Generate the JWT + host-cookie keys (required before serve)
   rdsh-hub serve              Start the hub server (cloud, multi-host)
   rdsh-hub user add|passwd|rm|ls|unlock|reset-2fa|ban|unban   Manage users (admin creates accounts)
   rdsh-hub audit ls           Audit log (login/2FA/sharing/email events)
@@ -147,6 +150,15 @@ Options:
   --tls-key <p>          TLS key path (with --tls-cert)
   --behind-proxy         Run behind a TLS-terminating reverse proxy
   --force                Overwrite an existing hub.json
+`,
+  init: `Usage: rdsh-hub init
+
+Generate the JWT signing key + the host-cookie Ed25519 key (mode 0600) for this hub.
+Required before \`serve\` (which refuses to start if keys are missing, so multiple
+instances cannot each generate their own). Refuses to overwrite existing keys.
+
+Options:
+  --config <path>   Hub config (default ~/.rdsh/hub.json; also $RDSH_HUB_CONFIG)
 `,
   db: `Usage: rdsh-hub db <action>
 
@@ -254,6 +266,10 @@ async function handleHub(args: string[], configPath?: string): Promise<void> {
   switch (sub) {
     case "setup": {
       await handleSetup(rest, configPath);
+      return;
+    }
+    case "init": {
+      await handleHubInit(configPath);
       return;
     }
     case "serve": {
@@ -699,6 +715,20 @@ function promptLine(prompt: string): Promise<string> {
       resolve(answer);
     });
   });
+}
+
+/** `rdsh-hub init`：生成 JWT + host-cookie 密钥（0600），已存在则拒绝（不覆盖）。 */
+async function handleHubInit(configPath?: string): Promise<void> {
+  const hubConfigPath = resolveHubConfigPath(configPath);
+  const config = await loadHubConfig(hubConfigPath);
+  const hostCookiePath = join(dirname(config.jwtKeyPath), "hub-hostcookie.key");
+  const existing = [config.jwtKeyPath, hostCookiePath].filter((p) => existsSync(p));
+  if (existing.length > 0) {
+    throw new Error(`refusing to overwrite existing key(s): ${existing.join(", ")}`);
+  }
+  await loadJwtKey(config.jwtKeyPath, { allowCreate: true });
+  loadHostCookieSigner(hostCookiePath, { allowCreate: true });
+  console.log(`rdsh-hub: keys generated (0600):\n  ${config.jwtKeyPath}\n  ${hostCookiePath}`);
 }
 
 /** `rdsh-hub setup`：选库 + 校验 + 建表 + 写 hub.json（原子）。 */

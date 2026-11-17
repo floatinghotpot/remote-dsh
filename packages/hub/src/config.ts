@@ -33,6 +33,8 @@ export interface SecurityConfig {
   auditRetentionDays: number;
   /** refresh 轮换后的复用宽限（秒）；0 = 关闭宽限，退回严格轮换 */
   refreshGraceSeconds: number;
+  /** 密钥文件缺失时是否允许自动生成（默认 false：拒绝启动，防多实例各生成各的；首次安装用 `rdsh-hub init`） */
+  allowKeyCreate?: boolean;
 }
 
 /** 套餐规格（host 数 × 时长；价格 config 可配）。 */
@@ -283,6 +285,12 @@ export interface HubConfig {
   hostCookieDomain?: string;
   /** 默认 relay（hub 内置转发点）的对客 URL（如 https://relay.rdsh.cn）；配置后 host 列表与进入 302 强制走该 URL，避免与站点根路径混用。缺省 → 空（回退 hub 根路径） */
   defaultRelayUrl?: string;
+  /** 内置 relay（hub 自己终结隧道）开关；多实例（双活）时必须关掉（71 B5）。缺省 → true */
+  relay?: { builtin?: boolean };
+  /** 71 B6：本实例对 relay 可达的独立 URL（必须 https）；缺省 → 不注册实例列表、不参与广播（单实例） */
+  instanceUrl?: string;
+  /** 71 B6：实例所属 region（对应 hub_instances.region；缺省 "cn"） */
+  instanceRegion?: string;
   /** 站点信息（portal 页脚导航） */
   site?: SiteConfig;
   /** 微信登录（网站应用 AppID；缺省 → 微信登录禁用） */
@@ -399,6 +407,31 @@ export function normalizeHubConfig(raw: unknown, source = "config"): HubConfig {
     out.defaultRelayUrl = cfg.defaultRelayUrl;
   }
   if (cfg.backup !== undefined) out.backup = normalizeBackup(cfg.backup, source);
+  if (cfg.relay !== undefined) {
+    if (typeof cfg.relay !== "object" || cfg.relay === null) throw new Error(`${source}: "relay" must be an object`);
+    const r = cfg.relay as Record<string, unknown>;
+    const relayOut: { builtin?: boolean } = {};
+    if (r.builtin !== undefined) {
+      if (typeof r.builtin !== "boolean") throw new Error(`${source}: "relay.builtin" must be a boolean`);
+      relayOut.builtin = r.builtin;
+    }
+    if (Object.keys(relayOut).length > 0) out.relay = relayOut;
+  }
+  if (cfg.instanceUrl !== undefined) {
+    if (typeof cfg.instanceUrl !== "string" || cfg.instanceUrl === "") throw new Error(`${source}: "instanceUrl" must be a non-empty string`);
+    let parsed: URL;
+    try {
+      parsed = new URL(cfg.instanceUrl);
+    } catch {
+      throw new Error(`${source}: "instanceUrl" must be an absolute URL`);
+    }
+    if (parsed.protocol !== "https:") throw new Error(`${source}: "instanceUrl" must be https (relay token must not travel in cleartext)`);
+    out.instanceUrl = cfg.instanceUrl;
+  }
+  if (cfg.instanceRegion !== undefined) {
+    if (typeof cfg.instanceRegion !== "string" || cfg.instanceRegion === "") throw new Error(`${source}: "instanceRegion" must be a non-empty string`);
+    out.instanceRegion = cfg.instanceRegion;
+  }
   if (cfg.site !== undefined) out.site = normalizeSite(cfg.site, source);
   if (cfg.wechatLogin !== undefined) out.wechatLogin = normalizeWechatLogin(cfg.wechatLogin, source);
   if (cfg.wechatAppLogin !== undefined) out.wechatAppLogin = normalizeWechatAppLogin(cfg.wechatAppLogin, source);
@@ -518,6 +551,10 @@ function normalizeSecurity(raw: unknown, source: string): SecurityConfig {
   if (s.refreshGraceSeconds !== undefined) {
     if (!Number.isInteger(s.refreshGraceSeconds) || (s.refreshGraceSeconds as number) < 0) throw new Error(`${source}: "security.refreshGraceSeconds" must be a non-negative integer`);
     defaults.refreshGraceSeconds = s.refreshGraceSeconds as number;
+  }
+  if (s.allowKeyCreate !== undefined) {
+    if (typeof s.allowKeyCreate !== "boolean") throw new Error(`${source}: "security.allowKeyCreate" must be a boolean`);
+    defaults.allowKeyCreate = s.allowKeyCreate;
   }
   return defaults;
 }

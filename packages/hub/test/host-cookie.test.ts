@@ -37,7 +37,7 @@ test("签名 host cookie：签发/验证/篡改/过期", () => {
 test("Ed25519 host cookie：签发/验证/篡改（R17）", () => {
   const dir = mkdtempSync(join(tmpdir(), "rdsh-hc-"));
   try {
-    const signer = loadHostCookieSigner(join(dir, "hostcookie.key"));
+    const signer = loadHostCookieSigner(join(dir, "hostcookie.key"), { allowCreate: true });
     const db = new HubDb(":memory:");
     const auth = new HubAuth(createSqliteStore(db), (id) => db.getUserById(id), new Jwt(Buffer.from("test-secret-key-0123456789abcdef")), {}, signer);
     const user = db.createUser("bob", "scrypt:fake");

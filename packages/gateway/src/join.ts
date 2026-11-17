@@ -1512,7 +1512,7 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
     // HOST_TOKEN_REVOKED 才是权威吊销**（永久停）；其余（ASSIGN_INVALID 分配层失败、
     // 或反代/WAF/旧版服务端的裸 401/403）一律按瞬时处理、退避重试，绝不永久停。
     // 监听此事件后 ws 不再自动 abort，需手动 terminate → 触发 close → 决定「重定向 / 拒绝 / 普通重连」。
-    let rejectSource: "none" | "hub" | "transient" = "none";
+    let rejectSource: "none" | "hub" | "transient" | "relay-disabled" = "none";
     client.on("unexpected-response", (_req, res) => {
       if (res.statusCode === 307) {
         const loc = res.headers.location;
@@ -1524,6 +1524,11 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
         const hdr = res.headers["x-rdsh-error"];
         const code = Array.isArray(hdr) ? hdr[0] : hdr;
         rejectSource = code === "HOST_TOKEN_REVOKED" ? "hub" : "transient";
+      } else if (res.statusCode === 503) {
+        // 71 B5：hub 多实例模式（relay.builtin=false）且无可分配中继节点。
+        const hdr = res.headers["x-rdsh-error"];
+        const code = Array.isArray(hdr) ? hdr[0] : hdr;
+        if (code === "RELAY_BUILTIN_DISABLED") rejectSource = "relay-disabled";
       }
       try {
         client.terminate();
@@ -1595,6 +1600,12 @@ export function startJoin(opts: StartJoinOptions): JoinHandle {
         // 分配层失败（relay 验 assign 没过）或裸 401/403（反代/WAF/旧版服务端）——
         // 都不是「host token 被吊销」，绝不删凭据、绝不永久停。307 目标已消费 → 落普通重连（退避）。
         log("warn", "transient 401/403 rejected; retrying");
+      } else if (rejectSource === "relay-disabled") {
+        // 多实例模式 + 无可用中继节点：不是 host token 问题（不删凭据、不永久停），
+        // 是拓扑/配置问题，运维修复后（启用在线中继 / 改回 relay.builtin=true）会自动恢复 → 退避重试 + 明确报错。
+        const msg = "no relay node available; enable an online relay node, or set relay.builtin=true in hub.json";
+        log("error", msg);
+        setState("reconnecting", { message: msg });
       } else if (rejectSource === "hub") {
         // 权威拒绝（host token 被吊销/失效）：停止重试 + 明确上报。
         // 但**保留**本地 token —— 删除凭据是不可逆动作，只应发生在用户显式注销；

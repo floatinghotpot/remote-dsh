@@ -298,6 +298,12 @@ JSAPI 支付需用户 openid（公众号 OAuth2）。门户在微信内浏览器
 
 ### GET /api/admin/health —— `{ uptimeSeconds, tunnelCount, onlineHosts, dbSize, version, lastBackupAt, events: { subscriptions }, userCache: { size }, usage: { flushRows, flushMs, dirty }, n2: { lastBodyBytes }, relay: { nodes, connections } }`（后 5 项为 70 U6 容量指标分项）
 
+### GET /api/admin/cluster —— 集群实例列表（71 U5）：`{ "instances": [{ url, region, version, lastSeenAt }], "relayBuiltin": boolean }`
+`instances` 来自 `hub_instances`（每实例 30s 自注册；只返回 90s 内有心跳的活跃实例）。`relayBuiltin` 是当前进程生效的 `relay.builtin`。
+
+### POST /api/admin/cluster/relay-builtin —— `{ builtin: boolean }`，写 `hub.json` 的 `relay.builtin`（原子写 + JSON 校验）
+返回 `{ ok, builtin, restartRequired: true }`；配置仅在启动时读取，**需重启 hub 生效**。多实例（双活）必须 `builtin=false`，否则 hub 继续持有内置隧道。
+
 ### GET /api/admin/config —— 脱敏后的运行时配置。
 
 ### GET /api/admin/admins；POST /api/admin/admins/{id}/{action} —— 管理员管理（`admin` only；`role` 请求体 `{ role, reason }`；不能操作自己）。

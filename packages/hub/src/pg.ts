@@ -113,8 +113,7 @@ export async function migratePg(pool: Pool, source = "unknown"): Promise<string[
 }
 
 /** client 级事务；异常回滚并重抛（替代 SQLite `db.exec("BEGIN/COMMIT/ROLLBACK")`）。 */
-export async function withTransaction<T>(pool: Pool, fn: (client: PoolClient) => Promise<T>): Promise<T> {
-  const outer = txStore.getStore();
+export async function withTransaction<T>(pool: Pool, fn: (client: PoolClient) => Promise<T>): Promise<T> {  const outer = txStore.getStore();
   if (outer !== undefined) {
     // 嵌套事务 → SAVEPOINT（与 SQLite 的 SAVEPOINT 可嵌套语义对齐；见 db.ts appendCreditLedger）。
     await outer.query("SAVEPOINT rdsh_sp");
@@ -137,6 +136,30 @@ export async function withTransaction<T>(pool: Pool, fn: (client: PoolClient) =>
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * 多实例互斥（session 级 advisory lock）：拿不到锁（另一实例在跑）→ 返回 acquired=false，不阻塞。
+ * **必须用 pool.connect() 的专用连接**：锁随 session 释放；若走 txDb(pool) 的池化连接，
+ * 回池后锁会泄漏到下一个使用者。同 migratePg 的写法。
+ */
+export async function withAdvisoryLock<T>(
+  pool: Pool,
+  key: string,
+  fn: () => Promise<T>,
+): Promise<{ acquired: boolean; value?: T }> {
+  const client = await pool.connect();
+  try {
+    const got = await client.query<{ ok: boolean }>("SELECT pg_try_advisory_lock(hashtext($1)::bigint) AS ok", [key]);
+    if (got.rows[0]?.ok !== true) return { acquired: false };
+    try {
+      return { acquired: true, value: await fn() };
+    } finally {
+      await client.query("SELECT pg_advisory_unlock(hashtext($1)::bigint)", [key]).catch(() => {});
+    }
   } finally {
     client.release();
   }

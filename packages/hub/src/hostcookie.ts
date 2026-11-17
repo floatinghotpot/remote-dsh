@@ -24,12 +24,15 @@ function publicKeyHexFrom(pub: KeyObject): string {
   return der.subarray(der.length - 32).toString("hex");
 }
 
-export function loadHostCookieSigner(path: string): HostCookieSigner {
+export function loadHostCookieSigner(path: string, opts: { allowCreate?: boolean } = {}): HostCookieSigner {
   let priv: KeyObject;
   try {
     priv = createPrivateKey(readFileSync(path, "utf8"));
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    if (opts.allowCreate !== true) {
+      throw new Error(`missing host-cookie key: ${path} (run "rdsh-hub init")`);
+    }
     mkdirSync(dirname(path), { recursive: true });
     const { privateKey, publicKey } = generateKeyPairSync("ed25519");
     writeFileSync(path, privateKey.export({ format: "pem", type: "pkcs8" }), { mode: 0o600 });

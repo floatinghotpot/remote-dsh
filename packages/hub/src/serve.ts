@@ -63,11 +63,14 @@ export interface HubServeOptions {
 }
 
 /** 读取或生成 JWT 签名密钥（0600，自动创建）。 */
-export async function loadJwtKey(path: string): Promise<Buffer> {
+export async function loadJwtKey(path: string, opts: { allowCreate?: boolean } = {}): Promise<Buffer> {
   try {
     return Buffer.from(await readFile(path, "utf8"), "utf8");
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    if (opts.allowCreate !== true) {
+      throw new Error(`missing JWT key: ${path} (run "rdsh-hub init")`);
+    }
     await mkdir(dirname(path), { recursive: true });
     const key = randomBytes(32);
     await writeFile(path, key.toString("base64url"), { mode: 0o600 });
@@ -94,8 +97,10 @@ export async function serveHub(opts: HubServeOptions): Promise<void> {
   let dbLabel: string;
   let dbSize: (() => Promise<number>) | undefined;
   const events = new EventHub();
+  let pgPool: ReturnType<typeof createPgPool> | undefined;
   if (driver === "postgres") {
     const pool = createPgPool(config.db?.dsn ?? "");
+    pgPool = pool;
     await migratePg(pool, "serve");
     dbSize = async () => Number((await pool.query("SELECT pg_database_size(current_database()) AS s")).rows[0]!.s);
     // Q9：用户缓存（预加载 + 5s 增量刷新 + 写路径同步失效）。
@@ -149,6 +154,21 @@ export async function serveHub(opts: HubServeOptions): Promise<void> {
   const pruneJoinTokens = async (): Promise<void> => { await store.pruneExpiredJoinTokens(); };
   void pruneJoinTokens();
   setInterval(() => void pruneJoinTokens(), 24 * 3600 * 1000).unref();
+  // 71 B2：算术验证码过期清理（5 分钟 TTL；10 分钟扫一次足够）。
+  const pruneCaptcha = async (): Promise<void> => { await store.pruneExpiredCaptchaChallenges(); };
+  setInterval(() => void pruneCaptcha(), 10 * 60 * 1000).unref();
+  // 71 B3：微信流程态过期清理（10 分钟 TTL）。
+  const pruneWechatFlows = async (): Promise<void> => { await store.pruneExpiredWechatFlows(); };
+  setInterval(() => void pruneWechatFlows(), 10 * 60 * 1000).unref();
+  // 71 B6：node_metrics 保留 7 天（原表无 prune；广播会放大写入）。
+  const pruneNodeMetrics = async (): Promise<void> => { await store.pruneNodeMetrics(Date.now() - 7 * 24 * 3600 * 1000); };
+  setInterval(() => void pruneNodeMetrics(), 24 * 3600 * 1000).unref();
+  // 71 B5：吊销表保留 1 小时（N5 下发 TTL 5 分钟，留足重试余量）。
+  const pruneRevocations = async (): Promise<void> => { await store.pruneRevocations(Date.now() - 3600_000); };
+  setInterval(() => void pruneRevocations(), 10 * 60 * 1000).unref();
+  // 71 B6：宕机实例清理（>7 天无心跳的实例行；读时另有 90s 活跃判定过滤）。
+  const pruneHubInstances = async (): Promise<void> => { await store.pruneHubInstances(Date.now() - 7 * 24 * 3600 * 1000); };
+  setInterval(() => void pruneHubInstances(), 24 * 3600 * 1000).unref();
 
   // 每日快照备份（SQLite 专属 VACUUM INTO；postgres 走托管 pg_dump / 43c）
   const backupDir = config.backup?.dir ?? join(dirname(config.dbPath), "backups");
@@ -171,8 +191,9 @@ export async function serveHub(opts: HubServeOptions): Promise<void> {
     loadKek(kekDir, config.llm.upstreamKeyPool.kekVersion ?? 1);
   }
 
-  const jwt = new Jwt(await loadJwtKey(config.jwtKeyPath));
-  const hostCookieSigner = loadHostCookieSigner(join(dirname(config.jwtKeyPath), "hub-hostcookie.key"));
+  const allowKeyCreate = config.security?.allowKeyCreate === true;
+  const jwt = new Jwt(await loadJwtKey(config.jwtKeyPath, { allowCreate: allowKeyCreate }));
+  const hostCookieSigner = loadHostCookieSigner(join(dirname(config.jwtKeyPath), "hub-hostcookie.key"), { allowCreate: allowKeyCreate });
   config.hostCookiePubKey = hostCookieSigner.publicKeyHex;
   const auth = new HubAuth(store, lookupUser, jwt, config.security, hostCookieSigner, driver === "postgres" ? (u) => cache?.set(u.id, u) : undefined);
   const tunnels = new TunnelRegistry();
@@ -185,6 +206,8 @@ export async function serveHub(opts: HubServeOptions): Promise<void> {
     behindProxy: config.behindProxy,
     db,
     store,
+    pgPool,
+    configPath,
     dbSize,
     userCacheSize: () => cache?.size ?? 0,
     auth,
@@ -209,9 +232,26 @@ export async function serveHub(opts: HubServeOptions): Promise<void> {
     hostCookiePubKey: config.hostCookiePubKey,
     hostCookieDomain: config.hostCookieDomain,
     defaultRelayUrl: config.defaultRelayUrl,
+    relay: config.relay,
     hostCookieSigner,
     llm: config.llm,
   });
+
+  // 71 B6：实例自注册（relay 经 N5 拿到同区实例列表）；每 30s 刷 last_seen_at。
+  if (config.instanceUrl !== undefined) {
+    const region = config.instanceRegion ?? "cn";
+    try {
+      await store.upsertHubInstance(config.instanceUrl, region, null, Date.now());
+    } catch (err) {
+      // 注册失败不致命：实例仍可服务，只是暂不在广播列表（下轮 touch 不会补注册，需重启）。
+      console.error("[hub] hub_instances register failed:", err instanceof Error ? err.message : err);
+    }
+    setInterval(() => {
+      void store.touchHubInstance(config.instanceUrl!, Date.now()).catch((err) =>
+        console.error("[hub] hub_instances touch failed:", err instanceof Error ? err.message : err),
+      );
+    }, 30_000).unref();
+  }
 
   const scheme = tls ? "https" : "http";
   const regMode = config.registration === "open" ? "registration open" : "registration closed (admin creates users)";

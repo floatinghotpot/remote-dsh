@@ -151,13 +151,14 @@ export async function handleNodeHeartbeat(req: IncomingMessage, res: ServerRespo
   const lastSeq = seqs.get(node.id);
   let needFull = false;
 
+  let transitions: { added: string[]; removed: string[] } = { added: [], removed: [] };
   if (isFull) {
     // 全量：以 hosts 为准替换 presence；只接受分配给本节点的 host（防伪造/串节点）。
     const hosts = body.hosts;
     if (Array.isArray(hosts)) {
       const reported = hosts.filter((h): h is string => typeof h === "string");
       const assigned = new Set((await runtime.store.listHostsByNode(node.id)).map((h) => h.id));
-      runtime.presence.setNodeHosts(node.id, reported.filter((id) => assigned.has(id)));
+      transitions = runtime.presence.setNodeHosts(node.id, reported.filter((id) => assigned.has(id)));
     }
     if (seq !== undefined) seqs.set(node.id, seq);
   } else if (seq !== undefined && lastSeq !== undefined && seq === lastSeq + 1) {
@@ -179,7 +180,7 @@ export async function handleNodeHeartbeat(req: IncomingMessage, res: ServerRespo
         }
       }
       const removed = removedRaw.filter((x): x is string => typeof x === "string");
-      runtime.presence.applyDelta(node.id, added, removed, now);
+      transitions = runtime.presence.applyDelta(node.id, added, removed, now);
       seqs.set(node.id, seq);
     }
   } else {
@@ -200,6 +201,26 @@ export async function handleNodeHeartbeat(req: IncomingMessage, res: ServerRespo
   }
   res.writeHead(200, { "content-type": "application/json" });
   res.end(needFull ? JSON.stringify({ needFull: true }) : "{}");
+  // 71 B6：事件由增量派生（只在状态翻转时推；owner 从 host 行取）。响应先回，事件后台推。
+  void pushHostEvents(runtime, transitions.added, transitions.removed).catch((err) =>
+    console.error("[hub] host event derive failed:", err instanceof Error ? err.message : err),
+  );
+}
+
+/** 71 B6：把 presence 的真实迁移派生成 host.online/offline 事件（owner 从 host 行取；分批防串行 RTT）。 */
+async function pushHostEvents(runtime: HubRuntime, added: string[], removed: string[]): Promise<void> {
+  const emit = async (ids: string[], type: "host.online" | "host.offline"): Promise<void> => {
+    const CONCURRENCY = 50;
+    for (let i = 0; i < ids.length; i += CONCURRENCY) {
+      const batch = ids.slice(i, i + CONCURRENCY);
+      const hosts = await Promise.all(batch.map((id) => runtime.store.getHostById(id)));
+      for (const h of hosts) {
+        if (h !== null) runtime.events.pushToUser(h.ownerId, { type, hostId: h.id });
+      }
+    }
+  };
+  await emit(added, "host.online");
+  await emit(removed, "host.offline");
 }
 
 /** N4：主机上线/下线登记（幂等；online → 该主机落在本节点）。 */
@@ -289,12 +310,19 @@ export async function handleNodeSync(req: IncomingMessage, res: ServerResponse, 
     if (balance.total <= floorMicro) blockedUserIds.push(uid);
   }
 
+  // 71 B6：同区活跃实例（relay 逐个推 N2；按 url 稳定排序，避免游标乱序）。
+  const regionFilter = node.region !== "" ? node.region : undefined;
+  const hubInstances = await runtime.store.listHubInstances(Date.now() - 90_000, regionFilter);
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({
     hosts,
     hostCookiePubKey: runtime.config.hostCookiePubKey ?? "",
     draining,
     blockedUserIds,
+    // 71 B5：近期吊销（TTL 内幂等重发；relay 收到后断开对应 host；不按节点定向）。
+    revokeHostIds: await runtime.store.listRecentRevocations(Date.now() - 5 * 60 * 1000),
+    // 71 B6：实例列表（url 均满足 relay.builtin 的 HTTPS 约束）。
+    hubInstances: hubInstances.map((i) => ({ url: i.url, region: i.region })),
   }));
 }
 

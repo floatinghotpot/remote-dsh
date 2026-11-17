@@ -18,6 +18,10 @@ import { llmCatalog } from "./llm-catalog.ts";
 import { serviceProviders } from "./service-providers.ts";
 import { upstreamCost } from "./upstream-cost.ts";
 import { analytics } from "./analytics.ts";
+import { captcha } from "./captcha.ts";
+import { wechat } from "./wechat.ts";
+import { revocations } from "./revocations.ts";
+import { hubInstances } from "./hub-instances.ts";
 
 /** 由连接池构造 PostgreSQL 版 `HubStore`（供 `startHubServer` 在 `db.driver=postgres` 时使用）。 */
 export function createPgStore(pool: Pool): HubStore {
@@ -35,6 +39,10 @@ export function createPgStore(pool: Pool): HubStore {
     ...serviceProviders(pool),
     ...upstreamCost(pool),
     ...analytics(pool),
+    ...captcha(pool),
+    ...wechat(pool),
+    ...revocations(pool),
+    ...hubInstances(pool),
   };
   return {
     ...parts,

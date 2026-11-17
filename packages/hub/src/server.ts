@@ -38,6 +38,8 @@ import { HubMetrics } from "./metrics.ts";
 import { createSqliteStore, type HubStore } from "./store.ts";
 import { hostOf } from "./nodes.ts";
 import type { HostCookieSigner } from "./hostcookie.ts";
+import { withAdvisoryLock } from "./pg.ts";
+import type { Pool } from "pg";
 
 export interface HubServerOptions {
   host: string;
@@ -47,8 +49,14 @@ export interface HubServerOptions {
   behindProxy?: boolean;
   db?: HubDb;
   store?: HubStore;
+  /** PG 连接池（仅 PG 模式；多实例 advisory lock / 实例发现用）。 */
+  pgPool?: Pool;
   /** DB 大小来源（PG 由 serve 注入）；缺省走 db 文件 size。 */
   dbSize?: () => Promise<number>;
+  /** 71 B5：内置 relay 开关（多实例必须 false）。 */
+  relay?: { builtin?: boolean };
+  /** hub.json 路径（U5 的 relay.builtin 写文件用）。 */
+  configPath?: string;
   /** 用户缓存条目数（70 U6；serve.ts 注入，SQLite 模式不传）。 */
   userCacheSize?: () => number;
   auth: HubAuth;
@@ -193,9 +201,12 @@ export async function startHubServer(opts: HubServerOptions): Promise<RunningHub
       hostCookiePubKey: opts.hostCookiePubKey,
       hostCookieDomain: opts.hostCookieDomain,
       defaultRelayUrl: opts.defaultRelayUrl,
+      relay: opts.relay,
       llm: opts.llm,
     },
     db: opts.db,
+    pgPool: opts.pgPool,
+    configPath: opts.configPath,
     store: opts.store ?? (opts.db !== undefined ? createSqliteStore(opts.db) : (() => { throw new Error("hub server requires db or store"); })()),
     dbSize: opts.dbSize,
     userCacheSize: opts.userCacheSize,
@@ -208,9 +219,20 @@ export async function startHubServer(opts: HubServerOptions): Promise<RunningHub
     hostCookieSigner: opts.hostCookieSigner,
   };
 
-  // 计费状态机定时扫描（每分钟）：trial/subscribed 到期 → grace → free
-  void sweepBilling(runtime);
-  setInterval(() => void sweepBilling(runtime), 60 * 1000).unref();
+  // 计费状态机定时扫描（每分钟）：trial/subscribed 到期 → grace → free。
+  // 多实例（PG）加 advisory lock：同一时刻只让一个实例跑，避免重复审计/降级（71 B4）。
+  const sweepOnce = async (): Promise<void> => {
+    if (runtime.pgPool === undefined) {
+      await sweepBilling(runtime);
+      return;
+    }
+    await withAdvisoryLock(runtime.pgPool, "rdsh_sweep_billing", () => sweepBilling(runtime));
+  };
+  const sweepLogged = (): void => {
+    void sweepOnce().catch((err) => console.error("[hub] sweepBilling failed:", err instanceof Error ? err.message : err));
+  };
+  sweepLogged();
+  setInterval(sweepLogged, 60 * 1000).unref();
 
   // 用量定时 flush（每分钟）：内存累计 → usage_daily（分批事务，幂等 MAX 合并）
   setInterval(async () => {
@@ -473,6 +495,12 @@ async function handleTunnelUpgrade(req: IncomingMessage, socket: Duplex, head: B
   }
   // 兜底直连（无可用节点 / 老 gateway）→ hub 直接转发。统一清掉残留节点分配，
   // 否则 isHostOnline 读 DB online 列（节点路由）会误判离线（markNodesOffline 不清 hosts.node_id）。
+  // 71 B5：多实例（relay.builtin=false）下 hub 不终结隧道——上面 307 已失败（无节点/老网关），这里只能 503。
+  if (runtime.config.relay?.builtin === false) {
+    socket.write("HTTP/1.1 503 Service Unavailable\r\ncontent-type: text/plain\r\nx-rdsh-error: RELAY_BUILTIN_DISABLED\r\n\r\nRELAY_BUILTIN_DISABLED\r\n");
+    socket.destroy();
+    return;
+  }
   if (host.nodeId !== null) {
     await runtime.store.setHostNode(host.id, null);
   }
