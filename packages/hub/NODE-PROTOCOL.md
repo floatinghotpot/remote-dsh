@@ -1,10 +1,8 @@
 # rdsh 节点协议（relay ↔ hub）
 
-> **状态**: v1（2026-11-17，70 A4 增量化）。跨语言契约 —— rdsh-relay（Go，私有仓）与 rdsh-hub
+> **状态**: v1（2026-11-17，N2 增量化）。跨语言契约 —— rdsh-relay（Go）与 rdsh-hub
 > （TS）之间的**唯一**节点上行协议。任何变更必须先更新本文档再改实现，并补 conformance
 > 用例（`e2e/fixtures/`）。
->
-> 关联：[req.md](../../../doc/feature/70-single-instance-capacity/req.md) A4、[solution.md](../../../doc/feature/70-single-instance-capacity/solution.md) §4.4
 
 ## 传输
 

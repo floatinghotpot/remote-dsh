@@ -1,7 +1,6 @@
 # 70 V1 压测 harness
 
-对应 [req.md](../../../doc/feature/70-single-instance-capacity/req.md) V1 与
-[66 discussion §7](../../../doc/feature/66-capacity-scaleout/discussion.md)（V1–V8）。
+对应 70 容量需求 V1 与 66 讨论 §7（V1–V8）。
 
 **目的**：把 66 discussion 里的「推算」换成「实测」——产出每一项的**上限**与**拐点**，
 回填单机容量表，作为「是否启动 71（多实例）」的输入（D1）。
