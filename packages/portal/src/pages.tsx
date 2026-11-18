@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
 import { api, ApiError, subscribeEvents, adminApi } from "./api.ts";
+import { CREDITS_MICRO, formatCredits, formatCreditsFromMicro, formatRatePoints } from "./format.ts";
 import type { HostInfo, JoinTokenInfo, CaptchaPayload, AccountInfo, Capabilities, UsageDay, WechatPayInfo, AdminMe, AdminUserRow, AdminHostRow, AdminNodeRow, AdminOrderRow, AdminPaymentRow, AdminAuditRow, AdminSubscriptionRow, AdminUserDetail, AdminUserCredits, AdminDashboard, AdminAnalytics, AdminConfig, LlmKeyInfo, LlmUsageModel, LlmCatalogModel, AdminProviderConfigRow, AdminServiceRow, AdminServicePoolRow, AdminUpstreamKeyRow } from "./api.ts";
 import { fingerprint } from "./e2ee.ts";
 import { useT, getLang } from "./i18n.ts";
@@ -1294,7 +1295,7 @@ function LlmKeysPage(): React.JSX.Element {
               <span style={{ color: "var(--rdsh-fg-subtle)" }}>{t("最近使用")}</span>
               <span style={{ color: "var(--rdsh-fg-muted)" }}>{fmtDate(k.lastUsedAt)}</span>
               <span style={{ color: "var(--rdsh-fg-subtle)" }}>{t("已消耗")}</span>
-              <span style={{ color: "var(--rdsh-fg-muted)" }}>{`${String(k.spentMicro / 10000)} ${t("点")}`}</span>
+              <span style={{ color: "var(--rdsh-fg-muted)" }}>{`${formatCreditsFromMicro(k.spentMicro)} ${t("点")}`}</span>
             </div>
           </div>
           );
@@ -2693,9 +2694,6 @@ function BillingPage(): React.JSX.Element {
   );
 }
 
-/** 点数微单位 → 点数（后端余额为整数微单位，1 点数 = 10000）。 */
-const CREDITS_MICRO = 10000;
-
 function CreditsPage(): React.JSX.Element {
   const { t, lang } = useT();
   const [balance, setBalance] = useState<number | null>(null);
@@ -2756,8 +2754,6 @@ function CreditsPage(): React.JSX.Element {
     if (!ok) load();
   };
 
-  const fmt = (n: number): string => n.toLocaleString();
-
   return (
     <>
       <Shell title={t("点数充值", { en: "Credits" })}>
@@ -2765,7 +2761,7 @@ function CreditsPage(): React.JSX.Element {
         {err !== "" && <p style={{ color: "var(--rdsh-danger)", fontSize: 13 }}>{err}</p>}
         <Card title={t("点数余额", { en: "Credits balance" })}>
           <div style={{ fontSize: 24, fontWeight: 700 }}>
-            {balance === null ? "—" : fmt(balance)} <span style={{ fontSize: 14, fontWeight: 400 }}>{t("点数", { en: "credits" })}</span>
+            {balance === null ? "—" : formatCredits(balance)} <span style={{ fontSize: 14, fontWeight: 400 }}>{t("点数", { en: "credits" })}</span>
           </div>
           <p style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", margin: "4px 0 0" }}>
             {t("1 点数 = 1 分钱，用于云端中转流量", { en: "1 credit = ¥0.01, used for cloud relay traffic" })}
@@ -2776,7 +2772,7 @@ function CreditsPage(): React.JSX.Element {
             {tiers.map((tier) => (
               <div key={tier.id} style={{ border: "1px solid var(--rdsh-border)", borderRadius: 10, padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 15, fontWeight: 700 }}>¥{tier.priceCny} → {fmt(tier.credits)} {t("点数", { en: "credits" })}</div>
+                  <div style={{ fontSize: 15, fontWeight: 700 }}>¥{tier.priceCny} → {formatCredits(tier.credits)} {t("点数", { en: "credits" })}</div>
                   {(tier.isPopular === true || tier.isBestValue === true) && (
                     <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
                       {tier.isPopular === true && (
@@ -2854,7 +2850,7 @@ function CreditsPricingPage(): React.JSX.Element {
             {tiers.map((tier) => (
               <tr key={tier.id} style={{ borderBottom: "1px solid var(--rdsh-border)" }}>
                 <td style={{ padding: "8px 0" }}>¥{tier.priceCny}</td>
-                <td style={{ padding: "8px 0", textAlign: "right" }}>{tier.credits.toLocaleString()} {t("点数", { en: "credits" })}</td>
+                <td style={{ padding: "8px 0", textAlign: "right" }}>{formatCredits(tier.credits)} {t("点数", { en: "credits" })}</td>
               </tr>
             ))}
           </tbody>
@@ -3088,12 +3084,12 @@ function AdminUserDetail({ userId }: { userId: number }): React.JSX.Element {
           <table className="admintbl" style={adminTableStyle()}>
             <tbody>
               <tr>
-                {adminTd(t("充值余额"), formatPoints(c.balances.purchased))}
-                {adminTd(t("赠送（结转）"), formatPoints(c.balances.bonusCarried))}
+                {adminTd(t("充值余额"), formatCreditsFromMicro(c.balances.purchased))}
+                {adminTd(t("赠送（结转）"), formatCreditsFromMicro(c.balances.bonusCarried))}
               </tr>
               <tr>
-                {adminTd(t("赠送（当期）"), formatPoints(c.balances.bonusCurrent))}
-                {adminTd(t("合计"), formatPoints(c.balances.total))}
+                {adminTd(t("赠送（当期）"), formatCreditsFromMicro(c.balances.bonusCurrent))}
+                {adminTd(t("合计"), formatCreditsFromMicro(c.balances.total))}
               </tr>
             </tbody>
           </table>
@@ -3104,10 +3100,10 @@ function AdminUserDetail({ userId }: { userId: number }): React.JSX.Element {
               <tbody>{c.ledger.slice(0, 50).map((r) => (
                 <tr key={r.id} style={{ borderBottom: "1px solid var(--rdsh-bg-subtle)" }}>
                   {adminTd(t("时间"), ts(r.createdAt))}
-                  {adminTd(t("变动"), `${r.delta > 0 ? "+" : ""}${formatPoints(r.delta)}`)}
+                  {adminTd(t("变动"), `${r.delta > 0 ? "+" : ""}${formatCreditsFromMicro(r.delta)}`)}
                   {adminTd(t("桶"), creditBucketLabel(t, r.bucket))}
                   {adminTd(t("原因"), creditReasonLabel(t, r.reason))}
-                  {adminTd(t("余额"), r.balanceAfter === null ? "—" : formatPoints(r.balanceAfter))}
+                  {adminTd(t("余额"), r.balanceAfter === null ? "—" : formatCreditsFromMicro(r.balanceAfter))}
                 </tr>
               ))}</tbody>
             </table>
@@ -3479,8 +3475,8 @@ function adminPriceLabel(t: T, s: AdminServiceRow): string {
   }
   const price = num(prices.price);
   if (price === null) return s.prices;
-  if (s.capability === "asr") return `${formatPoints(price * 60)} ${t("点/分钟")}`;
-  if (s.capability === "tts") return `${formatPoints(price * 100)} ${t("点/百字")}`;
+  if (s.capability === "asr") return `${formatRatePoints(price * 60)} ${t("点/分钟")}`;
+  if (s.capability === "tts") return `${formatRatePoints(price * 100)} ${t("点/百字")}`;
   return s.prices;
 }
 function adminYuan(micro: number): string {
@@ -5704,10 +5700,6 @@ function formatChars(chars: number, t: T): string {
   return `${chars.toLocaleString()} ${t("字符")}`;
 }
 
-function formatPoints(micro: number): string {
-  return (micro / CREDITS_MICRO).toLocaleString(undefined, { maximumFractionDigits: 1 });
-}
-
 /** 点数桶标签（credits_ledger.bucket）。 */
 function creditBucketLabel(t: T, bucket: string): string {
   switch (bucket) {
@@ -5930,7 +5922,7 @@ function UsagePage(): React.JSX.Element {
         <Card title={t("充值余额", { en: "Purchased credits" })}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
             <div style={{ fontSize: 20, fontWeight: 700 }}>
-              {creditBal === null ? "—" : Math.round(creditBal.purchased).toLocaleString()}{" "}
+              {creditBal === null ? "—" : formatCredits(creditBal.purchased)}{" "}
               <span style={{ fontSize: 13, fontWeight: 400 }}>{t("点数", { en: "credits" })}</span>
             </div>
             <button onClick={() => navigate("/credits")} style={btnStyle("ghost")}>
@@ -5940,7 +5932,7 @@ function UsagePage(): React.JSX.Element {
         </Card>
         <Card title={t("赠送余额", { en: "Bonus credits" })}>
           <div style={{ fontSize: 20, fontWeight: 700 }}>
-            {creditBal === null ? "—" : Math.round(creditBal.bonus).toLocaleString()}{" "}
+            {creditBal === null ? "—" : formatCredits(creditBal.bonus)}{" "}
             <span style={{ fontSize: 13, fontWeight: 400 }}>{t("点数", { en: "credits" })}</span>
           </div>
         </Card>
@@ -5958,12 +5950,12 @@ function UsagePage(): React.JSX.Element {
       {dailySpend !== null && dailySpend.days.length > 0 && (
         <Card title={t("每日点数消耗", { en: "Daily points used" })} badge={<span style={{ fontSize: 12, color: orange }}>{t("计费")}</span>}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 8 }}>
-            <span style={{ fontSize: 20, fontWeight: 700 }}>{formatPoints(dailySpend.totalMicro)}</span>
+            <span style={{ fontSize: 20, fontWeight: 700 }}>{formatCreditsFromMicro(dailySpend.totalMicro)}</span>
             <span style={{ fontSize: 13 }}>{t("点数", { en: "credits" })}</span>
           </div>
           <BarChart series={[dailySpendSeries]} colors={[orange]} />
           <div style={{ fontSize: 12, color: "var(--rdsh-fg-muted)", marginTop: 6 }}>
-            {t("合计")} {formatPoints(dailySpend.totalMicro)} · {t("日均")} {formatPoints(dailySpend.totalMicro / Math.max(1, dailySpend.days.length))}
+            {t("合计")} {formatCreditsFromMicro(dailySpend.totalMicro)} · {t("日均")} {formatCreditsFromMicro(dailySpend.totalMicro / Math.max(1, dailySpend.days.length))}
           </div>
         </Card>
       )}
