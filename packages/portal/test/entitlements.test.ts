@@ -102,8 +102,8 @@ describe("冻结矩阵（两端代码）", () => {
       systemSpeech: true,
       offlinePackages: true,
       offlineSpeech: true,
-      cloudSpeech: false,
-      cloudSpeechProxy: false,
+      cloudSpeech: true, // 2026-11-18：云端语音降到标准版起
+      cloudSpeechProxy: true,
       support: true,
     },
     pro: {
@@ -172,6 +172,7 @@ describe("展示约束", () => {
       "cloudRelay",
       "directConnect",
       "systemSpeech",
+      "offlinePackages",
       "offlineSpeech",
       "cloudSpeech",
       "cloudSpeechProxy",

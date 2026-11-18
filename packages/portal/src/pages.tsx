@@ -1014,7 +1014,7 @@ function fromTierHint(e: Entitlement): string {
       return "试用起";
     case "cloudSpeech":
     case "cloudSpeechProxy":
-      return "专业版起";
+      return "标准版起";
     case "support":
       return "标准版起";
     case "directConnect":

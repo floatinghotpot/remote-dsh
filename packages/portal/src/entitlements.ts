@@ -5,7 +5,7 @@
  * 判据（与 App 侧一致）：
  * - **消耗服务端成本**的能力（离线语音包走我方 CDN、云端中转走我方带宽与中继节点）→ 免费档不给；
  * - **端侧零成本**能力（直连、系统语音识别/合成）→ 全档开放；
- * - **云端语音识别/合成**分 BYO（自备 Key）与代理（走语音路由扣点），按策略给**专业版及以上**。
+ * - **云端语音识别/合成**分 BYO（自备 Key）与代理（走语音路由扣点），按策略给**标准版及以上**。
  */
 
 export type PlanTier =
@@ -42,6 +42,7 @@ export type Entitlement =
 export const DISPLAY_ORDER: readonly Entitlement[] = [
   "directConnect",
   "systemSpeech",
+  "offlinePackages",
   "offlineSpeech",
   "cloudSpeech",
   "cloudSpeechProxy",
@@ -120,7 +121,7 @@ export function has(tier: PlanTier, e: Entitlement): boolean {
       return tier !== "free"; // 走我方 CDN（trial 必须给：无 GMS/墨水屏设备唯一语音通路）
     case "cloudSpeech":
     case "cloudSpeechProxy":
-      return tier === "pro" || tier === "ultra" || tier === "internal"; // 专业版及以上
+      return tier !== "free" && tier !== "trial" && tier !== "grace"; // 标准版及以上（2026-11-18）
     case "support":
       return tier !== "free" && tier !== "trial"; // 付费档 + 宽限期（挽留）+ 专属
   }
