@@ -4676,9 +4676,12 @@ async function handleUnicpayStoreVerify(req: IncomingMessage, res: ServerRespons
 
   // 就地入账：平台在响应前已原子落 store_purchases + 入队 outbox（收据权威校验完成），
   // 这里用与 webhook store.purchase.succeeded 完全相同的幂等键 —— webhook 到达时同键 no-op，不双发。
-  if (purchase === "purchased" && goodsType === "consumable" && storeTransactionId !== "") {
+  // fail-closed：无法入账（goodsId 未映射 / 缺 storeTransactionId）时不得回报 purchased，
+  // 否则 SDK 会 finish/consume 收据而额度永远不到账。回 null → SDK 视为 transient 并保留收据。
+  let purchaseForClient = purchase;
+  if (purchase === "purchased" && goodsType === "consumable") {
     const product = creditProductById(creditProductsOf(runtime), goodsId);
-    if (product !== undefined) {
+    if (product !== undefined && storeTransactionId !== "") {
       await creditRecharge(runtime.store, auth.userId, product.credits * CREDITS_MICRO_PER_CREDIT, {
         sourceType: store,
         sourceId: storeTransactionId,
@@ -4686,13 +4689,15 @@ async function handleUnicpayStoreVerify(req: IncomingMessage, res: ServerRespons
       });
     } else {
       await runtime.store.recordAudit(auth.userId, "billing.unicpay.store_unknown_goods", { goodsId, store, storeTransactionId }, clientIp(req, runtime));
+      console.error(`[unicpay] store_verify cannot credit: goodsId=${goodsId} tx=${storeTransactionId} store=${store}`);
+      purchaseForClient = "";
     }
   }
 
   // 映射 unicpay 响应 { goodsId, orderType, goodsType, purchase, subscription } → SDK 期望的 { purchase }（透传 goodsType 供客户端判定充值/订阅）。
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({
-    purchase: purchase !== "" ? purchase : null,
+    purchase: purchaseForClient !== "" ? purchaseForClient : null,
     goodsType: goodsType !== "" ? goodsType : null,
   }));
 }
@@ -4813,6 +4818,14 @@ async function handleUnicpayWebhook(req: IncomingMessage, res: ServerResponse, r
     const channel = typeof body.store === "string" ? body.store : "unicpay";
     const goodsId = typeof body.goodsId === "string" ? body.goodsId : "";
     const plan = (runtime.config.billing?.plans ?? []).find((p) => p.id === goodsId);
+    if (plan === undefined) {
+      // fail-closed：未知 planId（目录漂移）不得授予订阅权益（否则「已付费、0 hosts」）。
+      // 非 2xx 让平台重试，配置修复后同一事件自动授予。
+      await runtime.store.recordAudit(userId, "billing.unicpay.subscription_unknown_plan", { eventType, goodsId, subscriptionId }, ip);
+      console.error(`[unicpay] ${eventType} unknown planId=${goodsId} subscriptionId=${subscriptionId} userId=${userId}`);
+      writeError(res, 503, "UNKNOWN_PLAN", "unknown subscription planId; retry after catalog sync");
+      return;
+    }
     const expiresAt = parseRfc3339Ms(body.expiresAt) ?? Date.now();
     const now = Date.now();
     const willRenew = body.willRenew === true;
@@ -4952,14 +4965,16 @@ async function handleUnicpayWebhook(req: IncomingMessage, res: ServerResponse, r
       return;
     }
     const userId = user.id;
-    const product = creditProductById(creditProductsOf(runtime), goodsId);
-    if (product === undefined) {
-      await runtime.store.recordAudit(userId, "billing.unicpay.store_unknown_goods", { eventType, goodsId, storeTransactionId }, ip);
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ ok: true, ignored: "unknown goods" }));
-      return;
-    }
     if (eventType === "store.purchase.succeeded") {
+      // fail-closed：无法入账（goodsId 未映射）时不能 ack（ack 后平台不再重投，
+      // 额度永久丢失）。非 2xx 让 outbox 退避重试，配置修复后同一事件自动补入账。
+      const product = creditProductById(creditProductsOf(runtime), goodsId);
+      if (product === undefined) {
+        await runtime.store.recordAudit(userId, "billing.unicpay.store_unknown_goods", { eventType, goodsId, storeTransactionId }, ip);
+        console.error(`[unicpay] ${eventType} unknown goodsId=${goodsId} store=${store} tx=${storeTransactionId} userId=${userId}`);
+        writeError(res, 503, "UNKNOWN_GOODS", "unknown goodsId; retry after catalog sync");
+        return;
+      }
       // 入账 purchased 桶（幂等键 = store + storeTransactionId，即 apple:<transactionId> / google:<purchaseToken>）。
       await creditRecharge(runtime.store, userId, product.credits * CREDITS_MICRO_PER_CREDIT, {
         sourceType: store,
@@ -4968,7 +4983,8 @@ async function handleUnicpayWebhook(req: IncomingMessage, res: ServerResponse, r
       });
     } else {
       // refunded / revoked → 冲正 purchased 桶（幂等键 = refund:<store>:<storeTransactionId>）。
-      // 冲正前反查原入账流水：webhook 两条独立投递，refunded 可能先于 succeeded 到达，乱序会冲成负余额。
+      // 冲正只依赖原入账流水，不依赖当前目录：档位下架后仍应能按原 delta 退款。
+      // 反查原入账：webhook 两条独立投递，refunded 可能先于 succeeded 到达，乱序会冲成负余额。
       const rechargeLedger = await runtime.store.getCreditLedgerByIdempotencyKey(`${store}:${storeTransactionId}`);
       if (rechargeLedger === null) {
         // 原入账未到 → 非 2xx 让平台退避重试（等 succeeded 到达后再冲正）。
@@ -4976,7 +4992,7 @@ async function handleUnicpayWebhook(req: IncomingMessage, res: ServerResponse, r
         writeError(res, 503, "RECHARGE_NOT_FOUND", "refund arrived before recharge; retry later");
         return;
       }
-      await creditRefund(runtime.store, userId, product.credits * CREDITS_MICRO_PER_CREDIT, {
+      await creditRefund(runtime.store, userId, Math.abs(rechargeLedger.delta), {
         platform: store,
         transactionId: storeTransactionId,
       });

@@ -397,6 +397,25 @@ test("H5: 未知用户 → 200 ack（不再 4xx）", async () => {
   assert.equal(db.getSubscriptionBySubscriptionId("sub-unknown"), null);
 });
 
+test("R5/R6: subscription 未知 planId → 503；补配置后重投 → 授予订阅", async () => {
+  const user = db.createUser("wh-sub-ug", await hashPassword("pw123456"));
+  const evt = subEvent({ userId: String(user.id), subscriptionId: "sub-ug-1", goodsId: "no_such_plan" });
+  const r1 = await postWebhook(evt);
+  assert.equal(r1.status, 503);
+  assert.notEqual(db.getUserById(user.id)!.planStatus, "subscribed");
+  const plans = runtime.config.billing!.plans!;
+  plans.push({ id: "no_such_plan", name: "X", hosts: 5, priceCny: 30, intervalMonths: 1, bonusCredits: 0 });
+  try {
+    const r2 = await postWebhook(evt);
+    assert.equal(r2.status, 200);
+    assert.equal(db.getUserById(user.id)!.planStatus, "subscribed");
+    assert.equal(db.getSubscriptionBySubscriptionId("sub-ug-1")!.planId, "no_such_plan");
+  } finally {
+    const idx = plans.findIndex((p) => p.id === "no_such_plan");
+    if (idx >= 0) plans.splice(idx, 1);
+  }
+});
+
 test("H2: subscription.changed 换档 → plan_id 更新为新档", async () => {
   const user = db.getUserByName("wh-user")!;
   const r = await postWebhook(subEvent({ eventType: "subscription.changed", userId: String(user.id), goodsId: "pro_monthly" }));
@@ -607,6 +626,56 @@ test("store.purchase.refunded → 冲正 purchased 桶", async () => {
   assert.equal(db.getCreditBalances(user.id).purchased, before - 800 * CREDITS_MICRO_PER_CREDIT);
 });
 
+test("R4: 商店退款按原入账 delta 冲正（改配置后仍冲原值）", async () => {
+  const user = db.createUser("wh-store-delta", await hashPassword("pw123456"));
+  const succ = {
+    eventType: "store.purchase.succeeded",
+    goodsId: "credits_1_usd",
+    goodsType: "consumable",
+    store: "apple",
+    storeTransactionId: "tx-delta-1",
+    userId: String(user.id),
+  };
+  await postWebhook(succ);
+  assert.equal(db.getCreditBalances(user.id).purchased, 800 * CREDITS_MICRO_PER_CREDIT);
+  const tiers = runtime.config.billing!.credits!;
+  const tier = tiers.find((c) => c.id === "credits_1_usd")!;
+  const original = tier.credits;
+  try {
+    tier.credits = 1000; // 模拟购买后、退款前改档位
+    const r = await postWebhook({ ...succ, eventType: "store.purchase.refunded" });
+    assert.equal(r.status, 200);
+    // 若按当前配置冲正会冲 1000，余额变 -200；按原 delta 冲正才是 0
+    assert.equal(db.getCreditBalances(user.id).purchased, 0);
+  } finally {
+    tier.credits = original;
+  }
+});
+
+test("R4/R5: 档位下架后退款仍按原入账 delta 冲正", async () => {
+  const user = db.createUser("wh-store-del", await hashPassword("pw123456"));
+  const succ = {
+    eventType: "store.purchase.succeeded",
+    goodsId: "credits_1_usd",
+    goodsType: "consumable",
+    store: "apple",
+    storeTransactionId: "tx-del-1",
+    userId: String(user.id),
+  };
+  await postWebhook(succ);
+  assert.equal(db.getCreditBalances(user.id).purchased, 800 * CREDITS_MICRO_PER_CREDIT);
+  const tiers = runtime.config.billing!.credits!;
+  const idx = tiers.findIndex((c) => c.id === "credits_1_usd");
+  const removed = tiers.splice(idx, 1)[0]!;
+  try {
+    const r = await postWebhook({ ...succ, eventType: "store.purchase.refunded" });
+    assert.equal(r.status, 200);
+    assert.equal(db.getCreditBalances(user.id).purchased, 0);
+  } finally {
+    tiers.splice(idx, 0, removed);
+  }
+});
+
 test("store.purchase: 非 consumable（买断）→ ack 忽略", async () => {
   const r = await postWebhook({
     eventType: "store.purchase.succeeded",
@@ -772,18 +841,29 @@ test("store.purchase.succeeded（google）→ 入账，幂等键 google:<purchas
   assert.equal(db.getCreditBalances(user.id).purchased, 5000 * CREDITS_MICRO_PER_CREDIT);
 });
 
-test("store.purchase: 未知 goodsId → ack 忽略", async () => {
+test("R5: 未知 goodsId webhook → 503（不 ack）；补配置后重投 → 入账", async () => {
   const user = db.createUser("wh-store-ug", await hashPassword("pw123456"));
-  const r = await postWebhook({
+  const evt = {
     eventType: "store.purchase.succeeded",
     goodsId: "no_such_product",
     goodsType: "consumable",
     store: "apple",
     storeTransactionId: "tx-ug-1",
     userId: String(user.id),
-  });
-  assert.equal(r.status, 200);
-  assert.equal(r.json.ignored, "unknown goods");
+  };
+  const r1 = await postWebhook(evt);
+  assert.equal(r1.status, 503);
+  assert.equal(db.getCreditBalances(user.id).purchased, 0);
+  const tiers = runtime.config.billing!.credits!;
+  tiers.push({ id: "no_such_product", credits: 800, priceCny: 8 });
+  try {
+    const r2 = await postWebhook(evt);
+    assert.equal(r2.status, 200);
+    assert.equal(db.getCreditBalances(user.id).purchased, 800 * CREDITS_MICRO_PER_CREDIT);
+  } finally {
+    const idx = tiers.findIndex((c) => c.id === "no_such_product");
+    if (idx >= 0) tiers.splice(idx, 1);
+  }
 });
 
 test("store.purchase.refunded 幂等：两次 refunded 只冲正一次", async () => {
@@ -817,6 +897,23 @@ test("R1: store/verify consumable 成功 ⇒ 就地入账，webhook 到达不重
   });
   assert.equal(wh.status, 200);
   assert.equal(db.getCreditBalances(user.id).purchased, 800 * CREDITS_MICRO_PER_CREDIT);
+  mockVerifyBody = null;
+});
+
+test("R5: store/verify 未知 goodsId ⇒ 不回 purchased（回 null）", async () => {
+  mockVerifyStatus = 200;
+  mockVerifyBody = { goodsId: "no_such_product", goodsType: "consumable", storeTransactionId: "tx-ugv-1", purchase: "purchased" };
+  const user = db.createUser("wh-iap-ug", await hashPassword("pw123456"));
+  const token = (await auth.issueTokens(user)).accessToken;
+  const res = await fetch(base + "/api/billing/unicpay/store/verify", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    body: JSON.stringify({ store: "apple", storeProductId: "no_such_product", receipt: "jws-unknown" }),
+  });
+  assert.equal(res.status, 200);
+  const json = (await res.json()) as { purchase: string | null };
+  assert.equal(json.purchase, null);
+  assert.equal(db.getCreditBalances(user.id).purchased, 0);
   mockVerifyBody = null;
 });
 

@@ -107,6 +107,9 @@ portal 后台充值页据此渲染档位（不再前端写死；与 `/api/billin
 - `store` = 商店标识字符串，**只允许小写字母、1–32 字符（`^[a-z]{1,32}$`）**；权威枚举由 unicpay 平台维护（如 `apple` / `google` / `huawei`），hub 只做格式校验后**透传、不枚举**——平台新增渠道（如 amazon）时 hub 无需改。
 - `storeProductId`、`receipt` 非空；`receipt` 为商店回执（Apple StoreKit2 JWS / Google purchaseToken / Huawei purchaseData JSON）。
 - `store` 未在平台注册时由 unicpay 返回 `unsupported store`（透传为上游错误）；unicpay 未配置时 `404 NOT_CONFIGURED`。
+- **`purchase` 语义**：只有平台验签成功**且 hub 能完成点数映射**时才返回 `"purchased"`；若 `goodsId` 不在本地点数档位（目录漂移）或缺少 `storeTransactionId`，返回 `"purchase": null`——客户端必须按 transient 处理（保留收据，不 finish/consume），等配置修复后由平台 webhook 重试补入账。
+- **错误语义**（客户端按此分流）：`401` = 鉴权失败（session/HMAC）；`422 invalid_receipt` = 收据无效（终态，可 finish/consume）；`502 channel_error` / 其它 `5xx` = 上游不可用（可重试，保留收据）；`400` = 请求非法；`404` = 未配置 / 未知 store product（配置类，**不得**当收据无效终态）。
+- **webhook `store.purchase.*`**：`goodsId` 未映射时 hub 返回 `503 UNKNOWN_GOODS`（不 ack），由 unicpay outbox 退避重试；配置修复后同一事件自动补入账。
 
 ### 点数档位配置：`config.billing.productsFile`
 ```json
