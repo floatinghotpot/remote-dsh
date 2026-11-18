@@ -4,13 +4,11 @@
 
 **remote-dsh 让您把 DeepSeek Harness（DSH）变成「任何地方浏览器即用」的 AI 智能体 —— 免公网 IP、免装客户端。**
 
-![rdsh logo](media/rdsh256bg.png)
-
 ## 为什么选择 remote-dsh
 
 - **浏览器即用**：免公网 IP、免装客户端，开浏览器就能指挥智能体，不限设备（PC、平板、手机），不限系统（Mac、Windows、Linux、iOS、安卓、鸿蒙）；
 - **持续在线**：会话保持连续，跨设备（PC、平板、手机）无缝接力，工作流不中断；
-- **双通道接入**：DSH 插件（`dsh-web-remote`）一键接入，或 CLI（`remote-dsh`）灵活自控；
+- **双通道接入**：DSH 插件（`dsh-whale-link`）一键接入，或 CLI（`remote-dsh`）灵活自控；
 - **全程加密**：TLS 链路加密 + 端到端加密（E2EE），Hub 只转发密文，看不到你的操作与数据；
 - **账号防护**：登录密码 + 双重认证（2FA），连续输错自动锁定，防撞库、防盗号；
 - **主机访问密码**：主机可再设置一道独立密码，与账号互为双保险，即使 Hub 管理员，也无法进入；
@@ -30,7 +28,7 @@
 **方式一 · DSH 桌面版装插件（免 CLI）**
 
 1. 打开 DSH 桌面版 → 左上角「插件」→ 安装第三方插件；
-2. 填入插件名 `dsh-web-remote`，装好（或升级）后**退出并重新打开 DSH**——目录选择器的固定补丁只在下次启动生效；重启后再打开插件面板；
+2. 填入插件名 `dsh-whale-link`，装好（或升级）后**退出并重新打开 DSH**——目录选择器的固定补丁只在下次启动生效；重启后再打开插件面板；
 3. 绑定本机：推荐掏出**鲸语通 App 扫码**（更快、更方便）；也可在面板粘贴 hub 地址 + join token。
 
 **方式二 · CLI（适用于服务器 / 无显示器的嵌入式主机）**
@@ -67,7 +65,7 @@ rdsh-hub serve                  # 自建 hub（内置 TLS 或反代部署）
 
 ## 架构
 
-![remote-dsh 架构图](media/rdsh-arch.jpg)
+![鲸语通网络架构](media/whalelink-arch-zh-landscape.png)
 
 ```
         客户端（浏览器）
@@ -98,7 +96,7 @@ rdsh-hub serve                  # 自建 hub（内置 TLS 或反代部署）
 | 开发机侧 | rdsh-gateway | 局域网认证网关 / 公网出站隧道端点；spawn `dsh web` |
 | 隧道协议 | rdsh-tunnel | 线协议：帧复用、心跳、背压 |
 | 门户 | rdsh-portal | 网页登录 + host 列表（Vite + React） |
-| DSH 插件 | dsh-web-remote | DSH 界面内的远程访问面板（免装 CLI） |
+| DSH 插件 | dsh-whale-link | DSH 界面内的远程访问面板（免装 CLI） |
 
 > **规模化 relay 节点**属于商业版（私有）；单机自托管用 hub 内置 relay 即可，不需要额外组件。
 
@@ -110,7 +108,7 @@ rdsh-hub serve                  # 自建 hub（内置 TLS 或反代部署）
 - **三模式接入**：局域网直连 / 云服务器直连（TLS + 密码）/ 公网 hub 转发（出站隧道）
 - **端到端加密**：hub 中转你的 DSH 流量但**读不到内容**（prompt / 代码 / 文件 / API key 全程密文）——Noise NK 握手（X25519 + AES-256-GCM）、会话密钥每连接轮换、浏览器 TOFU 指纹信任、pin 仅存本地
 - **多租户与安全**：邮箱验证 + 2FA、共享授权（owner/member）、审计日志、登录风控（锁定 + 限流）、IP 白名单、可选主机访问密码（与账号互为双保险，Hub 管理员也无法进入）
-- **双通道分发**：`dsh-web-remote` 插件（免装 CLI）或 `remote-dsh` CLI；hub 经 `rdsh-hub` 支持内置 TLS 或反代部署
+- **双通道分发**：`dsh-whale-link` 插件（免装 CLI）或 `remote-dsh` CLI；hub 经 `rdsh-hub` 支持内置 TLS 或反代部署
 
 **规划中**：SaaS 商业化托管 hub。
 

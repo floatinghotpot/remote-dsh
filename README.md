@@ -4,13 +4,11 @@
 
 **remote-dsh turns your DeepSeek Harness (DSH) into an AI agent you can use from any browser — no public IP, no client install.**
 
-![rdsh logo](media/rdsh256bg.png)
-
 ## Why remote-dsh
 
 - **Browser-first**: no public IP, no client install — open a browser and drive your agent from any device (PC / tablet / phone) and any OS (Mac, Windows, Linux, iOS, Android, HarmonyOS);
 - **Always on**: sessions stay live and follow you seamlessly across devices — no interrupted workflows;
-- **Two access paths**: the DSH plugin (`dsh-web-remote`) for one-click setup, or the CLI (`remote-dsh`) for full control;
+- **Two access paths**: the DSH plugin (`dsh-whale-link`) for one-click setup, or the CLI (`remote-dsh`) for full control;
 - **End-to-end encrypted**: TLS for transport plus end-to-end encryption (E2EE) — the hub relays only ciphertext and can never read your actions or data;
 - **Account protection**: password login + two-factor authentication (2FA), automatic lockout after repeated failures, protection against credential stuffing;
 - **Host access code**: optionally set a second, independent password on the host — even the hub admin cannot get in;
@@ -30,7 +28,7 @@
 **Route 1 · DSH desktop app plugin (no CLI)**
 
 1. Open the DSH desktop app → "Plugins" in the top-left → install a third-party plugin;
-2. Enter the plugin name `dsh-web-remote`; after installing (or upgrading), **quit and reopen DSH** — the directory-picker pin only takes effect on the next start. Then open the plugin panel;
+2. Enter the plugin name `dsh-whale-link`; after installing (or upgrading), **quit and reopen DSH** — the directory-picker pin only takes effect on the next start. Then open the plugin panel;
 3. Bind this machine: **recommended — pull out the WhaleLink App and scan the QR code** (faster); or paste the hub URL + join token in the panel.
 
 **Route 2 · CLI (for servers / headless embedded hosts)**
@@ -67,7 +65,7 @@ rdsh-hub serve                  # self-host the hub (built-in TLS or behind a re
 
 ## Architecture
 
-![remote-dsh architecture](media/rdsh-arch.jpg)
+![WhaleLink network architecture](media/whalelink-arch-en-landscape.png)
 
 ```
         Client (browser)
@@ -99,7 +97,7 @@ hub and gateway only — clients never implement it.
 | Host agent | rdsh-gateway | LAN auth gateway / outbound tunnel endpoint; spawns `dsh web` |
 | Tunnel protocol | rdsh-tunnel | wire protocol: framing, multiplexing, heartbeat |
 | Portal | rdsh-portal | web login + host list (Vite + React) |
-| DSH plugin | dsh-web-remote | remote-access panel inside the DSH UI (no CLI) |
+| DSH plugin | dsh-whale-link | remote-access panel inside the DSH UI (no CLI) |
 
 > **Scale-out relay nodes** are part of the commercial edition (proprietary). A single self-hosted hub already includes a built-in relay; no
 > extra component is required for normal self-hosting.
@@ -114,7 +112,7 @@ for the full feature list; [roadmap](doc/overview/roadmap.md) for milestones.
 - **Three access modes**: LAN direct / cloud-server direct (TLS + password) / public hub relay (outbound tunnel)
 - **End-to-end encryption**: the hub relays your DSH traffic but cannot read the content (prompts / code / files / API keys stay encrypted) — Noise NK handshake (X25519 + AES-256-GCM), fresh session keys per connection, browser TOFU fingerprint trust, pin stored locally only
 - **Multi-tenant & security**: email verification + 2FA, host sharing (owner/member), audit log, login rate-limiting (lockout + throttling), IP allow-list, optional host access code (a second lock on the host — even a hub admin cannot get in)
-- **Two access paths**: the `dsh-web-remote` plugin (no CLI) or the `remote-dsh` CLI; the hub runs via `rdsh-hub` with built-in TLS or behind a reverse proxy
+- **Two access paths**: the `dsh-whale-link` plugin (no CLI) or the `remote-dsh` CLI; the hub runs via `rdsh-hub` with built-in TLS or behind a reverse proxy
 
 **Planned**: SaaS managed hub.
 
